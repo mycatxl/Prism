@@ -98,12 +98,7 @@ Documentation=https://github.com/yourusername/Prism
 Type=simple
 User=$USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/prism \\
-    --port $PORT \\
-    --state-dir $STATE_DIR \\
-    --log-level $LOG_LEVEL \\
-    --admin-token $ADMIN_TOKEN \\
-    --dns-upstreams "$DNS_UPSTREAMS"
+ExecStart=$PROJECT_DIR/prism standalone
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -161,12 +156,7 @@ start_service() {
     else
         log_step "Starting Prism in foreground..."
         log_info "Press Ctrl+C to stop"
-        exec "$PROJECT_DIR/prism" \
-            --port "$PORT" \
-            --state-dir "$STATE_DIR" \
-            --log-level "$LOG_LEVEL" \
-            --admin-token "$ADMIN_TOKEN" \
-            --dns-upstreams "$DNS_UPSTREAMS"
+        exec "$PROJECT_DIR/prism" standalone
     fi
 }
 
