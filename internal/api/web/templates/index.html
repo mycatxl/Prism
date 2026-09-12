@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prism Management Console</title>
+    <link rel="stylesheet" href="/ui/static/app.css">
+</head>
+<body>
+    <div id="app">
+        <nav class="nav">
+            <div class="nav-brand">Prism</div>
+            <div class="nav-links">
+                <a href="#dashboard" class="nav-link active" data-page="dashboard">Dashboard</a>
+                <a href="#platforms" class="nav-link" data-page="platforms">Platforms</a>
+                <a href="#endpoints" class="nav-link" data-page="endpoints">Endpoints</a>
+                <a href="#leases" class="nav-link" data-page="leases">Leases</a>
+                <a href="#metrics" class="nav-link" data-page="metrics">Metrics</a>
+                <a href="#logs" class="nav-link" data-page="logs">Logs</a>
+            </div>
+        </nav>
+
+        <main class="main">
+            <div id="page-dashboard" class="page active">
+                <div class="page-header">
+                    <h1>Dashboard</h1>
+                </div>
+                <div class="grid">
+                    <div class="card">
+                        <div class="card-header">System Info</div>
+                        <div class="card-body" id="system-info">Loading...</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Platform Summary</div>
+                        <div class="card-body" id="platform-summary">Loading...</div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">Active Leases</div>
+                        <div class="card-body" id="active-leases">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="page-platforms" class="page">
+                <div class="page-header">
+                    <h1>Platforms</h1>
+                    <button class="btn btn-primary" onclick="app.showCreatePlatform()">Create Platform</button>
+                </div>
+                <div id="platforms-list" class="data-table"></div>
+            </div>
+
+            <div id="page-endpoints" class="page">
+                <div class="page-header">
+                    <h1>Endpoints</h1>
+                    <button class="btn btn-primary" onclick="app.showCreateEndpoint()">Create Endpoint</button>
+                </div>
+                <div id="endpoints-list" class="data-table"></div>
+            </div>
+
+            <div id="page-leases" class="page">
+                <div class="page-header">
+                    <h1>Leases</h1>
+                </div>
+                <div id="leases-list" class="data-table"></div>
+            </div>
+
+            <div id="page-metrics" class="page">
+                <div class="page-header">
+                    <h1>Metrics</h1>
+                </div>
+                <div id="metrics-content"></div>
+            </div>
+
+            <div id="page-logs" class="page">
+                <div class="page-header">
+                    <h1>Request Logs</h1>
+                </div>
+                <div id="logs-content"></div>
+            </div>
+        </main>
+    </div>
+
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title"></h2>
+                <button class="modal-close" onclick="app.closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="/ui/static/app.js"></script>
+</body>
+</html>

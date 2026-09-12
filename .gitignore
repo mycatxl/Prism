@@ -1,0 +1,50 @@
+# Binaries
+prism
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Runtime state
+state/
+*.db
+*.db-shm
+*.db-wal
+
+# Backups
+backups/
+*.tar
+*.tar.gz
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.admin_token
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
