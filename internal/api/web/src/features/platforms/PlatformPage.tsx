@@ -1,0 +1,329 @@
+import { DialogSurface } from "../../components/ui/DialogSurface";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, Info, Plus, RefreshCw, Search, Waypoints, X } from "lucide-react";
+import { useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
+import { useNavigate } from "react-router-dom";
+import { Badge } from "../../components/ui/Badge";
+import { Button } from "../../components/ui/Button";
+import { Card } from "../../components/ui/Card";
+import { QueryState } from "../../components/ui/QueryState";
+import { Input } from "../../components/ui/Input";
+import { OffsetPagination } from "../../components/ui/OffsetPagination";
+import { Select } from "../../components/ui/Select";
+import { Switch } from "../../components/ui/Switch";
+import { Textarea } from "../../components/ui/Textarea";
+import { ToastContainer } from "../../components/ui/Toast";
+import { useToast } from "../../hooks/useToast";
+import { useI18n } from "../../i18n";
+import { formatApiErrorMessage } from "../../lib/error-message";
+import { formatGoDuration } from "../../lib/time";
+import { createPlatform, listPlatforms } from "./api";
+import {
+  allocationPolicies,
+  allocationPolicyLabel,
+  emptyAccountBehaviorLabel,
+  emptyAccountBehaviors,
+  missActionLabel,
+  missActions,
+} from "./constants";
+import {
+  defaultPlatformFormValues,
+  platformFormSchema,
+  platformNameRuleHint,
+  toPlatformCreateInput,
+  type PlatformFormValues,
+} from "./formModel";
+import type { Platform } from "./types";
+
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+const EMPTY_PLATFORMS: Platform[] = [];
+const PAGE_SIZE_OPTIONS = [12, 24, 48, 96] as const;
+
+export function PlatformPage() {
+  const { t } = useI18n();
+  const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(24);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const { toasts, showToast, dismissToast } = useToast();
+
+  const queryClient = useQueryClient();
+  const formatPlatformMutationError = (error: unknown) => {
+    const base = formatApiErrorMessage(error, t);
+    if (base.includes("name:")) {
+      return `${base}；${t(platformNameRuleHint)}`;
+    }
+    return base;
+  };
+
+  const platformsQuery = useQuery({
+    queryKey: ["platforms", "page", page, pageSize, search],
+    queryFn: () =>
+      listPlatforms({
+        limit: pageSize,
+        offset: page * pageSize,
+        keyword: search,
+      }),
+    refetchInterval: 30_000,
+    placeholderData: (prev) => prev,
+  });
+
+  const platforms = platformsQuery.data?.items ?? EMPTY_PLATFORMS;
+
+  const totalPlatforms = platformsQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalPlatforms / pageSize));
+  const currentPage = Math.min(page, totalPages - 1);
+
+  const createForm = useForm<PlatformFormValues>({
+    resolver: zodResolver(platformFormSchema),
+    defaultValues: defaultPlatformFormValues,
+  });
+  const createEmptyAccountBehavior = useWatch({ control: createForm.control, name: "reverse_proxy_empty_account_behavior" });
+
+  const createMutation = useMutation({
+    mutationFn: createPlatform,
+    onSuccess: async (created) => {
+      await queryClient.invalidateQueries({ queryKey: ["platforms"] });
+      setCreateModalOpen(false);
+      createForm.reset();
+      showToast("success", t("平台 {{name}} 创建成功", { name: created.name }));
+      navigate(`/platforms/${created.id}`);
+    },
+    onError: (error) => {
+      showToast("error", formatPlatformMutationError(error));
+    },
+  });
+
+  const onCreateSubmit = createForm.handleSubmit(async (values) => {
+    createMutation.mutate(toPlatformCreateInput(values));
+  });
+
+  const changePageSize = (next: number) => {
+    setPageSize(next);
+    setPage(0);
+  };
+
+  return (
+    <section className="platform-page">
+      <header className="module-header">
+        <div>
+          <h2>{t("平台管理")}</h2>
+        </div>
+      </header>
+
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+      <Card className="platform-list-card platform-directory-card">
+        <div className="list-card-header">
+          <div>
+            <h3>{t("平台列表")}</h3>
+            <p>{t("共 {{count}} 个平台", { count: totalPlatforms })}</p>
+          </div>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <label className="search-box" htmlFor="platform-search" style={{ maxWidth: 200, margin: 0, gap: 6 }}>
+              <Search size={16} />
+              <Input
+                id="platform-search"
+                placeholder={t("搜索平台")}
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(0);
+                }}
+                style={{ padding: "6px 10px", borderRadius: 8 }}
+              />
+            </label>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setCreateModalOpen(true)}
+            >
+              <Plus size={16} />
+              {t("新建")}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => platformsQuery.refetch()}
+              disabled={platformsQuery.isFetching}
+            >
+              <RefreshCw size={16} className={platformsQuery.isFetching ? "spin" : undefined} />
+              {t("刷新")}
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      <section className="platform-directory">
+        <QueryState loading={platformsQuery.isLoading} error={platformsQuery.error} onRetry={() => void platformsQuery.refetch()} empty={!platformsQuery.isLoading && !platformsQuery.isError && !platforms.length} emptyText={t("没有匹配的平台")} />
+        {platforms.length > 0 && <div className="platform-row-labels"><span>{t("平台")}</span><span>{t("标签规则")}</span><span>{t("地区")}</span><span>{t("可用节点")}</span><span>{t("租约时长")}</span><span /></div>}
+        {platforms.map((platform) => <button className="platform-object-row" key={platform.id} onClick={() => navigate(`/platforms/${platform.id}`)} type="button">
+          <span className="platform-object-name"><span className="object-icon"><Waypoints size={18} /></span><span><strong>{platform.name}</strong><small>{t(platform.id === ZERO_UUID ? "内置平台" : allocationPolicyLabel[platform.allocation_policy])}</small></span></span>
+          <span className="platform-object-rules">{platform.regex_filters.length ? platform.regex_filters.map((rule,i) => <code key={i} data-rule={rule.startsWith("!") ? "exclude" : rule.startsWith("*") ? "must" : "any"}>{rule}</code>) : <span className="muted">{t("全部标签")}</span>}</span>
+          <span className="platform-object-regions">{platform.region_filters.length ? platform.region_filters.join(" / ").toUpperCase() : t("不限地区")}</span>
+          <span className="platform-object-count"><Badge variant={platform.routable_node_count ? "success" : "neutral"}>{platform.routable_node_count.toLocaleString()}</Badge></span>
+          <span className="platform-object-ttl">{formatGoDuration(platform.sticky_ttl, t("默认"))}</span>
+          <ArrowRight size={16} />
+        </button>)}
+        {platformsQuery.data && <OffsetPagination page={currentPage} totalPages={totalPages} totalItems={totalPlatforms} pageSize={pageSize} pageSizeOptions={PAGE_SIZE_OPTIONS} onPageChange={setPage} onPageSizeChange={changePageSize} disabled={platformsQuery.isFetching} />}
+      </section>
+
+      {createModalOpen ? (
+        <DialogSurface title={t("编辑")} variant="modal" onClose={() => setCreateModalOpen(false)}>
+          <Card className="modal-card">
+            <div className="modal-header">
+              <h3>{t("新建平台")}</h3>
+              <Button variant="ghost" size="sm" aria-label={t("关闭")} onClick={() => setCreateModalOpen(false)}>
+                <X size={16} />
+              </Button>
+            </div>
+
+            <form className="form-grid" onSubmit={onCreateSubmit}>
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-name">
+                  {t("名称")}
+                </label>
+                <Input id="create-name" invalid={Boolean(createForm.formState.errors.name)} {...createForm.register("name")} />
+                {createForm.formState.errors.name?.message ? (
+                  <p className="field-error">{t(createForm.formState.errors.name.message)}</p>
+                ) : null}
+                <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  {t(platformNameRuleHint)}
+                </p>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-sticky">
+                  {t("租约保持时长（可选）")}
+                </label>
+                <Input id="create-sticky" placeholder={t("例如 168h")} {...createForm.register("sticky_ttl")} />
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-miss-action">
+                  {t("反向代理账号解析出错策略")}
+                </label>
+                <Select id="create-miss-action" {...createForm.register("reverse_proxy_miss_action")}>
+                  {missActions.map((item) => (
+                    <option key={item} value={item}>
+                      {t(missActionLabel[item])}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-policy">
+                  {t("节点分配策略")}
+                </label>
+                <Select id="create-policy" {...createForm.register("allocation_policy")}>
+                  {allocationPolicies.map((item) => (
+                    <option key={item} value={item}>
+                      {t(allocationPolicyLabel[item])}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-passive-circuit-breaker" style={{ visibility: "hidden" }}>
+                  {t("禁用请求失败熔断")}
+                </label>
+                <div className="subscription-switch-item">
+                  <label className="subscription-switch-label" htmlFor="create-passive-circuit-breaker">
+                    <span>{t("禁用请求失败熔断")}</span>
+                    <span
+                      className="subscription-info-icon"
+                      title={t("开启后，此平台的代理请求失败不会增加节点熔断计数；主动探测不受影响。")}
+                      aria-label={t("开启后，此平台的代理请求失败不会增加节点熔断计数；主动探测不受影响。")}
+                      tabIndex={0}
+                    >
+                      <Info size={13} />
+                    </span>
+                  </label>
+                  <Switch id="create-passive-circuit-breaker" {...createForm.register("passive_circuit_breaker_disabled")} />
+                </div>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-empty-account-behavior">
+                  {t("反向代理账号为空行为")}
+                </label>
+                <Select id="create-empty-account-behavior" {...createForm.register("reverse_proxy_empty_account_behavior")}>
+                  {emptyAccountBehaviors.map((item) => (
+                    <option key={item} value={item}>
+                      {t(emptyAccountBehaviorLabel[item])}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+
+              <div
+                className={`account-headers-collapse ${createEmptyAccountBehavior === "FIXED_HEADER" ? "account-headers-collapse-open" : ""}`}
+                aria-hidden={createEmptyAccountBehavior !== "FIXED_HEADER"}
+              >
+                <div className="field-group">
+                  <label className="field-label" htmlFor="create-fixed-account-header">
+                    {t("用于提取 Account 的 Headers（每行一个）")}
+                  </label>
+                  <Textarea
+                    id="create-fixed-account-header"
+                    rows={3}
+                    placeholder={t("每行一个，例如 Authorization 或 X-Account-Id")}
+                    {...createForm.register("reverse_proxy_fixed_account_header")}
+                  />
+                  {createForm.formState.errors.reverse_proxy_fixed_account_header?.message ? (
+                    <p className="field-error">{t(createForm.formState.errors.reverse_proxy_fixed_account_header.message)}</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-regex">
+                  {t("节点名正则过滤规则（可选）")}
+                </label>
+                <Textarea
+                  id="create-regex"
+                  rows={4}
+                  placeholder={t("每行一条正则表达式，例如：\n\n香港\n日本\n*专线\n!过期\n!失效\n\n表示：选择【香港】或【日本】的【专线】节点，并排除包含【过期】或【失效】的节点。")}
+                  {...createForm.register("regex_filters_text")}
+                />
+                <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  <div>{t("普通正则表达式表示满足其一，* 开头表示必须包含，! 开头表示排除。")}</div>
+                  <div>{t("技巧：^<订阅名>/ 可筛选来自该订阅的节点。")}</div>
+                </div>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-region">
+                  {t("地区过滤规则（可选）")}
+                </label>
+                <Textarea
+                  id="create-region"
+                  rows={4}
+                  placeholder={t("每行一条，如 hk / us / !hk")}
+                  {...createForm.register("region_filters_text")}
+                />
+                <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
+                  {t("支持反选：以 ! 开头可排除地区（如 !hk）。可与正选混用，最终结果为“先正选再排除”。")}
+                </p>
+              </div>
+
+              <div className="detail-actions">
+                <Button type="submit" disabled={createMutation.isPending}>
+                  {createMutation.isPending ? t("创建中...") : t("确认创建")}
+                </Button>
+                <Button variant="secondary" onClick={() => setCreateModalOpen(false)}>
+                  {t("取消")}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </DialogSurface>
+      ) : null}
+    </section>
+  );
+}
