@@ -14,8 +14,8 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "当前为免认证访问模式": "Running in no-auth mode",
   "管理员登录": "Admin Login",
   "管理员令牌": "Admin Token",
-  "管理员令牌通过 `RESIN_ADMIN_TOKEN` 环境变量配置":
-    "The administrator token is configured through the `RESIN_ADMIN_TOKEN` environment variable",
+  "管理员令牌通过 `PRISM_ADMIN_TOKEN` 环境变量配置":
+    "The administrator token is configured through the `PRISM_ADMIN_TOKEN` environment variable",
   "显示管理员令牌": "Show Admin Token",
   "隐藏管理员令牌": "Hide Admin Token",
   "进入控制台": "Enter Console",
@@ -326,16 +326,16 @@ Note: Once enabled, requests without authentication information are rejected ins
   "业务账号（可选）": "Business account (optional)",
   "例如 user_tom，留空则只按平台路由": "e.g. user_tom; leave empty to route by platform only",
   "代理 token": "Proxy token",
-  "即后端 RESIN_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。":
-    "This is the backend RESIN_PROXY_TOKEN. Stored only in your browser, never uploaded.",
-  "填写 RESIN_PROXY_TOKEN": "Enter RESIN_PROXY_TOKEN",
+  "即后端 PRISM_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。":
+    "This is the backend PRISM_PROXY_TOKEN. Stored only in your browser, never uploaded.",
+  "填写 PRISM_PROXY_TOKEN": "Enter PRISM_PROXY_TOKEN",
   "当前代理免认证，可留空": "Proxy is unauthenticated; can be left empty",
   "当前代理免认证，无需填写": "Proxy is unauthenticated; no token required",
   "尚未填写 token，地址中将以 <token> 占位，请替换为实际值。":
     "Token not set; URLs use <token> as a placeholder — replace it with the real value.",
   "代理免认证": "No-auth proxy",
-  "后端 RESIN_PROXY_TOKEN 为空，正/反向代理无需认证。":
-    "Backend RESIN_PROXY_TOKEN is empty; forward/reverse proxy require no authentication.",
+  "后端 PRISM_PROXY_TOKEN 为空，正/反向代理无需认证。":
+    "Backend PRISM_PROXY_TOKEN is empty; forward/reverse proxy require no authentication.",
   "curl 示例": "curl example",
   "目标网址": "Target URL",
   "例如 https://api.ipify.org": "e.g. https://api.ipify.org",
@@ -403,12 +403,12 @@ Note: Once enabled, requests without authentication information are rejected ins
   "最近 24 小时": "Last 24 hours",
   "刚刚": "Just now",
   "0 秒": "0s",
-  "RESIN_ADMIN_TOKEN 为空，控制面 API 免认证": "RESIN_ADMIN_TOKEN is empty, control-plane API is unauthenticated",
-  "RESIN_PROXY_TOKEN 为空，正/反向代理免认证": "RESIN_PROXY_TOKEN is empty, forward/reverse proxy is unauthenticated",
-  "RESIN_ADMIN_TOKEN 强度较弱，建议更换为更高熵随机令牌":
-    "RESIN_ADMIN_TOKEN is weak, use a higher-entropy random token",
-  "RESIN_PROXY_TOKEN 强度较弱，建议更换为更高熵随机令牌":
-    "RESIN_PROXY_TOKEN is weak, use a higher-entropy random token",
+  "PRISM_ADMIN_TOKEN 为空，控制面 API 免认证": "PRISM_ADMIN_TOKEN is empty, control-plane API is unauthenticated",
+  "PRISM_PROXY_TOKEN 为空，正/反向代理免认证": "PRISM_PROXY_TOKEN is empty, forward/reverse proxy is unauthenticated",
+  "PRISM_ADMIN_TOKEN 强度较弱，建议更换为更高熵随机令牌":
+    "PRISM_ADMIN_TOKEN is weak, use a higher-entropy random token",
+  "PRISM_PROXY_TOKEN 强度较弱，建议更换为更高熵随机令牌":
+    "PRISM_PROXY_TOKEN is weak, use a higher-entropy random token",
   "按分类查看和修改设置，可随时撤销未保存更改。":
     "View and edit settings by category. Unsaved changes can be reverted at any time.",
   "按条件检索请求记录，快速定位问题。":

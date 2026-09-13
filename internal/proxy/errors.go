@@ -1,4 +1,4 @@
-// Package proxy implements the forward and reverse proxy data plane for Resin.
+// Package proxy implements the forward and reverse proxy data plane for Prism.
 package proxy
 
 import (
@@ -13,7 +13,7 @@ import (
 // ProxyError represents a structured proxy error response.
 type ProxyError struct {
 	HTTPCode   int
-	ResinError string // X-Resin-Error header value
+	PrismError string // X-Prism-Error header value
 	Message    string // plain-text body
 }
 
@@ -21,62 +21,62 @@ type ProxyError struct {
 var (
 	ErrAuthRequired = &ProxyError{
 		HTTPCode:   http.StatusProxyAuthRequired,
-		ResinError: "AUTH_REQUIRED",
+		PrismError: "AUTH_REQUIRED",
 		Message:    "Proxy authentication required",
 	}
 	ErrAuthFailed = &ProxyError{
 		HTTPCode:   http.StatusForbidden,
-		ResinError: "AUTH_FAILED",
+		PrismError: "AUTH_FAILED",
 		Message:    "Proxy authentication failed",
 	}
 	ErrURLParseError = &ProxyError{
 		HTTPCode:   http.StatusBadRequest,
-		ResinError: "URL_PARSE_ERROR",
+		PrismError: "URL_PARSE_ERROR",
 		Message:    "Failed to parse request URL",
 	}
 	ErrInvalidProtocol = &ProxyError{
 		HTTPCode:   http.StatusBadRequest,
-		ResinError: "INVALID_PROTOCOL",
+		PrismError: "INVALID_PROTOCOL",
 		Message:    "Protocol must be http or https",
 	}
 	ErrInvalidHost = &ProxyError{
 		HTTPCode:   http.StatusBadRequest,
-		ResinError: "INVALID_HOST",
+		PrismError: "INVALID_HOST",
 		Message:    "Invalid or empty host",
 	}
 	ErrPlatformNotFound = &ProxyError{
 		HTTPCode:   http.StatusNotFound,
-		ResinError: "PLATFORM_NOT_FOUND",
+		PrismError: "PLATFORM_NOT_FOUND",
 		Message:    "Platform not found",
 	}
 	ErrAccountRejected = &ProxyError{
 		HTTPCode:   http.StatusForbidden,
-		ResinError: "ACCOUNT_REJECTED",
+		PrismError: "ACCOUNT_REJECTED",
 		Message:    "Account extraction failed and platform rejects unmatched requests",
 	}
 	ErrNoAvailableNodes = &ProxyError{
 		HTTPCode:   http.StatusServiceUnavailable,
-		ResinError: "NO_AVAILABLE_NODES",
+		PrismError: "NO_AVAILABLE_NODES",
 		Message:    "No available nodes for routing",
 	}
 	ErrUpstreamConnectFailed = &ProxyError{
 		HTTPCode:   http.StatusBadGateway,
-		ResinError: "UPSTREAM_CONNECT_FAILED",
+		PrismError: "UPSTREAM_CONNECT_FAILED",
 		Message:    "Failed to connect to upstream",
 	}
 	ErrUpstreamTimeout = &ProxyError{
 		HTTPCode:   http.StatusGatewayTimeout,
-		ResinError: "UPSTREAM_TIMEOUT",
+		PrismError: "UPSTREAM_TIMEOUT",
 		Message:    "Upstream connection or response timed out",
 	}
 	ErrUpstreamRequestFailed = &ProxyError{
 		HTTPCode:   http.StatusBadGateway,
-		ResinError: "UPSTREAM_REQUEST_FAILED",
+		PrismError: "UPSTREAM_REQUEST_FAILED",
 		Message:    "Upstream request failed",
 	}
 	ErrInternalError = &ProxyError{
 		HTTPCode:   http.StatusInternalServerError,
-		ResinError: "INTERNAL_ERROR",
+		PrismError: "INTERNAL_ERROR",
 		Message:    "Internal proxy error",
 	}
 )
@@ -85,9 +85,9 @@ var (
 // For 407 responses, the Proxy-Authenticate header is added automatically.
 func writeProxyError(w http.ResponseWriter, pe *ProxyError) {
 	if pe.HTTPCode == http.StatusProxyAuthRequired {
-		w.Header().Set("Proxy-Authenticate", `Basic realm="Resin"`)
+		w.Header().Set("Proxy-Authenticate", `Basic realm="Prism"`)
 	}
-	w.Header().Set("X-Resin-Error", pe.ResinError)
+	w.Header().Set("X-Prism-Error", pe.PrismError)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(pe.HTTPCode)
 	w.Write([]byte(pe.Message))

@@ -35,7 +35,7 @@ func parseForwardCredentialV1(credential string) (token string, platform string,
 }
 
 // parseForwardCredentialV1WhenAuthDisabled parses optional identity when
-// RESIN_AUTH_VERSION=V1 and RESIN_PROXY_TOKEN is empty.
+// PRISM_AUTH_VERSION=V1 and PRISM_PROXY_TOKEN is empty.
 func parseForwardCredentialV1WhenAuthDisabled(credential string) (platform string, account string) {
 	lastColon := strings.LastIndexByte(credential, ':')
 	if lastColon >= 0 {

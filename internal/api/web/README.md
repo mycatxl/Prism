@@ -42,9 +42,9 @@ npm start
 
 当前后端已经读取环境变量及其工作目录的 `.env`：
 
-- `RESIN_ADMIN_TOKEN`：管理登录使用的 token。
-- `RESIN_PROXY_TOKEN`：HTTP/SOCKS 等代理接入使用的 token。
-- `RESIN_LISTEN_ADDRESS` / `RESIN_PORT`：后端自身监听地址和端口，与面板的 8080 分开。
+- `PRISM_ADMIN_TOKEN`：管理登录使用的 token。
+- `PRISM_PROXY_TOKEN`：HTTP/SOCKS 等代理接入使用的 token。
+- `PRISM_LISTEN_ADDRESS` / `PRISM_PORT`：后端自身监听地址和端口，与面板的 8080 分开。
 
 统一后端配置在项目根目录 `.env`，示例见 [根目录环境示例](../.env.example)。首次部署运行 `./bin/prism init` 生成两个独立随机令牌；已有配置继续保留。修改环境后重启后端即可，无需修改前端源码。
 

@@ -22,11 +22,11 @@ import (
 const (
 	localDNSTransportTag = "local"
 
-	secureDNSFailoverTransportTag  = "resin-secure-dns"
-	secureDNSFailoverTransportType = "resin-sequential-failover"
+	secureDNSFailoverTransportTag  = "prism-secure-dns"
+	secureDNSFailoverTransportType = "prism-sequential-failover"
 	secureDNSQueryPath             = "/dns-query"
 
-	customDNSTransportTagPrefix = "resin-dns-upstream-"
+	customDNSTransportTagPrefix = "prism-dns-upstream-"
 )
 
 type secureDNSTransportSpec struct {

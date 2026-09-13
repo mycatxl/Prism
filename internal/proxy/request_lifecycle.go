@@ -107,7 +107,7 @@ func (l *requestLifecycle) setProxyError(pe *ProxyError) {
 	if pe == nil {
 		return
 	}
-	l.log.ResinError = pe.ResinError
+	l.log.PrismError = pe.PrismError
 }
 
 func (l *requestLifecycle) setUpstreamError(stage string, err error) {

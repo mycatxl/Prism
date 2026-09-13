@@ -777,7 +777,7 @@ export function SystemConfigPage() {
                     </div>
                     <div className="field-group">
                       <label className="field-label" style={{ margin: 0 }}>{t("代理 / API 端口")}</label>
-                      <Input aria-label={t("代理 / API 端口")} readOnly value={String(envBaseline.resin_port)} />
+                      <Input aria-label={t("代理 / API 端口")} readOnly value={String(envBaseline.prism_port)} />
                     </div>
                   </div>
                 </section>)}

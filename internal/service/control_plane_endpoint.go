@@ -94,7 +94,7 @@ func NewDefaultEndpoint(port int) model.Endpoint {
 func (s *ControlPlaneService) defaultEndpoint() model.Endpoint {
 	port := 0
 	if s != nil && s.EnvCfg != nil {
-		port = s.EnvCfg.ResinPort
+		port = s.EnvCfg.ProxyPort
 	}
 	return NewDefaultEndpoint(port)
 }
