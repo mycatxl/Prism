@@ -41,8 +41,8 @@ const EMPTY_ENDPOINTS: Endpoint[] = [];
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const REQUIRE_PROXY_AUTH_LABEL = "强制客户端认证";
 const REQUIRE_PROXY_AUTH_HINT = `一些应用（例如浏览器）只有在代理服务器强制要求认证的时候，才会发送认证信息。
-因此，当 Resin 没有设置代理令牌时，这些应用不会向 Resin 发送认证字段，导致平台与账号信息缺失。
-如果你的 Resin 部署没有设置代理令牌，同时又需要兼容这些应用，可以开启此选项。
+因此，当 Prism 没有设置代理令牌时，这些应用不会向 Prism 发送认证字段，导致平台与账号信息缺失。
+如果你的 Prism 部署没有设置代理令牌，同时又需要兼容这些应用，可以开启此选项。
 注意：开启后，如果客户端没有发送认证信息，平台不再被视为 Default，而是拒绝请求。`;
 
 const DEFAULT_FORM: EndpointFormState = {
