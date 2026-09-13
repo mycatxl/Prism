@@ -47,7 +47,7 @@ go build -buildvcs=false ./cmd/prism
 
 4. Access the web interface:
 ```
-http://localhost:1080/ui/
+http://localhost:8080/ui/
 ```
 
 Use the admin token displayed after deployment or found in `state/.admin_token`.
@@ -56,7 +56,7 @@ Use the admin token displayed after deployment or found in `state/.admin_token`.
 
 Deploy with custom port and state directory:
 ```bash
-./scripts/deploy.sh --port 14242 --state-dir /opt/prism/state
+./scripts/deploy.sh --port 1080 --state-dir /opt/prism/state
 ```
 
 ### Architecture
@@ -74,7 +74,7 @@ Prism uses a modular architecture:
 #### Environment Variables
 
 ```bash
-PORT=1080                    # Management interface port
+PORT=8080                    # Management interface port
 STATE_DIR=./state            # State and database directory
 LOG_LEVEL=info              # Logging level (debug, info, warn, error)
 ADMIN_TOKEN=your-token      # Admin authentication token
@@ -85,7 +85,7 @@ DNS_UPSTREAMS=https://1.1.1.1/dns-query  # DNS-over-HTTPS upstreams
 
 Create a platform via API:
 ```bash
-curl -X POST http://localhost:1080/api/v1/platforms \
+curl -X POST http://localhost:8080/api/v1/platforms \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -99,7 +99,7 @@ curl -X POST http://localhost:1080/api/v1/platforms \
 
 Add nodes to the pool:
 ```bash
-curl -X POST http://localhost:1080/api/v1/nodes \
+curl -X POST http://localhost:8080/api/v1/nodes \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -118,12 +118,12 @@ curl -X POST http://localhost:1080/api/v1/nodes \
 
 Create an endpoint:
 ```bash
-curl -X POST http://localhost:1080/api/v1/endpoints \
+curl -X POST http://localhost:8080/api/v1/endpoints \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "id": "my-endpoint",
-    "port": 10808,
+    "port": 8081,
     "platform_id": "my-platform",
     "enabled": true
   }'
@@ -285,7 +285,7 @@ go build -buildvcs=false ./cmd/prism
 
 4. 访问 Web 界面：
 ```
-http://localhost:1080/ui/
+http://localhost:8080/ui/
 ```
 
 使用部署后显示的管理员 token，或在 `state/.admin_token` 文件中查找。
@@ -294,7 +294,7 @@ http://localhost:1080/ui/
 
 使用自定义端口和状态目录部署：
 ```bash
-./scripts/deploy.sh --port 14242 --state-dir /opt/prism/state
+./scripts/deploy.sh --port 1080 --state-dir /opt/prism/state
 ```
 
 ### 架构设计
@@ -312,7 +312,7 @@ Prism 采用模块化架构：
 #### 环境变量
 
 ```bash
-PORT=1080                    # 管理界面端口
+PORT=8080                    # 管理界面端口
 STATE_DIR=./state            # 状态和数据库目录
 LOG_LEVEL=info              # 日志级别（debug, info, warn, error）
 ADMIN_TOKEN=your-token      # 管理员认证 token
@@ -323,7 +323,7 @@ DNS_UPSTREAMS=https://1.1.1.1/dns-query  # DNS-over-HTTPS 上游
 
 通过 API 创建平台：
 ```bash
-curl -X POST http://localhost:1080/api/v1/platforms \
+curl -X POST http://localhost:8080/api/v1/platforms \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -337,7 +337,7 @@ curl -X POST http://localhost:1080/api/v1/platforms \
 
 添加节点到节点池：
 ```bash
-curl -X POST http://localhost:1080/api/v1/nodes \
+curl -X POST http://localhost:8080/api/v1/nodes \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -356,12 +356,12 @@ curl -X POST http://localhost:1080/api/v1/nodes \
 
 创建端点：
 ```bash
-curl -X POST http://localhost:1080/api/v1/endpoints \
+curl -X POST http://localhost:8080/api/v1/endpoints \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "id": "my-endpoint",
-    "port": 10808,
+    "port": 8081,
     "platform_id": "my-platform",
     "enabled": true
   }'

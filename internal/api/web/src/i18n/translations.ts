@@ -593,8 +593,8 @@ Note: Once enabled, requests without authentication information are rejected ins
     "Current browser does not support DecompressionStream; automatic decompression is unavailable.",
   "当前实时日志记录已开启": "Realtime request logging is enabled",
   "当前实时日志记录未开启": "Realtime request logging is disabled",
-  "登录失败：无法连接 API。请确认 Resin 在 2260 端口运行，并使用 `npm run dev`（含 /api 代理）启动前端。":
-    "Login failed: unable to connect to API. Ensure Resin runs on port 2260 and frontend is started with `npm run dev` (with /api proxy).",
+  "登录失败：无法连接 API。请确认 Resin 在 1080 端口运行，并使用 `npm run dev`（含 /api 代理）启动前端。":
+    "Login failed: unable to connect to API. Ensure Resin runs on port 1080 and frontend is started with `npm run dev` (with /api proxy).",
   '兜底规则 "*" 不可删除': 'Fallback rule "*" cannot be deleted',
   '兜底规则 "*" 不允许删除': 'Fallback rule "*" cannot be deleted',
   '兜底规则 "*" 仅允许编辑，不允许删除。':

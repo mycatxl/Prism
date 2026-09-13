@@ -200,7 +200,7 @@ export function PlatformAccessPanel({
 
   const env = envQuery.data;
   const proxyTokenSet = env?.proxy_token_set ?? true;
-  const inferredEndpoint = currentProxyEndpoint(env?.resin_port ?? 2260);
+  const inferredEndpoint = currentProxyEndpoint(env?.resin_port ?? 1080);
   const endpoint = parseProxyEndpoint(endpointOverride) || inferredEndpoint;
   const host = endpoint.host;
   const scheme = endpoint.scheme;
