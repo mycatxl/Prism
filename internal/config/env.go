@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -58,8 +59,8 @@ type EnvConfig struct {
 
 	// Auth
 	AuthVersion AuthVersion
-	AdminToken  string
-	ProxyToken  string
+	AdminToken  string `json:"-"`
+	ProxyToken  string `json:"-"`
 
 	// Metrics
 	MetricThroughputIntervalSeconds   int
@@ -95,13 +96,13 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.Quality = qualityConfig
 
 	// --- Directories ---
-	cfg.CacheDir = envStr("PRISM_CACHE_DIR", "./.local/cache")
-	cfg.StateDir = envStr("PRISM_STATE_DIR", "./.local/state")
-	cfg.LogDir = envStr("PRISM_LOG_DIR", "./.local/logs")
+	cfg.CacheDir = cleanDirPath(envStr("PRISM_CACHE_DIR", "./.local/cache"), &errs)
+	cfg.StateDir = cleanDirPath(envStr("PRISM_STATE_DIR", "./.local/state"), &errs)
+	cfg.LogDir = cleanDirPath(envStr("PRISM_LOG_DIR", "./.local/logs"), &errs)
 	cfg.ListenAddress = strings.TrimSpace(envStr("PRISM_LISTEN_ADDRESS", "127.0.0.1"))
 
 	// --- Ports ---
-	cfg.ProxyPort = envInt("PRISM_PORT", 1080, &errs)
+	cfg.ProxyPort = envInt("PRISM_PORT", 2260, &errs)
 	cfg.APIMaxBodyBytes = envInt("PRISM_API_MAX_BODY_BYTES", 1<<20, &errs)
 
 	// --- Core ---
@@ -179,6 +180,8 @@ func LoadEnvConfig() (*EnvConfig, error) {
 
 	if !hasAdminToken || strings.TrimSpace(cfg.AdminToken) == "" {
 		errs = append(errs, "PRISM_ADMIN_TOKEN must be defined and non-empty; run prism init to generate private tokens")
+	} else if len(cfg.AdminToken) < 16 {
+		errs = append(errs, "PRISM_ADMIN_TOKEN must be at least 16 characters")
 	}
 	if !hasProxyToken || strings.TrimSpace(cfg.ProxyToken) == "" {
 		errs = append(errs, "PRISM_PROXY_TOKEN must be defined and non-empty; run prism init to generate private tokens")
@@ -403,6 +406,18 @@ func splitDelimitedStringSlice(raw string) []string {
 	return out
 }
 
+func cleanDirPath(path string, errs *[]string) string {
+	if path == "" {
+		return path
+	}
+	cleaned := filepath.Clean(path)
+	if strings.Contains(cleaned, "..") {
+		*errs = append(*errs, fmt.Sprintf("directory path contains invalid traversal: %s", path))
+		return path
+	}
+	return cleaned
+}
+
 func validatePort(name string, value int, errs *[]string) {
 	if value < 1 || value > 65535 {
 		*errs = append(*errs, fmt.Sprintf("%s: port must be 1-65535, got %d", name, value))
@@ -422,6 +437,9 @@ const (
 
 // ValidateProxyTokenForV1 validates proxy token constraints used by auth version V1.
 func ValidateProxyTokenForV1(token string) error {
+	if len(token) < 16 {
+		return fmt.Errorf("must be at least 16 characters")
+	}
 	if strings.ContainsAny(token, v1ProxyTokenForbiddenChars) {
 		return fmt.Errorf("must not contain any of %q", v1ProxyTokenForbiddenChars)
 	}

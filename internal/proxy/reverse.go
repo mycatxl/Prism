@@ -3,6 +3,7 @@ package proxy
 import (
 	"crypto/subtle"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/http/httputil"
@@ -196,7 +197,8 @@ func (p *ReverseProxy) parsePathV1(rawPath string) (*parsedPath, *ProxyError) {
 	if host == "" {
 		return nil, ErrInvalidHost
 	}
-	if !isValidHost(host) {
+	// Basic validation only during parsing; SSRF check happens later during routing
+	if !isValidHostForBypass(host) {
 		return nil, ErrInvalidHost
 	}
 
@@ -309,9 +311,28 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var transport *http.Transport
 	var nodeHashRaw = route.NodeHash
 	domain := netutil.ExtractDomain(parsed.Host)
-	if p.bypass != nil && p.bypass.ShouldBypass(parsed.Host) {
+	isBypassed := p.bypass != nil && p.bypass.ShouldBypass(parsed.Host)
+
+	if isBypassed {
+		// Bypass targets are explicitly configured by admin, allow local/private.
+		// Still create routing lease for account tracking even though we use direct transport.
+		if account != "" && p.router != nil {
+			routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host)
+			if routeErr == nil {
+				route = routed.Route
+				lifecycle.setRouteResult(route)
+			}
+			// Ignore routing errors for bypass - the lease creation is best-effort.
+		}
 		transport = p.directHTTPTransport()
 	} else {
+		// Non-bypass targets must pass SSRF check
+		if !isValidHost(parsed.Host) {
+			lifecycle.setProxyError(ErrInvalidHost)
+			lifecycle.setHTTPStatus(ErrInvalidHost.HTTPCode)
+			writeProxyError(w, ErrInvalidHost)
+			return
+		}
 		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host)
 		if routeErr != nil {
 			lifecycle.setProxyError(routeErr)
@@ -563,7 +584,17 @@ func fixedAccountHeadersForPlatform(plat *platform.Platform) []string {
 
 // isValidHost validates that the host segment is a reasonable hostname or host:port.
 // Rejects empty hosts and hosts containing URL-unsafe characters.
+// For bypass rules, allows localhost and private IPs since those are explicitly configured.
+// For non-bypass requests, blocks localhost and private IP ranges to prevent SSRF attacks.
 func isValidHost(host string) bool {
+	return isValidHostInternal(host, false)
+}
+
+func isValidHostForBypass(host string) bool {
+	return isValidHostInternal(host, true)
+}
+
+func isValidHostInternal(host string, allowPrivate bool) bool {
 	if host == "" {
 		return false
 	}
@@ -585,8 +616,38 @@ func isValidHost(host string) bool {
 	if u.User != nil || u.Host == "" || u.Host != host {
 		return false
 	}
-	if u.Hostname() == "" {
+	hostname := u.Hostname()
+	if hostname == "" {
 		return false
 	}
+
+	// SSRF protection: block localhost and private IP ranges (unless bypass)
+	if !allowPrivate {
+		hostname = strings.ToLower(hostname)
+		if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
+			return false
+		}
+
+		// Block private IPv4 ranges
+		if ip := net.ParseIP(hostname); ip != nil {
+			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+				return false
+			}
+		}
+
+		// Block private IPv4 CIDR ranges by prefix
+		privateRanges := []string{
+			"10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
+			"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+			"172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+			"169.254.", // link-local
+		}
+		for _, prefix := range privateRanges {
+			if strings.HasPrefix(hostname, prefix) {
+				return false
+			}
+		}
+	}
+
 	return true
 }

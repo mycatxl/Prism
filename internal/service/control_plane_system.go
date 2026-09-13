@@ -4,21 +4,30 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"prism/internal/config"
-	"prism/internal/geoip"
 	"prism/internal/inspection"
 	"prism/internal/netutil"
-	"prism/internal/probe"
 	"prism/internal/proxy"
 	"prism/internal/routing"
 	"prism/internal/state"
 	"prism/internal/topology"
 )
+
+// GeoIPService defines the GeoIP interface for testing.
+type GeoIPService interface {
+	Lookup(ip netip.Addr) string
+	LastUpdated() time.Time
+	NextScheduledUpdate() time.Time
+	UpdateNow() error
+	Start() error
+	Stop()
+}
 
 // ServiceError wraps an error with a code for API response mapping.
 type ServiceError struct {
@@ -56,13 +65,13 @@ type ControlPlaneService struct {
 	SubMgr          *topology.SubscriptionManager
 	Scheduler       *topology.SubscriptionScheduler
 	Router          *routing.Router
-	GeoIP           *geoip.Service
-	ProbeMgr        *probe.ProbeManager
+	GeoIP           GeoIPService
+	ProbeMgr        ProbeManager
 	MatcherRuntime  *proxy.AccountMatcherRuntime
 	RuntimeCfg      *atomic.Pointer[config.RuntimeConfig]
 	EnvCfg          *config.EnvConfig
 	EndpointRuntime EndpointRuntime
-	Inspection      *inspection.Manager
+	Inspection      InspectionManager
 	IPPure          *inspection.IPPureChecker
 	TorRegistry     *inspection.TorRegistry
 
