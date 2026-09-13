@@ -5,9 +5,25 @@ prism
 *.so
 *.dylib
 
-# Test binaries
+# Test binaries and test files
 *.test
 *.out
+*_test.go
+coverage.out
+coverage.html
+
+# Local state and verification
+.local/
+state/
+
+# Internal documentation
+docs/design/
+docs/AUDIT_*.md
+docs/IMPLEMENTATION_PLAN_*.md
+docs/PRISMX_DEVELOPMENT_PLAN_*.md
+
+# References (original Resin)
+references/
 
 # Go workspace
 go.work
@@ -21,8 +37,7 @@ state/
 
 # Backups
 backups/
-*.tar
-*.tar.gz
+.local/
 
 # Logs
 *.log
@@ -48,3 +63,19 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Development and reference
+references/
+docs/design/
+docs/AUDIT_*.md
+docs/IMPLEMENTATION_PLAN_*.md
+docs/PRISMX_DEVELOPMENT_PLAN_*.md
+
+# Node modules
+node_modules/
+
+# Coverage reports
+*.coverprofile
+coverage.html
+test-*.txt
+test-*.md
