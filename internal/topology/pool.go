@@ -79,10 +79,11 @@ var (
 )
 
 // NewGlobalNodePool creates a new GlobalNodePool.
+// Returns nil if required configuration is invalid.
 func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 	maxConsecutiveFailuresFn := cfg.MaxConsecutiveFailures
 	if maxConsecutiveFailuresFn == nil {
-		panic("topology: NewGlobalNodePool requires non-nil MaxConsecutiveFailures")
+		return nil
 	}
 
 	return &GlobalNodePool{

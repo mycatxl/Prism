@@ -119,6 +119,20 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 				writeInvalidArgument(w, "protocol: unsupported value")
 				return
 			}
+			// Validate against known protocols
+			validProtocols := map[string]bool{
+				"shadowsocks": true,
+				"vmess":       true,
+				"trojan":      true,
+				"vless":       true,
+				"http":        true,
+				"https":       true,
+				"socks5":      true,
+			}
+			if !validProtocols[value] {
+				writeInvalidArgument(w, "protocol: unsupported protocol type")
+				return
+			}
 			filters.Protocol = &value
 		}
 
@@ -202,6 +216,10 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 func HandleGetNode(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hash := PathParam(r, "hash")
+		if len(hash) > 128 {
+			writeInvalidArgument(w, "node_hash: invalid length")
+			return
+		}
 		n, err := cp.GetNode(hash)
 		if err != nil {
 			writeServiceError(w, err)
@@ -215,6 +233,10 @@ func HandleGetNode(cp *service.ControlPlaneService) http.HandlerFunc {
 func HandleProbeEgress(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hash := PathParam(r, "hash")
+		if len(hash) > 128 {
+			writeInvalidArgument(w, "node_hash: invalid length")
+			return
+		}
 		result, err := cp.ProbeEgress(hash)
 		if err != nil {
 			writeServiceError(w, err)
@@ -228,6 +250,10 @@ func HandleProbeEgress(cp *service.ControlPlaneService) http.HandlerFunc {
 func HandleProbeLatency(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		hash := PathParam(r, "hash")
+		if len(hash) > 128 {
+			writeInvalidArgument(w, "node_hash: invalid length")
+			return
+		}
 		result, err := cp.ProbeLatency(hash)
 		if err != nil {
 			writeServiceError(w, err)

@@ -102,6 +102,9 @@ func normalizePlatformEmptyAccountBehavior(raw string) string {
 }
 
 func (s *ControlPlaneService) defaultPlatformConfig(name string) platformConfig {
+	if s == nil || s.EnvCfg == nil {
+		return platformConfig{Name: name}
+	}
 	return platformConfig{
 		Name:                   name,
 		StickyTTLNs:            int64(s.EnvCfg.DefaultPlatformStickyTTL),
@@ -305,6 +308,9 @@ func (s *ControlPlaneService) compileAndUpsertPlatform(id string, cfg platformCo
 
 // ListPlatforms returns all platforms from the database.
 func (s *ControlPlaneService) ListPlatforms() ([]PlatformResponse, error) {
+	if s == nil || s.Engine == nil {
+		return nil, internal("list platforms", fmt.Errorf("service not initialized"))
+	}
 	platforms, err := s.Engine.ListPlatforms()
 	if err != nil {
 		return nil, internal("list platforms", err)
@@ -317,6 +323,9 @@ func (s *ControlPlaneService) ListPlatforms() ([]PlatformResponse, error) {
 }
 
 func (s *ControlPlaneService) getPlatformModel(id string) (*model.Platform, error) {
+	if s == nil || s.Engine == nil {
+		return nil, internal("get platform", fmt.Errorf("service not initialized"))
+	}
 	p, err := s.Engine.GetPlatform(id)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -354,6 +363,9 @@ type CreatePlatformRequest struct {
 
 // CreatePlatform creates a new platform.
 func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*PlatformResponse, error) {
+	if s == nil || s.Engine == nil {
+		return nil, internal("create platform", fmt.Errorf("service not initialized"))
+	}
 	// Validate name.
 	if req.Name == nil {
 		return nil, invalidArg("name is required")
@@ -570,6 +582,9 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 
 // DeletePlatform deletes a platform.
 func (s *ControlPlaneService) DeletePlatform(id string) error {
+	if s == nil || s.Engine == nil {
+		return internal("delete platform", fmt.Errorf("service not initialized"))
+	}
 	if id == platform.DefaultPlatformID {
 		return conflict("cannot delete Default platform")
 	}
@@ -586,6 +601,9 @@ func (s *ControlPlaneService) DeletePlatform(id string) error {
 
 // ResetPlatformToDefault resets a platform to env defaults.
 func (s *ControlPlaneService) ResetPlatformToDefault(id string) (*PlatformResponse, error) {
+	if s == nil || s.Engine == nil {
+		return nil, internal("reset platform", fmt.Errorf("service not initialized"))
+	}
 	name, err := s.Engine.GetPlatformName(id)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

@@ -68,6 +68,15 @@ func NewServerWithAddress(
 	webUI := newWebUIHandler()
 	mux.Handle("/ui/", http.StripPrefix("/ui", webUI))
 
+	// Root redirect to UI
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.Redirect(w, r, "/ui/", http.StatusFound)
+			return
+		}
+		http.NotFound(w, r)
+	})
+
 	// Authenticated routes
 	authed := http.NewServeMux()
 	authed.Handle("GET /api/v1/system/info", HandleSystemInfo(systemInfo))

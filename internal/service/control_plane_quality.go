@@ -28,13 +28,13 @@ func inspectionError(err error) error {
 	}
 }
 
-func (s *ControlPlaneService) RequestIPQuality(ctx context.Context, rawIP string) (inspection.RequestResult, error) {
+func (s *ControlPlaneService) RequestIPQuality(ctx context.Context, rawIP string) (RequestResult, error) {
 	ip, err := netip.ParseAddr(rawIP)
 	if err != nil {
-		return inspection.RequestResult{}, invalidArg("ip: invalid address")
+		return RequestResult{}, invalidArg("ip: invalid address")
 	}
 	if s.Inspection == nil {
-		return inspection.RequestResult{}, inspectionError(quality.ErrDisabled)
+		return RequestResult{}, inspectionError(quality.ErrDisabled)
 	}
 	result, err := s.Inspection.Request(ctx, ip, true)
 	if err != nil {
@@ -75,46 +75,52 @@ func (s *ControlPlaneService) nodeQuality(ip netip.Addr) quality.Summary {
 	return s.projectQuality(summary)
 }
 
-func (s *ControlPlaneService) ProbeQuality(ctx context.Context, hash string) (inspection.RequestResult, error) {
+func (s *ControlPlaneService) ProbeQuality(ctx context.Context, hash string) (RequestResult, error) {
 	if s.Inspection == nil || !s.Inspection.Status().Enabled {
-		return inspection.RequestResult{}, inspectionError(quality.ErrDisabled)
+		return RequestResult{}, inspectionError(quality.ErrDisabled)
 	}
 	h, err := node.ParseHex(hash)
 	if err != nil {
-		return inspection.RequestResult{}, invalidArg("node_hash: invalid format")
+		return RequestResult{}, invalidArg("node_hash: invalid format")
 	}
 	entry, ok := s.Pool.GetEntry(h)
 	if !ok {
-		return inspection.RequestResult{}, notFound("node not found")
+		return RequestResult{}, notFound("node not found")
 	}
 	ip := entry.GetEgressIP()
 	observedAt := entry.LastEgressUpdate.Load()
 	if !ip.IsValid() || observedAt == 0 || time.Since(time.Unix(0, observedAt)) > 15*time.Minute {
 		if s.ProbeMgr == nil {
-			return inspection.RequestResult{}, conflict("probe the node egress IP before quality inspection")
+			return RequestResult{}, conflict("probe the node egress IP before quality inspection")
 		}
 		result, err := s.ProbeMgr.ProbeEgressSync(h)
 		if err != nil {
-			return inspection.RequestResult{}, conflict("unable to confirm the node egress IP; check node connectivity")
+			return RequestResult{}, conflict("unable to confirm the node egress IP; check node connectivity")
 		}
 		ip, err = netip.ParseAddr(result.EgressIP)
 		if err != nil {
-			return inspection.RequestResult{}, conflict("egress probe did not return a valid IP")
+			return RequestResult{}, conflict("egress probe did not return a valid IP")
 		}
 	}
 	return s.RequestIPQuality(ctx, ip.Unmap().String())
 }
 
-func (s *ControlPlaneService) QualityStatus() inspection.Status {
-	status := inspection.Status{Sources: []inspection.SourceStatus{}}
+func (s *ControlPlaneService) QualityStatus() Status {
+	status := Status{Sources: []SourceStatus{}}
 	if s.Inspection != nil {
 		status = s.Inspection.Status()
 	}
 	if s.IPPure != nil {
-		status.ManualSources = []inspection.ManualSourceStatus{s.IPPure.Status()}
+		status.Sources = append(status.Sources, SourceStatus{
+			Name:       "IPPure",
+			Configured: true,
+		})
 	}
 	if s.TorRegistry != nil {
-		status.RegistrySources = []inspection.RegistryStatus{s.TorRegistry.Status()}
+		status.Sources = append(status.Sources, SourceStatus{
+			Name:       "TorRegistry",
+			Configured: true,
+		})
 	}
 	return status
 }
