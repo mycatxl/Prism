@@ -16,7 +16,7 @@ export type RequestLogItem = {
   net_ok: boolean;
   http_method: string;
   http_status: number;
-  resin_error: string;
+  prism_error: string;
   upstream_stage: string;
   upstream_err_kind: string;
   upstream_errno: string;

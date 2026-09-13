@@ -26,7 +26,7 @@ type OutboundBuilder interface {
 
 // SingboxBuilderConfig configures SingboxBuilder construction.
 type SingboxBuilderConfig struct {
-	// DNSUpstreams configures Resin's node DNS chain.
+	// DNSUpstreams configures Prism's node DNS chain.
 	// Values are DNS upstream URI strings and the slice must not be empty.
 	DNSUpstreams []string
 }
@@ -54,7 +54,7 @@ func NewSingboxBuilderWithConfig(cfg SingboxBuilderConfig) (*SingboxBuilder, err
 	ctx = include.Context(ctx) // inject protocol registries
 
 	logFactory := log.NewNOPFactory()
-	logger := logFactory.NewLogger("resin-outbound")
+	logger := logFactory.NewLogger("prism-outbound")
 
 	dnsRegistry, ok := service.FromContext[adapter.DNSTransportRegistry](ctx).(*dns.TransportRegistry)
 	if !ok {

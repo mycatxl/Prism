@@ -200,7 +200,7 @@ export function PlatformAccessPanel({
 
   const env = envQuery.data;
   const proxyTokenSet = env?.proxy_token_set ?? true;
-  const inferredEndpoint = currentProxyEndpoint(env?.resin_port ?? 1080);
+  const inferredEndpoint = currentProxyEndpoint(env?.prism_port ?? 1080);
   const endpoint = parseProxyEndpoint(endpointOverride) || inferredEndpoint;
   const host = endpoint.host;
   const scheme = endpoint.scheme;
@@ -309,10 +309,10 @@ export function PlatformAccessPanel({
             <span
               className="subscription-info-icon"
               title={t(
-                "即后端 RESIN_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
+                "即后端 PRISM_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
               )}
               aria-label={t(
-                "即后端 RESIN_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
+                "即后端 PRISM_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
               )}
               tabIndex={0}
             >
@@ -324,7 +324,7 @@ export function PlatformAccessPanel({
             type="password"
             placeholder={
               proxyTokenSet
-                ? t("填写 RESIN_PROXY_TOKEN")
+                ? t("填写 PRISM_PROXY_TOKEN")
                 : t("当前代理免认证，无需填写")
             }
             value={tokenInputValue}

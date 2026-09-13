@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// supportedOutboundTypes is the set of outbound types that Resin manages.
+// supportedOutboundTypes is the set of outbound types that Prism manages.
 var supportedOutboundTypes = map[string]bool{
 	"socks":       true,
 	"http":        true,

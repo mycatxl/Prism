@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// TargetBypassMatcher decides whether a target should skip Resin node routing
-// and be dialed directly from the Resin process.
+// TargetBypassMatcher decides whether a target should skip Prism node routing
+// and be dialed directly from the Prism process.
 type TargetBypassMatcher struct {
 	rules []targetBypassRule
 }

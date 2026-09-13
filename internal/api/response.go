@@ -1,4 +1,4 @@
-// Package api implements the HTTP API server for Resin.
+// Package api implements the HTTP API server for Prism.
 package api
 
 import (

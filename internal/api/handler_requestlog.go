@@ -296,7 +296,7 @@ type logListItem struct {
 	NetOK                bool   `json:"net_ok"`
 	HTTPMethod           string `json:"http_method"`
 	HTTPStatus           int    `json:"http_status"`
-	ResinError           string `json:"resin_error"`
+	PrismError           string `json:"prism_error"`
 	UpstreamStage        string `json:"upstream_stage"`
 	UpstreamErrKind      string `json:"upstream_err_kind"`
 	UpstreamErrno        string `json:"upstream_errno"`
@@ -333,7 +333,7 @@ func toLogListItem(s requestlog.LogSummary) logListItem {
 		NetOK:                s.NetOK,
 		HTTPMethod:           s.HTTPMethod,
 		HTTPStatus:           s.HTTPStatus,
-		ResinError:           s.ResinError,
+		PrismError:           s.PrismError,
 		UpstreamStage:        s.UpstreamStage,
 		UpstreamErrKind:      s.UpstreamErrKind,
 		UpstreamErrno:        s.UpstreamErrno,

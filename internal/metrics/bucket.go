@@ -6,7 +6,7 @@ import (
 )
 
 // BucketAggregator accumulates metrics within time buckets aligned to
-// RESIN_METRIC_BUCKET_SECONDS boundaries. Thread-safe.
+// PRISM_METRIC_BUCKET_SECONDS boundaries. Thread-safe.
 type BucketAggregator struct {
 	mu            sync.Mutex
 	bucketSeconds int64

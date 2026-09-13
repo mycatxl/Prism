@@ -112,7 +112,7 @@ type parsedPath struct {
 // These are stripped from outbound reverse-proxy requests.
 var forwardingIdentityHeaders = []string{
 	// Internal account override header must not leak to upstream services.
-	"X-Resin-Account",
+	"X-Prism-Account",
 	"Forwarded",
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
@@ -284,7 +284,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 3) Continue routing with the resulting account (possibly empty).
 	account, behavior, extractionFailed := resolveReverseAccount(parsed, r, behaviorPlatform, accountHeaders)
 	lifecycle.setAccount(account)
-	if parsed.Account == "" && r.Header.Get("X-Resin-Account") == "" && behaviorRequiresAccountExtraction(behavior) {
+	if parsed.Account == "" && r.Header.Get("X-Prism-Account") == "" && behaviorRequiresAccountExtraction(behavior) {
 		lifecycle.setAccount(logHeaderAccount(account, p.token))
 	}
 
@@ -484,7 +484,7 @@ func resolveReverseAccount(
 ) (string, platform.ReverseProxyEmptyAccountBehavior, bool) {
 	behavior := effectiveEmptyAccountBehavior(plat)
 	if r != nil {
-		if headerAccount := r.Header.Get("X-Resin-Account"); headerAccount != "" {
+		if headerAccount := r.Header.Get("X-Prism-Account"); headerAccount != "" {
 			return headerAccount, behavior, false
 		}
 	}

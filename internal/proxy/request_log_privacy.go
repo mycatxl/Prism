@@ -45,7 +45,7 @@ func sensitiveLogHeader(name string, accountHeaders []string) bool {
 	}
 	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(name, "-", ""), "_", ""))
 	switch normalized {
-	case "cookie", "setcookie", "xresinaccount", "authenticationinfo", "proxyauthenticationinfo":
+	case "cookie", "setcookie", "xprismaccount", "authenticationinfo", "proxyauthenticationinfo":
 		return true
 	}
 	for _, part := range []string{"auth", "apikey", "token", "secret", "password", "credential", "signature", "session", "csrf", "xsrf"} {

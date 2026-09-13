@@ -60,7 +60,7 @@ type RequestLogEntry struct {
 	NetOK               bool
 	HTTPMethod          string
 	HTTPStatus          int
-	ResinError          string // logical proxy error code, e.g. UPSTREAM_TIMEOUT
+	PrismError          string // logical proxy error code, e.g. UPSTREAM_TIMEOUT
 	UpstreamStage       string // where upstream/network failure happened
 	UpstreamErrKind     string // normalized error family
 	UpstreamErrno       string // normalized errno, when available

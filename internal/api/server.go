@@ -13,7 +13,7 @@ import (
 	"prism/internal/service"
 )
 
-// Server wraps the HTTP server and mux for the Resin API.
+// Server wraps the HTTP server and mux for the Prism API.
 type Server struct {
 	httpServer *http.Server
 	mux        *http.ServeMux

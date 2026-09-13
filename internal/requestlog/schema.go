@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	net_ok                INTEGER NOT NULL DEFAULT 0,
 	http_method           TEXT NOT NULL DEFAULT '',
 	http_status           INTEGER NOT NULL DEFAULT 0,
-	resin_error           TEXT NOT NULL DEFAULT '',
+	prism_error           TEXT NOT NULL DEFAULT '',
 	upstream_stage        TEXT NOT NULL DEFAULT '',
 	upstream_err_kind     TEXT NOT NULL DEFAULT '',
 	upstream_errno        TEXT NOT NULL DEFAULT '',

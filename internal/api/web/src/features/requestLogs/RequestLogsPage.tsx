@@ -1001,13 +1001,13 @@ export function RequestLogsPage() {
                   color: "var(--text-secondary)",
                   lineHeight: "1.6",
                 }}>
-                  {(detailLog.resin_error || detailLog.upstream_stage || detailLog.upstream_err_kind || detailLog.upstream_errno || detailLog.upstream_err_msg) ? (
+                  {(detailLog.prism_error || detailLog.upstream_stage || detailLog.upstream_err_kind || detailLog.upstream_errno || detailLog.upstream_err_msg) ? (
                     <table style={{ borderCollapse: "collapse", width: "100%" }}>
                       <tbody>
-                        {detailLog.resin_error ? (
+                        {detailLog.prism_error ? (
                           <tr>
-                            <td style={{ color: "var(--danger)", fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>{t("Resin 错误:")}</td>
-                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.resin_error}</td>
+                            <td style={{ color: "var(--danger)", fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>{t("Prism 错误:")}</td>
+                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.prism_error}</td>
                           </tr>
                         ) : null}
                         {detailLog.upstream_stage ? (
@@ -1037,7 +1037,7 @@ export function RequestLogsPage() {
                       </tbody>
                     </table>
                   ) : null}
-                  {!detailLog.resin_error && !detailLog.upstream_stage && !detailLog.upstream_err_kind && !detailLog.upstream_err_msg ? (
+                  {!detailLog.prism_error && !detailLog.upstream_stage && !detailLog.upstream_err_kind && !detailLog.upstream_err_msg ? (
                     <div style={{ color: "var(--success)", display: "flex", alignItems: "center", gap: "6px" }}>
                       <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "var(--success)" }}></span>
                       {t("当前请求未产生异常诊断信息")}
