@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 # Default configuration
-PORT="${PORT:-1262}"
+PORT="${PORT:-8080}"
 STATE_DIR="${STATE_DIR:-$PROJECT_DIR/state}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-}"
@@ -232,7 +232,7 @@ while [[ $# -gt 0 ]]; do
 Usage: $0 [options]
 
 Options:
-  --port <port>              Management port (default: 1262)
+  --port <port>              Management port (default: 8080)
   --state-dir <path>         State directory (default: ./state)
   --admin-token <token>      Admin token (default: auto-generated)
   --log-level <level>        Log level (default: info)
@@ -247,8 +247,8 @@ Environment Variables:
   DNS_UPSTREAMS              Same as --dns-upstreams
 
 Example:
-  $0 --port 1262 --state-dir /opt/prism/state
-  PORT=1262 STATE_DIR=/opt/prism/state $0
+  $0 --port 8080 --state-dir /opt/prism/state
+  PORT=8080 STATE_DIR=/opt/prism/state $0
 
 EOF
             exit 0

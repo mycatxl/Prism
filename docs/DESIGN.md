@@ -101,7 +101,7 @@ flowchart LR
 
 默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。state.db 可靠保存配置、节点库存与质量证据，cache.db 仅保存可重建运行快照，metrics.db 和 request_logs 分别保存统计与滚动日志。
 
-管理面板默认监听 `127.0.0.1:1262`，后端 API/代理 listener 独立配置，当前 Resin 兼容目标为 `127.0.0.1:2260`。面板监听由 PRISM_UI_HOST/PRISM_UI_PORT 设置，API 反代由 PRISM_API_TARGET 设置；后端 token 从 RESIN_ADMIN_TOKEN/RESIN_PROXY_TOKEN 读取，不打包进前端。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
+管理面板默认监听 `127.0.0.1:8080`，后端 API/代理 listener 独立配置，当前 Resin 兼容目标为 `127.0.0.1:1080`。面板监听由 PRISM_UI_HOST/PRISM_UI_PORT 设置，API 反代由 PRISM_API_TARGET 设置；后端 token 从 RESIN_ADMIN_TOKEN/RESIN_PROXY_TOKEN 读取，不打包进前端。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
 
 ### 4.2 模块与依赖
 

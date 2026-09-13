@@ -2,10 +2,10 @@
 
 ## Quick Start
 
-Deploy Prism with management interface on port 1262:
+Deploy Prism with management interface on port 8080:
 
 ```bash
-./scripts/deploy.sh --port 1262
+./scripts/deploy.sh --port 8080
 ```
 
 This will:
@@ -25,7 +25,7 @@ This will:
 ```
 
 Uses default configuration:
-- Port: 1262
+- Port: 8080
 - State: `./state`
 - Log level: info
 - Auto-generated admin token
@@ -52,7 +52,7 @@ Uses default configuration:
 
 ```bash
 ./scripts/deploy.sh \
-  --port 1262 \
+  --port 8080 \
   --state-dir /opt/prism/state \
   --admin-token "my-secure-token" \
   --log-level debug \
@@ -64,7 +64,7 @@ Uses default configuration:
 You can also configure via environment variables:
 
 ```bash
-PORT=1262 \
+PORT=8080 \
 STATE_DIR=/opt/prism/state \
 ADMIN_TOKEN=my-token \
 LOG_LEVEL=info \
@@ -129,7 +129,7 @@ sudo journalctl -u prism -b
 After deployment, access the web interface:
 
 ```
-http://localhost:1262/ui/
+http://localhost:8080/ui/
 ```
 
 You'll need the admin token displayed after deployment. The token is also saved in:
@@ -142,12 +142,12 @@ You'll need the admin token displayed after deployment. The token is also saved 
 The REST API is available at:
 
 ```
-http://localhost:1262/api/v1/
+http://localhost:8080/api/v1/
 ```
 
 Use the admin token in the Authorization header:
 ```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:1262/api/v1/platforms
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8080/api/v1/platforms
 ```
 
 ## Post-Deployment Steps
@@ -155,14 +155,14 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:1262/api/v1/platform
 ### 1. Create Your First Platform
 
 Via Web UI:
-1. Navigate to http://localhost:1262/ui/
+1. Navigate to http://localhost:8080/ui/
 2. Click "Platforms" → "Create Platform"
 3. Fill in platform details
 4. Enable features (sticky sessions, scheduled rotation)
 
 Via API:
 ```bash
-curl -X POST http://localhost:1262/api/v1/platforms \
+curl -X POST http://localhost:8080/api/v1/platforms \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -177,12 +177,12 @@ curl -X POST http://localhost:1262/api/v1/platforms \
 ### 2. Add Endpoints
 
 ```bash
-curl -X POST http://localhost:1262/api/v1/endpoints \
+curl -X POST http://localhost:8080/api/v1/endpoints \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "id": "my-endpoint",
-    "port": 10808,
+    "port": 8081,
     "platform_id": "my-platform",
     "enabled": true
   }'
@@ -191,7 +191,7 @@ curl -X POST http://localhost:1262/api/v1/endpoints \
 ### 3. Add Nodes to the Pool
 
 ```bash
-curl -X POST http://localhost:1262/api/v1/nodes \
+curl -X POST http://localhost:8080/api/v1/nodes \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -237,7 +237,7 @@ If exposing Prism externally, configure firewall rules:
 
 ```bash
 # Allow only specific IPs
-sudo ufw allow from 10.0.0.0/8 to any port 1262
+sudo ufw allow from 10.0.0.0/8 to any port 8080
 
 # Or use a reverse proxy
 sudo ufw allow 80/tcp
@@ -259,7 +259,7 @@ server {
     ssl_certificate_key /etc/ssl/private/prism.key;
 
     location / {
-        proxy_pass http://127.0.0.1:1262;
+        proxy_pass http://127.0.0.1:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -272,7 +272,7 @@ server {
 
 ```caddyfile
 prism.example.com {
-    reverse_proxy localhost:1262
+    reverse_proxy localhost:8080
 }
 ```
 
@@ -302,7 +302,7 @@ sudo systemctl start prism
 5. Verify:
 ```bash
 sudo systemctl status prism
-curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:1262/api/v1/system/info
+curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8080/api/v1/system/info
 ```
 
 ## Monitoring
@@ -310,7 +310,7 @@ curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:1262/api/v1/system/i
 ### Health Check
 
 ```bash
-curl http://localhost:1262/health
+curl http://localhost:8080/health
 ```
 
 ### Metrics
@@ -319,7 +319,7 @@ Access metrics via the Web UI or API:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_TOKEN" \
-  http://localhost:1262/api/v1/metrics/snapshots/summary
+  http://localhost:8080/api/v1/metrics/snapshots/summary
 ```
 
 ### Prometheus Integration
@@ -330,7 +330,7 @@ Prism exposes metrics compatible with Prometheus. Add to `prometheus.yml`:
 scrape_configs:
   - job_name: 'prism'
     static_configs:
-      - targets: ['localhost:1262']
+      - targets: ['localhost:8080']
     metrics_path: '/api/v1/metrics/prometheus'
     authorization:
       credentials: 'YOUR_TOKEN'
@@ -342,10 +342,10 @@ scrape_configs:
 
 ```bash
 # Find process using port
-lsof -i :1262
+lsof -i :8080
 
 # Kill process
-kill $(lsof -t -i:1262)
+kill $(lsof -t -i:8080)
 
 # Or use a different port
 ./scripts/deploy.sh --port 8080
@@ -388,12 +388,12 @@ sudo systemctl status prism
 
 2. Check if port is listening:
 ```bash
-netstat -tlnp | grep 1262
+netstat -tlnp | grep 8080
 ```
 
 3. Test API directly:
 ```bash
-curl http://localhost:1262/health
+curl http://localhost:8080/health
 ```
 
 4. Check firewall:
@@ -411,7 +411,7 @@ cat /opt/prism/state/.admin_token
 2. Test with curl:
 ```bash
 TOKEN=$(cat /opt/prism/state/.admin_token)
-curl -H "Authorization: Bearer $TOKEN" http://localhost:1262/api/v1/platforms
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/platforms
 ```
 
 3. Clear browser storage and re-enter token

@@ -1,8 +1,8 @@
 # Prism 管理面板
 
-正式部署优先使用根目录 `make build` 后的 `./bin/prism standalone`，由 Go 进程直接提供 1262 管理入口和嵌入页面。本目录中的 Vite / Node 服务用于独立前端开发及兼容部署。
+正式部署优先使用根目录 `make build` 后的 `./bin/prism standalone`，由 Go 进程直接提供 8080 管理入口和嵌入页面。本目录中的 Vite / Node 服务用于独立前端开发及兼容部署。
 
-管理面板默认监听 **127.0.0.1:1262**，打开 `http://127.0.0.1:1262/ui/`。后端 API 和代理 listener 是独立服务，兼容当前 Resin 默认的 `127.0.0.1:2260`。
+管理面板默认监听 **127.0.0.1:8080**，打开 `http://127.0.0.1:8080/ui/`。后端 API 和代理 listener 是独立服务，兼容当前 Resin 默认的 `127.0.0.1:1080`。
 
 ## 启动
 
@@ -28,8 +28,8 @@ npm start
 | 环境变量 | 默认 | 作用 |
 |---|---|---|
 | `PRISM_UI_HOST` | `127.0.0.1` | 管理面板监听地址 |
-| `PRISM_UI_PORT` | `1262` | 管理面板端口 |
-| `PRISM_API_TARGET` | `http://127.0.0.1:2260` | 后端 API origin，只在面板服务器读取 |
+| `PRISM_UI_PORT` | `8080` | 管理面板端口 |
+| `PRISM_API_TARGET` | `http://127.0.0.1:1080` | 后端 API origin，只在面板服务器读取 |
 | `VITE_PROXY_BASE_URL` | 不设置 | 可选的公开代理地址，构建时用于地址生成；也可在平台接入页直接填写 |
 
 通用配置的优先级为进程环境变量 > `.env.local` > `.env` > 默认值。开发模式额外读取 `.env.development` 和 `.env.development.local`；构建/preview 对应 `.env.production` 和 `.env.production.local`，模式文件优先于通用文件，进程环境变量始终最高。`npm start` 读取通用配置。
@@ -44,7 +44,7 @@ npm start
 
 - `RESIN_ADMIN_TOKEN`：管理登录使用的 token。
 - `RESIN_PROXY_TOKEN`：HTTP/SOCKS 等代理接入使用的 token。
-- `RESIN_LISTEN_ADDRESS` / `RESIN_PORT`：后端自身监听地址和端口，与面板的 1262 分开。
+- `RESIN_LISTEN_ADDRESS` / `RESIN_PORT`：后端自身监听地址和端口，与面板的 8080 分开。
 
 统一后端配置在项目根目录 `.env`，示例见 [根目录环境示例](../.env.example)。首次部署运行 `./bin/prism init` 生成两个独立随机令牌；已有配置继续保留。修改环境后重启后端即可，无需修改前端源码。
 

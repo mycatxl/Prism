@@ -101,7 +101,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.ListenAddress = strings.TrimSpace(envStr("RESIN_LISTEN_ADDRESS", "127.0.0.1"))
 
 	// --- Ports ---
-	cfg.ResinPort = envInt("RESIN_PORT", 2260, &errs)
+	cfg.ResinPort = envInt("RESIN_PORT", 1080, &errs)
 	cfg.APIMaxBodyBytes = envInt("RESIN_API_MAX_BODY_BYTES", 1<<20, &errs)
 
 	// --- Core ---
