@@ -1,4 +1,8 @@
-# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+#
+# 实测 https://www.youtube.com/premium 返回 200，正文含 "countryCode":"JP"，
+# 地区提取（body_regex 取第一个捕获组）成立；判定逻辑不变。
+# 本轮未观测到 "Premium is not available in your country" 文案，保留该分支作为兜底。
 id: youtube_premium
 version: 1
 name: YouTube Premium
@@ -6,7 +10,7 @@ category: video
 enabled: true
 ttl: 12h
 timeout: 12s
-calibrated: "uncalibrated (signals from plan §5.4)"
+calibrated: 'calibrated 2026-09-25 (real 200 with "countryCode":"JP" on youtube.com/premium)'
 steps:
   - id: premium
     request:

@@ -74,7 +74,7 @@ type prismApp struct {
 //
 //  3. Open intel.db (WP08; the authoritative detection store).
 //
-//  4. loadRuntimeConfig(engine).
+//  4. loadRuntimeConfig(engine, envCfg).
 //
 //  5. Create the GeoIP service (upstream implementation; WP09 adds offline DBs).
 //
@@ -204,7 +204,7 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 		intelStore:  intelStore,
 	}
 	// 4. Runtime configuration (persisted values, defaults otherwise).
-	app.runtimeCfg.Store(loadRuntimeConfig(engine))
+	app.runtimeCfg.Store(loadRuntimeConfig(engine, envCfg))
 	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
 		return nil, err
 	}

@@ -12,11 +12,10 @@
 #   PRISM_BIN     binary under test (default: <repo>/bin/prism)
 #   PRISM_SMOKE_KEEP=1   keep the temporary work directory for debugging
 #
-# Note: the forwarding checks need outbound HTTPS access, because a freshly
-# added node must first pass its egress probe
-# (https://cloudflare.com/cdn-cgi/trace, see internal/probe/manager.go) through
-# the local test proxy before it becomes routable. Without internet access the
-# node stays circuit-open and those two checks fail.
+# Note: the forwarding checks need a node that has passed its egress probe. This
+# script answers that probe from a loopback endpoint and points
+# PRISM_EGRESS_TRACE_URL at it, so the whole run works without outbound internet
+# access.
 # Exit code: 0 when every check passed (or was skipped), 1 otherwise.
 
 set -uo pipefail
@@ -124,6 +123,7 @@ WORK_DIR="$(mktemp -d)"
 PRISM_PID=""
 TARGET_PID=""
 PROXY_PID=""
+TRACE_PID=""
 BODY_FILE="$WORK_DIR/body.txt"
 PRISM_LOG="$WORK_DIR/prism.log"
 ADMIN_TOKEN=""
@@ -131,7 +131,7 @@ PROXY_TOKEN=""
 
 cleanup() {
     local status=$?
-    for pid in "$PRISM_PID" "$TARGET_PID" "$PROXY_PID"; do
+    for pid in "$PRISM_PID" "$TARGET_PID" "$PROXY_PID" "$TRACE_PID"; do
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             kill "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
@@ -169,6 +169,7 @@ PROXY_TOKEN="$(random_token)"
 MAIN_PORT="$(free_port)"
 ADMIN_PORT="$(free_port)"
 TARGET_PORT="$(free_port)"
+TRACE_PORT="$(free_port)"
 PROXY_PORT="$(free_port)"
 
 MAIN_BASE="http://127.0.0.1:$MAIN_PORT"
@@ -188,6 +189,7 @@ PRISM_ADMIN_LISTEN=127.0.0.1:$ADMIN_PORT
 PRISM_STATE_DIR=./state
 PRISM_CACHE_DIR=./cache
 PRISM_LOG_DIR=./logs
+PRISM_EGRESS_TRACE_URL=http://127.0.0.1:$TRACE_PORT/cdn-cgi/trace
 # The reverse-proxy check below dials a loopback target directly. That only
 # happens for hosts matched by the operator bypass rules (upstream Resin
 # behaviour); SSRF protection for this path is opt-in via
@@ -200,6 +202,36 @@ chmod 0600 "$WORK_DIR/.env"
 python3 -m http.server "$TARGET_PORT" --bind 127.0.0.1 --directory "$WORK_DIR/www" \
     > "$WORK_DIR/target.log" 2>&1 &
 TARGET_PID=$!
+
+# --- local egress-trace endpoint ---------------------------------------------
+# A node only becomes routable after its egress probe succeeds. The probe target
+# is configurable (egress_trace_url / PRISM_EGRESS_TRACE_URL), so this run points
+# it at a loopback server that answers the Cloudflare trace shape. That is what
+# keeps the forwarding checks working with no outbound internet access.
+cat > "$WORK_DIR/trace.py" <<'PY'
+"""Minimal Cloudflare-trace endpoint for the offline smoke run."""
+import http.server
+import sys
+
+
+class TraceHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b"fl=smoke\nh=trace.local\nip=1.1.1.1\nts=0\nloc=SM\ncolo=SMOKE\n"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+server = http.server.ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), TraceHandler)
+server.serve_forever()
+PY
+python3 "$WORK_DIR/trace.py" "$TRACE_PORT" > "$WORK_DIR/trace.log" 2>&1 &
+TRACE_PID=$!
 
 # --- local HTTP proxy used as the single subscription node --------------------
 cat > "$WORK_DIR/proxy.py" <<'PY'

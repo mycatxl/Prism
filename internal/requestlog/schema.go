@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	upstream_err_kind     TEXT NOT NULL DEFAULT '',
 	upstream_errno        TEXT NOT NULL DEFAULT '',
 	upstream_err_msg      TEXT NOT NULL DEFAULT '',
+	events                TEXT NOT NULL DEFAULT '',
 	ingress_bytes         INTEGER NOT NULL DEFAULT 0,
 	egress_bytes          INTEGER NOT NULL DEFAULT 0,
 	payload_present       INTEGER NOT NULL DEFAULT 0,
@@ -75,8 +76,14 @@ DROP INDEX IF EXISTS idx_request_logs_platform_id;
 // CreateDDL defines the schema for each rolling request-log database.
 const CreateDDL = requestLogTablesDDL + requestLogIndexesDDL
 
+// ensureRequestLogSchema adds columns introduced after the initial schema so
+// existing rolling databases stay readable.
 func ensureRequestLogSchema(db *sql.DB) error {
 	if err := ensureRequestLogColumn(db, "request_logs", "first_byte_duration_ns", "first_byte_duration_ns INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// WP10 §3: routing advisories (e.g. rotation_fallback_same_ip).
+	if err := ensureRequestLogColumn(db, "request_logs", "events", "events TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -114,12 +115,23 @@ type OutcomeCase struct {
 	bodyRegex   *regexp.Regexp
 }
 
-// RegionSpec extracts the region a check inferred from a step body.
+// RegionSpec extracts the region a check inferred from one step. The region is
+// normally read from the body; HeaderRegex covers providers that only expose it
+// in a response header, such as the Location of a redirect: Netflix answers 301
+// with an empty body and encodes the region in the "/jp-en/" path prefix.
 type RegionSpec struct {
-	Step      string `yaml:"step"`
-	BodyRegex string `yaml:"body_regex"`
+	Step        string            `yaml:"step"`
+	BodyRegex   string            `yaml:"body_regex"`
+	HeaderRegex map[string]string `yaml:"header_regex"`
 
-	compiled *regexp.Regexp
+	compiled    *regexp.Regexp
+	headerRegex []headerRegionPattern
+}
+
+// headerRegionPattern binds one region header matcher to the header it reads.
+type headerRegionPattern struct {
+	name string
+	re   *regexp.Regexp
 }
 
 // Rule is one unlock check rule.
@@ -276,19 +288,50 @@ func (r *Rule) Validate() error {
 		if r.Region.Step != "" && !stepIDs[r.Region.Step] {
 			return fmt.Errorf("region references unknown step %q", r.Region.Step)
 		}
-		if r.Region.BodyRegex == "" {
-			return errors.New("region needs a body_regex")
+		if r.Region.BodyRegex == "" && len(r.Region.HeaderRegex) == 0 {
+			return errors.New("region needs a body_regex or a header_regex")
 		}
-		compiled, err := regexp.Compile(r.Region.BodyRegex)
-		if err != nil {
-			return fmt.Errorf("region body_regex: %w", err)
+		if r.Region.BodyRegex != "" {
+			compiled, err := compileRegionPattern("region body_regex", r.Region.BodyRegex)
+			if err != nil {
+				return err
+			}
+			r.Region.compiled = compiled
 		}
-		if compiled.NumSubexp() < 1 {
-			return errors.New("region body_regex needs a capture group")
+		// Header patterns are compiled in a stable order so extraction is
+		// deterministic when more than one header is configured.
+		names := make([]string, 0, len(r.Region.HeaderRegex))
+		for name := range r.Region.HeaderRegex {
+			names = append(names, name)
 		}
-		r.Region.compiled = compiled
+		sort.Strings(names)
+		for _, name := range names {
+			if strings.TrimSpace(name) == "" {
+				return errors.New("region header_regex needs a header name")
+			}
+			compiled, err := compileRegionPattern("region header_regex "+name, r.Region.HeaderRegex[name])
+			if err != nil {
+				return err
+			}
+			r.Region.headerRegex = append(r.Region.headerRegex, headerRegionPattern{name: name, re: compiled})
+		}
 	}
 	return nil
+}
+
+// compileRegionPattern compiles one region matcher. The engine reads the region
+// from the FIRST capture group only: extra groups are tolerated for backwards
+// compatibility with rules written before this helper existed (they are simply
+// ignored), but at least one group is required.
+func compileRegionPattern(kind, pattern string) (*regexp.Regexp, error) {
+	compiled, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", kind, err)
+	}
+	if compiled.NumSubexp() < 1 {
+		return nil, fmt.Errorf("%s needs a capture group", kind)
+	}
+	return compiled, nil
 }
 
 // ValidateUserFileName accepts "<id>.yaml" and "<id>.yml" only, so a malformed

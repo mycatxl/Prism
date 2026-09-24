@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -51,6 +52,7 @@ type EnvConfig struct {
 	DefaultPlatformReverseProxyFixedAccountHeader   string
 	DefaultPlatformAllocationPolicy                 string
 	ProbeTimeout                                    time.Duration
+	EgressTraceURL                                  string
 	ResourceFetchTimeout                            time.Duration
 	ResourceFetchMaxBytes                           int
 	NodeDNSUpstreams                                []string
@@ -154,6 +156,11 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		string(platform.AllocationPolicyBalanced),
 	)
 	cfg.ProbeTimeout = envDuration("PRISM_PROBE_TIMEOUT", 15*time.Second, &errs)
+	// PRISM_EGRESS_TRACE_URL points the node egress probe at a reachable
+	// endpoint (a local one in a fully offline deployment). Empty means "not
+	// set": the persisted runtime config or the shipped default is used
+	// instead, so an unrelated value is never clobbered.
+	cfg.EgressTraceURL = strings.TrimSpace(envStr("PRISM_EGRESS_TRACE_URL", ""))
 	cfg.ResourceFetchTimeout = envDuration("PRISM_RESOURCE_FETCH_TIMEOUT", 30*time.Second, &errs)
 	cfg.ResourceFetchMaxBytes = envInt("PRISM_RESOURCE_FETCH_MAX_BYTES", 32<<20, &errs)
 	cfg.NodeDNSUpstreams = envStringSlice("PRISM_NODE_DNS_UPSTREAMS", DefaultNodeDNSUpstreams(), &errs)
@@ -355,6 +362,12 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	}
 	if cfg.ProbeTimeout <= 0 {
 		errs = append(errs, "PRISM_PROBE_TIMEOUT must be positive")
+	}
+	if cfg.EgressTraceURL != "" {
+		u, err := url.ParseRequestURI(cfg.EgressTraceURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			errs = append(errs, "PRISM_EGRESS_TRACE_URL: must be an http/https absolute URL")
+		}
 	}
 	if cfg.ResourceFetchTimeout <= 0 {
 		errs = append(errs, "PRISM_RESOURCE_FETCH_TIMEOUT must be positive")

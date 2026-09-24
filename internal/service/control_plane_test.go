@@ -148,6 +148,17 @@ func TestValidateRuntimeConfig_InvalidURL(t *testing.T) {
 	if err := validateRuntimeConfig(cfg); err == nil {
 		t.Error("expected error for empty LatencyTestURL")
 	}
+	cfg = newDefaultCfg()
+	cfg.EgressTraceURL = "not a url"
+	if err := validateRuntimeConfig(cfg); err == nil {
+		t.Error("expected error for invalid EgressTraceURL")
+	}
+
+	cfg = newDefaultCfg()
+	cfg.EgressTraceURL = ""
+	if err := validateRuntimeConfig(cfg); err == nil {
+		t.Error("expected error for empty EgressTraceURL")
+	}
 }
 
 func TestValidateRuntimeConfig_ProbeIntervalsMinimum30s(t *testing.T) {
@@ -930,6 +941,11 @@ func TestDeletePlatform_DoesNotDecodeCorruptPersistedFiltersJSON(t *testing.T) {
 		"",
 		platformRow.AllocationPolicy,
 		true,
+		// WP10 §3 rotation fields: zero values keep this fixture behaviourally
+		// identical to before (rotation has its own tests).
+		false,
+		0,
+		false,
 	))
 
 	cp := &ControlPlaneService{
@@ -994,6 +1010,11 @@ func TestResetPlatformToDefault_SupportsBuiltInDefaultPlatform(t *testing.T) {
 		"",
 		defaultRow.AllocationPolicy,
 		true,
+		// WP10 §3 rotation fields: zero values keep this fixture behaviourally
+		// identical to before (rotation has its own tests).
+		false,
+		0,
+		false,
 	))
 
 	cp := &ControlPlaneService{
@@ -1137,6 +1158,11 @@ func TestResetPlatformToDefault_DoesNotDecodeCorruptPersistedFiltersJSON(t *test
 		"",
 		platformRow.AllocationPolicy,
 		true,
+		// WP10 §3 rotation fields: zero values keep this fixture behaviourally
+		// identical to before (rotation has its own tests).
+		false,
+		0,
+		false,
 	))
 
 	cp := &ControlPlaneService{

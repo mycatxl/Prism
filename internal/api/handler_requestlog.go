@@ -279,39 +279,41 @@ func parseStrictBoolQuery(w http.ResponseWriter, r *http.Request, key string) (*
 // --- Response types ---
 
 type logListItem struct {
-	ID                   string `json:"id"`
-	Ts                   string `json:"ts"`
-	ProxyType            int    `json:"proxy_type"`
-	ClientIP             string `json:"client_ip"`
-	PlatformID           string `json:"platform_id"`
-	PlatformName         string `json:"platform_name"`
-	Account              string `json:"account"`
-	TargetHost           string `json:"target_host"`
-	TargetURL            string `json:"target_url"`
-	NodeHash             string `json:"node_hash"`
-	NodeTag              string `json:"node_tag"`
-	EgressIP             string `json:"egress_ip"`
-	DurationMs           int64  `json:"duration_ms"`
-	FirstByteDurationMs  int64  `json:"first_byte_duration_ms"`
-	NetOK                bool   `json:"net_ok"`
-	HTTPMethod           string `json:"http_method"`
-	HTTPStatus           int    `json:"http_status"`
-	PrismError           string `json:"prism_error"`
-	UpstreamStage        string `json:"upstream_stage"`
-	UpstreamErrKind      string `json:"upstream_err_kind"`
-	UpstreamErrno        string `json:"upstream_errno"`
-	UpstreamErrMsg       string `json:"upstream_err_msg"`
-	IngressBytes         int64  `json:"ingress_bytes"`
-	EgressBytes          int64  `json:"egress_bytes"`
-	PayloadPresent       bool   `json:"payload_present"`
-	ReqHeadersLen        int    `json:"req_headers_len"`
-	ReqBodyLen           int    `json:"req_body_len"`
-	RespHeadersLen       int    `json:"resp_headers_len"`
-	RespBodyLen          int    `json:"resp_body_len"`
-	ReqHeadersTruncated  bool   `json:"req_headers_truncated"`
-	ReqBodyTruncated     bool   `json:"req_body_truncated"`
-	RespHeadersTruncated bool   `json:"resp_headers_truncated"`
-	RespBodyTruncated    bool   `json:"resp_body_truncated"`
+	ID                  string `json:"id"`
+	Ts                  string `json:"ts"`
+	ProxyType           int    `json:"proxy_type"`
+	ClientIP            string `json:"client_ip"`
+	PlatformID          string `json:"platform_id"`
+	PlatformName        string `json:"platform_name"`
+	Account             string `json:"account"`
+	TargetHost          string `json:"target_host"`
+	TargetURL           string `json:"target_url"`
+	NodeHash            string `json:"node_hash"`
+	NodeTag             string `json:"node_tag"`
+	EgressIP            string `json:"egress_ip"`
+	DurationMs          int64  `json:"duration_ms"`
+	FirstByteDurationMs int64  `json:"first_byte_duration_ms"`
+	NetOK               bool   `json:"net_ok"`
+	HTTPMethod          string `json:"http_method"`
+	HTTPStatus          int    `json:"http_status"`
+	PrismError          string `json:"prism_error"`
+	UpstreamStage       string `json:"upstream_stage"`
+	UpstreamErrKind     string `json:"upstream_err_kind"`
+	UpstreamErrno       string `json:"upstream_errno"`
+	UpstreamErrMsg      string `json:"upstream_err_msg"`
+	// Events lists routing advisories recorded for the request (WP10 §3).
+	Events               []string `json:"events"`
+	IngressBytes         int64    `json:"ingress_bytes"`
+	EgressBytes          int64    `json:"egress_bytes"`
+	PayloadPresent       bool     `json:"payload_present"`
+	ReqHeadersLen        int      `json:"req_headers_len"`
+	ReqBodyLen           int      `json:"req_body_len"`
+	RespHeadersLen       int      `json:"resp_headers_len"`
+	RespBodyLen          int      `json:"resp_body_len"`
+	ReqHeadersTruncated  bool     `json:"req_headers_truncated"`
+	ReqBodyTruncated     bool     `json:"req_body_truncated"`
+	RespHeadersTruncated bool     `json:"resp_headers_truncated"`
+	RespBodyTruncated    bool     `json:"resp_body_truncated"`
 }
 
 func toLogListItem(s requestlog.LogSummary) logListItem {
@@ -338,6 +340,7 @@ func toLogListItem(s requestlog.LogSummary) logListItem {
 		UpstreamErrKind:      s.UpstreamErrKind,
 		UpstreamErrno:        s.UpstreamErrno,
 		UpstreamErrMsg:       s.UpstreamErrMsg,
+		Events:               s.Events,
 		IngressBytes:         s.IngressBytes,
 		EgressBytes:          s.EgressBytes,
 		PayloadPresent:       s.PayloadPresent,

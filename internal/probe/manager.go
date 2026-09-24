@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand/v2"
 	"net/netip"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -40,6 +41,10 @@ type ProbeConfig struct {
 	LatencyTestURL     func() string
 	LatencyAuthorities func() []string
 
+	// EgressTraceURL is the node egress probe target (RuntimeConfig.EgressTraceURL).
+	// nil, or an empty return value, falls back to defaultEgressTraceURL.
+	EgressTraceURL func() string
+
 	// OnProbeEvent is called after each probe attempt completes (egress or latency).
 	// The kind parameter is "egress" or "latency".
 	OnProbeEvent func(kind string)
@@ -67,13 +72,17 @@ type ProbeManager struct {
 	maxAuthorityLatencyTestInterval func() time.Duration
 	latencyTestURL                  func() string
 	latencyAuthorities              func() []string
+	egressTraceURL                  func() string
 	onProbeEvent                    func(kind string)
 	onEgressObserved                atomic.Pointer[func(node.Hash, netip.Addr, string)]
 }
 
 const (
-	egressTraceURL        = "https://cloudflare.com/cdn-cgi/trace"
-	egressTraceDomain     = "cloudflare.com"
+	// defaultEgressTraceURL is the egress probe target used when
+	// ProbeConfig.EgressTraceURL is nil or empty — e.g. a runtime config
+	// persisted before the field existed. It mirrors
+	// config.DefaultEgressTraceURL.
+	defaultEgressTraceURL = "https://cloudflare.com/cdn-cgi/trace"
 	defaultLatencyTestURL = "https://www.gstatic.com/generate_204"
 	defaultQueueCap       = 1024
 )
@@ -270,6 +279,7 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 		maxAuthorityLatencyTestInterval: cfg.MaxAuthorityLatencyTestInterval,
 		latencyTestURL:                  cfg.LatencyTestURL,
 		latencyAuthorities:              cfg.LatencyAuthorities,
+		egressTraceURL:                  cfg.EgressTraceURL,
 		onProbeEvent:                    cfg.OnProbeEvent,
 	}
 }
@@ -381,10 +391,11 @@ func (m *ProbeManager) ProbeEgressSync(hash node.Hash) (*EgressProbeResult, erro
 		return nil, fmt.Errorf("egress probe failed: %w", err)
 	}
 
-	// Read back EWMA for cloudflare.com from the latency table.
+	// Read back the EWMA recorded under the domain of the effective egress trace
+	// URL (cloudflare.com unless the setting was changed).
 	var ewmaMs float64
 	if entry.LatencyTable != nil {
-		if stats, ok := entry.LatencyTable.GetDomainStats(egressTraceDomain); ok {
+		if stats, ok := entry.LatencyTable.GetDomainStats(m.currentEgressTraceDomain()); ok {
 			ewmaMs = float64(stats.Ewma) / float64(time.Millisecond)
 		}
 	}
@@ -797,7 +808,8 @@ func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testU
 }
 
 func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressProbeErrorStage, error) {
-	body, latency, err := m.fetcher(hash, egressTraceURL)
+	traceURL := m.currentEgressTraceURL()
+	body, latency, err := m.fetcher(hash, traceURL)
 	if err != nil {
 		m.pool.RecordOutcome(hash, false, node.ClassifyProbeError(err), node.BoundedProbeErrorDetail(err))
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
@@ -806,7 +818,7 @@ func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressPro
 
 	m.pool.RecordResult(hash, true)
 	if latency > 0 {
-		m.pool.RecordLatency(hash, egressTraceDomain, &latency)
+		m.pool.RecordLatency(hash, m.currentEgressTraceDomain(), &latency)
 	}
 
 	ip, loc, err := ParseCloudflareTrace(body)
@@ -848,4 +860,23 @@ func (m *ProbeManager) currentLatencyTestURL() string {
 		testURL = m.latencyTestURL()
 	}
 	return testURL
+}
+
+// currentEgressTraceURL returns the configured egress probe target. It falls
+// back to defaultEgressTraceURL when no provider is wired or the provider
+// yields nothing (a runtime config persisted before the field existed).
+func (m *ProbeManager) currentEgressTraceURL() string {
+	if m.egressTraceURL != nil {
+		if traceURL := strings.TrimSpace(m.egressTraceURL()); traceURL != "" {
+			return traceURL
+		}
+	}
+	return defaultEgressTraceURL
+}
+
+// currentEgressTraceDomain derives the latency-table key from the effective
+// URL, so RecordLatency and GetDomainStats always agree with the URL that was
+// actually probed.
+func (m *ProbeManager) currentEgressTraceDomain() string {
+	return netutil.ExtractDomain(m.currentEgressTraceURL())
 }

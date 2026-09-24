@@ -1,5 +1,8 @@
-# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
-# 抓取"可用地区"和"不可用地区"两类响应后，需要据此调整 status_in / body_contains 并更新 calibrated。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+#
+# 实测 https://www.google.com/search?q=prism&hl=en（不跟随重定向）返回 200，且没有 /sorry/ 跳转，
+# 因此 429 或 Location 含 /sorry/ => captcha、200 => available 的判定成立，逻辑不变。
+# 本轮未观测到 429/挑战页，保留现有分支。
 id: google_captcha
 version: 1
 name: Google Search
@@ -7,7 +10,7 @@ category: search
 enabled: true
 ttl: 12h
 timeout: 10s
-calibrated: "uncalibrated (signals from plan §5.4)"
+calibrated: 'calibrated 2026-09-25 (real 200 without a /sorry/ redirect on google.com/search)'
 steps:
   - id: search
     request:

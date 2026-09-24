@@ -176,4 +176,7 @@ func (l *requestLifecycle) setRouteResult(result routing.RouteResult) {
 	l.log.NodeHash = result.NodeHash.Hex()
 	l.log.NodeTag = result.NodeTag
 	l.log.EgressIP = result.EgressIP.String()
+	if len(result.Events) > 0 {
+		l.log.Events = append(l.log.Events, result.Events...)
+	}
 }

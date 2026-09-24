@@ -879,7 +879,7 @@ func TestProbeSync_EmitsProbeEvents(t *testing.T) {
 		Pool: pool,
 		Fetcher: func(_ node.Hash, url string) ([]byte, time.Duration, error) {
 			switch url {
-			case egressTraceURL:
+			case defaultEgressTraceURL:
 				return []byte("ip=198.51.100.10"), 20 * time.Millisecond, nil
 			default:
 				return []byte("ok"), 30 * time.Millisecond, nil
@@ -972,5 +972,75 @@ func TestParseCloudflareTrace_NoIP(t *testing.T) {
 	_, _, err := ParseCloudflareTrace(body)
 	if err == nil {
 		t.Fatal("expected error when ip field is missing")
+	}
+}
+
+// TestProbeEgress_UsesConfiguredTraceURL verifies that a configured
+// EgressTraceURL drives the fetch and that the latency sample is recorded under
+// the domain derived from that URL (not the built-in cloudflare.com key), so the
+// EWMA read-back and the stored entry agree.
+func TestProbeEgress_UsesConfiguredTraceURL(t *testing.T) {
+	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		MaxLatencyTableEntries: 16,
+		MaxConsecutiveFailures: func() int { return 3 },
+	})
+
+	hash := node.HashFromRawOptions([]byte(`{"type":"egress-configured-url"}`))
+	pool.AddNodeFromSub(hash, []byte(`{"type":"egress-configured-url"}`), "sub1")
+
+	entry, ok := pool.GetEntry(hash)
+	if !ok {
+		t.Fatal("entry not found")
+	}
+	storeOutbound(entry)
+
+	const configured = "http://127.0.0.1:18080/cdn-cgi/trace"
+	var fetchedURL string
+	mgr := NewProbeManager(ProbeConfig{
+		Pool: pool,
+		Fetcher: func(_ node.Hash, url string) ([]byte, time.Duration, error) {
+			fetchedURL = url
+			return []byte("fl=smoke\nh=trace.local\nip=198.51.100.7\nloc=SM\ncolo=SMOKE\n"), 33 * time.Millisecond, nil
+		},
+		EgressTraceURL: func() string { return configured },
+	})
+
+	result, err := mgr.ProbeEgressSync(hash)
+	if err != nil {
+		t.Fatalf("ProbeEgressSync: %v", err)
+	}
+	if fetchedURL != configured {
+		t.Fatalf("fetched URL: got %q, want %q", fetchedURL, configured)
+	}
+	if result.EgressIP != "198.51.100.7" {
+		t.Fatalf("egress IP: got %q, want %q", result.EgressIP, "198.51.100.7")
+	}
+
+	stats, ok := entry.LatencyTable.GetDomainStats("127.0.0.1")
+	if !ok {
+		t.Fatal("expected a latency entry for the configured URL's domain (127.0.0.1)")
+	}
+	if stats.Ewma != 33*time.Millisecond {
+		t.Fatalf("stored EWMA: got %v, want %v", stats.Ewma, 33*time.Millisecond)
+	}
+	if result.LatencyEwmaMs <= 0 {
+		t.Fatalf("latency_ewma_ms = %f, want > 0 (read back from the derived domain)", result.LatencyEwmaMs)
+	}
+}
+
+// TestEgressTraceURLFallback covers a missing or empty EgressTraceURL provider:
+// both must fall back to the shipped default target and its domain.
+func TestEgressTraceURLFallback(t *testing.T) {
+	nilMgr := NewProbeManager(ProbeConfig{})
+	if got := nilMgr.currentEgressTraceURL(); got != defaultEgressTraceURL {
+		t.Fatalf("nil provider URL: got %q, want %q", got, defaultEgressTraceURL)
+	}
+	if got := nilMgr.currentEgressTraceDomain(); got != "cloudflare.com" {
+		t.Fatalf("nil provider domain: got %q, want %q", got, "cloudflare.com")
+	}
+
+	emptyMgr := NewProbeManager(ProbeConfig{EgressTraceURL: func() string { return "   " }})
+	if got := emptyMgr.currentEgressTraceURL(); got != defaultEgressTraceURL {
+		t.Fatalf("empty provider URL: got %q, want %q", got, defaultEgressTraceURL)
 	}
 }
