@@ -64,7 +64,7 @@ PRISM_STATE_DIR=./.local/state PRISM_CACHE_DIR=./.local/cache \
 
 ## 4. Resin 能力对照表（WP05 §6）
 
-上游 `9b8ef8e` 的 93 个测试文件（`cmd/resin` 与 `internal/*`，`internal/publicsource` 除外）已全部移植，例外见文末「未随本次移植落地」。下表按 §6 的能力清单列出对应的测试名。
+上游 `9b8ef8e` 的 **105 个测试文件已全部移植**（其中 `internal/publicsource` 的 10 个与 `cmd/public-source-sync` 的 2 个在后续提交中补齐），仅剩的例外见文末「未随本次移植落地」。下表按 §6 的能力清单列出对应的测试名。
 
 | Resin 能力 | 覆盖测试（来源） |
 |---|---|
@@ -95,7 +95,7 @@ PRISM_STATE_DIR=./.local/state PRISM_CACHE_DIR=./.local/cache \
 
 ### 未随本次移植落地
 
-- `internal/publicsource`（10 个上游测试文件）：Prism 没有对应包。
+- `internal/publicsource`（10 个上游测试文件）与 `cmd/public-source-sync`（2 个）：**当初未移植，现已补齐**。两个包已完整落地，包内行为与上游逐字节一致（只改 import 路径），见 `docs/PROTOCOLS.md` §10.10。本节的其余条目仍然成立。
 - `internal/config` 的 `TestLoadEnvConfig_PublicSourceOverrides` 与 `TestLoadEnvConfig_PublicSourceRequiresSourcesWhenEnabled`：对应上游的 public-source 配置项（`PUBLIC_SOURCE_*`）在 Prism 中不存在，这两个用例随该功能一起不移植。
 - `internal/inspection` 的 4 个 Prism 测试（`ippure_test`、`manager_test`、`provider_test`、`tor_registry_test`）与 `internal/api` 的 `handler_ippure_test`、`handler_quality_test`：仍未移植，**原来的理由依然成立**——`ClaimInspection` / `LoadQualityRecords` 只作为 `internal/inspection/manager.go` 里 `inspection.Store` 接口的方法存在并被 `NewManager` 的代码路径调用，但树里没有任何类型实现该接口，也没有任何地方构造 manager。核验记录见 `docs/PROTOCOLS.md` §10.10（该节此前误称这两个方法“已实现”，已更正）。
 - WireGuard 用例（`internal/outbound` 的 `wireguard` / `wireguard-domain` 两个表项）：sing-box 1.14 已移除 WG outbound，改 endpoint 形式由 WP06 完成，本次先不保留这两个用例。

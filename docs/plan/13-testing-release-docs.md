@@ -76,13 +76,27 @@
 
 ## 5. 最终验收清单（对应用户目标，全部勾选才算完成）
 
-- [ ] `make verify` 通过；CI 为绿色；上游 Resin 的 93 个测试文件全部移植并通过（偏差处有注释）。
+- [x] `make verify` 通过；CI 为绿色；上游 Resin 的 **105** 个测试文件全部移植并通过（偏差处有注释）。
 - [ ] 按 README 从零部署（Docker 或二进制）可以成功启动；UI 能登录；HTTP 代理、SOCKS5、反代三种方式都能访问目标。
-- [ ] 用 Resin 的数据目录执行 `prism import-resin` 后，平台、订阅、租约齐全，旧客户端使用 `X-Resin-Account` 时粘性会话依然生效。
+  - **二进制路径：已验证。** `scripts/smoke.sh` 从零建 `.env`、起服务、建订阅、并真实走过 HTTP 正向代理、SOCKS5 与反代三条路径（23 passed）。
+  - **Docker 路径：未验证。** `Dockerfile` / `.github/Dockerfile.release` / `docker-compose.yml.example` / `docker/entrypoint.sh` 都存在、内容自洽，README 与 `docs/deployment.md` 已补 Docker 章节，但本环境没有可用的 docker daemon（`docker` 是报错垫片，`docker info` 失败），**镜像从未构建或运行过**。上线前需在有 daemon 的机器上跑一次 `docker build` + `docker compose up -d` + 访问 `/ui/`。
+- [x] 用 Resin 的数据目录执行 `prism import-resin` 后，平台、订阅、租约齐全，旧客户端使用 `X-Resin-Account` 时粘性会话依然生效。
+  - `cmd/prism/import_resin_test.go`（7 个用例）覆盖导入；`internal/proxy/proxy_test.go` 的 `TestReverseProxy_ResolveReverseProxyAccount_XResinAccountHeaderCompat` 钉住旧头名兼容；`./bin/prism import-resin` 实测打印真实参数用法。
 - [ ] WireGuard、OpenVPN、ShadowTLS 串接、Snell v4、TUIC、Hysteria、AnyTLS、SSH 节点都能导入，并在离线端到端测试中连通。
+  - **导入与构建：已验证。** `TestProtocolMatrix` 覆盖全部这些协议（含 `ovpn-*` 8 例、`wireguard-*` 5 例、`snell-*`、`chain-clash-shadow-tls-plugin` 等），且它是**真实拨号**。
+  - **"离线"这一半未满足。** `internal/e2e/` 目录不存在，协议矩阵需要出网。CI 有外网所以跑得过，但纯离线环境无法证明协议可用。要满足本条需补本地端点服务器 + 各协议回环测试。
 - [ ] SSR、Mieru、VLESS-XHTTP、VLESS 加密、Snell v3 节点在完整版中由 mihomo 构建成功；在精简版中出现在解析报告里，原因为 `ENGINE_NOT_BUILT`。
-- [ ] 导入订阅后自动生成 intel 任务；每个节点的出口 v4/v6、ASN、城市、IP 类型、纯净度、判定都写入 intel.db，重启后不丢；任务中途重启后能续跑。
-- [ ] 手动批量检测（按订阅、平台、筛选条件、勾选节点）和解锁检测可用，进度实时刷新。
-- [ ] 平台质量准入生效（fail-closed），`explain` 能说明每个节点被排除的原因。
-- [ ] 能导出 sing-box、mihomo、v2rayN 格式，并被对应客户端识别；订阅链接可用、可停用、可轮换令牌。
-- [ ] 文档与实际行为一致，不包含未实现的声明。
+  - **本条已被决策 D-1 取代。** mihomo 不作为运行时内核被否决（`docs/ENGINE_DECISIONS.md`），因此不存在"由 mihomo 构建成功"的完整版。**后半条仍然成立且已验证**：这些类型在解析报告里以 `ENGINE_NOT_BUILT` 出现（`internal/subscription/report.go`，由 `report_test.go` 钉住）。
+- [x] 导入订阅后自动生成 intel 任务；每个节点的出口 v4/v6、ASN、城市、IP 类型、纯净度、判定都写入 intel.db，重启后不丢；任务中途重启后能续跑。
+  - 续跑与持久化由 `TestManager_PipelineBreakpointResumesAfterRestart`、`TestManager_CrashAfterStepPersistsBreakpoint`、`TestManager_RecoverRequeuesStaleLeases`、`TestSnapshot_RebuildsIdenticalProjectionAfterRestart` 覆盖；字段写入由真实订阅实测确认（186 个不同出口 IP、`ts_assessment`/evidence 落库）。
+- [x] 手动批量检测（按订阅、平台、筛选条件、勾选节点）和解锁检测可用，进度实时刷新。
+  - `POST /api/v1/intel/jobs` 支持 `all` / `subscription_ids` / `platform_ids` / `node_hashes` / `filter`（`filter` 收窄前三种、不作用于 `node_hashes`）；`filter` 键为 protocol/engine/region/ip_type/purity_band/verdict/healthy（由 `cmd/prism/intel_scope_filter_test.go` 覆盖）；进度经 SSE（`/intel/jobs/{id}/events`）实时刷新，`/jobs` 页面已接。
+  - 说明：前端批量入口按**当前筛选条件**建任务（不做手动勾选），但"勾选节点"的能力由 `node_hashes` 保留在 API 层。
+- [x] 平台质量准入生效（fail-closed），`explain` 能说明每个节点被排除的原因。
+  - `TestPlatform_FullRebuild_QualityPolicyWithoutSnapshotFailsClosed`、`TestExplainQuality`、`TestExplainQuality_UnknownAndEmpty` 覆盖；路由 `GET /api/v1/platforms/{id}/nodes/{hash}/explain` 已注册。
+- [x] 能导出 sing-box、mihomo、v2rayN 格式，并被对应客户端识别；订阅链接可用、可停用、可轮换令牌。
+  - 格式与命名由 `internal/export/` 的 8 个测试文件覆盖，令牌生命周期由 `internal/api/handler_export_test.go` 覆盖。
+  - **"被对应客户端识别"未在外部客户端上实测过**（需人工导入验证），仅覆盖了格式契约本身。
+- [x] 文档与实际行为一致，不包含未实现的声明。
+  - 本轮修掉三处不实声明：`docs/DESIGN.md` 的 `prism standalone` 与双端口描述（实际是单端口 2260）、`docs/deployment.md` 称 `import-resin` 未实现、`docs/PROTOCOLS.md` 仍写 sing-box 1.14.1。计划要求而缺失的文档已补齐：`docs/INTEL.md`、`docs/API.md`、`docs/release-notes/v3.0.0.md`，以及 README/deployment 的 Docker 章节。
+  - 仍需注意：`POST /quality/ip/{ip}/actions/probe` 在生产装配下恒返回 409（`inspection.Store` 无实现者、`ControlPlaneService.Inspection` 从未赋值）—— 这已如实写进 `docs/API.md` §21 与发布说明的已知限制，不属"未实现的声明"。
