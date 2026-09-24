@@ -113,23 +113,37 @@ jobs:
             -X prism/internal/buildinfo.Tags=${TAGS_CSV}" \
             -o "build/${OUTPUT_NAME}" ./cmd/prism
 
+          # Companion tool shipped in the same archive so the public-source
+          # collector is usable without a separate build: see cmd/public-source-sync.
+          SYNC_OUTPUT="public-source-sync-${GOOS}-${GOARCH}${SUFFIX}"
+          if [ "$GOOS" = "windows" ]; then
+            SYNC_OUTPUT="${SYNC_OUTPUT}.exe"
+          fi
+
+          go build -trimpath -tags "$TAGS" \
+            -ldflags="-s -w" \
+            -o "build/${SYNC_OUTPUT}" ./cmd/public-source-sync
+
           cd build
 
           SIMPLE_NAME="prism${SUFFIX}"
+          SYNC_SIMPLE_NAME="public-source-sync${SUFFIX}"
           if [ "$GOOS" = "windows" ]; then
             SIMPLE_NAME="${SIMPLE_NAME}.exe"
+            SYNC_SIMPLE_NAME="${SYNC_SIMPLE_NAME}.exe"
           fi
           cp "${OUTPUT_NAME}" "${SIMPLE_NAME}"
+          cp "${SYNC_OUTPUT}" "${SYNC_SIMPLE_NAME}"
 
           if [ "$GOOS" = "windows" ]; then
-            zip "prism-${GOOS}-${GOARCH}${SUFFIX}.zip" "${SIMPLE_NAME}"
+            zip "prism-${GOOS}-${GOARCH}${SUFFIX}.zip" "${SIMPLE_NAME}" "${SYNC_SIMPLE_NAME}"
             PACKAGE_NAME="prism-${GOOS}-${GOARCH}${SUFFIX}.zip"
           else
-            tar -czvf "prism-${GOOS}-${GOARCH}${SUFFIX}.tar.gz" "${SIMPLE_NAME}"
+            tar -czvf "prism-${GOOS}-${GOARCH}${SUFFIX}.tar.gz" "${SIMPLE_NAME}" "${SYNC_SIMPLE_NAME}"
             PACKAGE_NAME="prism-${GOOS}-${GOARCH}${SUFFIX}.tar.gz"
           fi
 
-          rm "${SIMPLE_NAME}"
+          rm "${SIMPLE_NAME}" "${SYNC_SIMPLE_NAME}"
           echo "PACKAGE_NAME=${PACKAGE_NAME}" >> "$GITHUB_ENV"
 
       - name: Upload Release Package Artifact

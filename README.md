@@ -65,6 +65,22 @@ Without a compiled `bin/prism` the script stops and tells you to run
 
 No systemd? Run `./bin/prism run` from the directory that contains `.env`.
 
+Docker instead of systemd:
+
+```bash
+cp docker-compose.yml.example docker-compose.yml
+
+# The example passes ${PRISM_ADMIN_TOKEN} and ${PRISM_PROXY_TOKEN} into the
+# container and reads them from ./.env — the file `prism init` writes.
+./bin/prism init            # or set both tokens in .env by hand
+
+docker compose up -d        # then open http://<host>:2260/ui/
+```
+
+The example publishes `2260:2260` and keeps its databases and logs in three
+named volumes. Requirements, volume paths, the container user, health checks and
+upgrades are in the [Docker section of docs/deployment.md](docs/deployment.md#docker).
+
 ### Managing a running instance
 
 ```bash
@@ -446,6 +462,22 @@ sudo ./scripts/deploy.sh
 若缺少已编译的 `bin/prism`，脚本会提示先执行 `make build`。
 
 不使用 systemd 时，在包含 `.env` 的目录里直接运行 `./bin/prism run`。
+
+改用 Docker 时：
+
+```bash
+cp docker-compose.yml.example docker-compose.yml
+
+# 示例会把 ${PRISM_ADMIN_TOKEN} 和 ${PRISM_PROXY_TOKEN} 传给容器，
+# 并从 ./.env 读取它们——也就是 `prism init` 写出的那个文件。
+./bin/prism init            # 或者手动在 .env 里填两个令牌
+
+docker compose up -d        # 然后访问 http://<host>:2260/ui/
+```
+
+示例映射 `2260:2260`，数据库与日志放在三个命名卷里。环境要求、卷路径、容器
+用户、健康检查与升级方式见
+[docs/deployment.md 的 Docker 章节](docs/deployment.md#docker)。
 
 ### 服务管理
 

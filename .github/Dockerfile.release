@@ -16,6 +16,12 @@ COPY release-bin/${TARGETOS}/${TARGETARCH}/prism-${TARGETOS}-${TARGETARCH} /usr/
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+# Keep in sync with Dockerfile. See the note there: the entrypoint exports these
+# too, and the ENV makes the image correct even if the entrypoint is bypassed.
+ENV PRISM_CACHE_DIR=/var/cache/prism \
+    PRISM_STATE_DIR=/var/lib/prism \
+    PRISM_LOG_DIR=/var/log/prism
+
 EXPOSE 2260
 VOLUME ["/var/cache/prism", "/var/lib/prism", "/var/log/prism"]
 

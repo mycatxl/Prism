@@ -45,6 +45,13 @@ RUN apk add --no-cache ca-certificates tzdata su-exec \
   && mkdir -p /var/cache/prism /var/lib/prism /var/log/prism \
   && chown -R prism:prism /var/cache/prism /var/lib/prism /var/log/prism
 
+# Pin the data directories to the volumes declared below. The entrypoint exports
+# the same values, so overriding one of these with -e keeps working; this ENV
+# exists so the image is correct even if the entrypoint is bypassed.
+ENV PRISM_CACHE_DIR=/var/cache/prism \
+    PRISM_STATE_DIR=/var/lib/prism \
+    PRISM_LOG_DIR=/var/log/prism
+
 COPY --from=go-builder /out/prism /usr/local/bin/prism
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

@@ -33,6 +33,10 @@ web:
 backend:
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/prism ./cmd/prism
+	# Companion tool: collects nodes from public sources and either serves them as
+	# a remote subscription or pushes them in as a local one. Built here so CI
+	# catches breakage in both tag sets.
+	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/public-source-sync ./cmd/public-source-sync
 
 backend-lite:
 	$(MAKE) backend BUILD_TAGS='$(TAGS_BASE)'

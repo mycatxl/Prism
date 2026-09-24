@@ -5,6 +5,15 @@ cache_dir="${PRISM_CACHE_DIR:-/var/cache/prism}"
 state_dir="${PRISM_STATE_DIR:-/var/lib/prism}"
 log_dir="${PRISM_LOG_DIR:-/var/log/prism}"
 
+# Export the resolved directories. Without this the exec'd Prism process sees no
+# PRISM_*_DIR at all and falls back to its own defaults (./.local/state,
+# ./.local/cache, ./.local/logs). The runtime stage sets no WORKDIR, so those
+# defaults resolve against "/" — outside the declared volumes and not writable by
+# the unprivileged prism user. The volumes below would silently stay empty.
+export PRISM_CACHE_DIR="$cache_dir"
+export PRISM_STATE_DIR="$state_dir"
+export PRISM_LOG_DIR="$log_dir"
+
 if [ "$#" -eq 0 ]; then
   set -- /usr/local/bin/prism
 fi

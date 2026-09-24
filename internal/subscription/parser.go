@@ -2217,6 +2217,8 @@ func parseURILineSubscription(text string, report *parseReport) ([]ParsedNode, b
 			parsed, ok = parseNetchURI(line)
 		case strings.HasPrefix(lower, "http://"),
 			strings.HasPrefix(lower, "https://"),
+			strings.HasPrefix(lower, "socks4://"),
+			strings.HasPrefix(lower, "socks4a://"),
 			strings.HasPrefix(lower, "socks5://"),
 			strings.HasPrefix(lower, "socks5h://"):
 			lineImported = true
@@ -2310,6 +2312,10 @@ func parseProxyURI(uri string) (ParsedNode, bool) {
 		return ParsedNode{}, false
 	}
 
+	// socksVersion is the SOCKS protocol version of a URI-form node. sing-box's
+	// socks outbound accepts "4", "4a" and "5"; omitting it means 5, so only the
+	// legacy schemes set it. The Clash path does the same via clashSOCKSVersion.
+	socksVersion := ""
 	nodeType := ""
 	switch scheme {
 	case "http":
@@ -2320,6 +2326,12 @@ func parseProxyURI(uri string) (ParsedNode, bool) {
 		nodeType = "socks"
 	case "socks5", "socks5h":
 		nodeType = "socks"
+	case "socks4":
+		nodeType = "socks"
+		socksVersion = "4"
+	case "socks4a":
+		nodeType = "socks"
+		socksVersion = "4a"
 	default:
 		return ParsedNode{}, false
 	}
@@ -2336,6 +2348,11 @@ func parseProxyURI(uri string) (ParsedNode, bool) {
 		"tag":         defaultTag(tag, defaultTagProto, server, port),
 		"server":      server,
 		"server_port": port,
+	}
+
+	// Only the legacy schemes carry an explicit version: omitting it means 5.
+	if socksVersion != "" {
+		outbound["version"] = socksVersion
 	}
 
 	if u.User != nil {
