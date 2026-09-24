@@ -226,8 +226,12 @@ func TestDefaultSettingMergesCredentials(t *testing.T) {
 	if setting.DailyLimit != 900 {
 		t.Fatalf("a keyed provider defaults to 900/day, got %d", setting.DailyLimit)
 	}
-	if !setting.Enabled || !setting.Runnable() {
-		t.Fatal("proxycheck is enabled by default")
+	// Both proxycheck sources are off by default: the host-side one spends the
+	// Prism host's own anonymous quota (80/day) while proxycheck_node spends the
+	// same vendor's quota per node. Enabling both would query every address
+	// twice, so the host-side source is opt-in.
+	if setting.Enabled || setting.Runnable() {
+		t.Fatal("the host-side proxycheck source must be opt-in")
 	}
 	if setting.CredentialID() == "" {
 		t.Fatal("credential fingerprint missing")
@@ -342,7 +346,8 @@ func TestRegisterBuiltinsCatalog(t *testing.T) {
 	RegisterBuiltins(registry, BuiltinConfig{Now: func() time.Time { return testNow }})
 	want := []string{
 		"abuseipdb", "dbip_lite", "dnsbl", "geo_country", "ip_api", "ipapi_is",
-		"ipinfo_lite", "ippure", "ipqs", "maxmind_geolite2", "proxycheck", "torproject",
+		"ipinfo_lite", "ippure", "ipqs", "maxmind_geolite2", "proxycheck",
+		"proxycheck_node", "torproject",
 	}
 	got := registry.IDs()
 	if strings.Join(got, ",") != strings.Join(want, ",") {

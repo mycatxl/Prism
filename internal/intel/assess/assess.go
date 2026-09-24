@@ -23,12 +23,16 @@ const Profile = "prism-purity-v2"
 // Assessment.Components.
 const (
 	SourceProxycheck = "proxycheck"
-	SourceIPPure     = "ippure"
-	SourceIPQS       = "ipqs"
-	SourceAbuseIPDB  = "abuseipdb"
-	SourceIPAPIIs    = "ipapi_is"
-	SourceIPAPI      = "ip_api"
-	SourceDNSBL      = "dnsbl"
+	// SourceProxycheckNode is the anonymous via-node variant of the same vendor.
+	// It is never a scoring source of its own: ProviderAliases folds it onto
+	// SourceProxycheck so one address still yields one component.
+	SourceProxycheckNode = "proxycheck_node"
+	SourceIPPure         = "ippure"
+	SourceIPQS           = "ipqs"
+	SourceAbuseIPDB      = "abuseipdb"
+	SourceIPAPIIs        = "ipapi_is"
+	SourceIPAPI          = "ip_api"
+	SourceDNSBL          = "dnsbl"
 )
 
 // Non-scoring sources referenced by the algorithm.
@@ -370,10 +374,28 @@ func earliestValidUntil(evidence []quality.Evidence) time.Time {
 	return earliest
 }
 
-// lookup returns the valid evidence of one provider.
+// ProviderAliases maps a data source id onto the scoring source it feeds.
+//
+// proxycheck_node is the anonymous via-node variant of proxycheck: it reports
+// the same vendor's verdict for the same address, obtained through the node so
+// the vendor's anonymous quota is spent per node instead of per Prism host.
+// Folding it onto SourceProxycheck keeps exactly one component per source -
+// lookup returns the first match - no matter which variant answered.
+var ProviderAliases = map[string]string{
+	"proxycheck_node": SourceProxycheck,
+}
+
+// lookup returns the valid evidence of one provider. An exact match wins; only
+// then does an aliased source stand in, so a host-side proxycheck row always
+// outranks the via-node one for the same address.
 func lookup(evidence []quality.Evidence, provider string) (quality.Evidence, bool) {
 	for _, ev := range evidence {
 		if ev.Provider == provider {
+			return ev, true
+		}
+	}
+	for _, ev := range evidence {
+		if ProviderAliases[ev.Provider] == provider {
 			return ev, true
 		}
 	}
@@ -780,7 +802,7 @@ func voteIPType(evidence []quality.Evidence, asn int, reasons *[]string) string 
 // voteOf maps one source's evidence to a §1.4 vote, or "" when it does not vote.
 func voteOf(ev quality.Evidence) string {
 	switch ev.Provider {
-	case SourceProxycheck:
+	case SourceProxycheck, SourceProxycheckNode:
 		return normalizeRawType(ev.IPType)
 	case SourceIPQS:
 		if mapped := ipqsConnectionType(ev.SourceType); mapped != "" {

@@ -203,4 +203,11 @@ func RegisterBuiltins(reg *Registry, cfg BuiltinConfig) {
 			Timeout: cfg.timeout(), Now: now,
 		})
 	})
+
+	reg.Define(NewProxyCheckViaNodeProvider(ProxyCheckViaNodeOptions{}).Spec(), func(setting Setting) any {
+		return NewProxyCheckViaNodeProvider(ProxyCheckViaNodeOptions{
+			URL: urlOverride(setting), TTL: setting.EffectiveTTL(),
+			Timeout: cfg.timeout(), Now: now,
+		})
+	})
 }

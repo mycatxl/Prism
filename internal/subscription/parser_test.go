@@ -854,9 +854,11 @@ func TestParseGeneralSubscription_ClashJSON_HysteriaAdvancedFields(t *testing.T)
 	if !containsAnyString(certificates, "-----BEGIN CERTIFICATE-----ABC") {
 		t.Fatalf("tls.certificate: got %v", certificates)
 	}
-	utls := mustMapField(t, tls, "utls")
-	if got := utls["fingerprint"]; got != "chrome" {
-		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	// PRISM-FIX: hysteria v1 also runs over QUIC, so the hysteria2 rule applies:
+	// mapping the Clash fingerprint onto tls.utls makes sing-box reject the
+	// outbound with "unsupported usage for uTLS".
+	if _, present := tls["utls"]; present {
+		t.Fatalf("tls.utls must not be set for hysteria: got %v", tls["utls"])
 	}
 }
 
@@ -1041,9 +1043,11 @@ func TestParseGeneralSubscription_ClashJSON_Hysteria2AdvancedFields(t *testing.T
 	if !containsAnyString(certificates, "-----BEGIN CERTIFICATE-----XYZ") {
 		t.Fatalf("tls.certificate: got %v", certificates)
 	}
-	utls := mustMapField(t, tls, "utls")
-	if got := utls["fingerprint"]; got != "firefox" {
-		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	// PRISM-FIX: hysteria2 runs over QUIC and sing-box's QUIC TLS stack has no
+	// uTLS support, so the Clash fingerprint must not become tls.utls - it makes
+	// sing-box reject the outbound with "unsupported usage for uTLS".
+	if _, present := tls["utls"]; present {
+		t.Fatalf("tls.utls must not be set for hysteria2: got %v", tls["utls"])
 	}
 }
 
@@ -1745,9 +1749,12 @@ func TestParseGeneralSubscription_HY2URIAliasAndQueryPassword(t *testing.T) {
 	if got := tls["certificate_path"]; got != "/etc/ssl/certs/hy2.pem" {
 		t.Fatalf("tls.certificate_path: got %v", got)
 	}
-	utls := mustMapField(t, tls, "utls")
-	if got := utls["fingerprint"]; got != "chrome" {
-		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	// PRISM-FIX: this node is hysteria2, which runs over QUIC. sing-box has no
+	// uTLS support on its QUIC TLS stack, so mapping the fingerprint onto
+	// tls.utls makes sing-box reject the whole outbound with "unsupported usage
+	// for uTLS". The field must stay absent instead.
+	if _, present := tls["utls"]; present {
+		t.Fatalf("tls.utls must not be set for hysteria2: got %v", tls["utls"])
 	}
 }
 
