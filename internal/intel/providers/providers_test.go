@@ -475,3 +475,72 @@ func TestViaNodeRequiresOutbound(t *testing.T) {
 	result := provider.Lookup(context.Background(), nil, testIP)
 	expectCode(t, result, CodeUnavailable)
 }
+
+// --- proxycheck.io (via-node) ---------------------------------------------
+
+func TestProxyCheckViaNode(t *testing.T) {
+	var gotPath, gotQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write(fixture(t, "proxycheck/success.json"))
+	}))
+	defer server.Close()
+
+	provider := NewProxyCheckViaNodeProvider(ProxyCheckViaNodeOptions{
+		URL: server.URL, Now: func() time.Time { return testNow },
+	})
+	result := provider.Lookup(context.Background(), directOutbound{}, testIP)
+	evidence := mustEvidence(t, result)
+
+	// The anonymous API rejects a request without an address ("No valid IP
+	// Addresses supplied."), so the node's own address must be in the path: that
+	// is what makes the vendor attribute the query to the node's quota.
+	if !strings.Contains(gotPath, testIP.String()) {
+		t.Fatalf("the node's own address must be the query target, path = %q", gotPath)
+	}
+	if !strings.Contains(gotQuery, "ver=") {
+		t.Fatalf("the pinned API version is missing: %q", gotQuery)
+	}
+	if strings.Contains(gotQuery, "key=") {
+		t.Fatal("a key must never be sent through a node's outbound")
+	}
+	if got := evidence.Provider; got != "proxycheck_node" {
+		t.Fatalf("provider: %q", got)
+	}
+	if got := evidence.Profile; got != ProxyCheckNodeProfile {
+		t.Fatalf("profile: %q", got)
+	}
+}
+
+func TestProxyCheckViaNodeNeedsAnAddress(t *testing.T) {
+	provider := NewProxyCheckViaNodeProvider(ProxyCheckViaNodeOptions{
+		URL: "https://example.invalid", Now: func() time.Time { return testNow },
+	})
+	result := provider.Lookup(context.Background(), directOutbound{}, netip.Addr{})
+	if !result.Failed() {
+		t.Fatal("a via-node lookup without the node's address must fail instead of querying another owner's quota")
+	}
+	if result.Err.Code != CodeRequest {
+		t.Fatalf("code: %q", result.Err.Code)
+	}
+}
+
+func TestProxyCheckNodeSpecSpendsQuotaPerNode(t *testing.T) {
+	spec := NewProxyCheckViaNodeProvider(ProxyCheckViaNodeOptions{}).Spec()
+	if spec.Kind != KindViaNode {
+		t.Fatalf("kind: %v", spec.Kind)
+	}
+	if spec.RequiresKey {
+		t.Fatal("the via-node variant must never need a credential")
+	}
+	if !spec.DefaultEnabled {
+		t.Fatal("the via-node variant is the default proxycheck source")
+	}
+	if spec.DefaultDailyLimit != 100 {
+		t.Fatalf("daily limit: %d", spec.DefaultDailyLimit)
+	}
+	if spec.DefaultQPS <= 0 || spec.DefaultQPS > 5 {
+		t.Fatalf("provider-wide QPS valve out of range: %v", spec.DefaultQPS)
+	}
+}

@@ -1470,12 +1470,9 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		if alpn := getStringSlice(proxy, "alpn"); len(alpn) > 0 {
 			tls["alpn"] = alpn
 		}
-		applyUTLSFromValue(tls, firstNonEmpty(
-			getString(proxy, "fingerprint"),
-			getString(proxy, "client-fingerprint"),
-			getString(proxy, "client_fingerprint"),
-			getString(proxy, "fp"),
-		))
+		// Hysteria2 runs over QUIC and sing-box's QUIC TLS stack has no uTLS
+		// support: mapping a fingerprint onto tls.utls makes sing-box reject
+		// the outbound with "unsupported usage for uTLS". Drop it.
 		applyTLSCertificateFromClash(tls, proxy)
 		outbound := map[string]any{
 			"type":        "hysteria2",
@@ -1677,12 +1674,9 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		))
 		insecure, _ := getBool(proxy, "skip-cert-verify", "allowInsecure", "insecure")
 		tls := newClashEnabledTLS(sni, insecure, getStringSlice(proxy, "alpn"))
-		applyUTLSFromValue(tls, firstNonEmpty(
-			getString(proxy, "fingerprint"),
-			getString(proxy, "client-fingerprint"),
-			getString(proxy, "client_fingerprint"),
-			getString(proxy, "fp"),
-		))
+		// Hysteria (v1) also runs over QUIC: see the hysteria2 branch. sing-box
+		// has no uTLS support on its QUIC TLS stack, so a fingerprint is dropped
+		// instead of turning the node into a build error.
 		applyTLSCertificateFromClash(tls, proxy)
 		outbound := map[string]any{
 			"type":        "hysteria",
@@ -3682,12 +3676,10 @@ func parseHysteria2URI(uri string) (ParsedNode, bool) {
 	if alpn := splitALPN(query.Get("alpn")); len(alpn) > 0 {
 		tls["alpn"] = alpn
 	}
-	applyUTLSFromValue(tls, firstNonEmpty(
-		query.Get("fp"),
-		query.Get("fingerprint"),
-		query.Get("client-fingerprint"),
-		query.Get("client_fingerprint"),
-	))
+	// Hysteria2 runs over QUIC, and sing-box's QUIC TLS stack has no uTLS
+	// support: mapping a fingerprint onto tls.utls makes sing-box reject the
+	// whole outbound with "unsupported usage for uTLS". The field is dropped
+	// rather than shipped as an unusable node.
 	if pins := splitCommaList(firstNonEmpty(
 		query.Get("pinSHA256"),
 		query.Get("pin-sha256"),

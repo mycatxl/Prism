@@ -424,3 +424,114 @@ type ViaNodeOutboundDialer interface {
 
 // ErrNodeNotReady marks a node that has no usable outbound yet.
 var ErrNodeNotReady = errors.New("node outbound is not ready")
+
+// ---------------------------------------------------------------------------
+// proxycheck.io (via-node, anonymous)
+// ---------------------------------------------------------------------------
+
+// ProxyCheckViaNodeURL is the proxycheck.io v3 endpoint prefix.
+//
+// proxycheck.io has no anonymous "what is my IP" mode: a request without an
+// address is rejected with HTTP 400 "No valid IP Addresses supplied.", and the
+// documented origin-IP behaviour belongs to a public API key in a browser
+// context, which a server cannot use. What does work is naming the address
+// explicitly while the request itself leaves through that same node: the vendor
+// then attributes the query to the node's egress address, so the anonymous
+// quota is spent per node instead of per Prism host. That is the only way to
+// cover an inventory of thousands of nodes without a key, and it needs no
+// credential at all, which is exactly what makes it safe to run through an
+// untrusted outbound.
+const ProxyCheckViaNodeURL = "https://proxycheck.io/v3/"
+
+// ProxyCheckNodeProfile is the normalised contract of the via-node variant. It
+// is separate from ProxyCheckProfile so a decoder change can invalidate one
+// without discarding the other.
+const ProxyCheckNodeProfile = "proxycheck-via-node-v3-2"
+
+// ProxyCheckViaNodeOptions configures the anonymous via-node data source.
+type ProxyCheckViaNodeOptions struct {
+	URL     string
+	TTL     time.Duration
+	Timeout time.Duration
+	Now     func() time.Time
+}
+
+// ProxyCheckViaNode reports proxycheck.io's verdict for a node's own egress
+// address, queried through that same node so the vendor's anonymous quota
+// belongs to the node. It never carries a key: a credential must not travel
+// through an untrusted outbound (WP09 §1).
+type ProxyCheckViaNode struct {
+	spec    Spec
+	url     string
+	ttl     time.Duration
+	timeout time.Duration
+	now     func() time.Time
+}
+
+// NewProxyCheckViaNodeProvider builds the anonymous via-node provider.
+func NewProxyCheckViaNodeProvider(opts ProxyCheckViaNodeOptions) *ProxyCheckViaNode {
+	target := strings.TrimSpace(opts.URL)
+	if target == "" {
+		target = ProxyCheckViaNodeURL
+	}
+	if !strings.HasSuffix(target, "/") {
+		target += "/"
+	}
+	ttl := opts.TTL
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 12 * time.Second
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &ProxyCheckViaNode{
+		spec: Spec{
+			ID: "proxycheck_node", Name: "proxycheck.io (via node)",
+			Website: "https://proxycheck.io/",
+			Terms: "Anonymous queries must not be used commercially and share the quota of the " +
+				"requesting address (100/day). Because the query leaves through the node and " +
+				"names that same node, the quota is spent per node - which is what makes a " +
+				"large inventory affordable without a key. Prism counts a per-node daily " +
+				"budget (default 100) and keeps a provider-wide QPS valve (default 2/s). A key " +
+				"can raise the quota, but a key is never sent through a node: enter it on the " +
+				"host-side proxycheck.io source instead. See https://proxycheck.io/pricing/.",
+			Kind: KindViaNode, Profile: ProxyCheckNodeProfile,
+			RequiresKey: false, DefaultEnabled: true,
+			DefaultDailyLimit: 100, DefaultQPS: 2, BatchSize: 1,
+			DefaultTTL: ttl, SupportsIPv6: true,
+		},
+		url: target, ttl: ttl, timeout: timeout, now: now,
+	}
+}
+
+// Spec implements ViaNodeProvider.
+func (p *ProxyCheckViaNode) Spec() Spec { return p.spec }
+
+// Lookup implements ViaNodeProvider. The address is both the query target and -
+// because the request leaves through that same node - the owner of the quota.
+func (p *ProxyCheckViaNode) Lookup(ctx context.Context, ob adapter.Outbound, expect netip.Addr) Result {
+	if !expect.IsValid() {
+		return Failure(CodeRequest, "proxycheck.io via-node needs the node's own egress address")
+	}
+	address := expect.Unmap().String()
+	if expect.Is6() {
+		// An IPv6 literal needs brackets in a URL path.
+		address = "[" + address + "]"
+	}
+	target := p.url + address + "?ver=24-June-2026&tag=0"
+	resp, failure := fetchViaNode(ctx, ob, target, nil, p.timeout)
+	if failure.Failed() {
+		return failure
+	}
+	evidence, err := DecodeProxyCheckAs(resp.Body, expect, p.now().UTC(), p.ttl,
+		"proxycheck_node", ProxyCheckNodeProfile)
+	if err != nil {
+		return FailureErr(err, "proxycheck.io returned incomplete or mismatched evidence")
+	}
+	return Result{Evidence: evidence, Raw: boundedRaw(resp.Body)}
+}

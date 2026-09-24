@@ -86,8 +86,12 @@ func NewProxyCheckProvider(opts ProxyCheckOptions) *ProxyCheck {
 				"(80/day) and must not be used commercially. A key raises the quota to the " +
 				"plan limit (Prism defaults to 900/day, configurable up to 1,000,000). " +
 				"See https://proxycheck.io/pricing/.",
+			// Off by default: the anonymous quota of this source is the Prism host's
+			// own 80/day, while proxycheck_node spends the same vendor's quota per
+			// node through the node itself. Enable this one when an API key is
+			// available - a key must never travel through an inventory node.
 			Kind: KindOnlineIP, Profile: ProxyCheckProfile,
-			RequiresKey: false, DefaultEnabled: true,
+			RequiresKey: false, DefaultEnabled: false,
 			DefaultDailyLimit: 80, DefaultDailyLimitWithKey: 900, MaxDailyLimit: 1_000_000,
 			DefaultQPS: 1, BatchSize: 1, DefaultTTL: ttl, SupportsIPv6: true,
 		},
@@ -144,10 +148,18 @@ func (p *ProxyCheck) lookupOne(ctx context.Context, ip netip.Addr) Result {
 	return Result{Evidence: evidence, Raw: boundedRaw(resp.Body)}
 }
 
-// DecodeProxyCheck validates and normalises one proxycheck.io v3 payload. It is
-// strict: contradictory risk fields, out-of-range scores, missing detections and
-// a mismatched address are all rejected.
+// DecodeProxyCheck validates one proxycheck.io v3 payload against the queried
+// address.
 func DecodeProxyCheck(body []byte, ip netip.Addr, now time.Time, ttl time.Duration) (*quality.Evidence, error) {
+	return DecodeProxyCheckAs(body, ip, now, ttl, "proxycheck", ProxyCheckProfile)
+}
+
+// DecodeProxyCheckAs is DecodeProxyCheck with an explicit source identity, so
+// the anonymous via-node variant can record its own provider id and profile
+// while sharing one strict decoder. It is strict: contradictory risk fields,
+// out-of-range scores, missing detections and a mismatched address are all
+// rejected.
+func DecodeProxyCheckAs(body []byte, ip netip.Addr, now time.Time, ttl time.Duration, provider, profile string) (*quality.Evidence, error) {
 	invalid := func() (*quality.Evidence, error) {
 		return nil, &ProviderError{Code: CodeResponse, Message: "proxycheck.io returned incomplete or mismatched evidence"}
 	}
@@ -237,7 +249,7 @@ func DecodeProxyCheck(body []byte, ip netip.Addr, now time.Time, ttl time.Durati
 		organization = result.Network.Provider
 	}
 	evidence := &quality.Evidence{
-		IP: ip.Unmap().String(), Provider: "proxycheck", Profile: ProxyCheckProfile,
+		IP: ip.Unmap().String(), Provider: provider, Profile: profile,
 		IPType: networkType, SourceType: boundedText(result.Network.Type, 80),
 		ASN: boundedText(result.Network.ASN, 40), Organization: boundedText(organization, 240),
 		CountryCode:     boundedText(result.Location.CountryCode, 8),
