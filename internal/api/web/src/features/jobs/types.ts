@@ -75,9 +75,26 @@ export type IntelJobItemPage = PageEnvelope<IntelJobItem>;
 // The endpoint decodes with DisallowUnknownFields, so the body is limited to
 // exactly these keys; the job priority is not part of the contract and is
 // fixed server side (control_plane_intel.go:113 uses PriorityManual = 100).
+//
+// jobs.Scope unions its entries (internal/intel/jobs/jobs.go:132) and `filter`
+// carries the same keys as the GET /api/v1/nodes query (docs/plan/08-intel-store-jobs.md:181).
+// Values are strings by contract — "true"/"false" for the switches.
+export type IntelJobScopeFilter = {
+  protocol?: string;
+  engine?: string;
+  region?: string;
+  ip_type?: string;
+  purity_band?: string;
+  verdict?: string;
+  healthy?: "true" | "false";
+};
+
 export type IntelJobScope = {
   all?: boolean;
+  subscription_ids?: string[];
+  platform_ids?: string[];
   node_hashes?: string[];
+  filter?: IntelJobScopeFilter;
 };
 
 export type CreateIntelJobRequest = {

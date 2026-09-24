@@ -7,7 +7,9 @@ import {
   ChevronRight,
   Copy,
   Globe2,
+  LoaderCircle,
   Network,
+  Radar,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -37,7 +39,10 @@ import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatDateTime } from "../../lib/time";
 import { listPlatforms } from "../platforms/api";
 import { listSubscriptions } from "../subscriptions/api";
+import { createIntelJob } from "../jobs/api";
+import type { IntelJobScope } from "../jobs/types";
 import { getNode, listNodes, probeEgress, probeLatency } from "./api";
+import { buildBulkIntelScope, hasUnsupportedFilters } from "./intelScope";
 import { getAllRegions, getRegionName } from "./regions";
 import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
 import { getQualityStatus, inspectNode, qualityPollingInterval } from "../quality/api";
@@ -256,6 +261,25 @@ export function NodesPage() {
     },
     onError: error => showToast("error", formatApiErrorMessage(error, t)),
   });
+
+  // Bulk intel entry point of the node pool (docs/plan/12-frontend.md:38): the
+  // current URL filters become the job scope (intelScope.ts) and every run is
+  // limited to healthy nodes. `total` counts the filtered list, so the button
+  // shows an upper bound of the nodes the job will cover.
+  const bulkCount = nodesQuery.data?.total ?? 0;
+  const bulkScopeBlocked = mode === "error" || mode === "disabled" || mode === "circuit_open";
+  const bulkScopeWider = hasUnsupportedFilters(params);
+  const [bulkJobID, setBulkJobID] = useState("");
+  const bulkJob = useMutation({
+    mutationFn: (request: { scope: IntelJobScope; count: number }) =>
+      createIntelJob({ kind: "full", scope: request.scope, force: true }),
+    onSuccess: (response, request) => {
+      void queryClient.invalidateQueries({ queryKey: ["intel-jobs"] });
+      setBulkJobID(response.job.id);
+      showToast("success", t("已创建情报任务（预计 {{count}} 个节点）", { count: request.count }));
+    },
+    onError: error => showToast("error", formatApiErrorMessage(error, t)),
+  });
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["quality"] });
     if (view === "nodes") void nodesQuery.refetch();
@@ -388,6 +412,26 @@ export function NodesPage() {
             <span className="filter-count">{numberOfFilters}</span>
           ) : null}
         </Button>
+        <Button
+          variant="secondary"
+          aria-label={t("批量拉取情报")}
+          title={t(bulkScopeBlocked
+            ? "批量拉取只对健康节点生效，请先切换状态筛选。"
+            : "对当前筛选结果中健康的节点批量拉取情报。")}
+          disabled={bulkJob.isPending || bulkScopeBlocked || bulkCount === 0}
+          onClick={() => bulkJob.mutate({ scope: buildBulkIntelScope(params), count: bulkCount })}
+        >
+          {bulkJob.isPending ? <LoaderCircle size={15} className="spin" /> : <Radar size={15} />}
+          {t("批量拉取情报")} · {bulkCount.toLocaleString()}
+        </Button>
+        {bulkScopeWider && !bulkScopeBlocked ? (
+          <span className="node-bulk-warning">
+            {t("部分筛选条件不适用于批量拉取，实际范围可能更大。")}
+          </span>
+        ) : null}
+        {bulkJobID ? (
+          <Link className="btn btn-ghost btn-sm" to="/jobs">{t("查看检测任务")}</Link>
+        ) : null}
         <span className="node-ip-count">
           <Globe2 size={15} />
           {nodesQuery.data
@@ -841,7 +885,12 @@ export function NodesPage() {
                 </section>
                 <section className="inspector-section">
                   <h3>{t("纯净度评估")}</h3>
-                  <NodeIntelPanel intel={detail.intel} />
+                  <NodeIntelPanel
+                    intel={detail.intel}
+                    nodeHash={detail.node_hash}
+                    ready={detail.has_outbound}
+                    notify={showToast}
+                  />
                 </section>
                 <section className="inspector-section">
                   <h3>{t("来源与标签")}</h3>

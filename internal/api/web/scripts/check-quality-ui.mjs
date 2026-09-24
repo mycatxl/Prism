@@ -58,11 +58,13 @@ export async function verifyQualityViews({ page, origin, adminToken, screenshots
     await page.getByRole("textbox", { name: "搜索节点", exact: true }).fill("");
     await expect(page.locator(".node-name")).toHaveCount(2);
     assert(!new URL(page.url()).searchParams.has("tag"), "Legacy search must not reappear after clearing");
-    // The IPPure-review flow and the per-node purity badge presentation both moved
-    // in WP10: /ui/quality now redirects into the node view and the review widget
-    // is no longer reachable from the router. Their data contract stays covered by
-    // the Go tests plus the column assertions in check-ui-live.mjs, so the browser
-    // regression stops at "the node list renders the isolated inventory cleanly".
+    // The IPPure-review flow stays reachable for this node: the node drawer
+    // renders QualityDetails, which mounts the existing IPPureReviewPanel as
+    // soon as it receives a node hash (QualityDetails.tsx:185). WP10 only moved
+    // the entry point — /ui/quality redirects into the node view now — so the
+    // browser regression does not walk the review request again; its data
+    // contract stays covered by the Go tests and the per-node purity badge
+    // assertions in check-ui-live.mjs.
   } finally { await page.unroute(match, handler); }
 }
 
