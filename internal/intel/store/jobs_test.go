@@ -582,3 +582,148 @@ func TestJobs_ClaimRespectsJobScope(t *testing.T) {
 		t.Fatalf("claim after cancel = %+v (err %v)", claimed, err)
 	}
 }
+
+// TestViaNodeBudget_IsCountedPerNode pins the reason provider_node_state
+// exists: a via-node lookup leaves through the node, so the vendor's anonymous
+// quota belongs to that node's address and two nodes must not share one budget.
+func TestViaNodeBudget_IsCountedPerNode(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
+
+	req := ViaNodeBudgetRequest{
+		Provider: "ippure", NodeHash: "node-a", Day: DayString(day),
+		NodeDailyLimit: 2, NowNs: day.UnixNano(),
+	}
+	for i := 1; i <= 2; i++ {
+		state, err := st.ConsumeViaNodeBudget(ctx, req)
+		if err != nil {
+			t.Fatalf("consume %d for node-a: %v", i, err)
+		}
+		if state.Used != i {
+			t.Fatalf("node-a used = %d, want %d", state.Used, i)
+		}
+	}
+	// node-a is exhausted, but node-b still has its own untouched budget.
+	if _, err := st.ConsumeViaNodeBudget(ctx, req); !errors.Is(err, ErrBudgetExhausted) {
+		t.Fatalf("node-a third consume: err = %v, want ErrBudgetExhausted", err)
+	}
+	other := req
+	other.NodeHash = "node-b"
+	state, err := st.ConsumeViaNodeBudget(ctx, other)
+	if err != nil {
+		t.Fatalf("node-b must not be blocked by node-a's budget: %v", err)
+	}
+	if state.Used != 1 {
+		t.Fatalf("node-b used = %d, want 1", state.Used)
+	}
+}
+
+// TestViaNodeBudget_ExhaustedNodeDefersToNextDay pins the wait the caller parks
+// the item with: a node whose own budget is gone can only retry tomorrow.
+func TestViaNodeBudget_ExhaustedNodeDefersToNextDay(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
+	nextDay := day.Truncate(24 * time.Hour).Add(24 * time.Hour)
+
+	req := ViaNodeBudgetRequest{
+		Provider: "ippure", NodeHash: "node-a", Day: DayString(day),
+		NodeDailyLimit: 1, NowNs: day.UnixNano(),
+	}
+	if _, err := st.ConsumeViaNodeBudget(ctx, req); err != nil {
+		t.Fatalf("first consume: %v", err)
+	}
+	state, err := st.ConsumeViaNodeBudget(ctx, req)
+	if !errors.Is(err, ErrBudgetExhausted) {
+		t.Fatalf("err = %v, want ErrBudgetExhausted", err)
+	}
+	if state.NextRequestAtNs != nextDay.UnixNano() {
+		t.Fatalf("next_request_at = %d, want the next UTC day (%d)", state.NextRequestAtNs, nextDay.UnixNano())
+	}
+	if state.Used != 1 {
+		t.Fatalf("used = %d, want the node's own counter", state.Used)
+	}
+}
+
+// TestViaNodeBudget_GlobalQPSStillProtectsTheVendor pins the safety valve: the
+// per-node budget alone must never let the whole inventory reach the vendor at
+// once, so a provider-wide QPS still gates every node.
+func TestViaNodeBudget_GlobalQPSStillProtectsTheVendor(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
+
+	base := ViaNodeBudgetRequest{
+		Provider: "ippure", Day: DayString(day), NodeDailyLimit: 100,
+		GlobalQPS: 2, NowNs: day.UnixNano(),
+	}
+	first := base
+	first.NodeHash = "node-a"
+	if _, err := st.ConsumeViaNodeBudget(ctx, first); err != nil {
+		t.Fatalf("node-a: %v", err)
+	}
+
+	second := base
+	second.NodeHash = "node-b"
+	second.NowNs = day.UnixNano() + int64(250*time.Millisecond)
+	state, err := st.ConsumeViaNodeBudget(ctx, second)
+	if !errors.Is(err, ErrProviderNotReady) {
+		t.Fatalf("node-b inside the valve window: err = %v, want ErrProviderNotReady", err)
+	}
+	if state.NextRequestAtNs != day.UnixNano()+int64(500*time.Millisecond) {
+		t.Fatalf("next_request_at = %d, want now+500ms for a 2/s valve", state.NextRequestAtNs)
+	}
+
+	second.NowNs = day.UnixNano() + int64(500*time.Millisecond)
+	if _, err := st.ConsumeViaNodeBudget(ctx, second); err != nil {
+		t.Fatalf("node-b after the valve window: %v", err)
+	}
+}
+
+// TestViaNodeBudget_SharedPauseAndBlockState pins that the provider-wide
+// pause/block state still governs every node of a via-node data source.
+func TestViaNodeBudget_SharedPauseAndBlockState(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
+
+	req := ViaNodeBudgetRequest{
+		Provider: "ippure", NodeHash: "node-a", Day: DayString(day),
+		NodeDailyLimit: 10, NowNs: day.UnixNano(),
+	}
+	if _, err := st.ConsumeViaNodeBudget(ctx, req); err != nil {
+		t.Fatalf("first consume: %v", err)
+	}
+	if err := st.MarkProviderBlocked(ctx, "ippure", day.Add(time.Hour).UnixNano(), "PROVIDER_LIMIT"); err != nil {
+		t.Fatalf("MarkProviderBlocked: %v", err)
+	}
+	other := req
+	other.NodeHash = "node-b"
+	if _, err := st.ConsumeViaNodeBudget(ctx, other); !errors.Is(err, ErrProviderBlocked) {
+		t.Fatalf("err = %v, want ErrProviderBlocked", err)
+	}
+	if err := st.MarkProviderPaused(ctx, "ippure", "PROVIDER_AUTH", "key-1"); err != nil {
+		t.Fatalf("MarkProviderPaused: %v", err)
+	}
+	state, err := st.ConsumeViaNodeBudget(ctx, other)
+	if !errors.Is(err, ErrProviderPaused) {
+		t.Fatalf("err = %v, want ErrProviderPaused", err)
+	}
+	if !state.Paused {
+		t.Fatal("the returned state must report the pause")
+	}
+}
+
+// TestViaNodeBudget_RequiresANodeHash pins the argument contract: without a node
+// there is no address for the vendor to attribute the quota to.
+func TestViaNodeBudget_RequiresANodeHash(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
+	if _, err := st.ConsumeViaNodeBudget(ctx, ViaNodeBudgetRequest{
+		Provider: "ippure", Day: DayString(day), NowNs: day.UnixNano(),
+	}); err == nil {
+		t.Fatal("a via-node consume without a node hash must fail")
+	}
+}

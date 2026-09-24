@@ -495,8 +495,11 @@ func TestParseGeneralSubscription_ClashJSON_NewProtocolsAndDialFields(t *testing
 	if got := hysteria["network"]; got != "udp" {
 		t.Fatalf("hysteria network: got %v", got)
 	}
+	// PRISM-FIX: sing-quic's port parser requires the "start:end" shape and
+	// rejects a bare port with "bad port range". A bare Clash port is therefore
+	// widened to "1000:1000" instead of being passed through unchanged.
 	serverPorts := mustSliceField(t, hysteria, "server_ports")
-	if !containsAnyString(serverPorts, "1000") || !containsAnyString(serverPorts, "2000:3000") {
+	if !containsAnyString(serverPorts, "1000:1000") || !containsAnyString(serverPorts, "2000:3000") {
 		t.Fatalf("hysteria server_ports mismatch: %v", serverPorts)
 	}
 
@@ -1016,8 +1019,11 @@ func TestParseGeneralSubscription_ClashJSON_Hysteria2AdvancedFields(t *testing.T
 	if got := obj["hop_interval"]; got != "12s" {
 		t.Fatalf("hop_interval: got %v", got)
 	}
+	// PRISM-FIX: a bare "443" is rejected by sing-quic with "bad port range",
+	// so sing-box cannot build the outbound. The widened "443:443" is the shape
+	// sing-box actually accepts; the previous expectation encoded the failure.
 	serverPorts := mustSliceField(t, obj, "server_ports")
-	if !containsAnyString(serverPorts, "443") || !containsAnyString(serverPorts, "8443") {
+	if !containsAnyString(serverPorts, "443:443") || !containsAnyString(serverPorts, "8443:8443") {
 		t.Fatalf("server_ports: got %v", serverPorts)
 	}
 	obfs := mustMapField(t, obj, "obfs")
@@ -2925,4 +2931,226 @@ func containsAnyString(values []any, expected string) bool {
 		}
 	}
 	return false
+}
+
+// TestParseGeneralSubscription_ClashJSON_Hysteria2PortFormats pins the port
+// mapping contract: sing-quic's port parser only accepts the "start:end" shape,
+// so every other Clash spelling has to be widened before it reaches sing-box.
+// A bare port used to be passed through and made sing-box refuse to build the
+// outbound outright ("bad port range"), which no skip report ever surfaced.
+func TestParseGeneralSubscription_ClashJSON_Hysteria2PortFormats(t *testing.T) {
+	data := []byte(`{
+		"proxies": [
+			{
+				"name": "hy2-mixed-ports",
+				"type": "hysteria2",
+				"server": "hop.example.com",
+				"port": 443,
+				"password": "password",
+				"ports": "443, 8443, 20000-30000, 1000:2000"
+			}
+		]
+	}`)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	ports := mustSliceField(t, obj, "server_ports")
+	want := []string{"443:443", "8443:8443", "20000:30000", "1000:2000"}
+	if len(ports) != len(want) {
+		t.Fatalf("server_ports: got %v, want %v", ports, want)
+	}
+	for i, expected := range want {
+		if ports[i] != expected {
+			t.Fatalf("server_ports[%d]: got %v, want %v (all: %v)", i, ports[i], expected, ports)
+		}
+	}
+}
+
+// TestParseGeneralSubscription_ClashJSON_Hysteria2PortsWithoutPort covers the
+// port-hopping shape mihomo accepts: "ports" is present and "port" is not. Such
+// a node used to be dropped with "missing required fields"; the first hop port
+// is now the primary server_port.
+func TestParseGeneralSubscription_ClashJSON_Hysteria2PortsWithoutPort(t *testing.T) {
+	data := []byte(`{
+		"proxies": [
+			{
+				"name": "hy2-hop-only",
+				"type": "hysteria2",
+				"server": "hop.example.com",
+				"password": "password",
+				"ports": "20000-30000"
+			},
+			{
+				"name": "hy2-no-port-at-all",
+				"type": "hysteria2",
+				"server": "hop.example.com",
+				"password": "password"
+			}
+		]
+	}`)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected only the port-hopping node to parse, got %d", len(nodes))
+	}
+	if got := nodes[0].Tag; got != "hy2-hop-only" {
+		t.Fatalf("parsed the wrong node: %v", got)
+	}
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	if got := obj["server_port"]; got != float64(20000) {
+		t.Fatalf("server_port: got %v, want 20000", got)
+	}
+	ports := mustSliceField(t, obj, "server_ports")
+	if len(ports) != 1 || ports[0] != "20000:30000" {
+		t.Fatalf("server_ports: got %v", ports)
+	}
+}
+
+// TestParseGeneralSubscription_ClashJSON_Hysteria2BandwidthUnits pins the
+// bandwidth mapping: mihomo stores up/down as a string that may carry a unit
+// (utils.StringToBps), so "100 Mbps" and "1 Gbps" must reach sing-box as Mbps.
+func TestParseGeneralSubscription_ClashJSON_Hysteria2BandwidthUnits(t *testing.T) {
+	data := []byte(`{
+		"proxies": [
+			{
+				"name": "hy2-units",
+				"type": "hysteria2",
+				"server": "hy2.example.com",
+				"port": 443,
+				"password": "password",
+				"up": "100 Mbps",
+				"down": "1 Gbps"
+			},
+			{
+				"name": "hy2-plain-numbers",
+				"type": "hysteria2",
+				"server": "hy2.example.com",
+				"port": 443,
+				"password": "password",
+				"up": 20,
+				"down": "60"
+			}
+		]
+	}`)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 parsed nodes, got %d", len(nodes))
+	}
+	byTag := make(map[string]map[string]any, len(nodes))
+	for _, parsed := range nodes {
+		byTag[parsed.Tag] = parseNodeRaw(t, parsed.RawOptions)
+	}
+
+	units, ok := byTag["hy2-units"]
+	if !ok {
+		t.Fatalf("hy2-units was not parsed: %v", byTag)
+	}
+	if got := units["up_mbps"]; got != float64(100) {
+		t.Fatalf("up_mbps: got %v, want 100", got)
+	}
+	if got := units["down_mbps"]; got != float64(1000) {
+		t.Fatalf("down_mbps: got %v, want 1000", got)
+	}
+
+	plain, ok := byTag["hy2-plain-numbers"]
+	if !ok {
+		t.Fatalf("hy2-plain-numbers was not parsed: %v", byTag)
+	}
+	if got := plain["up_mbps"]; got != float64(20) {
+		t.Fatalf("up_mbps: got %v, want 20", got)
+	}
+	if got := plain["down_mbps"]; got != float64(60) {
+		t.Fatalf("down_mbps: got %v, want 60", got)
+	}
+}
+
+// TestParseGeneralSubscription_ClashJSON_TrojanSharedTLSFields pins the trojan
+// TLS contract: the branch has to use the shared Clash TLS mapping. Building the
+// tls map by hand dropped alpn, the uTLS fingerprint, the REALITY options and
+// the CA certificates even though the URI path maps all of them.
+func TestParseGeneralSubscription_ClashJSON_TrojanSharedTLSFields(t *testing.T) {
+	data := []byte(`{
+		"proxies": [
+			{
+				"name": "trojan-tls",
+				"type": "trojan",
+				"server": "trojan.example.com",
+				"port": 443,
+				"password": "password",
+				"alpn": ["h2", "http/1.1"],
+				"client-fingerprint": "chrome",
+				"ca": "/etc/ssl/certs/trojan.pem",
+				"ca-str": "-----BEGIN CERTIFICATE-----XYZ"
+			},
+			{
+				"name": "trojan-reality",
+				"type": "trojan",
+				"server": "trojan.example.com",
+				"port": 443,
+				"password": "password",
+				"reality-opts": {
+					"public-key": "PUBLIC-KEY-VALUE",
+					"short-id": "0123abcd"
+				}
+			}
+		]
+	}`)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 parsed nodes, got %d", len(nodes))
+	}
+	byTag := make(map[string]map[string]any, len(nodes))
+	for _, parsed := range nodes {
+		byTag[parsed.Tag] = parseNodeRaw(t, parsed.RawOptions)
+	}
+
+	plainTag, ok := byTag["trojan-tls"]
+	if !ok {
+		t.Fatalf("trojan-tls was not parsed: %v", byTag)
+	}
+	plain := mustMapField(t, plainTag, "tls")
+	alpn := mustSliceField(t, plain, "alpn")
+	if !containsAnyString(alpn, "h2") || !containsAnyString(alpn, "http/1.1") {
+		t.Fatalf("tls.alpn: got %v", alpn)
+	}
+	utls := mustMapField(t, plain, "utls")
+	if got := utls["fingerprint"]; got != "chrome" {
+		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	}
+	if got := plain["certificate_path"]; got != "/etc/ssl/certs/trojan.pem" {
+		t.Fatalf("tls.certificate_path: got %v", got)
+	}
+	certificates := mustSliceField(t, plain, "certificate")
+	if !containsAnyString(certificates, "-----BEGIN CERTIFICATE-----XYZ") {
+		t.Fatalf("tls.certificate: got %v", certificates)
+	}
+
+	realityTag, ok := byTag["trojan-reality"]
+	if !ok {
+		t.Fatalf("trojan-reality was not parsed: %v", byTag)
+	}
+	reality := mustMapField(t, mustMapField(t, realityTag, "tls"), "reality")
+	if got := reality["public_key"]; got != "PUBLIC-KEY-VALUE" {
+		t.Fatalf("tls.reality.public_key: got %v", got)
+	}
+	if got := reality["short_id"]; got != "0123abcd" {
+		t.Fatalf("tls.reality.short_id: got %v", got)
+	}
 }
