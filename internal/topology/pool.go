@@ -64,6 +64,11 @@ type GlobalNodePool struct {
 	maxConsecutiveFailures func() int
 	latencyDecayWindow     func() time.Duration
 	latencyAuthorities     func() []string
+	// logf is an optional diagnostic sink for probe-failure/recovery
+	// transitions (installed with SetLogf). nil disables logging entirely.
+	// It is only read from recorder paths, so it must be installed before
+	// background workers start.
+	logf func(format string, args ...any)
 }
 
 // PoolConfig configures the GlobalNodePool.
@@ -572,6 +577,13 @@ func (p *GlobalNodePool) SetOnNodeRemoved(fn func(hash node.Hash, entry *node.No
 	p.onNodeRemoved = fn
 }
 
+// SetLogf installs an optional diagnostic logger for probe-failure class
+// transitions and recoveries. A nil logger disables logging (no-op). It must
+// be called before background workers start.
+func (p *GlobalNodePool) SetLogf(logf func(format string, args ...any)) {
+	p.logf = logf
+}
+
 // NotifyNodeDirty triggers platform re-evaluation for a single node.
 // Used by OutboundManager after outbound creation to update routable views.
 func (p *GlobalNodePool) NotifyNodeDirty(hash node.Hash) {
@@ -584,12 +596,34 @@ func (p *GlobalNodePool) RangeNodes(fn func(node.Hash, *node.NodeEntry) bool) {
 	p.nodes.Range(fn)
 }
 
-// RecordResult records a probe or passive health-check result.
-// On success, resets FailureCount and clears circuit-breaker.
-// On failure, increments FailureCount and opens circuit-breaker if threshold is reached.
-// Notifies platforms only when circuit state changes (open/recover).
-// Fires OnNodeDynamicChanged only when dynamic fields actually change.
+// RecordResult records a probe or passive health-check result that carries no
+// classified reason. It is a thin wrapper over RecordOutcome so every existing
+// call site keeps the original semantics (failure count + circuit breaker).
+// With no class/detail the pool must not invent a probe-failure reason, so the
+// wrapper never attaches one.
 func (p *GlobalNodePool) RecordResult(hash node.Hash, success bool) {
+	p.RecordOutcome(hash, success, node.ProbeErrorNone, "")
+}
+
+// RecordOutcome records a probe or passive health-check result together with
+// the classified reason of an active-probe failure.
+//
+// Health semantics are identical to the original RecordResult:
+//   - success resets FailureCount and clears the circuit-breaker;
+//   - failure increments FailureCount and opens the circuit-breaker if the
+//     threshold is reached;
+//   - platforms are notified only when circuit state changes (open/recover);
+//   - OnNodeDynamicChanged fires only when dynamic fields actually change.
+//
+// Probe-failure bookkeeping (a separate axis from Entry.LastError, which means
+// the node could not be built at all):
+//   - success clears a previously recorded probe failure;
+//   - failure stores class/detail on the entry; a None class or an empty
+//     detail clears the record (see node.NodeEntry.SetProbeFailure);
+//   - the optional logf hook (SetLogf) is called ONLY on a failure-class
+//     change and on recovery, never on every failure: probes run continuously
+//     and logging each one would flood the log.
+func (p *GlobalNodePool) RecordOutcome(hash node.Hash, success bool, class node.ProbeErrorClass, detail string) {
 	entry, ok := p.nodes.Load(hash)
 	if !ok {
 		return
@@ -606,6 +640,12 @@ func (p *GlobalNodePool) RecordResult(hash node.Hash, success bool) {
 			dynamicChanged = true
 			circuitStateChanged = true
 		}
+		if prevClass, _, _ := entry.GetProbeFailure(); prevClass != node.ProbeErrorNone {
+			entry.ClearProbeFailure()
+			if p.logf != nil {
+				p.logf("[topology] node probe recovered: hash=%s", hash.Hex())
+			}
+		}
 	} else {
 		newCount := entry.FailureCount.Add(1)
 		dynamicChanged = true
@@ -615,6 +655,11 @@ func (p *GlobalNodePool) RecordResult(hash node.Hash, success bool) {
 			if entry.CircuitOpenSince.CompareAndSwap(0, time.Now().UnixNano()) {
 				circuitStateChanged = true
 			}
+		}
+		prevClass, _, _ := entry.GetProbeFailure()
+		entry.SetProbeFailure(class, detail, time.Now())
+		if class != node.ProbeErrorNone && class != prevClass && p.logf != nil {
+			p.logf("[topology] node probe failed: hash=%s class=%s detail=%s", hash.Hex(), class, detail)
 		}
 	}
 

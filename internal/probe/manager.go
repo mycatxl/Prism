@@ -746,7 +746,8 @@ func (m *ProbeManager) isLatencyProbeDue(
 }
 
 // probeEgress performs a single egress probe against a node via Cloudflare trace.
-// Writes back: RecordResult, RecordLatency (cloudflare.com), UpdateNodeEgressIP.
+// Writes back: RecordOutcome (success, or a classified failure reason),
+// RecordLatency (cloudflare.com), UpdateNodeEgressIP.
 func (m *ProbeManager) probeEgress(hash node.Hash, entry *node.NodeEntry) {
 	if m.fetcher == nil {
 		return
@@ -773,7 +774,8 @@ func (m *ProbeManager) probeEgress(hash node.Hash, entry *node.NodeEntry) {
 }
 
 // probeLatency performs a latency probe against a node using the configured test URL.
-// Writes back: RecordResult, RecordLatency.
+// Writes back: RecordOutcome (success, or a classified failure reason),
+// RecordLatency.
 func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testURL string) {
 	if m.fetcher == nil {
 		return
@@ -797,7 +799,7 @@ func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testU
 func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressProbeErrorStage, error) {
 	body, latency, err := m.fetcher(hash, egressTraceURL)
 	if err != nil {
-		m.pool.RecordResult(hash, false)
+		m.pool.RecordOutcome(hash, false, node.ClassifyProbeError(err), node.BoundedProbeErrorDetail(err))
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
 		return netip.Addr{}, egressProbeFetchError, err
 	}
@@ -810,6 +812,9 @@ func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressPro
 	ip, loc, err := ParseCloudflareTrace(body)
 	if err != nil {
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
+		// A parse failure is still a probe failure: it now counts against the
+		// node and records its reason (previously this path recorded nothing).
+		m.pool.RecordOutcome(hash, false, node.ProbeErrorParse, node.BoundedProbeErrorDetail(err))
 		return netip.Addr{}, egressProbeParseError, err
 	}
 	m.pool.UpdateNodeEgressIP(hash, &ip, loc)
@@ -827,7 +832,7 @@ func (m *ProbeManager) performLatencyProbe(hash node.Hash, testURL string) error
 	domain := netutil.ExtractDomain(testURL)
 	_, latency, err := m.fetcher(hash, testURL)
 	if err != nil {
-		m.pool.RecordResult(hash, false)
+		m.pool.RecordOutcome(hash, false, node.ClassifyProbeError(err), node.BoundedProbeErrorDetail(err))
 		m.pool.RecordLatency(hash, domain, nil)
 		return err
 	}

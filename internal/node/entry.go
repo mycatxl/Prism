@@ -61,7 +61,18 @@ type NodeEntry struct {
 	LastLatencyProbeAttempt          atomic.Int64
 	LastAuthorityLatencyProbeAttempt atomic.Int64
 	LastEgressUpdateAttempt          atomic.Int64
-	LatencyTable                     *LatencyTable // per-domain latency stats; nil if not initialized
+
+	// Probe-failure fields record WHY the last active probe attempt (egress or
+	// latency) failed. This is a different axis from LastError above:
+	// LastError means "the node could not be built at all" and drives the
+	// no-outbound unavailable/eviction judgements (ephemeral cleaner,
+	// subscription scheduler). Active probes run against buildable nodes, so
+	// these fields must never be conflated with LastError, never be touched by
+	// node-building paths, and never be used as a cleanup predicate.
+	probeErrorClass  atomic.Pointer[string] // nil = no probe failure recorded
+	probeErrorDetail atomic.Pointer[string] // nil = no probe failure recorded
+	probeErrorAt     atomic.Int64           // unix-nano of the failing probe attempt; 0 = none
+	LatencyTable     *LatencyTable          // per-domain latency stats; nil if not initialized
 
 	// Outbound instance for this node.
 	Outbound atomic.Pointer[adapter.Outbound]
@@ -421,4 +432,57 @@ func (e *NodeEntry) GetLastError() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.LastError
+}
+
+// SetProbeFailure records why the most recent active probe failed.
+//
+// Clearing semantics: passing ProbeErrorNone (no class) or an empty detail
+// clears any stored failure instead of storing a half-filled record. A failure
+// without a class or without a detail is unusable to every reader (logs, UI,
+// eviction heuristics), so "reason unknown" is represented as "no probe
+// failure recorded" rather than as a stale-looking entry. This keeps the
+// invariant: GetProbeFailure either returns a non-empty class + non-empty
+// detail + non-zero timestamp, or the cleared zero value.
+//
+// A zero at timestamp is replaced with time.Now() so a recorded failure always
+// carries a usable timestamp.
+//
+// This never touches LastError (build-time failures are a separate concern).
+func (e *NodeEntry) SetProbeFailure(class ProbeErrorClass, detail string, at time.Time) {
+	if class == ProbeErrorNone || detail == "" {
+		e.ClearProbeFailure()
+		return
+	}
+	if at.IsZero() {
+		at = time.Now()
+	}
+	classValue := string(class)
+	detailValue := detail
+	e.probeErrorClass.Store(&classValue)
+	e.probeErrorDetail.Store(&detailValue)
+	e.probeErrorAt.Store(at.UnixNano())
+}
+
+// ClearProbeFailure drops the recorded probe failure. It is called when an
+// active probe succeeds and never affects LastError.
+func (e *NodeEntry) ClearProbeFailure() {
+	e.probeErrorClass.Store(nil)
+	e.probeErrorDetail.Store(nil)
+	e.probeErrorAt.Store(0)
+}
+
+// GetProbeFailure returns the last recorded active-probe failure, or
+// (ProbeErrorNone, "", time.Time{}) when the node has no recorded failure.
+// The timestamp is UTC and is always non-zero for a non-cleared failure.
+func (e *NodeEntry) GetProbeFailure() (class ProbeErrorClass, detail string, at time.Time) {
+	classPtr := e.probeErrorClass.Load()
+	detailPtr := e.probeErrorDetail.Load()
+	ns := e.probeErrorAt.Load()
+	if classPtr == nil || *classPtr == "" || ns == 0 {
+		return ProbeErrorNone, "", time.Time{}
+	}
+	if detailPtr != nil {
+		detail = *detailPtr
+	}
+	return ProbeErrorClass(*classPtr), detail, time.Unix(0, ns).UTC()
 }
