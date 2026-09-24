@@ -398,7 +398,13 @@ func TestDecodeIPPureRules(t *testing.T) {
 	}
 }
 
-func TestIPPureSpecCoolsDownForAMinute(t *testing.T) {
+// TestIPPureSpecScopesLimitsPerNode pins the via-node limit split: the daily
+// budget is counted per node (the vendor's anonymous quota belongs to the
+// node's address) and the spec-level QPS is only the provider-wide valve that
+// keeps the whole inventory from reaching the vendor at once. The previous
+// "one query per minute" was a global gate that made a 287-node inventory take
+// hours to walk even though every node had its own untouched quota.
+func TestIPPureSpecScopesLimitsPerNode(t *testing.T) {
 	spec := NewIPPureProvider(IPPureOptions{}).Spec()
 	if spec.Kind != KindViaNode {
 		t.Fatalf("kind: %v", spec.Kind)
@@ -406,8 +412,8 @@ func TestIPPureSpecCoolsDownForAMinute(t *testing.T) {
 	if spec.DefaultDailyLimit != 500 {
 		t.Fatalf("daily limit: %d", spec.DefaultDailyLimit)
 	}
-	if got := time.Duration(float64(time.Second) / spec.DefaultQPS); got != time.Minute {
-		t.Fatalf("expected one query per minute, got %v", got)
+	if spec.DefaultQPS <= 0 || spec.DefaultQPS > 5 {
+		t.Fatalf("provider-wide QPS valve out of range: %v", spec.DefaultQPS)
 	}
 	if spec.DefaultTTL != 7*24*time.Hour {
 		t.Fatalf("ttl: %v", spec.DefaultTTL)

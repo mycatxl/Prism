@@ -190,6 +190,143 @@ func (s *Store) ConsumeProviderBudget(ctx context.Context, req BudgetRequest) (P
 	return st, nil
 }
 
+// ProviderNodeState is the per-node budget row of a via-node data source.
+type ProviderNodeState struct {
+	Provider        string
+	NodeHash        string
+	Day             string
+	Used            int
+	NextRequestAtNs int64
+}
+
+// ViaNodeBudgetRequest describes one via-node budget consumption attempt.
+type ViaNodeBudgetRequest struct {
+	Provider string
+	// NodeHash is the node the request leaves through. Its address is what the
+	// vendor sees, so the anonymous quota belongs to that node, not to Prism.
+	NodeHash string
+	Day      string
+	// NodeDailyLimit bounds this one node's lookups for the day (0 = unlimited).
+	NodeDailyLimit int
+	// GlobalQPS bounds the whole provider (0 = unlimited). It is the only
+	// protection the vendor gets, because it cannot attribute a via-node
+	// request to the Prism host at all.
+	GlobalQPS    float64
+	NowNs        int64
+	CredentialID string
+}
+
+// ConsumeViaNodeBudget atomically reserves one via-node lookup of one node.
+//
+// Two independent gates are evaluated inside one transaction:
+//
+//   - the per-node daily budget in provider_node_state, which stops Prism from
+//     re-polling a single node without limit, and
+//   - the provider-wide paused/blocked/next_request_at_ns state in
+//     provider_state, which stays the safety valve that keeps the whole
+//     inventory from reaching the vendor at once.
+//
+// The returned ProviderState carries an effective NextRequestAtNs whenever a
+// gate is closed, so the caller can park the item instead of blocking a worker
+// (§3.2 step 4, R4).
+func (s *Store) ConsumeViaNodeBudget(ctx context.Context, req ViaNodeBudgetRequest) (ProviderState, error) {
+	db, err := s.conn()
+	if err != nil {
+		return ProviderState{}, err
+	}
+	if strings.TrimSpace(req.Provider) == "" {
+		return ProviderState{}, fmt.Errorf("consume via-node budget: provider is required")
+	}
+	if strings.TrimSpace(req.NodeHash) == "" {
+		return ProviderState{}, fmt.Errorf("consume via-node budget: node_hash is required")
+	}
+	if req.NowNs <= 0 {
+		return ProviderState{}, fmt.Errorf("consume via-node budget: now_ns is required")
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return ProviderState{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	global, err := scanProviderState(tx.QueryRowContext(ctx, providerStateSelect+` WHERE provider = ?`, req.Provider))
+	if errors.Is(err, sql.ErrNoRows) {
+		global = ProviderState{Provider: req.Provider, Day: req.Day, CredentialID: req.CredentialID}
+	} else if err != nil {
+		return ProviderState{}, err
+	}
+	// A rotated credential automatically lifts a pause (§3.3, WP09 §1).
+	if req.CredentialID != "" && req.CredentialID != global.CredentialID {
+		global.Paused = false
+		global.ErrorCode = ""
+		global.CredentialID = req.CredentialID
+	}
+	if req.Day != "" && req.Day != global.Day {
+		global.Day = req.Day
+		global.NextRequestAtNs = 0
+	}
+
+	node, err := scanProviderNodeState(tx.QueryRowContext(ctx,
+		providerNodeStateSelect+` WHERE provider = ? AND node_hash = ?`, req.Provider, req.NodeHash))
+	if errors.Is(err, sql.ErrNoRows) {
+		node = ProviderNodeState{Provider: req.Provider, NodeHash: req.NodeHash, Day: req.Day}
+	} else if err != nil {
+		return ProviderState{}, err
+	}
+	if req.Day != "" && req.Day != node.Day {
+		node.Day = req.Day
+		node.Used = 0
+	}
+
+	// Every path persists both rows: a day rollover above is itself a state
+	// change that has to survive an early return.
+	settle := func(state ProviderState, cause error) (ProviderState, error) {
+		if upsertErr := upsertProviderStateTx(ctx, tx, global); upsertErr != nil {
+			return ProviderState{}, upsertErr
+		}
+		if upsertErr := upsertProviderNodeStateTx(ctx, tx, node); upsertErr != nil {
+			return ProviderState{}, upsertErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return ProviderState{}, commitErr
+		}
+		return state, cause
+	}
+
+	switch {
+	case global.Paused:
+		return settle(global, ErrProviderPaused)
+	case global.BlockedUntilNs > req.NowNs:
+		return settle(global, ErrProviderBlocked)
+	case req.NodeDailyLimit > 0 && node.Used >= req.NodeDailyLimit:
+		// This node's budget for the day is gone; the earliest retry is the
+		// next UTC day, which the caller weighs against its deferral bound.
+		state := global
+		state.Used = node.Used
+		state.NextRequestAtNs = nextUTCDayNs(req.NowNs)
+		return settle(state, ErrBudgetExhausted)
+	case global.NextRequestAtNs > req.NowNs:
+		return settle(global, ErrProviderNotReady)
+	}
+
+	node.Used++
+	global.Used++
+	if req.GlobalQPS > 0 {
+		global.NextRequestAtNs = req.NowNs + int64(float64(time.Second)/req.GlobalQPS)
+	}
+	// The caller compares Used against NodeDailyLimit, so report the node's own
+	// counter here; provider_state.used keeps accumulating the provider total.
+	state := global
+	state.Used = node.Used
+	return settle(state, nil)
+}
+
+// nextUTCDayNs returns the start of the next UTC day as Unix nanoseconds.
+func nextUTCDayNs(nowNs int64) int64 {
+	return time.Unix(0, nowNs).UTC().Truncate(24 * time.Hour).Add(24 * time.Hour).UnixNano()
+}
+
 // MarkProviderBlocked records a 429 cooldown.
 func (s *Store) MarkProviderBlocked(ctx context.Context, provider string, untilNs int64, errorCode string) error {
 	return s.patchProviderState(ctx, provider, func(st *ProviderState) {
@@ -554,6 +691,8 @@ const providerStateSelect = `SELECT provider, day, used, next_request_at_ns, blo
 const queueItemSelect = `SELECT provider, ip, priority, job_id, status, attempts,
 	next_run_at_ns, lease_owner, lease_until_ns, error_code, enqueued_at_ns FROM provider_queue`
 
+const providerNodeStateSelect = `SELECT provider, node_hash, day, used, next_request_at_ns FROM provider_node_state`
+
 func scanProviderState(row rowScanner) (ProviderState, error) {
 	var st ProviderState
 	var paused int
@@ -588,6 +727,24 @@ func upsertProviderStateTx(ctx context.Context, tx *sql.Tx, st ProviderState) er
 			credential_id      = excluded.credential_id`,
 		st.Provider, st.Day, st.Used, st.NextRequestAtNs, st.BlockedUntilNs,
 		boolToInt(st.Paused), st.ErrorCode, st.CredentialID)
+	return err
+}
+
+func scanProviderNodeState(row rowScanner) (ProviderNodeState, error) {
+	var st ProviderNodeState
+	err := row.Scan(&st.Provider, &st.NodeHash, &st.Day, &st.Used, &st.NextRequestAtNs)
+	return st, err
+}
+
+func upsertProviderNodeStateTx(ctx context.Context, tx *sql.Tx, st ProviderNodeState) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO provider_node_state (provider, node_hash, day, used, next_request_at_ns)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(provider, node_hash) DO UPDATE SET
+			day                = excluded.day,
+			used               = excluded.used,
+			next_request_at_ns = excluded.next_request_at_ns`,
+		st.Provider, st.NodeHash, st.Day, st.Used, st.NextRequestAtNs)
 	return err
 }
 

@@ -620,7 +620,7 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 		if !ok {
 			continue
 		}
-		wait, reason := e.consumeViaNodeBudget(ctx, setting, now)
+		wait, reason := e.consumeViaNodeBudget(ctx, setting, nodeHash, now)
 		if reason != "" {
 			skippedSources = append(skippedSources, spec.ID+": "+reason)
 			e.logf("[intel] via-node %s skipped: %s", spec.ID, reason)
@@ -662,17 +662,22 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 	return jobs.StepResult{Summary: summary}
 }
 
-// consumeViaNodeBudget applies the daily budget and the global QPS of one
-// via-node data source. It returns a wait duration when the item should be
-// parked, or a non-empty reason when the source must be skipped.
-func (e *stepExecutor) consumeViaNodeBudget(ctx context.Context, setting providers.Setting, now time.Time) (time.Duration, string) {
-	state, err := e.store.ConsumeProviderBudget(ctx, store.BudgetRequest{
-		Provider:     setting.Spec.ID,
-		Day:          store.DayString(now),
-		DailyLimit:   setting.DailyLimit,
-		QPS:          setting.QPS,
-		NowNs:        now.UnixNano(),
-		CredentialID: setting.CredentialID(),
+// consumeViaNodeBudget applies the per-node daily budget and the provider-wide
+// QPS valve of one via-node data source. Because the request leaves through the
+// node itself, the vendor's anonymous quota belongs to that node's address, so
+// the daily budget is counted per node and only the QPS valve is provider-wide
+// (it is what keeps the whole inventory from reaching the vendor at once). It
+// returns a wait duration when the item should be parked, or a non-empty reason
+// when the source must be skipped.
+func (e *stepExecutor) consumeViaNodeBudget(ctx context.Context, setting providers.Setting, nodeHash string, now time.Time) (time.Duration, string) {
+	state, err := e.store.ConsumeViaNodeBudget(ctx, store.ViaNodeBudgetRequest{
+		Provider:       setting.Spec.ID,
+		NodeHash:       nodeHash,
+		Day:            store.DayString(now),
+		NodeDailyLimit: setting.DailyLimit,
+		GlobalQPS:      setting.QPS,
+		NowNs:          now.UnixNano(),
+		CredentialID:   setting.CredentialID(),
 	})
 	if err == nil {
 		return 0, ""

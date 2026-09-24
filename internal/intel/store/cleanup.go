@@ -15,6 +15,7 @@ type CleanupPolicy struct {
 	ProviderQueueFailedAfter time.Duration // 7d
 	OrphanAfter              time.Duration // 30d
 	EgressHistoryPerNode     int           // 50
+	ProviderNodeStateAfter   time.Duration // 7d
 }
 
 // DefaultCleanupPolicy returns the retention rules of WP08 §6.
@@ -26,6 +27,7 @@ func DefaultCleanupPolicy() CleanupPolicy {
 		ProviderQueueFailedAfter: 7 * 24 * time.Hour,
 		OrphanAfter:              30 * 24 * time.Hour,
 		EgressHistoryPerNode:     50,
+		ProviderNodeStateAfter:   7 * 24 * time.Hour,
 	}
 }
 
@@ -38,8 +40,10 @@ type CleanupResult struct {
 	Evidence      int64 `json:"evidence"`
 	Checks        int64 `json:"checks"`
 	Assessments   int64 `json:"assessments"`
-	Vacuumed      bool  `json:"vacuumed"`
-	Optimized     bool  `json:"optimized"`
+	// ProviderNodeState counts the per-node via-node budget rows of past days.
+	ProviderNodeState int64 `json:"provider_node_state"`
+	Vacuumed          bool  `json:"vacuumed"`
+	Optimized         bool  `json:"optimized"`
 }
 
 // Cleanup applies the retention rules of §6. Orphan deletion uses the node
@@ -98,6 +102,15 @@ func (s *Store) Cleanup(ctx context.Context, now time.Time, policy CleanupPolicy
 		result.Evidence = orphans.Evidence
 		result.Checks = orphans.Checks
 		result.Assessments = orphans.Assessments
+	}
+
+	if policy.ProviderNodeStateAfter > 0 {
+		dayCutoff := now.UTC().Add(-policy.ProviderNodeStateAfter).Format("2006-01-02")
+		n, err := s.DeleteProviderNodeStateBefore(ctx, dayCutoff)
+		if err != nil {
+			return result, err
+		}
+		result.ProviderNodeState = n
 	}
 
 	if err := s.Optimize(); err != nil {
@@ -165,4 +178,19 @@ func (s *Store) countOrphansTx(ctx context.Context, db *sql.DB, cutoff int64) (o
 		return out, err
 	}
 	return out, nil
+}
+
+// DeleteProviderNodeStateBefore deletes the per-node via-node budget rows whose
+// day rolled over before the cutoff. A row only ever carries a same-day
+// counter, so a stale one is dead weight (R4: every table stays bounded).
+func (s *Store) DeleteProviderNodeStateBefore(ctx context.Context, dayCutoff string) (int64, error) {
+	db, err := s.conn()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.ExecContext(ctx, `DELETE FROM provider_node_state WHERE day < ?`, dayCutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

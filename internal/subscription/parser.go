@@ -1327,7 +1327,20 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 	tag := strings.TrimSpace(firstNonEmpty(getString(proxy, "name"), getString(proxy, "tag")))
 	server := strings.TrimSpace(getString(proxy, "server"))
 	port, ok := getUint(proxy, "port")
-	if !ok || server == "" {
+	if !ok {
+		// Hysteria2 port hopping: mihomo accepts a node that only declares
+		// "ports" (adapter/outbound/hysteria2.go only fails when port and ports
+		// are both empty). The first hop port becomes the primary server_port.
+		if nodeType != "hysteria2" && nodeType != "hy2" {
+			return ParsedNode{}, false
+		}
+		hop, hopOK := firstHysteriaHopPort(proxy)
+		if !hopOK {
+			return ParsedNode{}, false
+		}
+		port = hop
+	}
+	if server == "" {
 		return ParsedNode{}, false
 	}
 
@@ -1420,9 +1433,10 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 			"enabled":     tlsEnabled,
 			"server_name": firstNonEmpty(strings.TrimSpace(serverName), server),
 		}
-		if insecure, ok := getBool(proxy, "skip-cert-verify", "allowInsecure", "insecure"); ok && insecure {
-			tls["insecure"] = true
-		}
+		// trojan shares the generic Clash TLS mapping with vless/vmess: building
+		// the tls map by hand here dropped alpn, the uTLS fingerprint, the
+		// REALITY options and the "ca"/"ca-str" certificates.
+		applyClashTLSFields(tls, proxy)
 		outbound := map[string]any{
 			"type":        "trojan",
 			"tag":         defaultTag(tag, "trojan", server, port),
@@ -1474,10 +1488,10 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		if ports := normalizeHysteriaPortList(firstNonEmpty(getString(proxy, "ports"), getString(proxy, "mport"))); len(ports) > 0 {
 			outbound["server_ports"] = ports
 		}
-		if upMbps, ok := getUint(proxy, "up", "up-mbps", "up_mbps"); ok {
+		if upMbps, ok := getMbps(proxy, "up", "up-mbps", "up_mbps"); ok {
 			outbound["up_mbps"] = upMbps
 		}
-		if downMbps, ok := getUint(proxy, "down", "down-mbps", "down_mbps"); ok {
+		if downMbps, ok := getMbps(proxy, "down", "down-mbps", "down_mbps"); ok {
 			outbound["down_mbps"] = downMbps
 		}
 		if hopInterval, ok := getDurationString(proxy, "s", "hop-interval", "hop_interval"); ok {
@@ -1930,6 +1944,13 @@ func normalizeHysteriaPortRange(raw string) string {
 	}
 	compact := strings.ReplaceAll(portRange, " ", "")
 	if strings.Count(compact, "-") != 1 {
+		// A bare port ("443") is the other form Clash allows inside "ports".
+		// sing-quic's port parser requires the "start:end" shape and rejects a
+		// bare number with "bad port range", which makes sing-box refuse to
+		// build the outbound at all, so widen it to "443:443".
+		if isDecimalString(compact) {
+			return compact + ":" + compact
+		}
 		return portRange
 	}
 	start, end, ok := strings.Cut(compact, "-")
@@ -1946,6 +1967,24 @@ func normalizeHysteriaPortRange(raw string) string {
 		return portRange
 	}
 	return start + ":" + end
+}
+
+// firstHysteriaHopPort returns the first port of a Clash "ports"/"mport" list.
+// It is the port a hysteria2 node without an explicit "port" connects to first.
+func firstHysteriaHopPort(proxy map[string]any) (uint64, bool) {
+	for _, candidate := range normalizeHysteriaPortList(firstNonEmpty(
+		getString(proxy, "ports"),
+		getString(proxy, "mport"),
+	)) {
+		head, _, _ := strings.Cut(candidate, ":")
+		if head == "" {
+			continue
+		}
+		if value, err := strconv.ParseUint(head, 10, 16); err == nil && value > 0 {
+			return value, true
+		}
+	}
+	return 0, false
 }
 
 func isDecimalString(raw string) bool {
@@ -4141,6 +4180,16 @@ func setTLSFromClash(outbound map[string]any, proxy map[string]any, key string) 
 	)); serverName != "" {
 		tls["server_name"] = serverName
 	}
+	applyClashTLSFields(tls, proxy)
+	outbound["tls"] = tls
+}
+
+// applyClashTLSFields copies the shared Clash TLS keys onto an already built
+// tls map: skip-cert-verify, alpn, the uTLS fingerprint, the REALITY options
+// and the CA certificates. A branch that cannot use setTLSFromClash because it
+// owns the "enabled"/"server_name" defaults (trojan, hysteria2) calls this
+// directly, so no branch can silently drop one of these fields again.
+func applyClashTLSFields(tls map[string]any, proxy map[string]any) {
 	if insecure, ok := getBool(proxy, "skip-cert-verify", "insecure", "allowInsecure"); ok && insecure {
 		tls["insecure"] = true
 	}
@@ -4155,7 +4204,6 @@ func setTLSFromClash(outbound map[string]any, proxy map[string]any, key string) 
 	))
 	applyClashRealityToTLS(tls, proxy)
 	applyTLSCertificateFromClash(tls, proxy)
-	outbound["tls"] = tls
 }
 
 func applyClashRealityToTLS(tls map[string]any, proxy map[string]any) {
@@ -4804,6 +4852,56 @@ func getUint(m map[string]any, keys ...string) (uint64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// getMbps reads a Clash bandwidth value the way mihomo's utils.StringToBps
+// does: a bare number means Mbps and a unit suffix ("100 Mbps", "1 Gbps") is
+// converted. sing-box wants an integer number of Mbps in up_mbps/down_mbps; a
+// value Prism cannot read stays "not set" instead of being guessed.
+func getMbps(m map[string]any, keys ...string) (uint64, bool) {
+	for _, key := range keys {
+		v, ok := m[key]
+		if !ok || v == nil {
+			continue
+		}
+		if text, isText := v.(string); isText {
+			if mbps, ok := parseMbps(text); ok {
+				return mbps, true
+			}
+			continue
+		}
+		// A YAML/JSON number is already a count of Mbps.
+		return getUint(m, key)
+	}
+	return 0, false
+}
+
+// parseMbps converts "100", "100 mbps", "1 Gbps" and friends into whole Mbps.
+func parseMbps(raw string) (uint64, bool) {
+	text := strings.ToLower(strings.TrimSpace(raw))
+	if text == "" {
+		return 0, false
+	}
+	multiplier := 1.0
+	switch {
+	case strings.HasSuffix(text, "tbps"):
+		multiplier, text = 1_000_000, strings.TrimSuffix(text, "tbps")
+	case strings.HasSuffix(text, "gbps"):
+		multiplier, text = 1_000, strings.TrimSuffix(text, "gbps")
+	case strings.HasSuffix(text, "kbps"):
+		multiplier, text = 0.001, strings.TrimSuffix(text, "kbps")
+	case strings.HasSuffix(text, "mbps"):
+		multiplier, text = 1, strings.TrimSuffix(text, "mbps")
+	case strings.HasSuffix(text, "bps"):
+		multiplier, text = 0.000001, strings.TrimSuffix(text, "bps")
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	// The negated conjunction is false for NaN, so a malformed or absurd value
+	// is rejected instead of being turned into a bandwidth cap.
+	if err != nil || !(value >= 0 && value <= 1_000_000) {
+		return 0, false
+	}
+	return uint64(value * multiplier), true
 }
 
 func getBool(m map[string]any, keys ...string) (bool, bool) {

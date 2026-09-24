@@ -125,12 +125,14 @@ func NewIPPureProvider(opts IPPureOptions) *IPPure {
 	return &IPPure{
 		spec: Spec{
 			ID: "ippure", Name: "IPPure", Website: "https://ippure.com/MyIP-Info-API",
-			Terms: "IPPure's terms may restrict bulk or systematic use; Prism calls it at most " +
-				"once per 60 seconds and defaults to 500 lookups per day. Check the vendor " +
-				"conditions yourself before raising the limits.",
+			Terms: "IPPure's terms may restrict bulk or systematic use. The query runs through " +
+				"the node, so the vendor sees that node's address and the quota belongs to it: " +
+				"Prism counts a per-node daily budget (default 500) and keeps a provider-wide " +
+				"QPS valve (default 2/s) so the whole inventory never arrives at once. Check " +
+				"the vendor conditions yourself before raising these limits.",
 			Kind: KindViaNode, Profile: IPPureProfile,
 			RequiresKey: false, DefaultEnabled: true,
-			DefaultDailyLimit: 500, DefaultQPS: 1.0 / 60.0, BatchSize: 1,
+			DefaultDailyLimit: 500, DefaultQPS: 2, BatchSize: 1,
 			DefaultTTL: ttl, SupportsIPv6: true,
 		},
 		url: target, ttl: ttl, timeout: timeout, now: now,
@@ -282,8 +284,9 @@ func NewIPAPIProvider(opts IPAPIOptions) *IPAPI {
 			ID: "ip_api", Name: "ip-api.com", Website: "https://ip-api.com/",
 			Terms: "The free endpoint is HTTP-only, limited to 45 requests per minute per " +
 				"source address and is not licensed for commercial use. Because the query runs " +
-				"through the node, the quota belongs to the node's own egress address. Prism " +
-				"limits the whole provider to 5 queries per second.",
+				"through the node, that 45/minute budget belongs to the node's own egress " +
+				"address, so the daily budget Prism counts is per node. The provider-wide 5 " +
+				"queries per second valve only keeps the whole inventory from arriving at once.",
 			Kind: KindViaNode, Profile: IPAPIProfile,
 			RequiresKey: false, DefaultEnabled: true,
 			DefaultDailyLimit: 0, DefaultQPS: 5, BatchSize: 1,
