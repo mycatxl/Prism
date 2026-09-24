@@ -700,9 +700,12 @@ func redirectHostMatches(location, needle string) bool {
 	return strings.EqualFold(host, needle)
 }
 
-// extractRegion pulls a two-letter region code out of one step body.
+// extractRegion pulls a two-letter region code out of one step: the body first,
+// then the configured response headers. A redirect with an empty body only
+// carries the region in a header (Netflix answers 301 with a region-prefixed
+// Location and no body), which is what header_regex covers.
 func extractRegion(spec *RegionSpec, steps map[string]stepResult) string {
-	if spec == nil || spec.compiled == nil {
+	if spec == nil || (spec.compiled == nil && len(spec.headerRegex) == 0) {
 		return ""
 	}
 	step, ok := steps[spec.Step]
@@ -712,7 +715,22 @@ func extractRegion(spec *RegionSpec, steps map[string]stepResult) string {
 			break
 		}
 	}
-	match := spec.compiled.FindStringSubmatch(step.Body)
+	if spec.compiled != nil {
+		if region := regionFromMatch(spec.compiled.FindStringSubmatch(step.Body)); region != "" {
+			return region
+		}
+	}
+	for _, pattern := range spec.headerRegex {
+		if region := regionFromMatch(pattern.re.FindStringSubmatch(step.Header.Get(pattern.name))); region != "" {
+			return region
+		}
+	}
+	return ""
+}
+
+// regionFromMatch normalises the first capture group of one regexp match into a
+// two-letter, upper-case region code; "" when it is not a region.
+func regionFromMatch(match []string) string {
 	if len(match) < 2 {
 		return ""
 	}

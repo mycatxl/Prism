@@ -3,6 +3,7 @@ package routing
 import (
 	"errors"
 	"math/rand/v2"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -23,6 +24,9 @@ var randomRouteRNGPool = sync.Pool{
 // does not do extra pool scans/availability validation on the hot path.
 // Post-pick race handling (node removed right after selection) is handled by
 // the caller in RouteRequest.
+//
+// It performs no candidate exclusion; see randomRouteAvoiding for the WP10 §3
+// rotation-avoidance variant.
 func randomRoute(
 	plat *platform.Platform,
 	stats *IPLoadStats,
@@ -31,34 +35,66 @@ func randomRoute(
 	authorities []string,
 	p2cWindow time.Duration,
 ) (node.Hash, error) {
+	h, _, err := randomRouteAvoiding(plat, stats, pool, targetDomain, authorities, p2cWindow, netip.Addr{})
+	return h, err
+}
+
+// randomRouteAvoiding selects a routable node using P2C with latency/load
+// scoring while excluding candidates whose egress IP equals avoidIP (WP10 §3
+// rotation avoidance). The second return value reports that every candidate
+// shared avoidIP, so the unfiltered pick had to be used; the caller records
+// rotation_fallback_same_ip for that case.
+func randomRouteAvoiding(
+	plat *platform.Platform,
+	stats *IPLoadStats,
+	pool PoolAccessor,
+	targetDomain string,
+	authorities []string,
+	p2cWindow time.Duration,
+	avoidIP netip.Addr,
+) (node.Hash, bool, error) {
 	view := plat.View()
 	size := view.Size()
 	if size == 0 {
-		return node.Zero, ErrNoAvailableNodes
+		return node.Zero, false, ErrNoAvailableNodes
 	}
 
 	rng := randomRouteRNGPool.Get().(*rand.Rand)
 	defer randomRouteRNGPool.Put(rng)
 
-	pick := func() (node.Hash, bool) {
+	pickAny := func() (node.Hash, bool) {
 		return view.RandomPick(rng)
+	}
+	pick := pickAny
+	if avoidIP.IsValid() {
+		pick = func() (node.Hash, bool) {
+			return randomPickExcludingEgressIP(view, rng, pool, avoidIP)
+		}
 	}
 
 	// Pick 1st candidate.
 	h1, ok1 := pick()
+	fallbackSameIP := false
+	if !ok1 && avoidIP.IsValid() {
+		// Every routable candidate shares the account's previous egress IP:
+		// fall back to the unfiltered pick and report the fallback.
+		fallbackSameIP = true
+		pick = pickAny
+		h1, ok1 = pick()
+	}
 	if !ok1 {
-		return node.Zero, ErrNoAvailableNodes
+		return node.Zero, false, ErrNoAvailableNodes
 	}
 
 	// If view has one node, use it directly.
 	if size == 1 {
-		return h1, nil
+		return h1, fallbackSameIP, nil
 	}
 
 	// Pick 2nd candidate; best-effort to make it distinct.
 	h2, ok2 := pick()
 	if !ok2 {
-		return h1, nil
+		return h1, fallbackSameIP, nil
 	}
 	if h2 == h1 {
 		for i := 0; i < 3; i++ {
@@ -72,7 +108,7 @@ func randomRoute(
 			}
 		}
 		if h2 == h1 {
-			return h1, nil
+			return h1, fallbackSameIP, nil
 		}
 	}
 
@@ -88,7 +124,34 @@ func randomRoute(
 	if s1 < s2 {
 		selected = h1
 	}
-	return selected, nil
+	return selected, fallbackSameIP, nil
+}
+
+// randomPickExcludingEgressIP returns a uniformly random routable hash whose
+// egress IP differs from avoidIP. The view's O(1) random pick cannot express a
+// predicate, so this walks the view with reservoir sampling; it only runs for
+// accounts that hold a live rotation tombstone.
+func randomPickExcludingEgressIP(
+	view platform.ReadOnlyView,
+	rng *rand.Rand,
+	pool PoolAccessor,
+	avoidIP netip.Addr,
+) (node.Hash, bool) {
+	var (
+		chosen node.Hash
+		seen   uint64
+	)
+	view.Range(func(h node.Hash) bool {
+		if entry, ok := pool.GetEntry(h); ok && entry.GetEgressIP() == avoidIP {
+			return true
+		}
+		seen++
+		if rng.Uint64()%seen == 0 {
+			chosen = h
+		}
+		return true
+	})
+	return chosen, seen > 0
 }
 
 // compareLatencies determines the latency values for h1 and h2.

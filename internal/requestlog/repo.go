@@ -2,6 +2,7 @@ package requestlog
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -18,7 +19,7 @@ import (
 	"prism/internal/state"
 )
 
-const logSummarySelectColumns = "id, ts_ns, proxy_type, client_ip, platform_id, platform_name, account, target_host, target_url, node_hash, node_tag, egress_ip, duration_ns, first_byte_duration_ns, net_ok, http_method, http_status, prism_error, upstream_stage, upstream_err_kind, upstream_errno, upstream_err_msg, ingress_bytes, egress_bytes, payload_present, req_headers_len, req_body_len, resp_headers_len, resp_body_len, req_headers_truncated, req_body_truncated, resp_headers_truncated, resp_body_truncated"
+const logSummarySelectColumns = "id, ts_ns, proxy_type, client_ip, platform_id, platform_name, account, target_host, target_url, node_hash, node_tag, egress_ip, duration_ns, first_byte_duration_ns, net_ok, http_method, http_status, prism_error, upstream_stage, upstream_err_kind, upstream_errno, upstream_err_msg, events, ingress_bytes, egress_bytes, payload_present, req_headers_len, req_body_len, resp_headers_len, resp_body_len, req_headers_truncated, req_body_truncated, resp_headers_truncated, resp_body_truncated"
 
 // Repo manages rolling SQLite databases for request logs.
 // Each DB is named request_logs-<unix_ms>.db and lives in logDir.
@@ -119,11 +120,12 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 		target_host, target_url, node_hash, node_tag, egress_ip,
 		duration_ns, first_byte_duration_ns, net_ok, http_method, http_status,
 		prism_error, upstream_stage, upstream_err_kind, upstream_errno, upstream_err_msg,
+		events,
 		ingress_bytes, egress_bytes,
 		payload_present,
 		req_headers_len, req_body_len, resp_headers_len, resp_body_len,
 		req_headers_truncated, req_body_truncated, resp_headers_truncated, resp_body_truncated
-	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
 		return 0, fmt.Errorf("requestlog repo prepare log: %w", err)
 	}
@@ -159,6 +161,7 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 			e.TargetHost, e.TargetURL, e.NodeHash, e.NodeTag, e.EgressIP,
 			e.DurationNs, e.FirstByteDurationNs, netOK, e.HTTPMethod, e.HTTPStatus,
 			e.PrismError, e.UpstreamStage, e.UpstreamErrKind, e.UpstreamErrno, e.UpstreamErrMsg,
+			marshalLogEvents(e.Events),
 			e.IngressBytes, e.EgressBytes,
 			hasPayload,
 			e.ReqHeadersLen, e.ReqBodyLen, e.RespHeadersLen, e.RespBodyLen,
@@ -225,8 +228,10 @@ type LogSummary struct {
 	UpstreamErrKind     string `json:"upstream_err_kind"`
 	UpstreamErrno       string `json:"upstream_errno"`
 	UpstreamErrMsg      string `json:"upstream_err_msg"`
-	IngressBytes        int64  `json:"ingress_bytes"`
-	EgressBytes         int64  `json:"egress_bytes"`
+	// Events lists routing advisories such as rotation_fallback_same_ip (WP10 §3).
+	Events       []string `json:"events"`
+	IngressBytes int64    `json:"ingress_bytes"`
+	EgressBytes  int64    `json:"egress_bytes"`
 
 	PayloadPresent       bool `json:"payload_present"`
 	ReqHeadersLen        int  `json:"req_headers_len"`
@@ -669,12 +674,14 @@ type rowScanner interface {
 func scanLogSummary(s rowScanner) (LogSummary, error) {
 	var row LogSummary
 	var netOK, payloadPresent, rht, rbt, rsht, rsbt int
+	var eventsRaw string
 	err := s.Scan(
 		&row.ID, &row.TsNs, &row.ProxyType, &row.ClientIP,
 		&row.PlatformID, &row.PlatformName, &row.Account,
 		&row.TargetHost, &row.TargetURL, &row.NodeHash, &row.NodeTag, &row.EgressIP,
 		&row.DurationNs, &row.FirstByteDurationNs, &netOK, &row.HTTPMethod, &row.HTTPStatus,
 		&row.PrismError, &row.UpstreamStage, &row.UpstreamErrKind, &row.UpstreamErrno, &row.UpstreamErrMsg,
+		&eventsRaw,
 		&row.IngressBytes, &row.EgressBytes,
 		&payloadPresent,
 		&row.ReqHeadersLen, &row.ReqBodyLen, &row.RespHeadersLen, &row.RespBodyLen,
@@ -689,7 +696,33 @@ func scanLogSummary(s rowScanner) (LogSummary, error) {
 	row.ReqBodyTruncated = rbt != 0
 	row.RespHeadersTruncated = rsht != 0
 	row.RespBodyTruncated = rsbt != 0
+	row.Events = unmarshalLogEvents(eventsRaw)
 	return row, nil
+}
+
+// marshalLogEvents encodes the routing advisories of one request for storage.
+func marshalLogEvents(events []string) string {
+	if len(events) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(events)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// unmarshalLogEvents decodes a stored event list; malformed values decode to nil
+// rather than failing the whole row.
+func unmarshalLogEvents(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var events []string
+	if err := json.Unmarshal([]byte(raw), &events); err != nil {
+		return nil
+	}
+	return events
 }
 
 func boolToInt(b bool) int {

@@ -1018,3 +1018,44 @@ func TestMarkNodeRemovedDirty_DeletesStaticDynamicAndLatency(t *testing.T) {
 		t.Fatalf("node_latency not deleted: %+v", latencies)
 	}
 }
+
+func TestLoadRuntimeConfig_EgressTraceURLEnvOverrideAndLegacyFallback(t *testing.T) {
+	root := t.TempDir()
+	engine, closer, err := state.PersistenceBootstrap(filepath.Join(root, "state"), filepath.Join(root, "cache"))
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	// No persisted config: the shipped default applies.
+	if got := loadRuntimeConfig(engine, &config.EnvConfig{}).EgressTraceURL; got != config.DefaultEgressTraceURL {
+		t.Fatalf("default egress_trace_url: got %q, want %q", got, config.DefaultEgressTraceURL)
+	}
+
+	const offline = "http://127.0.0.1:18080/cdn-cgi/trace"
+	persisted := config.NewDefaultRuntimeConfig()
+	if err := engine.SaveSystemConfig(persisted, 1, time.Now().UnixNano()); err != nil {
+		t.Fatalf("SaveSystemConfig: %v", err)
+	}
+
+	// PRISM_EGRESS_TRACE_URL wins over the persisted value, so an offline
+	// deployment takes effect on every start...
+	if got := loadRuntimeConfig(engine, &config.EnvConfig{EgressTraceURL: offline}).EgressTraceURL; got != offline {
+		t.Fatalf("env egress_trace_url: got %q, want %q", got, offline)
+	}
+	// ... while an unset variable keeps the persisted value untouched.
+	if got := loadRuntimeConfig(engine, &config.EnvConfig{}).EgressTraceURL; got != persisted.EgressTraceURL {
+		t.Fatalf("persisted egress_trace_url: got %q, want %q", got, persisted.EgressTraceURL)
+	}
+
+	// A config row persisted before the field existed decodes to "": it must be
+	// normalised to the shipped default instead of leaving the target empty.
+	legacy := config.NewDefaultRuntimeConfig()
+	legacy.EgressTraceURL = ""
+	if err := engine.SaveSystemConfig(legacy, 2, time.Now().UnixNano()); err != nil {
+		t.Fatalf("SaveSystemConfig(legacy): %v", err)
+	}
+	if got := loadRuntimeConfig(engine, &config.EnvConfig{}).EgressTraceURL; got != config.DefaultEgressTraceURL {
+		t.Fatalf("legacy row egress_trace_url: got %q, want %q", got, config.DefaultEgressTraceURL)
+	}
+}

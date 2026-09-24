@@ -427,3 +427,31 @@ func TestPatchRuntimeConfig_LatencyTestURLAutoAddsAuthority(t *testing.T) {
 		t.Fatalf("expected gstatic.com to be auto-added, got %v", updated.LatencyAuthorities)
 	}
 }
+
+func TestPatchRuntimeConfig_EgressTraceURLTakesEffect(t *testing.T) {
+	h := newPatchHarness(t)
+
+	if got := h.runtimeCfg.Load().EgressTraceURL; got != config.DefaultEgressTraceURL {
+		t.Fatalf("default egress_trace_url: got %q, want %q", got, config.DefaultEgressTraceURL)
+	}
+
+	const target = "http://127.0.0.1:18080/cdn-cgi/trace"
+	updated, err := h.cp.PatchRuntimeConfig([]byte(`{"egress_trace_url":"http://127.0.0.1:18080/cdn-cgi/trace"}`))
+	if err != nil {
+		t.Fatalf("PatchRuntimeConfig: %v", err)
+	}
+	if updated.EgressTraceURL != target {
+		t.Fatalf("patched egress_trace_url: got %q, want %q", updated.EgressTraceURL, target)
+	}
+	if live := h.runtimeCfg.Load().EgressTraceURL; live != target {
+		t.Fatalf("runtime pointer egress_trace_url: got %q, want %q", live, target)
+	}
+
+	persisted, _, err := h.engine.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	if persisted.EgressTraceURL != target {
+		t.Fatalf("persisted egress_trace_url: got %q, want %q", persisted.EgressTraceURL, target)
+	}
+}

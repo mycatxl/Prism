@@ -62,9 +62,10 @@ func (r *ScheduledRotator) sweep() {
 
 	// Collect platforms with scheduled rotation enabled
 	type platformInfo struct {
-		platID   string
-		interval time.Duration
-		state    *PlatformRoutingState
+		platID      string
+		interval    time.Duration
+		stickyTTLNs int64
+		state       *PlatformRoutingState
 	}
 	platforms := make([]platformInfo, 0)
 
@@ -90,9 +91,10 @@ func (r *ScheduledRotator) sweep() {
 		}
 
 		platforms = append(platforms, platformInfo{
-			platID:   plat.ID,
-			interval: interval,
-			state:    state,
+			platID:      plat.ID,
+			interval:    interval,
+			stickyTTLNs: plat.StickyTTLNs,
+			state:       state,
 		})
 		return true
 	})
@@ -121,16 +123,16 @@ func (r *ScheduledRotator) sweep() {
 
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(platID string, interval time.Duration, state *PlatformRoutingState) {
+		go func(platID string, interval time.Duration, stickyTTLNs int64, state *PlatformRoutingState) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			r.rotatePlatformLeases(platID, interval, state, nowNs)
-		}(info.platID, info.interval, info.state)
+			r.rotatePlatformLeases(platID, interval, stickyTTLNs, state, nowNs)
+		}(info.platID, info.interval, info.stickyTTLNs, info.state)
 	}
 	wg.Wait()
 }
 
-func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Duration, state *PlatformRoutingState, nowNs int64) {
+func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Duration, stickyTTLNs int64, state *PlatformRoutingState, nowNs int64) {
 	intervalNs := int64(interval)
 
 	// Collect accounts that need rotation
@@ -155,6 +157,7 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 	// and this point a concurrent request may have replaced the lease, and
 	// deleting that fresh lease would rotate an account twice.
 	floorNs := nowNs - intervalNs
+	tombstoneTTL := rotationTombstoneTTL(interval, stickyTTLNs)
 	for _, account := range candidates {
 		select {
 		case <-r.stopCh:
@@ -162,7 +165,10 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 		default:
 		}
 
-		// Delete the lease to trigger re-routing on next request.
-		r.router.DeleteLeaseIfOlderThan(platID, account, floorNs)
+		// Delete the lease to trigger re-routing on next request and remember
+		// its egress IP so the next lease avoids it (WP10 §3).
+		if lease, deleted := r.router.DeleteLeaseIfOlderThan(platID, account, floorNs); deleted {
+			r.router.recordRotationTombstone(platID, account, lease.EgressIP, nowNs, tombstoneTTL)
+		}
 	}
 }

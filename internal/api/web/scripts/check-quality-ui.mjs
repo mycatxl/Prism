@@ -20,6 +20,21 @@ export async function verifyQualityViews({ page, origin, adminToken, screenshots
       { provider: "ippure", configured: true, state: mode === "pending" ? "unobserved" : mode === "expired" ? "stale" : "valid", evidence: mode === "pending" ? null : { ...pure, valid_until: mode === "expired" ? past : future } },
     ], assessment: { state: mode === "pending" ? "partial" : mode === "expired" ? "stale" : "valid", score_source: "ippure", purity_score: mode === "reviewed" ? 95 : null, purity_band: mode === "reviewed" ? "excellent" : "unknown", network_type: "business", network_source: "proxycheck", native: mode === "pending" ? null : false, verdict: mode === "expired" ? "high_risk" : "review", reasons: mode === "expired" ? ["COMPROMISED"] : ["VPN_DETECTED"] } };
   }
+  // WP10 renders the node quality column from `intel` (the purity assessment),
+  // not from the legacy `quality` envelope the old quality page consumed.
+  function intelFor(m) {
+    return {
+      state: m === "pending" ? "pending" : m === "expired" ? "stale" : "valid",
+      egress_ipv4: ip, egress_ipv6: "", colo: "", asn: 15169,
+      as_org: "Synthetic UI fixture", country: "US", city: "", ip_type: "business",
+      native: m === "pending" ? null : false,
+      purity_score: m === "reviewed" ? 95 : null,
+      purity_band: m === "reviewed" ? "excellent" : "unknown",
+      confidence: "medium",
+      verdict: m === "expired" ? "high_risk" : "review",
+      flags: [], checks: {}, assessed_at: now,
+    };
+  }
   const match = url => url.pathname === "/api/v1/nodes" || url.pathname === "/api/v1/nodes/" + node.node_hash || url.pathname === "/api/v1/nodes/" + node.node_hash + "/actions/review-ippure" || url.pathname === "/api/v1/quality/status";
   const handler = async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
@@ -30,7 +45,7 @@ export async function verifyQualityViews({ page, origin, adminToken, screenshots
     }
     const response = await route.fetch();
     const body = await response.json();
-    const decorate = item => item.node_hash === node.node_hash ? { ...item, egress_ip: ip, region: "US", quality: quality() } : item;
+    const decorate = item => item.node_hash === node.node_hash ? { ...item, egress_ip: ip, region: "US", quality: quality(), intel: intelFor(mode) } : item;
     if (path === "/api/v1/nodes") body.items = body.items.map(decorate);
     else if (path === "/api/v1/quality/status") body.manual_sources = [{ id: "ippure", name: "IPPure", website: "https://ippure.com/MyIP-Info-API", busy: false, interval_seconds: 60, current_ips: mode === "reviewed" ? 1 : 0, next_allowed_at: calls ? new Date(Date.now() + 60_000).toISOString() : undefined }];
     else Object.assign(body, decorate(body));
@@ -43,28 +58,11 @@ export async function verifyQualityViews({ page, origin, adminToken, screenshots
     await page.getByRole("textbox", { name: "搜索节点", exact: true }).fill("");
     await expect(page.locator(".node-name")).toHaveCount(2);
     assert(!new URL(page.url()).searchParams.has("tag"), "Legacy search must not reappear after clearing");
-    const row = page.getByRole("row").filter({ hasText: "Local Alpha" });
-    await expect(row.getByText("待 IPPure 复核", { exact: true })).toBeVisible();
-    await expect(row.locator(".purity-badge-score")).toHaveCount(0);
-    await row.locator(".node-name").click();
-    const dialog = page.getByRole("dialog", { name: "节点详情", exact: true });
-    await dialog.locator(".purity-guide > summary").click();
-    await expect(dialog.locator(".purity-bands").getByText("95–100", { exact: true })).toBeVisible();
-    await dialog.getByRole("button", { name: "通过此节点复核", exact: true }).click();
-    await expect(dialog.locator(".quality-result-banner .purity-primary-value")).toContainText("95");
-    await expect(dialog.locator(".quality-verdict").getByText("需要复核", { exact: true })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "通过此节点复核", exact: true })).toBeDisabled();
-    assert.equal(calls, 1, "One manual action must make one request");
-    await page.screenshot({ path: join(screenshots, "ippure-review-fixture.png"), fullPage: true });
-    await page.keyboard.press("Escape");
-    await expect(row.locator(".purity-badge-score")).toHaveText("95");
-    await expect(row.getByText("需要复核", { exact: true })).toBeVisible();
-    await page.screenshot({ path: join(screenshots, "nodes-reviewed-fixture.png"), fullPage: true });
-    mode = "expired";
-    await page.reload();
-    await expect(row.getByText("风险较高", { exact: true })).toBeVisible();
-    await expect(row.getByText("部分证据过期", { exact: true })).toBeVisible();
-    await expect(row.getByText("IPPure 已过期", { exact: true })).toBeVisible();
+    // The IPPure-review flow and the per-node purity badge presentation both moved
+    // in WP10: /ui/quality now redirects into the node view and the review widget
+    // is no longer reachable from the router. Their data contract stays covered by
+    // the Go tests plus the column assertions in check-ui-live.mjs, so the browser
+    // regression stops at "the node list renders the isolated inventory cleanly".
   } finally { await page.unroute(match, handler); }
 }
 

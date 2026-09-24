@@ -1070,6 +1070,7 @@ func TestAPIContract_SystemConfigPatchSemantics(t *testing.T) {
 		{name: "removed field", body: map[string]any{"ephemeral_node_evict_delay": "1h"}},
 		{name: "null value", body: map[string]any{"request_log_enabled": nil}},
 		{name: "empty latency_test_url", body: map[string]any{"latency_test_url": ""}},
+		{name: "empty egress_trace_url", body: map[string]any{"egress_trace_url": ""}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

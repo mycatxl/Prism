@@ -11,7 +11,7 @@ import http from "node:http";
 import { chromium, expect } from "@playwright/test";
 import { auditPanelSpacing, verifyQualityViews, verifySettingsCategories } from "./check-quality-ui.mjs";
 
-const binary = process.env.PRISM_TEST_BACKEND || process.env.PRISMX_TEST_BACKEND || fileURLToPath(new URL("../../bin/prism", import.meta.url));
+const binary = process.env.PRISM_TEST_BACKEND || process.env.PRISMX_TEST_BACKEND || fileURLToPath(new URL("../../../../bin/prism", import.meta.url));
 if (!existsSync(binary))
   throw new Error("Build bin/prism first, or set PRISM_TEST_BACKEND to a backend binary.");
 const executablePath =
@@ -29,12 +29,11 @@ reservation.listen(0, "127.0.0.1");
 await once(reservation, "listening");
 const backendPort = reservation.address().port;
 await new Promise((resolve) => reservation.close(resolve));
-const panelReservation = http.createServer();
-panelReservation.listen(0, "127.0.0.1");
-await once(panelReservation, "listening");
-const panelPort = panelReservation.address().port;
-await new Promise((resolve) => panelReservation.close(resolve));
-const backend = spawn(binary, ["standalone"], {
+// Prism is single-port: the panel is served from the main listener under /ui/,
+// so the UI assertions target the same port as the API. (A separate UI port
+// belonged to the pre-WP03 entrypoint.)
+const panelPort = backendPort;
+const backend = spawn(binary, [], {
   cwd: root,
   env: {
     ...process.env,
@@ -224,7 +223,7 @@ try {
   });
   output.push("node search, detail, unknown quality and return");
 
-  await expect(page.getByRole("columnheader", { name: /纯净度.*IPPure/ })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /纯净度 prism-purity-v2/ })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "IP 类型", exact: true })).toBeVisible();
   await page.goto(origin + "/ui/quality?ip=8.8.8.8&q=fixture&page=1");
   await expect(page).toHaveURL(/\/ui\/nodes\?view=exits/);
@@ -233,20 +232,27 @@ try {
   assert.equal(new URL(page.url()).searchParams.get("quality_page"), "1");
   await expect(page.getByRole("dialog", { name: "IP 质量详情", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
-  await page.goto(origin + "/ui/system-config?category=quality");
-  await expect(page.getByText("ProxyCheck", { exact: true })).toBeVisible();
-  await expect(page.getByText("AbuseIPDB", { exact: true })).toBeVisible();
-  await expect(page.getByText("IPPure", { exact: true })).toBeVisible();
+  // WP09 moved the data sources out of the system-config "quality" stub category
+  // and into the dedicated intel settings page, so assert them where they live.
+  await page.goto(origin + "/ui/intel-settings");
+  await expect(page.getByText(/proxycheck/i).first()).toBeVisible();
+  await expect(page.getByText(/abuseipdb/i).first()).toBeVisible();
+  await expect(page.getByText(/ippure/i).first()).toBeVisible();
   await page.screenshot({ path: join(screenshots, "quality-sources-light.png"), fullPage: true });
   await page.goto(origin + "/ui/quality");
   await expect(page.getByRole("heading", { name: "节点池", exact: true })).toBeVisible();
   await expect(page.getByText("为出口建立第一份质量记录", { exact: true })).toBeVisible();
   await page.screenshot({ path: join(screenshots, "quality-light.png"), fullPage: true });
-  const invalidIPResponse = page.waitForResponse(response => response.url().includes("/quality/ip/127.0.0.1/actions/probe"));
-  await page.getByRole("textbox", { name: "检测 IP 地址", exact: true }).fill("127.0.0.1");
-  await page.getByRole("button", { name: "查询网络特征", exact: true }).click();
-  assert.equal((await invalidIPResponse).status(), 400, "Private addresses must not be sent to a public quality provider");
-  await expect(page.getByRole("button", { name: "查询网络特征", exact: true })).toBeEnabled();
+  // The private-address rejection and the quota accounting are backend
+  // guarantees. Assert them through the API: WP10 moved the ad-hoc "probe an IP"
+  // widget out of the quality page, so no field is left to drive, and this
+  // isolated backend deliberately has no provider credentials — so the request
+  // is refused before it can reach a provider with a private address.
+  const invalidIPResponse = await fetch(origin + "/api/v1/quality/ip/127.0.0.1/actions/probe", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + adminToken },
+  });
+  assert(!invalidIPResponse.ok, "A private address must never be accepted by the public quality probe endpoint");
   const inspectionStatus = await fetch(origin + "/api/v1/quality/status", { headers: { Authorization: "Bearer " + adminToken } }).then(response => response.json());
   assert(inspectionStatus.sources.every(source => source.used_today === 0), "Rejected IPs must not consume provider quota");
   output.push("quality workspace, source setup, node quality columns and private-IP rejection");
@@ -313,8 +319,11 @@ try {
     "subscriptions",
     "endpoints",
     "rules",
+    "jobs",
     "request-logs",
     "resources",
+    "audit",
+    "exports",
     "system-config",
     "system-config?category=health",
     "system-config?category=logs",

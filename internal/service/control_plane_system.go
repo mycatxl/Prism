@@ -103,6 +103,7 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"max_authority_latency_test_interval":      true,
 	"max_egress_test_interval":                 true,
 	"latency_test_url":                         true,
+	"egress_trace_url":                         true,
 	"latency_authorities":                      true,
 	"p2c_latency_window":                       true,
 	"latency_decay_window":                     true,
@@ -242,6 +243,12 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 		return verr
 	}
 	latencyDomain := strings.ToLower(netutil.ExtractDomain(u.Host))
+	// egress_trace_url is a single URL with no authority list to cross-check: it
+	// only has to be an absolute http/https URL. An empty value is rejected so a
+	// cleared field cannot silently stop the egress probe.
+	if _, verr := parseHTTPAbsoluteURL("egress_trace_url", strings.TrimSpace(cfg.EgressTraceURL)); verr != nil {
+		return verr
+	}
 	if cfg.MaxConsecutiveFailures < 0 {
 		return invalidArg("max_consecutive_failures: must be non-negative")
 	}

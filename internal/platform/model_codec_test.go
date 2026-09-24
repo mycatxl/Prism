@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"prism/internal/model"
 )
@@ -244,5 +245,44 @@ func TestValidateRegionFilters_Invalid(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "region_filters[0]") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// WP10 §3 regression guard: the startup loader builds runtime platforms through
+// BuildFromModel and the scheduled rotator reads the rotation fields from those
+// runtime objects, so the round trip must not drop them.
+func TestBuildFromModel_PreservesScheduledRotationFields(t *testing.T) {
+	mp := model.Platform{
+		ID:                               "plat-rotation",
+		Name:                             "Platform-Rotation",
+		StickyTTLNs:                      int64(2 * time.Hour),
+		RegexFilters:                     []string{},
+		RegionFilters:                    []string{},
+		ReverseProxyMissAction:           "TREAT_AS_EMPTY",
+		ReverseProxyEmptyAccountBehavior: "RANDOM",
+		AllocationPolicy:                 "BALANCED",
+		ScheduledRotationEnabled:         true,
+		ScheduledRotationIntervalNs:      int64(30 * time.Minute),
+		RotationAvoidPreviousIP:          true,
+	}
+
+	plat, err := BuildFromModel(mp)
+	if err != nil {
+		t.Fatalf("BuildFromModel: %v", err)
+	}
+	if !plat.ScheduledRotationEnabled {
+		t.Fatal("runtime platform lost scheduled_rotation_enabled")
+	}
+	if !plat.IsScheduledRotationEnabled() {
+		t.Fatal("IsScheduledRotationEnabled must reflect the decoded value")
+	}
+	if got := plat.ScheduledRotationIntervalNs; got != mp.ScheduledRotationIntervalNs {
+		t.Fatalf("scheduled rotation interval = %d, want %d", got, mp.ScheduledRotationIntervalNs)
+	}
+	if got := plat.GetScheduledRotationInterval(); got != 30*time.Minute {
+		t.Fatalf("GetScheduledRotationInterval = %v, want 30m", got)
+	}
+	if !plat.RotationAvoidPreviousIP {
+		t.Fatal("runtime platform lost rotation_avoid_previous_ip")
 	}
 }

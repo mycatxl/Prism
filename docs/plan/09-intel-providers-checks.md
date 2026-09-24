@@ -168,7 +168,12 @@ outcomes:                  # 按顺序匹配，第一条命中即采用
 default: unknown
 region:                    # 可选：从某一步抓取地区码（两位大写字母）
   step: home
+  # body_regex 与 header_regex 至少给一个；两者都能命中时优先 body_regex。
+  # 每个正则取**第一个**捕获组作为地区码，多余的捕获组被忽略（向后兼容）。
   body_regex: '"countryCode":"([A-Z]{2})"'
+  # 当地区只出现在重定向的 Location 头里时用它。Netflix 即如此：301 的
+  # Location 是 https://www.netflix.com/jp-en/title/<id>，地区在 /jp-en/ 中。
+  header_regex: {Location: "/([a-z]{2})-en/"}
 ```
 
 ### 5.2 匹配器

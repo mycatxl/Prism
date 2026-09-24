@@ -170,7 +170,11 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 	if err != nil {
 		return nil, err
 	}
-	plat := platform.NewConfiguredPlatform(
+	// WP10 §3: the pool objects built here are what the scheduled rotator reads
+	// on every sweep, so the rotation fields must be part of the construction
+	// call instead of being patched on afterwards (a missed patch leaves the
+	// platform rotating nothing).
+	return platform.NewConfiguredPlatform(
 		id,
 		cfg.Name,
 		compiledRegexFilters,
@@ -182,9 +186,10 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.ReverseProxyFixedAccountHeader,
 		cfg.AllocationPolicy,
 		cfg.PassiveCircuitBreakerDisabled,
-	)
-	plat.RotationAvoidPreviousIP = cfg.RotationAvoidPreviousIP
-	return plat, nil
+		cfg.ScheduledRotationEnabled,
+		cfg.ScheduledRotationIntervalNs,
+		cfg.RotationAvoidPreviousIP,
+	), nil
 }
 
 func validatePlatformMissAction(raw string) *ServiceError {

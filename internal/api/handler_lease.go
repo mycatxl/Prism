@@ -149,6 +149,29 @@ func HandleDeleteLease(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+// HandleRotateLease returns a handler for
+// POST /api/v1/platforms/{id}/leases/{account}/actions/rotate.
+// It deletes the lease, records a rotation tombstone for the previous egress IP
+// and answers 204 No Content (WP10 §3).
+func HandleRotateLease(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		platformID, ok := requireUUIDPathParam(w, r, "id", "platform_id")
+		if !ok {
+			return
+		}
+		account, err := validateAccountPath(r)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if err := cp.RotateLease(platformID, account); err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 // HandleDeleteAllLeases returns a handler for DELETE /api/v1/platforms/{id}/leases.
 func HandleDeleteAllLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

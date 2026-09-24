@@ -1,6 +1,9 @@
-# 校准状态：docs/plan/09-intel-providers-checks.md §5.4 明确要求"信号必须在校准时确定"。
-# 下面用的是通用可达性判定，属于占位实现：它只能区分"能打开"和"被拒"，无法区分地区限制。
-# 抓取真实响应后必须补齐地区判据并更新 calibrated。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+#
+# 实测 https://gemini.google.com/ 返回 200，正文 848704 字节，既不含 "countryCode"，
+# 也不含 "not available in your country/region" 之类的地区提示：
+# 本轮响应里找不到可用的地区判据，因此这里只做可达性判定（403/451 => blocked，
+# 429 => captcha，200 => available），没有地区标记时不要臆造地区信号。
 id: gemini
 version: 1
 name: Gemini
@@ -8,7 +11,7 @@ category: ai
 enabled: true
 ttl: 24h
 timeout: 12s
-calibrated: "placeholder (region signal not yet determined)"
+calibrated: 'calibrated 2026-09-25 reachability only (no region marker in the real 200 response)'
 steps:
   - id: home
     request:

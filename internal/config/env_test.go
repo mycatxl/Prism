@@ -180,6 +180,43 @@ func TestLoadEnvConfig_EnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadEnvConfig_EgressTraceURL(t *testing.T) {
+	envs := requiredEnvs()
+	envs["PRISM_EGRESS_TRACE_URL"] = "  http://127.0.0.1:18080/cdn-cgi/trace  "
+	setEnvs(t, envs)
+
+	cfg, err := LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertEqual(t, "EgressTraceURL", cfg.EgressTraceURL, "http://127.0.0.1:18080/cdn-cgi/trace")
+}
+
+func TestLoadEnvConfig_EgressTraceURLUnsetIsEmpty(t *testing.T) {
+	// Empty means "not set": the persisted runtime config (or the shipped
+	// default) stays in charge instead of being clobbered by a default value.
+	setEnvs(t, requiredEnvs())
+	t.Setenv("PRISM_EGRESS_TRACE_URL", "")
+
+	cfg, err := LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertEqual(t, "EgressTraceURL", cfg.EgressTraceURL, "")
+}
+
+func TestLoadEnvConfig_InvalidEgressTraceURL(t *testing.T) {
+	envs := requiredEnvs()
+	envs["PRISM_EGRESS_TRACE_URL"] = "not a url"
+	setEnvs(t, envs)
+
+	_, err := LoadEnvConfig()
+	if err == nil {
+		t.Fatal("expected an error for an invalid PRISM_EGRESS_TRACE_URL")
+	}
+	assertContains(t, err.Error(), "PRISM_EGRESS_TRACE_URL")
+}
+
 func TestLoadEnvConfig_DefaultPlatformFixedHeaderMultiline(t *testing.T) {
 	envs := requiredEnvs()
 	envs["PRISM_DEFAULT_PLATFORM_REVERSE_PROXY_EMPTY_ACCOUNT_BEHAVIOR"] = "FIXED_HEADER"

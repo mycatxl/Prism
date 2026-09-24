@@ -21,6 +21,7 @@ type RuntimeConfig struct {
 
 	// Probe
 	LatencyTestURL     string   `json:"latency_test_url"`
+	EgressTraceURL     string   `json:"egress_trace_url"`
 	LatencyAuthorities []string `json:"latency_authorities"`
 
 	// P2C
@@ -40,6 +41,11 @@ type RuntimeConfig struct {
 	IntelRefreshSchedule          string `json:"intel_refresh_schedule"`
 }
 
+// DefaultEgressTraceURL is the shipped node egress probe target. It is also the
+// fallback for a runtime config persisted before egress_trace_url existed: such
+// a row decodes to an empty value and must keep probing the default URL.
+const DefaultEgressTraceURL = "https://cloudflare.com/cdn-cgi/trace"
+
 // NewDefaultRuntimeConfig returns a RuntimeConfig populated with the default
 // values specified in DESIGN.md §运行时全局设置项.
 func NewDefaultRuntimeConfig() *RuntimeConfig {
@@ -57,6 +63,7 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		MaxEgressTestInterval:           Duration(24 * time.Hour),
 
 		LatencyTestURL:     "https://www.gstatic.com/generate_204",
+		EgressTraceURL:     DefaultEgressTraceURL,
 		LatencyAuthorities: []string{"gstatic.com", "google.com", "cloudflare.com", "github.com"},
 
 		P2CLatencyWindow:   Duration(10 * time.Minute),

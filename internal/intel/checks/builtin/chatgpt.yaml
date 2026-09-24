@@ -1,7 +1,11 @@
-# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
 #
 # 两步：先用 Cloudflare trace 取出口地区（loc），再问 iOS 端点是否拦截。
-# Location 重定向到 /xx-en/ 时地区从路径提取。
+# 实测 https://chatgpt.com/cdn-cgi/trace 返回 200，正文含 loc=US，地区仍从 loc 提取。
+# 实测 https://ios.chat.openai.com/（跟随重定向）返回 403，正文恰为
+#   {"cf_details":"Request is not allowed. Please try again later.", "type":"dc"}
+# 其中 "type":"dc" 是"数据中心 IP 被拒"的明确标记，用它比裸 403 更精确，
+# 所以这条 body_contains 排在 status_in: [403] 之前。
 id: chatgpt
 version: 1
 name: ChatGPT
@@ -9,7 +13,7 @@ category: ai
 enabled: true
 ttl: 12h
 timeout: 15s
-calibrated: "uncalibrated (signals from plan §5.4)"
+calibrated: 'calibrated 2026-09-25 (real 403 with "type":"dc" on ios.chat.openai.com; trace 200 with loc=US)'
 steps:
   - id: trace
     request:
@@ -30,8 +34,11 @@ steps:
 outcomes:
   - when: {step: probe, body_contains: "unsupported_country"}
     outcome: blocked
+  # 2026-09-25 本轮实测从未观测到 "VPN" 标记，保留该分支作为既有信号的兜底。
   - when: {step: probe, body_contains: "VPN"}
     outcome: captcha
+  - when: {step: probe, body_contains: '"type":"dc"'}
+    outcome: blocked
   - when: {step: probe, status_in: [403]}
     outcome: blocked
   - when: {step: probe, status_in: [200, 301, 302, 307]}

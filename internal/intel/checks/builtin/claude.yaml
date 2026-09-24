@@ -1,4 +1,9 @@
-# 校准状态：结构取自 docs/plan/09-intel-providers-checks.md §5.1 的示例，尚未用真实响应校准。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+#
+# 实测 https://claude.ai/ 返回 403，正文 5656 字节，含 Cloudflare 挑战脚本
+# /cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=...（即 "challenge-platform"）。
+# 因此 status_in: [403, 503] + body_contains: "challenge-platform" => captcha 的判定成立，逻辑不动。
+# 本轮未观测到 Location: app-unavailable-in-region 的拦截跳转，保留该分支作为兜底。
 id: claude
 version: 1
 name: Claude
@@ -6,7 +11,7 @@ category: ai
 enabled: true
 ttl: 24h
 timeout: 10s
-calibrated: "uncalibrated (structure from plan §5.1)"
+calibrated: 'calibrated 2026-09-25 (real 403 with a 5656-byte challenge-platform body on claude.ai)'
 steps:
   - id: home
     request:

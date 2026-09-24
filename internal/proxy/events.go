@@ -67,6 +67,9 @@ type RequestLogEntry struct {
 	UpstreamErrMsg      string // sanitized upstream error message
 	IngressBytes        int64  // bytes from upstream to client (header + body)
 	EgressBytes         int64  // bytes from client to upstream (header + body)
+	// Events carries routing advisories emitted while serving this request,
+	// e.g. "rotation_fallback_same_ip" (WP10 §3). Persisted as a JSON array.
+	Events []string
 
 	// Optional detail payload (mainly for reverse proxy request logging).
 	ReqHeaders           []byte

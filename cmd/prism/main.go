@@ -79,16 +79,31 @@ func supportsANSIColorOnStderr() bool {
 	return (stat.Mode() & os.ModeCharDevice) != 0
 }
 
-func loadRuntimeConfig(engine *state.StateEngine) *config.RuntimeConfig {
+func loadRuntimeConfig(engine *state.StateEngine, envCfg *config.EnvConfig) *config.RuntimeConfig {
 	runtimeCfg, ver, err := engine.GetSystemConfig()
 	if err != nil {
 		fatalf("load system config: %v", err)
 	}
 	if runtimeCfg == nil {
 		log.Println("No persisted runtime config found, using defaults")
-		return config.NewDefaultRuntimeConfig()
+		runtimeCfg = config.NewDefaultRuntimeConfig()
+	} else {
+		log.Printf("Loaded persisted runtime config (version %d)", ver)
 	}
-	log.Printf("Loaded persisted runtime config (version %d)", ver)
+	// A config persisted before egress_trace_url existed decodes to an empty
+	// value: fall back to the shipped default so the egress probe keeps working
+	// and PATCH validation (which rejects an empty value) stays satisfiable.
+	if strings.TrimSpace(runtimeCfg.EgressTraceURL) == "" {
+		runtimeCfg.EgressTraceURL = config.DefaultEgressTraceURL
+	}
+	// PRISM_EGRESS_TRACE_URL wins over the persisted value: an offline
+	// deployment points the egress probe at a local endpoint and expects that to
+	// apply on every start (the field stays hot-updatable via PATCH afterwards).
+	if envCfg != nil {
+		if traceURL := strings.TrimSpace(envCfg.EgressTraceURL); traceURL != "" {
+			runtimeCfg.EgressTraceURL = traceURL
+		}
+	}
 	return runtimeCfg
 }
 
@@ -301,6 +316,9 @@ func newTopologyRuntime(
 		},
 		LatencyTestURL: func() string {
 			return runtimeConfigSnapshot(runtimeCfg).LatencyTestURL
+		},
+		EgressTraceURL: func() string {
+			return runtimeConfigSnapshot(runtimeCfg).EgressTraceURL
 		},
 		LatencyAuthorities: func() []string {
 			return runtimeConfigSnapshot(runtimeCfg).LatencyAuthorities

@@ -1,4 +1,9 @@
-# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+#
+# 实测 https://www.tiktok.com/ 返回 200，但正文只有 1462 字节，是 WAF 挑战页：
+# 含 "slardarClient": "SlardarWAF"、<p id="wci" class="_wafchallengeid"> 和 "Please wait..."。
+# 挑战页同样是 200，所以两条挑战标记必须在 status_in: [200] 之前判成 captcha，
+# 否则可用节点会被挑战页误判成 available。
 id: tiktok
 version: 1
 name: TikTok
@@ -6,7 +11,7 @@ category: social
 enabled: true
 ttl: 12h
 timeout: 12s
-calibrated: "uncalibrated (signals from plan §5.4)"
+calibrated: 'calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page)'
 steps:
   - id: home
     request:
@@ -20,6 +25,11 @@ steps:
 outcomes:
   - when: {step: home, body_contains: "Your account is currently unavailable"}
     outcome: blocked
+  # WAF 挑战页标记（2026-09-25 实测正文：SlardarWAF 与 _wafchallengeid）。
+  - when: {step: home, body_contains: "_wafchallengeid"}
+    outcome: captcha
+  - when: {step: home, body_contains: "SlardarWAF"}
+    outcome: captcha
   - when: {step: home, status_in: [403, 451]}
     outcome: blocked
   - when: {step: home, status_in: [200]}

@@ -18,6 +18,10 @@ const RulesPage = lazy(() => import("../features/rules/RulesPage").then(m => ({ 
 const SubscriptionPage = lazy(() => import("../features/subscriptions/SubscriptionPage").then(m => ({ default: m.SubscriptionPage })));
 const SystemConfigPage = lazy(() => import("../features/systemConfig/SystemConfigPage").then(m => ({ default: m.SystemConfigPage })));
 
+const JobsPage = lazy(() => import("../features/jobs/JobsPage").then(m => ({ default: m.JobsPage })));
+const ExportsPage = lazy(() => import("../features/exports/ExportsPage").then(m => ({ default: m.ExportsPage })));
+const AuditLogsPage = lazy(() => import("../features/audit/AuditLogsPage").then(m => ({ default: m.AuditLogsPage })));
+
 function FocusContent({ children }: { children: ReactNode }) {
   useEffect(() => {
     const heading = document.querySelector<HTMLElement>(".content h1,.content h2");
@@ -59,6 +63,9 @@ export function AppRoutes() {
       <Route path="/resources" element={<Page><GeoIPPage /></Page>} />
       <Route path="/intel-settings" element={<Page><IntelSettingsPage /></Page>} />
       <Route path="/system-config" element={<Page><SystemConfigPage /></Page>} />
+      <Route path="/jobs" element={<Page><JobsPage /></Page>} />
+      <Route path="/exports" element={<Page><ExportsPage /></Page>} />
+      <Route path="/audit" element={<Page><AuditLogsPage /></Page>} />
       <Route path="*" element={<NotFoundPage />} />
     </Route>
   </Routes>;

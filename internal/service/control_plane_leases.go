@@ -139,6 +139,20 @@ func (s *ControlPlaneService) DeleteLease(platformID, account string) error {
 	return nil
 }
 
+// RotateLease removes a single lease and records a rotation tombstone holding
+// the egress IP it was using, so the next lease for the account avoids that IP
+// (WP10 §3). It returns notFound when the account holds no lease.
+func (s *ControlPlaneService) RotateLease(platformID, account string) error {
+	plat, ok := s.Pool.GetPlatform(platformID)
+	if !ok || plat == nil {
+		return notFound("platform not found")
+	}
+	if !s.Router.RotateLease(plat, account) {
+		return notFound("lease not found")
+	}
+	return nil
+}
+
 // DeleteAllLeases removes all leases for a platform.
 func (s *ControlPlaneService) DeleteAllLeases(platformID string) error {
 	if _, ok := s.Pool.GetPlatform(platformID); !ok {

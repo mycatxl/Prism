@@ -72,6 +72,9 @@ func NewConfiguredPlatform(
 	fixedAccountHeader string,
 	allocationPolicy string,
 	passiveCircuitBreakerDisabled bool,
+	scheduledRotationEnabled bool,
+	scheduledRotationIntervalNs int64,
+	rotationAvoidPreviousIP bool,
 ) *Platform {
 	normalizedFixedHeaders, fixedHeaders, err := NormalizeFixedAccountHeaders(fixedAccountHeader)
 	if err != nil {
@@ -87,6 +90,12 @@ func NewConfiguredPlatform(
 	plat.ReverseProxyFixedAccountHeaders = append([]string(nil), fixedHeaders...)
 	plat.AllocationPolicy = ParseAllocationPolicy(allocationPolicy)
 	plat.PassiveCircuitBreakerDisabled = passiveCircuitBreakerDisabled
+	// WP10 §3: the scheduled rotator reads these fields from the live pool
+	// objects, so they must be applied at construction time — dropping them here
+	// silently turns the rotator into a no-op.
+	plat.ScheduledRotationEnabled = scheduledRotationEnabled
+	plat.ScheduledRotationIntervalNs = scheduledRotationIntervalNs
+	plat.RotationAvoidPreviousIP = rotationAvoidPreviousIP
 	return plat
 }
 
@@ -144,5 +153,10 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 		fixedHeader,
 		mp.AllocationPolicy,
 		mp.PassiveCircuitBreakerDisabled,
+		// WP10 §3: startup loads platforms through this path, so the scheduled
+		// rotation and rotation-avoidance fields must survive the round trip.
+		mp.ScheduledRotationEnabled,
+		mp.ScheduledRotationIntervalNs,
+		mp.RotationAvoidPreviousIP,
 	), nil
 }
