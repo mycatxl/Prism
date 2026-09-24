@@ -14,7 +14,7 @@ The `ScheduledRotator` runs as a background task that periodically scans all pla
 
 ## Configuration
 
-Scheduled rotation is configured per-platform via the `/v1/platforms/{id}` PATCH endpoint:
+Scheduled rotation is configured per-platform via the `/api/v1/platforms/{id}` PATCH endpoint (management calls need the admin bearer token):
 
 ```json
 {
@@ -58,7 +58,8 @@ The rotation interval is compared against the lease's `created_at` timestamp, NO
 ### Enable hourly rotation for a platform
 
 ```bash
-curl -X PATCH http://localhost:8080/v1/platforms/my-platform-id \
+curl -X PATCH http://127.0.0.1:2260/api/v1/platforms/my-platform-id \
+  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "scheduled_rotation_enabled": true,
@@ -69,7 +70,8 @@ curl -X PATCH http://localhost:8080/v1/platforms/my-platform-id \
 ### Disable rotation
 
 ```bash
-curl -X PATCH http://localhost:8080/v1/platforms/my-platform-id \
+curl -X PATCH http://127.0.0.1:2260/api/v1/platforms/my-platform-id \
+  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "scheduled_rotation_enabled": false
@@ -123,32 +125,32 @@ These events can be observed via the lease event callback configured in the rout
 
 ### Files
 
-- `/internal/routing/scheduled_rotator.go` - Main implementation
-- `/internal/routing/scheduled_rotator_test.go` - Comprehensive tests
-- `/internal/platform/platform.go` - Configuration fields
-- `/cmd/prism/main.go` - Service initialization
+- `internal/routing/scheduled_rotator.go` - Main implementation.
+- `internal/platform/platform.go` - Configuration fields.
+- `internal/model/models.go` - Persisted platform fields (`scheduled_rotation_enabled`, `scheduled_rotation_interval`).
+- `cmd/prism/app_runtime.go` - Construction (`routing.NewScheduledRotator`, line 269) and start/stop with the router (line 448).
 
 ### Initialization
 
-The rotator is automatically started during service initialization:
+The rotator is created with the router and runs for the lifetime of the service:
 
 ```go
-rotator := routing.NewScheduledRotator(router, pool)
-rotator.Start()
-defer rotator.Stop()
+topoRuntime.rotator = routing.NewScheduledRotator(topoRuntime.router, topoRuntime.pool)
+...
+topoRuntime.rotator.Start()   // stopped again on shutdown
 ```
 
 ## Testing
 
-Run the test suite:
+There is no automated test for the rotator in this repository yet: the
+`internal/routing` package has no `_test.go` file. Deriving the sweep behaviour
+from the implementation (`internal/routing/scheduled_rotator.go`):
 
-```bash
-go test ./internal/routing -run TestScheduledRotator -v
-```
+- a platform with `scheduled_rotation_enabled=false` is a no-op;
+- only leases whose `created_at` is older than `scheduled_rotation_interval` are
+  deleted;
+- platforms are swept in parallel, with jitter around the 7 second period;
+- `Stop()` terminates the sweep goroutine.
 
-Tests cover:
-- Basic rotation functionality
-- Disabled rotation (no-op)
-- Age-based filtering (only old leases rotated)
-- Graceful shutdown
-- Parallel platform processing
+End-to-end behaviour (a lease being replaced after the interval) is currently
+only covered manually through the console/log output of a running instance.

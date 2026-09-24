@@ -68,7 +68,7 @@ type ProbeManager struct {
 	latencyTestURL                  func() string
 	latencyAuthorities              func() []string
 	onProbeEvent                    func(kind string)
-	onEgressObserved                atomic.Pointer[func(netip.Addr)]
+	onEgressObserved                atomic.Pointer[func(node.Hash, netip.Addr, string)]
 }
 
 const (
@@ -279,9 +279,11 @@ func (m *ProbeManager) SetOnProbeEvent(fn func(kind string)) {
 	m.onProbeEvent = fn
 }
 
-// SetOnEgressObserved installs a lightweight observer after a successful
-// sample. The callback must not perform network or database I/O.
-func (m *ProbeManager) SetOnEgressObserved(fn func(netip.Addr)) {
+// SetOnEgressObserved installs a lightweight observer after a successful sample.
+// The callback must not perform network or database I/O: it receives the node
+// hash, the observed IP and the trace loc so the intel subsystem can record
+// WHICH node produced the IP (WP08 §4).
+func (m *ProbeManager) SetOnEgressObserved(fn func(node.Hash, netip.Addr, string)) {
 	if fn == nil {
 		m.onEgressObserved.Store(nil)
 		return
@@ -812,7 +814,11 @@ func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressPro
 	}
 	m.pool.UpdateNodeEgressIP(hash, &ip, loc)
 	if observer := m.onEgressObserved.Load(); observer != nil {
-		(*observer)(ip)
+		locValue := ""
+		if loc != nil {
+			locValue = *loc
+		}
+		(*observer)(hash, ip, locValue)
 	}
 	return ip, egressProbeNoError, nil
 }

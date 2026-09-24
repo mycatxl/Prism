@@ -30,6 +30,21 @@ type NodeFilters struct {
 	EgressIP       *string
 	ProbedSince    *time.Time
 	TagKeyword     *string
+
+	// WP10 §4 intel filters. They are evaluated against the in-memory
+	// assessment projection (see nodeIntelMatchesFilters): ip_type and
+	// purity_band read the projected names, and a node without an assessment
+	// never satisfies a purity/verdict/confidence/native/asn/country/check
+	// filter. Verdicts holds the accepted verdict names and Checks the
+	// `check=<id>:<outcome>` pairs; the API layer bounds both.
+	PurityMin     *int
+	PurityMax     *int
+	Verdicts      []string
+	ConfidenceMin *string
+	Native        *bool
+	ASN           *int
+	Country       *string
+	Checks        []NodeCheckFilter
 }
 
 // ListNodes returns nodes from the pool with optional filters.
@@ -132,20 +147,14 @@ func (s *ControlPlaneService) nodeEntryMatchesFilters(
 	if filters.Protocol != nil && entry.Protocol != *filters.Protocol {
 		return false
 	}
-	if filters.IPType != nil || filters.QualityState != nil || filters.RiskGrade != nil || filters.PurityBand != nil {
-		state, ipType, grade, purity := "unobserved", "unknown", "unknown", "unknown"
+	// Legacy quality filters (quality_state, risk_grade) still read the
+	// inspection summary, exactly as before.
+	if filters.QualityState != nil || filters.RiskGrade != nil {
+		state := "unobserved"
 		summary := s.nodeQuality(entry.GetEgressIP())
-		grade = quality.EffectiveRiskGrade(summary)
-		purity = quality.EffectivePurityBand(summary)
+		grade := quality.EffectiveRiskGrade(summary)
 		if summary.Assessment != nil {
-			state, ipType = summary.Assessment.State, summary.Assessment.NetworkType
-			if filters.PurityBand != nil && *filters.PurityBand == "review" &&
-				(summary.Assessment.Verdict == "review" || summary.Assessment.Verdict == "conflicting") {
-				purity = "review"
-			}
-		}
-		if filters.IPType != nil && ipType != *filters.IPType {
-			return false
+			state = summary.Assessment.State
 		}
 		if filters.QualityState != nil && state != *filters.QualityState {
 			return false
@@ -153,7 +162,10 @@ func (s *ControlPlaneService) nodeEntryMatchesFilters(
 		if filters.RiskGrade != nil && grade != *filters.RiskGrade {
 			return false
 		}
-		if filters.PurityBand != nil && purity != *filters.PurityBand {
+	}
+	// WP10 §4 intel filters, served from the in-memory assessment projection.
+	if hasIntelFilters(filters) {
+		if !s.nodeIntelMatchesFilters(s.nodeIntel(entry, time.Now().UTC()), filters) {
 			return false
 		}
 	}

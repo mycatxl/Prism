@@ -132,3 +132,21 @@ func parseHTTPAbsoluteURL(field, value string) (*url.URL, *ServiceError) {
 	}
 	return u, nil
 }
+
+// optionalObject decodes a nested JSON object field into a raw message so the
+// caller can apply its own decoder (used by quality_policy, which accepts the
+// legacy key names).
+func (p mergePatch) optionalObject(field string) (json.RawMessage, bool, *ServiceError) {
+	raw, ok := p[field]
+	if !ok {
+		return nil, false, nil
+	}
+	if _, isObject := raw.(map[string]any); !isObject {
+		return nil, true, invalidArg(fmt.Sprintf("%s: must be an object", field))
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil, true, invalidArg(fmt.Sprintf("%s: %s", field, err.Error()))
+	}
+	return encoded, true, nil
+}

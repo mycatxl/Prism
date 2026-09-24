@@ -19,22 +19,43 @@ type Hash [16]byte
 var Zero Hash
 
 // HashFromRawOptions computes a node Hash from raw JSON options.
-// It unmarshals the JSON, removes the "tag" key, and re-marshals.
-// Go's encoding/json sorts map keys at all nesting levels, so the output
-// is deterministic without any manual sorting.
+//
+// Form A (a plain sing-box outbound, §1.1): the "tag" key is removed and the
+// result is re-marshalled. Go's encoding/json sorts map keys at all nesting
+// levels, so the output is deterministic without any manual sorting. This path
+// is byte-compatible with the upstream Resin implementation.
+//
+// Form B (an envelope, §1.2): the display name, main.tag and proxy.name are
+// removed. deps[i].tag is fixed to d<i> and therefore kept.
+//
 // If JSON parsing fails, it falls back to hashing the raw bytes directly.
 func HashFromRawOptions(raw []byte) Hash {
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
 		return hashBytes(raw)
 	}
-	delete(m, "tag")
+	if _, isEnvelope := m[EnvelopeMarker]; isEnvelope {
+		pruneEnvelopeForHash(m)
+	} else {
+		delete(m, "tag")
+	}
 
 	canonical, err := json.Marshal(m)
 	if err != nil {
 		return hashBytes(raw)
 	}
 	return hashBytes(canonical)
+}
+
+// pruneEnvelopeForHash strips the display-only fields of a form B envelope.
+func pruneEnvelopeForHash(m map[string]any) {
+	delete(m, "name")
+	if main, ok := m["main"].(map[string]any); ok {
+		delete(main, "tag")
+	}
+	if proxy, ok := m["proxy"].(map[string]any); ok {
+		delete(proxy, "name")
+	}
 }
 
 // Hex returns the lowercase hex encoding of the hash.

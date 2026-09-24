@@ -28,10 +28,11 @@ import {
   deleteSubscription,
   listSubscriptions,
   getSubscription,
+  getSubscriptionParseReport,
   refreshSubscription,
   updateSubscription,
 } from "./api";
-import type { Subscription } from "./types";
+import type { Subscription, SubscriptionParseReason } from "./types";
 
 type EnabledFilter = "all" | "enabled" | "disabled";
 type SubscriptionSourceType = "remote" | "local";
@@ -55,6 +56,7 @@ const subscriptionCreateSchema = z.object({
   enabled: z.boolean(),
   ephemeral: z.boolean(),
   incremental_alive_nodes: z.boolean(),
+  auto_intel: z.boolean(),
 }).superRefine((value, ctx) => {
   const url = value.url.trim();
   const content = value.content.trim();
@@ -83,6 +85,8 @@ const LOCAL_SOURCE_UPDATE_INTERVAL = "12h";
 const SUBSCRIPTION_DISABLE_HINT = "禁用订阅后，相关节点不会参与平台路由、健康统计或自动探测。";
 const SUBSCRIPTION_EPHEMERAL_HINT = "临时订阅的非健康节点会在一段时间后被自动删除。订阅本身不会被删除。";
 const SUBSCRIPTION_INCREMENTAL_HINT = "开启后刷新时保留当前仍存活的旧节点，仅清理失效旧节点，并合并新订阅内容；关闭后仅保留刷新后的订阅内容。";
+const SUBSCRIPTION_AUTO_INTEL_HINT = "开启后，该订阅刷新新增的节点会自动进入 Intel 批量检测；关闭后该订阅不会自动排队检测。";
+const SUBSCRIPTION_PARSE_REPORT_HINT = "解析报告按原因分组列出被丢弃的节点：原因、数量以及一个有限的名称样例。";
 
 function extractHostname(url: string): string {
   try {
@@ -103,6 +107,7 @@ function subscriptionToEditForm(subscription: Subscription): SubscriptionEditFor
     enabled: subscription.enabled,
     ephemeral: subscription.ephemeral,
     incremental_alive_nodes: subscription.incremental_alive_nodes,
+    auto_intel: subscription.auto_intel,
   };
 }
 
@@ -125,6 +130,114 @@ function normalizeSubmitUpdateInterval(sourceType: SubscriptionSourceType, raw: 
     return LOCAL_SOURCE_UPDATE_INTERVAL;
   }
   return raw.trim();
+}
+
+// SubscriptionParseReportSection renders the parse report of one subscription:
+// the grouped skip summary that every subscription response carries, plus the
+// exact (bounded) list from GET /api/v1/subscriptions/{id}/parse-report.
+function SubscriptionParseReportSection({ subscription }: { subscription: Subscription }) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const detailQuery = useQuery({
+    queryKey: ["subscriptions", "parse-report", subscription.id],
+    queryFn: () => getSubscriptionParseReport(subscription.id),
+    enabled: expanded,
+  });
+
+  const summary = subscription.parse_report ?? null;
+  const detail = detailQuery.data;
+
+  return (
+    <section className="platform-drawer-section">
+      <div className="platform-drawer-section-head">
+        <h4>{t("解析报告")}</h4>
+        <span
+          className="subscription-info-icon"
+          title={t(SUBSCRIPTION_PARSE_REPORT_HINT)}
+          aria-label={t(SUBSCRIPTION_PARSE_REPORT_HINT)}
+          tabIndex={0}
+        >
+          <Info size={13} />
+        </span>
+      </div>
+
+      {summary === null ? (
+        <p className="platform-op-hint">{t("该订阅尚未解析；刷新一次后会在这里列出被丢弃的节点及原因。")}</p>
+      ) : (
+        <>
+          <p className="platform-op-hint">
+            {t("共 {{total}} 个节点：导入 {{imported}} 个，丢弃 {{skipped}} 个。", {
+              total: summary.total,
+              imported: summary.imported,
+              skipped: summary.skipped,
+            })}
+          </p>
+
+          {summary.reasons.length === 0 ? (
+            <p className="platform-op-hint">{t("没有节点被丢弃。")}</p>
+          ) : (
+            <ul className="platform-ops-list">
+              {summary.reasons.map((bucket: SubscriptionParseReason) => (
+                <li key={bucket.reason} className="platform-op-item">
+                  <div className="platform-op-copy">
+                    <h5>{`${bucket.reason} × ${bucket.count}`}</h5>
+                    <p className="platform-op-hint">
+                      {bucket.sample_names.length > 0
+                        ? t("名称样例：{{names}}", { names: bucket.sample_names.join("、") })
+                        : t("没有可显示的名称")}
+                      {bucket.samples_truncated ? t("（样例已截断）") : ""}
+                    </p>
+                    {bucket.detail ? <p className="platform-op-hint">{bucket.detail}</p> : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {summary.skipped_overflow ? (
+            <p className="platform-op-hint">
+              {t("另有 {{count}} 个被丢弃的节点只计入数量，未记录名称。", { count: summary.skipped_overflow })}
+            </p>
+          ) : null}
+          {summary.reasons_overflow ? (
+            <p className="platform-op-hint">
+              {t("另有 {{count}} 种原因只计入数量。", { count: summary.reasons_overflow })}
+            </p>
+          ) : null}
+
+          <Button variant="ghost" onClick={() => setExpanded((previous) => !previous)}>
+            {expanded ? t("收起完整列表") : t("查看完整列表")}
+          </Button>
+
+          {expanded ? (
+            detailQuery.isPending ? (
+              <QueryState loading />
+            ) : detailQuery.error ? (
+              <QueryState error={detailQuery.error} onRetry={() => void detailQuery.refetch()} />
+            ) : !detail || !detail.parsed ? (
+              <p className="platform-op-hint">{t("该订阅尚未解析。")}</p>
+            ) : detail.truncated ? (
+              <p className="platform-op-hint">{t("解析报告超过 64 KiB，只保留了截断标记。")}</p>
+            ) : (
+              <ul className="platform-ops-list">
+                {detail.skipped.map((entry) => (
+                  <li
+                    key={`${entry.type}|${entry.name}|${entry.reason}`}
+                    className="platform-op-item"
+                  >
+                    <div className="platform-op-copy">
+                      <h5>{`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}</h5>
+                      <p className="platform-op-hint">{`${entry.reason}: ${entry.detail}`}</p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : null}
+        </>
+      )}
+    </section>
+  );
 }
 
 export function SubscriptionPage() {
@@ -201,6 +314,7 @@ export function SubscriptionPage() {
       enabled: true,
       ephemeral: false,
       incremental_alive_nodes: false,
+      auto_intel: true,
     },
   });
 
@@ -219,6 +333,7 @@ export function SubscriptionPage() {
       enabled: true,
       ephemeral: false,
       incremental_alive_nodes: false,
+      auto_intel: true,
     },
   });
 
@@ -277,6 +392,7 @@ export function SubscriptionPage() {
         enabled: true,
         ephemeral: false,
         incremental_alive_nodes: false,
+        auto_intel: true,
       });
       showToast("success", t("订阅 {{name}} 创建成功", { name: created.name }));
     },
@@ -298,6 +414,7 @@ export function SubscriptionPage() {
         enabled: formData.enabled,
         ephemeral: formData.ephemeral,
         incremental_alive_nodes: formData.incremental_alive_nodes,
+        auto_intel: formData.auto_intel,
         ...(formData.source_type === "remote"
           ? { url: formData.url.trim() }
           : { content: formData.content }),
@@ -449,6 +566,7 @@ export function SubscriptionPage() {
       enabled: values.enabled,
       ephemeral: values.ephemeral,
       incremental_alive_nodes: values.incremental_alive_nodes,
+      auto_intel: values.auto_intel,
       ...(values.source_type === "remote"
         ? { url: values.url.trim() }
         : { content: values.content }),
@@ -810,6 +928,8 @@ export function SubscriptionPage() {
                   <div className="callout callout-success">{t("最近一次刷新无错误")}</div>
                 )}
 
+                <SubscriptionParseReportSection subscription={selectedSubscription} />
+
                 <form className="form-grid" onSubmit={onEditSubmit}>
                   <input type="hidden" {...editForm.register("source_type")} />
 
@@ -936,6 +1056,26 @@ export function SubscriptionPage() {
                         </span>
                       </label>
                       <Switch id="edit-sub-incremental-alive-nodes" {...editForm.register("incremental_alive_nodes")} />
+                    </div>
+                  </div>
+
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="edit-sub-auto-intel" style={{ visibility: "hidden" }}>
+                      {t("自动 Intel 检测")}
+                    </label>
+                    <div className="subscription-switch-item">
+                      <label className="subscription-switch-label" htmlFor="edit-sub-auto-intel">
+                        <span>{t("自动 Intel 检测")}</span>
+                        <span
+                          className="subscription-info-icon"
+                          title={t(SUBSCRIPTION_AUTO_INTEL_HINT)}
+                          aria-label={t(SUBSCRIPTION_AUTO_INTEL_HINT)}
+                          tabIndex={0}
+                        >
+                          <Info size={13} />
+                        </span>
+                      </label>
+                      <Switch id="edit-sub-auto-intel" {...editForm.register("auto_intel")} />
                     </div>
                   </div>
 
@@ -1167,6 +1307,26 @@ export function SubscriptionPage() {
                     </span>
                   </label>
                   <Switch id="create-sub-incremental-alive-nodes" {...createForm.register("incremental_alive_nodes")} />
+                </div>
+              </div>
+
+              <div className="field-group">
+                <label className="field-label" htmlFor="create-sub-auto-intel" style={{ visibility: "hidden" }}>
+                  {t("自动 Intel 检测")}
+                </label>
+                <div className="subscription-switch-item">
+                  <label className="subscription-switch-label" htmlFor="create-sub-auto-intel">
+                    <span>{t("自动 Intel 检测")}</span>
+                    <span
+                      className="subscription-info-icon"
+                      title={t(SUBSCRIPTION_AUTO_INTEL_HINT)}
+                      aria-label={t(SUBSCRIPTION_AUTO_INTEL_HINT)}
+                      tabIndex={0}
+                    >
+                      <Info size={13} />
+                    </span>
+                  </label>
+                  <Switch id="create-sub-auto-intel" {...createForm.register("auto_intel")} />
                 </div>
               </div>
 

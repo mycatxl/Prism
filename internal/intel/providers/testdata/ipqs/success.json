@@ -1,0 +1,21 @@
+{
+  "success": true,
+  "message": "Success",
+  "ip_address": "8.8.8.8",
+  "fraud_score": 5,
+  "proxy": false,
+  "vpn": false,
+  "tor": false,
+  "active_tor": false,
+  "recent_abuse": false,
+  "bot_status": false,
+  "connection_type": "Corporate",
+  "ISP": "Google LLC",
+  "organization": "Google LLC",
+  "ASN": 15169,
+  "country_code": "US",
+  "city": "Mountain View",
+  "region": "California",
+  "mobile": false,
+  "is_crawler": false
+}

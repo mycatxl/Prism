@@ -34,7 +34,9 @@ func Assess(s Summary, now time.Time) Assessment {
 	if s.State == "unsupported" {
 		a.State = "unsupported"
 	}
-	if s.State == "pending" { a.State = "pending" }
+	if s.State == "pending" {
+		a.State = "pending"
+	}
 	if proxy != nil {
 		a.NetworkType, a.NetworkSource = proxy.IPType, ProviderID
 		a.State = "partial"
@@ -72,7 +74,9 @@ func Assess(s Summary, now time.Time) Assessment {
 		a.Reasons = append(a.Reasons, "NETWORK_EVIDENCE_MISSING")
 	}
 	networkComplete := proxy != nil && proxy.Signals.Proxy != nil && proxy.Signals.VPN != nil && proxy.Signals.Tor != nil && proxy.Signals.Compromised != nil
-	if a.State == "valid" && !networkComplete { a.State = "partial" }
+	if a.State == "valid" && !networkComplete {
+		a.State = "partial"
+	}
 	review, highRisk, conflict := false, false, false
 	if tor := currentSource(s, "torproject", now); tor != nil && len(tor.TorRoles) > 0 {
 		a.TorRoles = append([]string(nil), tor.TorRoles...)

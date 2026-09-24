@@ -1,0 +1,13 @@
+{
+  "ip": "8.8.8.8",
+  "is_datacenter": true,
+  "is_vpn": false,
+  "is_proxy": false,
+  "is_tor": false,
+  "is_abuser": false,
+  "is_crawler": false,
+  "is_mobile": false,
+  "asn": {"asn": 15169, "org": "Google LLC", "country": "US", "type": "hosting"},
+  "location": {"country": "United States", "country_code": "US", "city": "Mountain View", "state": "California"},
+  "company": {"name": "Google LLC", "type": "hosting"}
+}

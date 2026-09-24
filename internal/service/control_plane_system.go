@@ -10,8 +10,11 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/robfig/cron/v3"
+
 	"prism/internal/config"
 	"prism/internal/inspection"
+	"prism/internal/intel"
 	"prism/internal/netutil"
 	"prism/internal/proxy"
 	"prism/internal/routing"
@@ -74,6 +77,9 @@ type ControlPlaneService struct {
 	Inspection      InspectionManager
 	IPPure          *inspection.IPPureChecker
 	TorRegistry     *inspection.TorRegistry
+	// Intel is the WP08 facade: the authoritative intel.db store, the in-memory
+	// projection and the batch job executor. It is nil until WP08 is wired.
+	Intel *intel.Service
 
 	configMu      sync.Mutex
 	configVersion int
@@ -102,6 +108,12 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"latency_decay_window":                     true,
 	"cache_flush_interval":                     true,
 	"cache_flush_dirty_threshold":              true,
+	"intel_enabled":                            true,
+	"intel_node_workers":                       true,
+	"intel_check_concurrency_per_check":        true,
+	"intel_max_running_jobs":                   true,
+	"intel_auto_checks":                        true,
+	"intel_refresh_schedule":                   true,
 }
 
 var platformPatchAllowedFields = map[string]bool{
@@ -116,6 +128,8 @@ var platformPatchAllowedFields = map[string]bool{
 	"passive_circuit_breaker_disabled":     true,
 	"scheduled_rotation_interval":          true,
 	"scheduled_rotation_enabled":           true,
+	"rotation_avoid_previous_ip":           true,
+	"quality_policy":                       true,
 }
 
 var subscriptionPatchAllowedFields = map[string]bool{
@@ -127,6 +141,8 @@ var subscriptionPatchAllowedFields = map[string]bool{
 	"ephemeral":                  true,
 	"incremental_alive_nodes":    true,
 	"ephemeral_node_evict_delay": true,
+	// WP08 §3.6: the per-subscription automatic-intel switch.
+	"auto_intel": true,
 }
 
 func parseRuntimeConfigPatch(patchJSON json.RawMessage, out *config.RuntimeConfig) *ServiceError {
@@ -268,6 +284,30 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 		if !found {
 			cfg.LatencyAuthorities = append(cfg.LatencyAuthorities, latencyDomain)
 		}
+	}
+	if verr := validateIntelConfig(cfg); verr != nil {
+		return verr
+	}
+	return nil
+}
+
+// validateIntelConfig bounds the intel batch settings of WP08 §3.4.
+func validateIntelConfig(cfg *config.RuntimeConfig) *ServiceError {
+	if cfg.IntelNodeWorkers < 1 || cfg.IntelNodeWorkers > 128 {
+		return invalidArg("intel_node_workers: must be between 1 and 128")
+	}
+	if cfg.IntelMaxRunningJobs < 1 {
+		return invalidArg("intel_max_running_jobs: must be at least 1")
+	}
+	if cfg.IntelCheckConcurrencyPerCheck < 1 {
+		return invalidArg("intel_check_concurrency_per_check: must be at least 1")
+	}
+	schedule := strings.TrimSpace(cfg.IntelRefreshSchedule)
+	if schedule == "" {
+		return invalidArg("intel_refresh_schedule: must not be empty")
+	}
+	if _, err := cron.ParseStandard(schedule); err != nil {
+		return invalidArg("intel_refresh_schedule: " + err.Error())
 	}
 	return nil
 }

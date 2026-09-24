@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS job_items;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS provider_queue;
+DROP TABLE IF EXISTS provider_state;
+DROP TABLE IF EXISTS ip_assessment;
+DROP TABLE IF EXISTS node_checks;
+DROP TABLE IF EXISTS evidence;
+DROP TABLE IF EXISTS egress_history;
+DROP TABLE IF EXISTS node_egress;

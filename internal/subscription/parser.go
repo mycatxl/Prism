@@ -13,6 +13,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"prism/internal/node"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -33,12 +35,16 @@ var supportedOutboundTypes = map[string]bool{
 	"tor":         true,
 	"ssh":         true,
 	"naive":       true,
+	"snell":       true,
 }
 
 // ParsedNode represents a single parsed outbound from a subscription response.
 type ParsedNode struct {
 	Tag        string          // original tag from the outbound config
 	RawOptions json.RawMessage // full outbound JSON (including tag)
+	// Detail carries per-node parse notes (WP06 §9), for example the .ovpn
+	// directives that were accepted and ignored. It never contains credentials.
+	Detail string
 }
 
 // subscriptionResponse is the top-level structure of a sing-box subscription.
@@ -68,53 +74,77 @@ func NewGeneralSubscriptionParser() *GeneralSubscriptionParser {
 	return &GeneralSubscriptionParser{}
 }
 
-// ParseGeneralSubscription parses sing-box JSON / Clash JSON|YAML / URI-line
-// subscriptions (vmess/vless/trojan/ss/hysteria2/http/https/socks5/socks5h),
-// plus plain HTTP proxy lines (IP:PORT or IP:PORT:USER:PASS), with optional
-// base64-wrapped content support.
+// ParseGeneralSubscription parses sing-box JSON / Clash JSON|YAML / Surge /
+// .ovpn / URI-line subscriptions (vmess/vless/trojan/ss/hysteria2/tuic/anytls/
+// wireguard/openvpn/http/https/socks5/socks5h), plus plain HTTP proxy lines
+// (IP:PORT or IP:PORT:USER:PASS), with optional base64-wrapped content support.
+//
+// It is the reporting-free facade over ParseWithReport (WP06 §9).
 func ParseGeneralSubscription(data []byte) ([]ParsedNode, error) {
-	return NewGeneralSubscriptionParser().Parse(data)
+	result, err := ParseWithReport(data)
+	return result.Nodes, err
+}
+
+// ParseWithReport parses subscription content and reports every node that was
+// recognised but not imported, with a reason (WP06 §9).
+func ParseWithReport(data []byte) (ParseResult, error) {
+	return NewGeneralSubscriptionParser().ParseWithReport(data)
 }
 
 // Parse parses subscription content and returns supported outbound nodes.
 func (p *GeneralSubscriptionParser) Parse(data []byte) ([]ParsedNode, error) {
+	result, err := p.ParseWithReport(data)
+	return result.Nodes, err
+}
+
+// ParseWithReport parses subscription content and returns both the imported
+// nodes and the parse report. A returned error still carries the report for
+// everything the parser managed to classify before failing.
+func (p *GeneralSubscriptionParser) ParseWithReport(data []byte) (ParseResult, error) {
 	if len(data) > MaxSubscriptionBytes {
-		return nil, fmt.Errorf("subscription: input exceeds %d bytes; split large subscriptions into smaller sources", MaxSubscriptionBytes)
+		return newParseReport().result(), fmt.Errorf("subscription: input exceeds %d bytes; split large subscriptions into smaller sources", MaxSubscriptionBytes)
 	}
 	normalized := normalizeInput(data)
 	if len(normalized) == 0 {
-		return nil, fmt.Errorf("subscription: empty response")
+		return newParseReport().result(), fmt.Errorf("subscription: empty response")
 	}
 
-	attempt, err := parseSubscriptionContent(normalized)
+	report := newParseReport()
+	attempt, err := parseSubscriptionContent(normalized, report)
 	if err != nil {
-		return nil, err
+		report.addNodes(attempt.nodes)
+		return report.result(), err
 	}
 	if attempt.recognized {
-		return attempt.nodes, nil
+		report.addNodes(attempt.nodes)
+		return report.result(), nil
 	}
 
 	if decodedText, ok := tryDecodeBase64ToText(normalized); ok {
-		decodedAttempt, decodedErr := parseSubscriptionContent([]byte(decodedText))
+		// The decoded attempt keeps its own report so skips are not counted twice.
+		decodedReport := newParseReport()
+		decodedAttempt, decodedErr := parseSubscriptionContent([]byte(decodedText), decodedReport)
 		if decodedErr != nil {
-			return nil, decodedErr
+			decodedReport.addNodes(decodedAttempt.nodes)
+			return decodedReport.result(), decodedErr
 		}
 		if decodedAttempt.recognized {
-			return decodedAttempt.nodes, nil
+			decodedReport.addNodes(decodedAttempt.nodes)
+			return decodedReport.result(), nil
 		}
 	}
 
-	return nil, fmt.Errorf("subscription: unsupported format or no supported nodes found")
+	return newParseReport().result(), fmt.Errorf("subscription: unsupported format or no supported nodes found")
 }
 
-func parseSubscriptionContent(data []byte) (parseAttempt, error) {
+func parseSubscriptionContent(data []byte, report *parseReport) (parseAttempt, error) {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 0 {
 		return parseAttempt{}, nil
 	}
 
 	if looksLikeJSON(trimmed) {
-		nodes, recognized, err := parseJSONSubscription(trimmed)
+		nodes, recognized, err := parseJSONSubscription(trimmed, report)
 		if err != nil {
 			return parseAttempt{}, err
 		}
@@ -124,35 +154,64 @@ func parseSubscriptionContent(data []byte) (parseAttempt, error) {
 	}
 
 	text := normalizeTextContent(string(trimmed))
-	if nodes, recognized, err := parseClashYAMLSubscription(text); err != nil {
+	if nodes, recognized, err := parseClashYAMLSubscription(text, report); err != nil {
 		return parseAttempt{}, err
 	} else if recognized {
 		return parseAttempt{nodes: nodes, recognized: true}, nil
 	}
 
-	if nodes, recognized, err := parseSurgeProxySubscription(text); err != nil {
+	// WP06 §4.1: a non-JSON, non-YAML payload built from OpenVPN directives is
+	// a client profile, not a proxy list.
+	if nodes, recognized, err := parseOpenVPNSubscription(text, report); err != nil {
 		return parseAttempt{}, err
 	} else if recognized {
 		return parseAttempt{nodes: nodes, recognized: true}, nil
 	}
 
-	if nodes, recognized := parseURILineSubscription(text); recognized {
+	if nodes, recognized, err := parseSurgeProxySubscription(text, report); err != nil {
+		return parseAttempt{}, err
+	} else if recognized {
+		return parseAttempt{nodes: nodes, recognized: true}, nil
+	}
+
+	if nodes, recognized := parseURILineSubscription(text, report); recognized {
 		return parseAttempt{nodes: nodes, recognized: true}, nil
 	}
 
 	return parseAttempt{}, nil
 }
 
-func parseJSONSubscription(data []byte) ([]ParsedNode, bool, error) {
+// parseJSONSubscription decodes a sing-box/Clash-JSON body.
+//
+// Unlike the YAML path this needs no depth guard of its own: encoding/json's
+// scanner caps structural nesting at maxNestingDepth (10000) and returns
+// "exceeded max depth" instead of recursing, so a nesting bomb is a clean
+// decode error here (TestParseWithReport_DeeplyNestedJSONStaysSafe keeps that
+// claim honest).
+func parseJSONSubscription(data []byte, report *parseReport) ([]ParsedNode, bool, error) {
 	var obj map[string]json.RawMessage
 	objErr := json.Unmarshal(data, &obj)
 	if objErr == nil {
-		if outboundsRaw, ok := obj["outbounds"]; ok {
-			nodes, err := parseSingboxOutbounds(outboundsRaw)
+		if nodes, recognized, err := parseOpenVPNBundleJSON(obj, report); recognized {
 			return nodes, true, err
 		}
+		_, hasOutbounds := obj["outbounds"]
+		_, hasEndpoints := obj["endpoints"]
+		if hasOutbounds || hasEndpoints {
+			outbounds, err := decodeRawArray(obj["outbounds"])
+			if err != nil {
+				return nil, true, fmt.Errorf("subscription: unmarshal outbounds: %w", err)
+			}
+			endpoints, err := decodeRawArray(obj["endpoints"])
+			if err != nil {
+				return nil, true, fmt.Errorf("subscription: unmarshal endpoints: %w", err)
+			}
+			// WP06 §5/§6: endpoints and detour chains are resolved over the
+			// whole document.
+			return parseSingboxDocument(outbounds, endpoints, report), true, nil
+		}
 		if proxiesRaw, ok := obj["proxies"]; ok {
-			nodes, err := parseClashProxiesJSON(proxiesRaw)
+			nodes, err := parseClashProxiesJSON(proxiesRaw, report)
 			return nodes, true, err
 		}
 		return nil, false, nil
@@ -160,7 +219,7 @@ func parseJSONSubscription(data []byte) ([]ParsedNode, bool, error) {
 
 	var arr []json.RawMessage
 	if err := json.Unmarshal(data, &arr); err == nil {
-		nodes := parseRawOutbounds(arr)
+		nodes := parseRawOutbounds(arr, report)
 		if len(nodes) == 0 {
 			return nil, false, nil
 		}
@@ -170,46 +229,97 @@ func parseJSONSubscription(data []byte) ([]ParsedNode, bool, error) {
 	return nil, true, fmt.Errorf("subscription: unmarshal json: %w", objErr)
 }
 
-func parseSingboxOutbounds(raw json.RawMessage) ([]ParsedNode, error) {
-	var resp subscriptionResponse
-	if err := json.Unmarshal(raw, &resp.Outbounds); err != nil {
-		return nil, fmt.Errorf("subscription: unmarshal outbounds: %w", err)
+func parseSingboxOutbounds(raw json.RawMessage, report *parseReport) ([]ParsedNode, error) {
+	var outbounds []json.RawMessage
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &outbounds); err != nil {
+			return nil, fmt.Errorf("subscription: unmarshal outbounds: %w", err)
+		}
 	}
-	return parseRawOutbounds(resp.Outbounds), nil
+	return parseSingboxDocument(outbounds, nil, report), nil
 }
 
-func parseRawOutbounds(outbounds []json.RawMessage) []ParsedNode {
-	nodes := make([]ParsedNode, 0, len(outbounds))
-	for _, raw := range outbounds {
-		var header outboundHeader
-		if err := json.Unmarshal(raw, &header); err != nil {
-			// Skip malformed individual outbound — do not fail the entire parse.
-			continue
-		}
-		if !supportedOutboundTypes[header.Type] {
-			continue
-		}
-		nodes = append(nodes, ParsedNode{
-			Tag:        header.Tag,
-			RawOptions: json.RawMessage(append([]byte(nil), raw...)),
-		})
+// parseSingboxEndpoints imports a top-level sing-box "endpoints" array
+// (WP06 §5): wireguard entries are normalized into endpoint envelopes,
+// openvpn-client/openconnect entries are carried verbatim, and tailscale is
+// reported as ENGINE_NOT_BUILT.
+func parseSingboxEndpoints(raw json.RawMessage, report *parseReport) ([]ParsedNode, error) {
+	var endpoints []json.RawMessage
+	if err := json.Unmarshal(raw, &endpoints); err != nil {
+		return nil, fmt.Errorf("subscription: unmarshal endpoints: %w", err)
 	}
-	return nodes
+	return parseSingboxDocument(nil, endpoints, report), nil
 }
 
-func parseClashProxiesJSON(raw json.RawMessage) ([]ParsedNode, error) {
+// wrapEndpointObject carries a sing-box endpoint object into a form B envelope
+// unchanged.
+func wrapEndpointObject(tag string, raw json.RawMessage) ParsedNode {
+	envelope := map[string]any{
+		node.EnvelopeMarker: node.EnvelopeVersion,
+		"engine":            node.EngineSingbox,
+		"kind":              node.KindEndpoint,
+		"name":              tag,
+		"main":              json.RawMessage(raw),
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		encoded = raw
+	}
+	return ParsedNode{Tag: tag, RawOptions: json.RawMessage(encoded)}
+}
+
+func wireGuardEndpointTag(tag string, endpoint node.WireGuardEndpoint) string {
+	if strings.TrimSpace(tag) != "" {
+		return tag
+	}
+	if len(endpoint.Peers) > 0 {
+		return "wireguard-" + endpoint.Peers[0].Address
+	}
+	return "wireguard"
+}
+
+// decodeRawArray decodes an optional JSON array of objects.
+func decodeRawArray(raw json.RawMessage) ([]json.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// parseRawOutbounds resolves detour chains inside a bare outbound array.
+func parseRawOutbounds(outbounds []json.RawMessage, report *parseReport) []ParsedNode {
+	return parseSingboxDocument(outbounds, nil, report)
+}
+
+func parseClashProxiesJSON(raw json.RawMessage, report *parseReport) ([]ParsedNode, error) {
 	var proxies []map[string]any
 	if err := json.Unmarshal(raw, &proxies); err != nil {
 		return nil, fmt.Errorf("subscription: unmarshal clash proxies: %w", err)
 	}
-	return parseClashProxies(proxies), nil
+	return parseClashProxies(proxies, report), nil
 }
 
-func parseClashYAMLSubscription(text string) ([]ParsedNode, bool, error) {
+func parseClashYAMLSubscription(text string, report *parseReport) ([]ParsedNode, bool, error) {
 	if !looksLikeClashYAML(text) {
 		return nil, false, nil
 	}
 
+	// WP06 §9 hardening: refuse a body that would make yaml.v3's decoder burn
+	// unbounded CPU (one mapping with a very large number of keys, which its
+	// duplicate-key check makes quadratic) or recurse very deeply, before the
+	// decode starts. See yaml_guard.go for the limits and the measurements.
+	if limit := scanYAMLLimits(text, yamlScanLimits{
+		MaxDepth: MaxYAMLNestingDepth,
+		MaxKeys:  MaxYAMLMappingKeys,
+	}); limit.DepthBreach || limit.MappingKeyBreach {
+		reason, detail := describeYAMLLimitBreach(limit)
+		report.addSkip(SkippedNode{Source: SourceClash, Reason: reason, Detail: detail})
+		return nil, true, fmt.Errorf("subscription: %s", detail)
+	}
 	var cfg struct {
 		Proxies    []map[string]any `yaml:"proxies"`
 		ProxyUpper []map[string]any `yaml:"Proxy"`
@@ -225,17 +335,19 @@ func parseClashYAMLSubscription(text string) ([]ParsedNode, bool, error) {
 	if len(proxies) == 0 && len(cfg.ProxyLower) > 0 {
 		proxies = cfg.ProxyLower
 	}
-	return parseClashProxies(proxies), true, nil
+	return parseClashProxies(proxies, report), true, nil
 }
 
-func parseClashProxies(proxies []map[string]any) []ParsedNode {
+func parseClashProxies(proxies []map[string]any, report *parseReport) []ParsedNode {
 	nodes := make([]ParsedNode, 0, len(proxies))
 	for _, proxy := range proxies {
-		if node, ok := convertClashProxyToNode(proxy); ok {
-			nodes = append(nodes, node)
+		if converted, ok := convertClashProxyToNode(proxy, report, SourceClash); ok {
+			nodes = append(nodes, converted)
 		}
 	}
-	return nodes
+	// WP06 §6.4: dialer-proxy references that resolve inside this document
+	// become chain nodes; the rest stay dangling for the parse report.
+	return applyClashDialerChains(nodes)
 }
 
 type surgeProxyLine struct {
@@ -245,7 +357,7 @@ type surgeProxyLine struct {
 
 const surgeScannerMaxTokenSize = 1024 * 1024
 
-func parseSurgeProxySubscription(text string) ([]ParsedNode, bool, error) {
+func parseSurgeProxySubscription(text string, report *parseReport) ([]ParsedNode, bool, error) {
 	lower := strings.ToLower(text)
 	if !strings.Contains(lower, "[proxy") && !strings.Contains(lower, "[wireguard ") {
 		return nil, false, nil
@@ -323,12 +435,12 @@ func parseSurgeProxySubscription(text string) ([]ParsedNode, bool, error) {
 	}
 
 	for _, item := range proxyLines {
-		node, ok, seen := parseSurgeProxyLine(item.name, item.body, wireGuardSections)
+		parsed, ok, seen := parseSurgeProxyLine(item.name, item.body, wireGuardSections, report)
 		if seen {
 			recognized = true
 		}
 		if ok {
-			nodes = append(nodes, node)
+			nodes = append(nodes, parsed)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -337,7 +449,7 @@ func parseSurgeProxySubscription(text string) ([]ParsedNode, bool, error) {
 	return nodes, recognized, nil
 }
 
-func parseSurgeProxyLine(name string, body string, wireGuardSections map[string]map[string]string) (ParsedNode, bool, bool) {
+func parseSurgeProxyLine(name string, body string, wireGuardSections map[string]map[string]string, report *parseReport) (ParsedNode, bool, bool) {
 	parts := splitCommaRespectQuotes(body)
 	if len(parts) == 0 {
 		return ParsedNode{}, false, false
@@ -348,18 +460,24 @@ func parseSurgeProxyLine(name string, body string, wireGuardSections map[string]
 		if !ok {
 			return ParsedNode{}, false, true
 		}
-		node, ok := convertClashProxyToNode(proxy)
-		return node, ok, true
+		parsed, ok := convertClashProxyToNode(proxy, report, SourceSurge)
+		return parsed, ok, true
 	}
 	if proxy, ok := parseSurgeQXProxyLine(name, parts); ok {
-		node, ok := convertClashProxyToNode(proxy)
-		return node, ok, true
+		parsed, ok := convertClashProxyToNode(proxy, report, SourceSurge)
+		return parsed, ok, true
 	}
 	switch proto {
 	case "ss", "shadowsocks", "vmess", "vmess-aead", "trojan", "socks5", "http", "https",
-		"vless", "wireguard", "wg", "hysteria", "hysteria2", "hy2", "tuic", "ssh":
+		"vless", "wireguard", "wg", "hysteria", "hysteria2", "hy2", "tuic", "ssh", "snell":
 		// supported and convertible to sing-box compatible outbounds
-	case "ssr", "snell", "shadowtls", "naive":
+	case "ssr":
+		// Recognised, but sing-box has no SSR support (D-1); report it.
+		if skipped, ok := skipDeferredOrUnknown(name, "ssr", SourceSurge); ok {
+			report.addSkip(skipped)
+		}
+		return ParsedNode{}, false, true
+	case "shadowtls", "naive":
 		// Keep unsupported Surge node types as "unrecognized" to avoid silent drops.
 		return ParsedNode{}, false, false
 	default:
@@ -372,8 +490,8 @@ func parseSurgeProxyLine(name string, body string, wireGuardSections map[string]
 			if !ok {
 				return ParsedNode{}, false, true
 			}
-			node, ok := convertClashProxyToNode(proxy)
-			return node, ok, true
+			parsed, ok := convertClashProxyToNode(proxy, report, SourceSurge)
+			return parsed, ok, true
 		}
 	}
 	if len(parts) < 3 {
@@ -503,6 +621,22 @@ func parseSurgeProxyLine(name string, body string, wireGuardSections map[string]
 		}
 		if sni := strings.TrimSpace(surgeOption(options, "sni", "servername", "peer")); sni != "" {
 			proxy["sni"] = sni
+		}
+	case "snell":
+		psk := strings.TrimSpace(surgeOption(options, "psk", "password"))
+		if psk == "" {
+			return ParsedNode{}, false, true
+		}
+		proxy["type"] = "snell"
+		proxy["psk"] = psk
+		if version := strings.TrimSpace(surgeOption(options, "version")); version != "" {
+			proxy["version"] = version
+		}
+		if obfs := strings.TrimSpace(surgeOption(options, "obfs", "obfs-mode", "obfs_mode")); obfs != "" {
+			proxy["obfs"] = obfs
+		}
+		if obfsHost := strings.TrimSpace(surgeOption(options, "obfs-host", "obfs_host")); obfsHost != "" {
+			proxy["obfs-host"] = obfsHost
 		}
 	case "wireguard", "wg":
 		privateKey := strings.TrimSpace(surgeOption(options, "private-key", "private_key"))
@@ -674,8 +808,8 @@ func parseSurgeProxyLine(name string, body string, wireGuardSections map[string]
 		}
 	}
 
-	node, ok := convertClashProxyToNode(proxy)
-	return node, ok, true
+	parsed, ok := convertClashProxyToNode(proxy, report, SourceSurge)
+	return parsed, ok, true
 }
 
 func parseSurgeCustomProxyLine(name string, parts []string) (map[string]any, bool) {
@@ -1175,7 +1309,20 @@ func splitCommaRespectQuotes(input string) []string {
 	return out
 }
 
-func convertClashProxyToNode(proxy map[string]any) (ParsedNode, bool) {
+// convertClashProxyToNode converts one Clash/Surge style proxy map into a node
+// document and reports the drop when it cannot be represented (WP06 §9).
+func convertClashProxyToNode(proxy map[string]any, report *parseReport, source string) (ParsedNode, bool) {
+	parsed, ok := convertClashProxyPayload(proxy)
+	if ok {
+		return parsed, true
+	}
+	if report != nil {
+		report.addSkip(clashProxySkip(proxy, source))
+	}
+	return ParsedNode{}, false
+}
+
+func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 	nodeType := strings.ToLower(strings.TrimSpace(getString(proxy, "type")))
 	tag := strings.TrimSpace(firstNonEmpty(getString(proxy, "name"), getString(proxy, "tag")))
 	server := strings.TrimSpace(getString(proxy, "server"))
@@ -1201,6 +1348,10 @@ func convertClashProxyToNode(proxy map[string]any) (ParsedNode, bool) {
 		}
 		setSSPluginFromClash(outbound, proxy)
 		applyClashDialFields(outbound, proxy)
+		// WP06 §6.2: a Clash shadow-tls plugin becomes a shadowtls detour chain.
+		if chainRaw, ok := clashShadowTLSChain(defaultTag(tag, "shadowsocks", server, port), server, port, proxy, outbound); ok {
+			return ParsedNode{Tag: defaultTag(tag, "shadowsocks", server, port), RawOptions: chainRaw}, true
+		}
 		return buildParsedNode(outbound)
 	case "vmess":
 		uuid := strings.TrimSpace(getString(proxy, "uuid"))
@@ -1401,12 +1552,19 @@ func convertClashProxyToNode(proxy map[string]any) (ParsedNode, bool) {
 		applyClashDialFields(outbound, proxy)
 		return buildParsedNode(outbound)
 	case "wireguard", "wg":
+		if firstNonNil(proxy["amnezia-wg-option"], proxy["amnezia-wg-options"], proxy["amnezia_wg_option"]) != nil {
+			// sing-box cannot express AmneziaWG; WP07 (mihomo) handles it.
+			return ParsedNode{}, false
+		}
+		// The legacy sing-box WireGuard outbound form is preserved here so that
+		// existing node identities keep their hash; SingboxRuntime converts it
+		// into a wireguard endpoint at build time (WP06 §1.3).
 		privateKey := strings.TrimSpace(getString(proxy, "private-key", "private_key"))
 		publicKey := strings.TrimSpace(getString(proxy, "public-key", "public_key"))
 		localAddress := parseWireGuardLocalAddress(proxy)
 		allowedIPs := parseWireGuardAllowedIPs(proxy)
 		if len(allowedIPs) == 0 {
-			allowedIPs = []string{"0.0.0.0/0", "::/0"}
+			allowedIPs = node.DefaultWireGuardAllowedIPs()
 		}
 		if privateKey == "" || publicKey == "" || len(localAddress) == 0 {
 			return ParsedNode{}, false
@@ -1440,6 +1598,46 @@ func convertClashProxyToNode(proxy map[string]any) (ParsedNode, bool) {
 		}
 		if udp, ok := getBool(proxy, "udp"); ok && !udp {
 			outbound["network"] = "tcp"
+		}
+		applyClashDialFields(outbound, proxy)
+		return buildParsedNode(outbound)
+	case "snell":
+		// WP06 §7: sing-box 1.14 only supports Snell v4 and v6 outbounds;
+		// Clash/Surge nodes declare v4.
+		psk := strings.TrimSpace(getString(proxy, "psk", "password"))
+		version, hasVersion := getUint(proxy, "version")
+		if psk == "" {
+			return ParsedNode{}, false
+		}
+		if !hasVersion || version != 4 {
+			// v1-v3 (or an unspecified version) is delegated to WP07.
+			return ParsedNode{}, false
+		}
+		outbound := map[string]any{
+			"type":        "snell",
+			"tag":         defaultTag(tag, "snell", server, port),
+			"server":      server,
+			"server_port": port,
+			"psk":         psk,
+			"version":     uint64(4),
+		}
+		if obfsOpts, ok := getMap(proxy, "obfs-opts", "obfs_opts"); ok {
+			if mode := strings.TrimSpace(getString(obfsOpts, "mode")); mode != "" {
+				outbound["obfs_mode"] = mode
+			}
+			if host := strings.TrimSpace(getString(obfsOpts, "host")); host != "" {
+				outbound["obfs_host"] = host
+			}
+		}
+		if mode := strings.TrimSpace(getString(proxy, "obfs")); mode != "" {
+			if _, exists := outbound["obfs_mode"]; !exists {
+				outbound["obfs_mode"] = mode
+			}
+		}
+		if host := strings.TrimSpace(getString(proxy, "obfs-host", "obfs_host")); host != "" {
+			if _, exists := outbound["obfs_host"]; !exists {
+				outbound["obfs_host"] = host
+			}
 		}
 		applyClashDialFields(outbound, proxy)
 		return buildParsedNode(outbound)
@@ -1895,7 +2093,7 @@ func hasLetter(value string) bool {
 	return false
 }
 
-func parseURILineSubscription(text string) ([]ParsedNode, bool) {
+func parseURILineSubscription(text string, report *parseReport) ([]ParsedNode, bool) {
 	var nodes []ParsedNode
 	recognized := false
 	for _, rawLine := range strings.Split(text, "\n") {
@@ -1905,73 +2103,148 @@ func parseURILineSubscription(text string) ([]ParsedNode, bool) {
 		}
 
 		lower := strings.ToLower(line)
+		// WP06 §8/§11: ssr:// and mierus:// belong to the rejected fallback
+		// kernel; report them instead of dropping the line.
+		if scheme, rest, isURL := strings.Cut(lower, "://"); isURL && rest != "" {
+			if deferred, ok := deferredShareLinkSchemes[scheme]; ok {
+				recognized = true
+				report.addSkip(SkippedNode{
+					Name:   shareLinkName(line),
+					Type:   scheme,
+					Source: SourceURI,
+					Reason: node.ReasonEngineNotBuilt,
+					Detail: deferred,
+				})
+				continue
+			}
+		}
 		var (
-			node      ParsedNode
-			ok        bool
-			extraNode []ParsedNode
+			parsed       ParsedNode
+			ok           bool
+			extraNode    []ParsedNode
+			lineImported bool
 		)
 		switch {
 		case strings.HasPrefix(lower, "vmess://"):
-			recognized = true
-			node, ok = parseVmessURI(line)
+			lineImported = true
+			parsed, ok = parseVmessURI(line)
 		case strings.HasPrefix(lower, "vmess1://"):
-			recognized = true
-			node, ok = parseVmess1URI(line)
+			lineImported = true
+			parsed, ok = parseVmess1URI(line)
 		case strings.HasPrefix(lower, "vless://"):
-			recognized = true
-			node, ok = parseVlessURI(line)
+			lineImported = true
+			parsed, ok = parseVlessURI(line)
 		case strings.HasPrefix(lower, "trojan://"):
-			recognized = true
-			node, ok = parseTrojanURI(line)
+			lineImported = true
+			parsed, ok = parseTrojanURI(line)
 		case strings.HasPrefix(lower, "ss://"):
-			recognized = true
-			node, ok = parseSSURI(line)
+			lineImported = true
+			parsed, ok = parseSSURI(line)
 		case strings.HasPrefix(lower, "hysteria2://"):
-			recognized = true
-			node, ok = parseHysteria2URI(line)
+			lineImported = true
+			parsed, ok = parseHysteria2URI(line)
 		case strings.HasPrefix(lower, "hy2://"):
-			recognized = true
-			node, ok = parseHysteria2URI(line)
+			lineImported = true
+			parsed, ok = parseHysteria2URI(line)
+		// WP06 §8: share links completed for the sing-box path.
+		case strings.HasPrefix(lower, "tuic://"):
+			lineImported = true
+			parsed, ok = parseTuicURI(line)
+		case strings.HasPrefix(lower, "hysteria://"):
+			lineImported = true
+			parsed, ok = parseHysteriaURI(line)
+		case strings.HasPrefix(lower, "anytls://"):
+			lineImported = true
+			parsed, ok = parseAnyTLSURI(line)
+		case strings.HasPrefix(lower, "ssh://"):
+			lineImported = true
+			parsed, ok = parseSSHURI(line)
+		case strings.HasPrefix(lower, "wireguard://"),
+			strings.HasPrefix(lower, "wg://"):
+			lineImported = true
+			parsed, ok = parseWireGuardShareURI(line)
 		case strings.HasPrefix(lower, "ssd://"):
-			recognized = true
+			lineImported = true
 			extraNode, ok = parseSSDURI(line)
 		case strings.HasPrefix(lower, "socks://"):
-			recognized = true
-			node, ok = parseSocksURI(line)
+			lineImported = true
+			parsed, ok = parseSocksURI(line)
 			if !ok {
-				node, ok = parseProxyURI(line)
+				parsed, ok = parseProxyURI(line)
 			}
 		case strings.HasPrefix(lower, "tg://socks"),
 			strings.HasPrefix(lower, "https://t.me/socks"),
 			strings.HasPrefix(lower, "tg://http"),
 			strings.HasPrefix(lower, "https://t.me/http"),
 			strings.HasPrefix(lower, "https://t.me/https"):
-			recognized = true
-			node, ok = parseTelegramProxyURI(line)
+			lineImported = true
+			parsed, ok = parseTelegramProxyURI(line)
 		case strings.HasPrefix(lower, "netch://"):
-			recognized = true
-			node, ok = parseNetchURI(line)
+			lineImported = true
+			parsed, ok = parseNetchURI(line)
 		case strings.HasPrefix(lower, "http://"),
 			strings.HasPrefix(lower, "https://"),
 			strings.HasPrefix(lower, "socks5://"),
 			strings.HasPrefix(lower, "socks5h://"):
-			recognized = true
-			node, ok = parseProxyURI(line)
+			lineImported = true
+			parsed, ok = parseProxyURI(line)
 		default:
-			node, ok = parsePlainHTTPProxyLine(line)
+			parsed, ok = parsePlainHTTPProxyLine(line)
 			if ok {
-				recognized = true
+				lineImported = true
 			}
+		}
+		if lineImported {
+			recognized = true
+		}
+		if lineImported && !ok && len(extraNode) == 0 {
+			// The line carried a scheme Prism imports but the payload could not
+			// be represented: report it rather than dropping it silently.
+			report.addSkip(shareLinkSkip(line))
 		}
 		if len(extraNode) > 0 {
 			nodes = append(nodes, extraNode...)
 			continue
 		}
 		if ok {
-			nodes = append(nodes, node)
+			nodes = append(nodes, parsed)
 		}
 	}
 	return nodes, recognized
+}
+
+// shareLinkName extracts the display name of a share link.
+func shareLinkName(line string) string {
+	if index := strings.Index(line, "#"); index >= 0 {
+		return decodeTag(line[index+1:])
+	}
+	return ""
+}
+
+// shareLinkSkip classifies a share link that carries a Prism scheme but could
+// not be converted.
+func shareLinkSkip(line string) SkippedNode {
+	lower := strings.ToLower(line)
+	scheme, _, _ := strings.Cut(lower, "://")
+	name := shareLinkName(line)
+	switch scheme {
+	case "vless":
+		query := ""
+		if _, rawQuery, ok := strings.Cut(line, "?"); ok {
+			query = rawQuery
+		}
+		values, _ := url.ParseQuery(query)
+		if network := strings.ToLower(strings.TrimSpace(values.Get("type"))); network == "xhttp" || network == "splithttp" {
+			return skipNode(name, "vless", SourceURI, node.ReasonEngineNotBuilt, "vless(xhttp)")
+		}
+		if encryption := strings.TrimSpace(values.Get("encryption")); encryption != "" && !strings.EqualFold(encryption, "none") {
+			return skipNode(name, "vless", SourceURI, node.ReasonEngineNotBuilt, "vless(encryption)")
+		}
+		return skipNode(name, "vless", SourceURI, node.ReasonInvalid, "unparsable vless share link")
+	case "hysteria":
+		return skipNode(name, "hysteria", SourceURI, node.ReasonInvalid, "unparsable hysteria share link")
+	}
+	return skipNode(name, scheme, SourceURI, node.ReasonInvalid, "unparsable share link")
 }
 
 func parsePlainHTTPProxyLine(line string) (ParsedNode, bool) {
@@ -3130,6 +3403,11 @@ func parseVlessURI(uri string) (ParsedNode, bool) {
 	}
 
 	query := u.Query()
+	// WP06 §8: a VLESS node with a non-empty encryption mode is not
+	// representable by sing-box and is delegated to WP07.
+	if encryption := strings.TrimSpace(query.Get("encryption")); encryption != "" && !strings.EqualFold(encryption, "none") {
+		return ParsedNode{}, false
+	}
 	outbound := map[string]any{
 		"type":        "vless",
 		"tag":         tag,
@@ -3438,7 +3716,9 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 
 	if at := strings.LastIndex(beforeQuery, "@"); at > 0 && at < len(beforeQuery)-1 {
 		left := beforeQuery[:at]
-		hostport := beforeQuery[at+1:]
+		// WP06 §8 ①: SIP002 writes ss://<userinfo>@host:port/?plugin=..., so the
+		// trailing slash before the query must not reach the port parser.
+		hostport := strings.TrimSuffix(beforeQuery[at+1:], "/")
 		method, password, ok := parseSSMethodPassword(left)
 		if !ok {
 			return ParsedNode{}, false
@@ -3474,7 +3754,7 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 		return ParsedNode{}, false
 	}
 	left := decodedText[:at]
-	hostport := decodedText[at+1:]
+	hostport := strings.TrimSuffix(decodedText[at+1:], "/")
 	method, password, ok := parseSSMethodPassword(left)
 	if !ok {
 		return ParsedNode{}, false
@@ -3502,6 +3782,13 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 }
 
 func parseSSMethodPassword(input string) (string, string, bool) {
+	// WP06 §8 ②: userinfo of a SIP002 link is percent-encoded; ss2022 keys
+	// carry base64 padding that arrives as %3D.
+	if strings.Contains(input, "%") {
+		if decoded, err := url.QueryUnescape(input); err == nil {
+			input = decoded
+		}
+	}
 	if method, password, ok := strings.Cut(input, ":"); ok {
 		method = normalizeShadowsocksMethod(method)
 		password = strings.TrimSpace(password)

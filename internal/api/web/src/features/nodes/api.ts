@@ -46,6 +46,20 @@ function normalizeNode(raw: ApiNodeSummary): NodeSummary {
     normalized.reference_latency_ms = reference_latency_ms;
   }
 
+  // The assessment may be missing entirely (pre-WP10 payloads). Normalising it
+  // here keeps every consumer free of undefined checks; `intel.state` carries
+  // the "unassessed" case.
+  const intel = raw.intel;
+  if (intel) {
+    normalized.intel = {
+      ...intel,
+      native: intel.native ?? null,
+      purity_score: typeof intel.purity_score === "number" ? intel.purity_score : null,
+      flags: Array.isArray(intel.flags) ? intel.flags : [],
+      checks: intel.checks && typeof intel.checks === "object" ? intel.checks : {},
+    };
+  }
+
   return normalized;
 }
 
@@ -79,6 +93,30 @@ export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): P
   appendIfNotEmpty("region", filters.region?.toLowerCase());
   appendIfNotEmpty("egress_ip", filters.egress_ip);
   appendIfNotEmpty("probed_since", filters.probed_since);
+
+  // WP10 §4 intel filters.
+  if (filters.purity_min !== undefined) {
+    query.set("purity_min", String(filters.purity_min));
+  }
+  if (filters.purity_max !== undefined) {
+    query.set("purity_max", String(filters.purity_max));
+  }
+  appendIfNotEmpty("verdict", filters.verdict);
+  appendIfNotEmpty("confidence_min", filters.confidence_min);
+  appendIfNotEmpty("country", filters.country?.toUpperCase());
+  if (filters.native !== undefined) {
+    query.set("native", String(filters.native));
+  }
+  if (filters.asn !== undefined) {
+    query.set("asn", String(filters.asn));
+  }
+  // `check` is repeatable; each entry is "<check id>:<outcome>".
+  for (const check of filters.check ?? []) {
+    const trimmed = check.trim();
+    if (trimmed) {
+      query.append("check", trimmed);
+    }
+  }
 
   if (filters.circuit_open !== undefined) {
     query.set("circuit_open", String(filters.circuit_open));

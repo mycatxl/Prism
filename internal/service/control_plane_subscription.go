@@ -33,11 +33,18 @@ type SubscriptionResponse struct {
 	Ephemeral               bool   `json:"ephemeral"`
 	IncrementalAliveNodes   bool   `json:"incremental_alive_nodes"`
 	EphemeralNodeEvictDelay string `json:"ephemeral_node_evict_delay"`
-	Enabled                 bool   `json:"enabled"`
-	CreatedAt               string `json:"created_at"`
-	LastChecked             string `json:"last_checked,omitempty"`
-	LastUpdated             string `json:"last_updated,omitempty"`
-	LastError               string `json:"last_error,omitempty"`
+	// AutoIntel is the per-subscription automatic-intel switch (§3.6). Always
+	// present, so a client can read back what it set.
+	AutoIntel bool `json:"auto_intel"`
+	// ParseReport is the grouped summary of the last parse (Workplan WP06 §9):
+	// one entry per skip reason with a count and a bounded, redacted sample of
+	// names. Nil until the subscription has been parsed once.
+	ParseReport *subscription.SkipSummary `json:"parse_report,omitempty"`
+	Enabled     bool                      `json:"enabled"`
+	CreatedAt   string                    `json:"created_at"`
+	LastChecked string                    `json:"last_checked,omitempty"`
+	LastUpdated string                    `json:"last_updated,omitempty"`
+	LastError   string                    `json:"last_error,omitempty"`
 }
 
 func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) SubscriptionResponse {
@@ -75,6 +82,8 @@ func (s *ControlPlaneService) subToResponse(sub *subscription.Subscription) Subs
 		Ephemeral:               sub.Ephemeral(),
 		IncrementalAliveNodes:   sub.IncrementalAliveNodes(),
 		EphemeralNodeEvictDelay: time.Duration(sub.EphemeralNodeEvictDelayNs()).String(),
+		AutoIntel:               sub.AutoIntel(),
+		ParseReport:             sub.ParseSummary(),
 		Enabled:                 sub.Enabled(),
 		CreatedAt:               time.Unix(0, sub.CreatedAtNs).UTC().Format(time.RFC3339Nano),
 	}
@@ -114,6 +123,78 @@ func (s *ControlPlaneService) GetSubscription(id string) (*SubscriptionResponse,
 	return &r, nil
 }
 
+// SubscriptionParseReportResponse is the body of
+// GET /api/v1/subscriptions/{id}/parse-report.
+//
+// It is the durable view: the report stored by the last parse, bounded by
+// subscription.MaxSkippedNodes records (the state store keeps at most 64 KiB and
+// replaces anything larger with a marker, see Truncated).
+type SubscriptionParseReportResponse struct {
+	SubscriptionID string `json:"subscription_id"`
+	// Parsed is false when the subscription has never been parsed.
+	Parsed bool `json:"parsed"`
+	// Truncated is true when the stored report exceeded the 64 KiB store limit;
+	// summary, stats and skipped are then empty.
+	Truncated     bool                       `json:"truncated"`
+	OriginalBytes int                        `json:"original_bytes,omitempty"`
+	Summary       subscription.SkipSummary   `json:"summary"`
+	Stats         subscription.ParseStats    `json:"stats"`
+	Skipped       []subscription.SkippedNode `json:"skipped"`
+}
+
+// GetSubscriptionParseReport returns the stored parse report of one
+// subscription. Skipped holds at most subscription.MaxSkippedNodes records;
+// Stats.SkippedOverflow counts the records the report did not keep, so
+// Stats.Skipped is always the true total.
+func (s *ControlPlaneService) GetSubscriptionParseReport(id string) (*SubscriptionParseReportResponse, error) {
+	if s.SubMgr.Lookup(id) == nil {
+		return nil, notFound("subscription not found")
+	}
+	resp := &SubscriptionParseReportResponse{
+		SubscriptionID: id,
+		Summary:        subscription.SkipSummary{Reasons: []subscription.SkipReason{}},
+		Skipped:        []subscription.SkippedNode{},
+	}
+	if s.Engine == nil {
+		return resp, nil
+	}
+	raw, err := s.Engine.GetSubscriptionParseReport(id)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			// The row is gone although the subscription is live: report "not
+			// parsed yet" instead of hiding the subscription behind a 404.
+			return resp, nil
+		}
+		return nil, internal("load parse report", err)
+	}
+	if raw == "" || raw == "{}" {
+		return resp, nil
+	}
+	var marker struct {
+		Truncated     bool `json:"truncated"`
+		OriginalBytes int  `json:"original_bytes"`
+	}
+	if err := json.Unmarshal([]byte(raw), &marker); err != nil {
+		return nil, internal("decode parse report", err)
+	}
+	if marker.Truncated {
+		resp.Truncated = true
+		resp.OriginalBytes = marker.OriginalBytes
+		return resp, nil
+	}
+	var result subscription.ParseResult
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return nil, internal("decode parse report", err)
+	}
+	resp.Parsed = true
+	resp.Stats = result.Stats
+	if len(result.Skipped) > 0 {
+		resp.Skipped = result.Skipped
+	}
+	resp.Summary = subscription.SummarizeParseResult(result)
+	return resp, nil
+}
+
 // CreateSubscriptionRequest holds create subscription parameters.
 type CreateSubscriptionRequest struct {
 	Name                    *string `json:"name"`
@@ -125,10 +206,17 @@ type CreateSubscriptionRequest struct {
 	Ephemeral               *bool   `json:"ephemeral"`
 	IncrementalAliveNodes   *bool   `json:"incremental_alive_nodes"`
 	EphemeralNodeEvictDelay *string `json:"ephemeral_node_evict_delay"`
+	// AutoIntel is the per-subscription automatic-intel switch (§3.6).
+	// Defaults to true, matching the subscription column's default.
+	AutoIntel *bool `json:"auto_intel"`
 }
 
 const minSubscriptionUpdateInterval = 30 * time.Second
 const defaultSubscriptionEphemeralNodeEvictDelay = 72 * time.Hour
+
+// defaultSubscriptionAutoIntel matches the persisted default of
+// `subscriptions.auto_intel` (migration 000011).
+const defaultSubscriptionAutoIntel = true
 
 func parseSubscriptionSourceType(raw *string) (string, *ServiceError) {
 	if raw == nil {
@@ -205,6 +293,10 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 	if req.IncrementalAliveNodes != nil {
 		incrementalAliveNodes = *req.IncrementalAliveNodes
 	}
+	autoIntel := defaultSubscriptionAutoIntel
+	if req.AutoIntel != nil {
+		autoIntel = *req.AutoIntel
+	}
 	ephemeralNodeEvictDelay := defaultSubscriptionEphemeralNodeEvictDelay
 	if req.EphemeralNodeEvictDelay != nil {
 		d, err := time.ParseDuration(*req.EphemeralNodeEvictDelay)
@@ -231,6 +323,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 		Ephemeral:                 ephemeral,
 		IncrementalAliveNodes:     incrementalAliveNodes,
 		EphemeralNodeEvictDelayNs: int64(ephemeralNodeEvictDelay),
+		AutoIntel:                 autoIntel,
 		CreatedAtNs:               now,
 		UpdatedAtNs:               now,
 	}
@@ -243,6 +336,7 @@ func (s *ControlPlaneService) CreateSubscription(req CreateSubscriptionRequest) 
 	sub.SetSourceType(sourceType)
 	sub.SetContent(content)
 	sub.SetIncrementalAliveNodes(incrementalAliveNodes)
+	sub.SetAutoIntel(autoIntel)
 	sub.SetEphemeralNodeEvictDelayNs(int64(ephemeralNodeEvictDelay))
 	sub.CreatedAtNs = now
 	sub.UpdatedAtNs = now
@@ -364,6 +458,13 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		newEphemeralNodeEvictDelay = int64(d)
 	}
 
+	newAutoIntel := sub.AutoIntel()
+	if b, ok, err := patch.optionalBool("auto_intel"); err != nil {
+		return nil, err
+	} else if ok {
+		newAutoIntel = b
+	}
+
 	now := time.Now().UnixNano()
 	ms := model.Subscription{
 		ID:                        id,
@@ -376,6 +477,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		Ephemeral:                 newEphemeral,
 		IncrementalAliveNodes:     newIncrementalAliveNodes,
 		EphemeralNodeEvictDelayNs: newEphemeralNodeEvictDelay,
+		AutoIntel:                 newAutoIntel,
 		CreatedAtNs:               sub.CreatedAtNs,
 		UpdatedAtNs:               now,
 	}
@@ -389,6 +491,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 	sub.SetEphemeral(newEphemeral)
 	sub.SetIncrementalAliveNodes(newIncrementalAliveNodes)
 	sub.SetEphemeralNodeEvictDelayNs(newEphemeralNodeEvictDelay)
+	sub.SetAutoIntel(newAutoIntel)
 	sub.UpdatedAtNs = now
 
 	if nameChanged {

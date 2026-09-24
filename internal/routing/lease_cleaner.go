@@ -18,7 +18,7 @@ type LeaseCleaner struct {
 	minInterval time.Duration
 	jitterRange time.Duration
 
-	// test hook: called at the beginning of each sweep.
+	// test hook: called after each sweep completes (used as a barrier).
 	sweepHook func()
 }
 
@@ -49,8 +49,10 @@ func (c *LeaseCleaner) Stop() {
 }
 
 func (c *LeaseCleaner) sweep() {
+	// The hook signals sweep completion: it runs after the expiry sweep below
+	// has finished, so tests can use it as a barrier.
 	if c.sweepHook != nil {
-		c.sweepHook()
+		defer c.sweepHook()
 	}
 
 	now := time.Now()

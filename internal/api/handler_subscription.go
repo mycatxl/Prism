@@ -94,6 +94,24 @@ func HandleGetSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+// HandleGetSubscriptionParseReport returns a handler for
+// GET /api/v1/subscriptions/{id}/parse-report: the stored report of the last
+// parse, so a user can see exactly which nodes were dropped and why.
+func HandleGetSubscriptionParseReport(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
+		if !ok {
+			return
+		}
+		report, err := cp.GetSubscriptionParseReport(id)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, report)
+	}
+}
+
 // HandleCreateSubscription returns a handler for POST /api/v1/subscriptions.
 func HandleCreateSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

@@ -2,7 +2,7 @@
 
 日期：2026-09-05。状态：个人开源版实现基线 v2.1；方案已整理，应用代码与容量验收尚未实施。
 
-> 当前范围固定为个人自用与开源发行，不实现 SaaS、套餐、支付和多租户。个人版的分组、容量、检测和换 IP 方案见 [规模与切换设计](design/SCALE_AND_ROTATION.md)。
+> 当前范围固定为个人自用与开源发行，不实现 SaaS、套餐、支付和多租户。个人版的分组、容量、检测和换 IP 方案见[实施总方案](plan/PRISM_PLAN_FULL.md)与[方案索引](plan/README.md)。
 
 ## 1. 目标与范围
 
@@ -50,7 +50,7 @@ go test ./internal/proxy ./internal/routing ./internal/probe \
 | `requestlog`, `metrics` | 保留可观测能力 | 脱敏、丢弃指标和本地留存策略 |
 | `api`, `service`, WebUI | 渐进扩展 | 个人管理员鉴权；先最小运维页面，后完整页面 |
 
-源码依据包括 [平台筛选](../references/Resin/internal/platform/platform.go)、[路由](../references/Resin/internal/routing/router.go)、[探测](../references/Resin/internal/probe/manager.go)、[流量统计](../references/Resin/internal/proxy/counting_conn.go)、[日志写入](../references/Resin/internal/requestlog/service.go)。
+源码依据来自上游 Resin 仓库（基线提交见[上游基线](UPSTREAM_BASELINE.md)）：`internal/platform/platform.go`（平台筛选）、`internal/routing/router.go`（路由）、`internal/probe/manager.go`（探测）、`internal/proxy/counting_conn.go`（流量统计）、`internal/requestlog/service.go`（日志写入）。
 
 ## 3. 架构约束
 
@@ -214,12 +214,14 @@ references/Resin/          # 只读参考基线
 
 ## 8. 专项文档与落地顺序
 
-- [质量检测与路由](design/QUALITY_AND_ROUTING.md)：证据、评级、任务、准入与租约。
-- [安全设计](design/SECURITY.md)：信任边界、认证、目标地址、密钥和故障安全。
-- [同出口分组、规模与切换](design/SCALE_AND_ROTATION.md)：个人版的容量边界、检测调度和换 IP 方案。
-- [数据、日志与恢复](design/DATA_AND_LOGGING.md)：数据表、写入语义、留存、备份和恢复。
-- [性能、测试与运维](design/PERFORMANCE_AND_OPERATIONS.md)：容量预算、检测调度、压测和发布门槛。
-- [API 与管理界面](design/API_AND_PRODUCT.md)：个人管理员 API、导入、平台、检测和切换界面。
-- [个人版实施计划](IMPLEMENTATION_PLAN_V2.md)：从 Resin 基线到开源发布。
+`docs/design/` 下的旧专项文档已删除（该目录当前被 `.gitignore` 忽略），对应内容现在由 `docs/plan/` 的工作包维护：
+
+- [数据源、经节点检测与解锁检测](plan/09-intel-providers-checks.md)、[纯净度评估与平台质量准入](plan/10-purity-policy.md)：证据、评级、任务、准入与租约。
+- [安全与回归整改](plan/04-regressions-security.md) 与[当前安全控制清单](SECURITY.md)：信任边界、认证、目标地址、密钥和故障安全。
+- [实施总方案](plan/PRISM_PLAN_FULL.md)：个人版的容量边界、分组、检测调度和换 IP 方案。
+- [持久化层重建与迁移](plan/02-state-layer.md)：数据表、写入语义、留存、备份和恢复。
+- [端到端测试、文档与发布](plan/13-testing-release-docs.md)：容量预算、测试门槛和发布流程。
+- [前端改造](plan/12-frontend.md)：个人管理员 API、导入、平台、检测和切换界面。
+- [全局约束与已核实事实](plan/00-overview.md)：从 Resin 基线到开源发布的完整实施计划。
 
 具体信誉供应商在 M2 接入前以真实样本确认覆盖、质量、许可和费用。开源基础模式不依赖付费服务：提供连通性、延迟、出口和可用 GeoIP；住宅/机房与信誉无证据时明确未知。不得将基础模式包装成已验证纯净度。

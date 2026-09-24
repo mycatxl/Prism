@@ -38,7 +38,13 @@ type NodeEntry struct {
 	RawOptions json.RawMessage
 	Protocol   string
 	CreatedAt  time.Time
-
+	// Engine is the runtime that builds this node: "singbox" or "mihomo".
+	Engine string
+	// ProtocolDetail is the display form of the node protocol, for example
+	// "shadowsocks+shadowtls", "vless+reality" or "vless+xhttp" (WP06 §1.4).
+	ProtocolDetail string
+	// Chain reports whether the node is a detour chain.
+	Chain bool
 	// --- Dynamic (guarded by mu) ---
 	mu              sync.RWMutex
 	subscriptionIDs []string
@@ -70,17 +76,99 @@ func NewNodeEntry(hash Hash, rawOptions json.RawMessage, createdAt time.Time, ma
 		Hash:       hash,
 		RawOptions: rawOptions,
 		CreatedAt:  createdAt,
+		Engine:     EngineSingbox,
 	}
-	var metadata struct {
-		Type string `json:"type"`
-	}
-	if json.Unmarshal(rawOptions, &metadata) == nil && len(metadata.Type) <= 32 {
-		e.Protocol = strings.ToLower(metadata.Type)
+	if doc, err := ParseNodeDoc(rawOptions); err == nil {
+		e.Engine = doc.Engine
+		e.Chain = doc.Chain
+		e.Protocol = normalizeProtocolName(doc.Engine, doc.Type)
+		e.ProtocolDetail = protocolDetailFor(doc)
+	} else {
+		// Fall back to the plain "type" field so that a malformed document does
+		// not lose its protocol label.
+		var metadata struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(rawOptions, &metadata) == nil && len(metadata.Type) <= 32 {
+			e.Protocol = strings.ToLower(metadata.Type)
+		}
 	}
 	if maxLatencyTableEntries > 0 {
 		e.LatencyTable = NewLatencyTable(maxLatencyTableEntries)
 	}
 	return e
+}
+
+// normalizeProtocolName maps an engine type name onto the unified protocol
+// name used by filters and the UI (WP06 §1.4).
+func normalizeProtocolName(engine string, typeName string) string {
+	name := strings.ToLower(strings.TrimSpace(typeName))
+	if len(name) > 32 {
+		name = name[:32]
+	}
+	if engine != EngineMihomo {
+		return name
+	}
+	switch name {
+	case "ss":
+		return "shadowsocks"
+	case "socks5":
+		return "socks"
+	default:
+		return name
+	}
+}
+
+// protocolDetailFor renders the display detail of a node document.
+func protocolDetailFor(doc NodeDoc) string {
+	base := normalizeProtocolName(doc.Engine, doc.Type)
+	if doc.Chain {
+		if len(doc.Deps) > 0 {
+			if depType, err := TypeOfObject(doc.Deps[0]); err == nil && depType != "" {
+				return base + "+" + strings.ToLower(depType)
+			}
+		}
+		return base
+	}
+	if base == "" {
+		return ""
+	}
+
+	var probe struct {
+		TLS       json.RawMessage `json:"tls"`
+		Transport struct {
+			Type string `json:"type"`
+		} `json:"transport"`
+	}
+	if err := json.Unmarshal(doc.Main, &probe); err != nil {
+		return base
+	}
+	detail := base
+	if transport := normalizeProtocolTransport(probe.Transport.Type); transport != "" {
+		detail += "+" + transport
+	}
+	var tls struct {
+		Reality struct {
+			Enabled bool `json:"enabled"`
+		} `json:"reality"`
+	}
+	if len(probe.TLS) > 0 && json.Unmarshal(probe.TLS, &tls) == nil && tls.Reality.Enabled {
+		detail += "+reality"
+	}
+	return detail
+}
+
+// normalizeProtocolTransport maps sing-box transport names onto the share-link
+// spelling used in UI details.
+func normalizeProtocolTransport(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "tcp":
+		return ""
+	case "splithttp":
+		return "xhttp"
+	default:
+		return strings.ToLower(strings.TrimSpace(raw))
+	}
 }
 
 // SubscriptionIDs returns a copy of the subscription ID slice (thread-safe).

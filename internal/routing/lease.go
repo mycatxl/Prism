@@ -85,6 +85,26 @@ func (t *LeaseTable) DeleteLease(account string) (Lease, bool) {
 	return deleted, ok
 }
 
+// DeleteLeaseIfOlderThan atomically removes a lease only when the lease that is
+// currently stored is still old enough to be rotated. The age check happens
+// inside the map lock, so a lease that was concurrently created or renewed
+// after the caller collected candidates is never removed.
+// Returns the deleted lease and true when a lease was actually deleted.
+func (t *LeaseTable) DeleteLeaseIfOlderThan(account string, createdBeforeOrAtNs int64) (Lease, bool) {
+	var deleted Lease
+	ok := false
+	t.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+		if !loaded || current.CreatedAtNs > createdBeforeOrAtNs {
+			return current, xsync.CancelOp
+		}
+		t.stats.Dec(current.EgressIP)
+		deleted = current
+		ok = true
+		return current, xsync.DeleteOp
+	})
+	return deleted, ok
+}
+
 // Size returns the number of leases in the table.
 func (t *LeaseTable) Size() int {
 	return t.leases.Size()

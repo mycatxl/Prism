@@ -608,6 +608,31 @@ func (r *Router) DeleteLease(platformID, account string) bool {
 	return true
 }
 
+// DeleteLeaseIfOlderThan removes a single lease by platform and account only if
+// the stored lease is still old enough for scheduled rotation
+// (CreatedAtNs <= createdBeforeOrAtNs). The staleness check is atomic with the
+// deletion, so a lease recreated after the rotator collected it is preserved.
+// Returns true if a lease was deleted. Emits a LeaseRemove event.
+func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBeforeOrAtNs int64) bool {
+	state, ok := r.states.Load(platformID)
+	if !ok {
+		return false
+	}
+	lease, deleted := state.Leases.DeleteLeaseIfOlderThan(account, createdBeforeOrAtNs)
+	if !deleted {
+		return false
+	}
+	r.emitLeaseEvent(LeaseEvent{
+		Type:        LeaseRemove,
+		PlatformID:  platformID,
+		Account:     account,
+		NodeHash:    lease.NodeHash,
+		EgressIP:    lease.EgressIP,
+		CreatedAtNs: lease.CreatedAtNs,
+	})
+	return true
+}
+
 // DeleteAllLeases removes all leases for a platform.
 // Returns the number of leases deleted. Emits a LeaseRemove event for each.
 func (r *Router) DeleteAllLeases(platformID string) int {

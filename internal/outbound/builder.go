@@ -1,21 +1,10 @@
 package outbound
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/adapter/endpoint"
-	"github.com/sagernet/sing-box/adapter/inbound"
-	sbOutbound "github.com/sagernet/sing-box/adapter/outbound"
 	"github.com/sagernet/sing-box/dns"
-	"github.com/sagernet/sing-box/include"
-	"github.com/sagernet/sing-box/log"
-	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing/common"
-	sJson "github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
 )
 
@@ -29,149 +18,55 @@ type SingboxBuilderConfig struct {
 	// DNSUpstreams configures Prism's node DNS chain.
 	// Values are DNS upstream URI strings and the slice must not be empty.
 	DNSUpstreams []string
+	// QuietInterfaceMonitor replaces sing-box's netlink default-interface
+	// monitor with a no-op one. Unit tests enable it because the upstream
+	// monitor trips a data race in sing-box v1.14.0 route.NetworkManager
+	// (route/network.go:220 vs :574) that `go test -race` reports. Production
+	// keeps the real monitor.
+	QuietInterfaceMonitor bool
 }
 
 // ---------------------------------------------------------------------------
-// SingboxBuilder — creates real sing-box adapter.Outbound instances.
+// SingboxBuilder — WP06 compatibility wrapper around SingboxRuntime.
 // ---------------------------------------------------------------------------
 
 // SingboxBuilder builds real sing-box outbound instances from raw JSON options.
-// It holds a fully-wired context with DNS services so that domain-based
-// outbound servers can be resolved.
+// Since WP06 it delegates to the embedded sing-box runtime (§2); the type is
+// kept so that existing callers and tests keep working unchanged.
 type SingboxBuilder struct {
-	registry            *sbOutbound.Registry
-	ctx                 context.Context
-	logFactory          log.Factory
+	runtime             *SingboxRuntime
 	dnsTransportManager *dns.TransportManager
-	dnsRouter           *dns.Router
 }
 
-// NewSingboxBuilderWithConfig creates a SingboxBuilder with a complete
-// sing-box service graph (registries + DNS). The caller must call Close()
-// when done.
+// NewSingboxBuilderWithConfig creates a SingboxBuilder backed by an embedded
+// sing-box instance. The caller must call Close() when done.
 func NewSingboxBuilderWithConfig(cfg SingboxBuilderConfig) (*SingboxBuilder, error) {
-	ctx := context.Background()
-	ctx = include.Context(ctx) // inject protocol registries
-
-	logFactory := log.NewNOPFactory()
-	logger := logFactory.NewLogger("prism-outbound")
-
-	dnsRegistry, ok := service.FromContext[adapter.DNSTransportRegistry](ctx).(*dns.TransportRegistry)
-	if !ok {
-		return nil, fmt.Errorf("singbox builder: unexpected DNS transport registry type %T", service.FromContext[adapter.DNSTransportRegistry](ctx))
-	}
-	registerSecureDNSTransport(dnsRegistry)
-
-	// --- Service graph (same order as Demos/simple-proxy/main.go) -----------
-
-	// Endpoint Manager
-	endpointMgr := endpoint.NewManager(logger, service.FromContext[adapter.EndpointRegistry](ctx))
-	service.MustRegister[adapter.EndpointManager](ctx, endpointMgr)
-
-	// Inbound Manager (required dependency even though unused)
-	inboundMgr := inbound.NewManager(logger, service.FromContext[adapter.InboundRegistry](ctx), endpointMgr)
-	service.MustRegister[adapter.InboundManager](ctx, inboundMgr)
-
-	// Outbound Manager (sing-box's own manager, for detour resolution)
-	outboundMgr := sbOutbound.NewManager(logger, service.FromContext[adapter.OutboundRegistry](ctx), endpointMgr, "")
-	service.MustRegister[adapter.OutboundManager](ctx, outboundMgr)
-
-	// DNS Transport Manager
-	dnsTransportMgr := dns.NewTransportManager(logger, service.FromContext[adapter.DNSTransportRegistry](ctx), outboundMgr, secureDNSFailoverTransportTag)
-	service.MustRegister[adapter.DNSTransportManager](ctx, dnsTransportMgr)
-
-	// DNS Router
-	dnsRouter, err := dns.NewRouter(ctx, logFactory, option.DNSOptions{})
+	runtime, err := NewSingboxRuntime(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("singbox builder: create DNS router: %w", err)
+		return nil, err
 	}
-	service.MustRegister[adapter.DNSRouter](ctx, dnsRouter)
-
-	dnsTransportSpecs, err := secureDNSTransportSpecsForUpstreams(cfg.DNSUpstreams)
-	if err != nil {
-		return nil, fmt.Errorf("singbox builder: configure DNS transports: %w", err)
-	}
-	for _, spec := range dnsTransportSpecs {
-		if err := dnsTransportMgr.Create(ctx, logger, spec.tag, spec.transportType, spec.options); err != nil {
-			return nil, fmt.Errorf("singbox builder: create DNS transport %s[%s]: %w", spec.transportType, spec.tag, err)
-		}
-	}
-
-	// Start DNS Transport Manager lifecycle
-	if err := dnsTransportMgr.Start(adapter.StartStateInitialize); err != nil {
-		return nil, fmt.Errorf("singbox builder: initialize DNS transport manager: %w", err)
-	}
-	if err := dnsTransportMgr.Start(adapter.StartStateStart); err != nil {
-		_ = dnsTransportMgr.Close()
-		return nil, fmt.Errorf("singbox builder: start DNS transport manager: %w", err)
-	}
-
-	// Start DNS Router lifecycle
-	if err := dnsRouter.Initialize(nil); err != nil {
-		_ = dnsTransportMgr.Close()
-		return nil, fmt.Errorf("singbox builder: initialize DNS router: %w", err)
-	}
-	if err := dnsRouter.Start(adapter.StartStateStart); err != nil {
-		_ = dnsRouter.Close()
-		_ = dnsTransportMgr.Close()
-		return nil, fmt.Errorf("singbox builder: start DNS router: %w", err)
-	}
-
-	registry := service.FromContext[adapter.OutboundRegistry](ctx).(*sbOutbound.Registry)
-
-	return &SingboxBuilder{
-		registry:            registry,
-		ctx:                 ctx,
-		logFactory:          logFactory,
-		dnsTransportManager: dnsTransportMgr,
-		dnsRouter:           dnsRouter,
-	}, nil
+	return &SingboxBuilder{runtime: runtime, dnsTransportManager: runtime.DNSTransportManager()}, nil
 }
 
-// Build parses rawOptions (a complete sing-box outbound JSON object with
-// type/tag fields) into a real adapter.Outbound and runs it through the
-// lifecycle stages.
+// Build parses rawOptions (a form A outbound, a form B endpoint, or a form B
+// detour chain) into a real adapter.Outbound instance.
 func (b *SingboxBuilder) Build(rawOptions json.RawMessage) (adapter.Outbound, error) {
-	// 1. Parse via official option.Outbound path (strips type/tag, creates
-	//    typed options via OutboundOptionsRegistry + badjson.UnmarshallExcluded).
-	var outboundConfig option.Outbound
-	if err := sJson.UnmarshalContext(b.ctx, rawOptions, &outboundConfig); err != nil {
-		return nil, fmt.Errorf("parse outbound options: %w", err)
-	}
-
-	// 2. Create the outbound instance via the registry.
-	logger := b.logFactory.NewLogger("outbound/" + outboundConfig.Type)
-	ob, err := b.registry.CreateOutbound(
-		b.ctx,
-		nil, // router — not needed for simple dialing
-		logger,
-		outboundConfig.Tag,
-		outboundConfig.Type,
-		outboundConfig.Options,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create outbound [%s]: %w", outboundConfig.Type, err)
-	}
-
-	// 3. Run lifecycle start stages. On failure, close and return error.
-	for _, stage := range adapter.ListStartStages {
-		if err := adapter.LegacyStart(ob, stage); err != nil {
-			_ = common.Close(ob)
-			return nil, fmt.Errorf("outbound start %s [%s]: %w", stage, outboundConfig.Type, err)
-		}
-	}
-
-	return ob, nil
+	return b.runtime.Build(rawOptions)
 }
 
-// Close shuts down the builder's internal DNS services.
+// Close shuts down the embedded sing-box instance.
 func (b *SingboxBuilder) Close() error {
-	var errs []error
-	if b.dnsRouter != nil {
-		errs = append(errs, b.dnsRouter.Close())
-	}
-	if b.dnsTransportManager != nil {
-		errs = append(errs, b.dnsTransportManager.Close())
-	}
-	return errors.Join(errs...)
+	return b.runtime.Close()
+}
+
+// DNSTransportManager exposes the runtime's DNS transport manager for tests and
+// diagnostics (the secure DNS chain assertions in builder_test.go).
+func (b *SingboxBuilder) DNSTransportManager() *dns.TransportManager {
+	manager, _ := service.FromContext[adapter.DNSTransportManager](b.runtime.ctx).(*dns.TransportManager)
+	return manager
+}
+
+// Runtime returns the underlying SingboxRuntime.
+func (b *SingboxBuilder) Runtime() *SingboxRuntime {
+	return b.runtime
 }

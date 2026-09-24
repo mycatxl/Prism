@@ -3,7 +3,6 @@ package proxy
 import (
 	"crypto/subtle"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptrace"
 	"net/http/httputil"
@@ -36,6 +35,16 @@ type ReverseProxyConfig struct {
 	OutboundTransport OutboundTransportConfig
 	TransportPool     *OutboundTransportPool
 	ProxyBypassRules  []string
+	// DirectDenyPrivate enables the local dial guard on every local dial path
+	// (this proxy's bypass branch, the forward HTTP proxy, CONNECT and SOCKS5)
+	// while keeping node-routed requests unaffected. It is the
+	// PRISM_DIRECT_DENY_PRIVATE switch and defaults to false, which keeps the
+	// upstream Resin behaviour.
+	DirectDenyPrivate bool
+	// AuthGuard optionally rate limits failed proxy authentications. A nil
+	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
+	// defaults to 0, which disables it).
+	AuthGuard AuthFailureGuard
 }
 
 // ReverseProxy implements an HTTP reverse proxy.
@@ -54,6 +63,8 @@ type ReverseProxy struct {
 	directTransport   *http.Transport
 	directOnce        sync.Once
 	bypass            *TargetBypassMatcher
+	directGuard       DirectDialGuard
+	authGuard         AuthFailureGuard
 }
 
 // NewReverseProxy creates a new reverse proxy handler.
@@ -79,6 +90,8 @@ func NewReverseProxy(cfg ReverseProxyConfig) *ReverseProxy {
 		transportConfig: transportCfg,
 		transportPool:   transportPool,
 		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
+		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate),
+		authGuard:       cfg.AuthGuard,
 	}
 }
 
@@ -93,7 +106,7 @@ func (p *ReverseProxy) outboundHTTPTransport(routed routedOutbound) *http.Transp
 
 func (p *ReverseProxy) directHTTPTransport() *http.Transport {
 	p.directOnce.Do(func() {
-		p.directTransport = newDirectHTTPTransport(p.transportConfig, p.metricsSink)
+		p.directTransport = newDirectHTTPTransport(p.transportConfig, p.metricsSink, p.directGuard)
 	})
 	return p.directTransport
 }
@@ -112,8 +125,10 @@ type parsedPath struct {
 // forwardingIdentityHeaders are commonly used to disclose proxy chain identity.
 // These are stripped from outbound reverse-proxy requests.
 var forwardingIdentityHeaders = []string{
-	// Internal account override header must not leak to upstream services.
+	// Internal account override headers must not leak to upstream services.
+	// Both the Prism and the upstream Resin spelling are stripped (X4).
 	"X-Prism-Account",
+	"X-Resin-Account",
 	"Forwarded",
 	"X-Forwarded-For",
 	"X-Forwarded-Host",
@@ -197,8 +212,11 @@ func (p *ReverseProxy) parsePathV1(rawPath string) (*parsedPath, *ProxyError) {
 	if host == "" {
 		return nil, ErrInvalidHost
 	}
-	// Basic validation only during parsing; SSRF check happens later during routing
-	if !isValidHostForBypass(host) {
+	// Syntax check only: private and loopback targets are valid here because
+	// node-routed requests never reach them from this host. Local direct
+	// (bypass) requests are checked separately when PRISM_DIRECT_DENY_PRIVATE
+	// is enabled.
+	if !isValidHost(host) {
 		return nil, ErrInvalidHost
 	}
 
@@ -247,6 +265,12 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	parsed, perr := p.parsePath(r.URL.EscapedPath())
 	if perr != nil {
+		if perr == ErrAuthFailed {
+			if guardProxyAuthFailure(w, r, p.authGuard) {
+				return
+			}
+			recordProxyAuthFailure(p.authGuard, r)
+		}
 		writeProxyError(w, perr)
 		return
 	}
@@ -286,7 +310,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 3) Continue routing with the resulting account (possibly empty).
 	account, behavior, extractionFailed := resolveReverseAccount(parsed, r, behaviorPlatform, accountHeaders)
 	lifecycle.setAccount(account)
-	if parsed.Account == "" && r.Header.Get("X-Prism-Account") == "" && behaviorRequiresAccountExtraction(behavior) {
+	if parsed.Account == "" && accountOverrideHeader(r) == "" && behaviorRequiresAccountExtraction(behavior) {
 		lifecycle.setAccount(logHeaderAccount(account, p.token))
 	}
 
@@ -311,28 +335,21 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var transport *http.Transport
 	var nodeHashRaw = route.NodeHash
 	domain := netutil.ExtractDomain(parsed.Host)
-	isBypassed := p.bypass != nil && p.bypass.ShouldBypass(parsed.Host)
-
-	if isBypassed {
-		// Bypass targets are explicitly configured by admin, allow local/private.
-		// Still create routing lease for account tracking even though we use direct transport.
-		if account != "" && p.router != nil {
-			routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host)
-			if routeErr == nil {
-				route = routed.Route
-				lifecycle.setRouteResult(route)
-			}
-			// Ignore routing errors for bypass - the lease creation is best-effort.
+	if p.bypass != nil && p.bypass.ShouldBypass(parsed.Host) {
+		// Bypass targets are dialled locally by operator-configured rules and
+		// never create a routing lease (upstream Resin behaviour).
+		// PRISM_DIRECT_DENY_PRIVATE optionally refuses loopback, private,
+		// link-local, CGNAT, reserved and cloud metadata direct targets. The
+		// same policy covers every local dial path (forward proxy, CONNECT and
+		// SOCKS5); it never affects node-routed requests.
+		if err := p.directGuard.CheckTarget(r.Context(), parsed.Host); err != nil {
+			lifecycle.setProxyError(ErrDirectTargetDenied)
+			lifecycle.setHTTPStatus(ErrDirectTargetDenied.HTTPCode)
+			writeProxyError(w, ErrDirectTargetDenied)
+			return
 		}
 		transport = p.directHTTPTransport()
 	} else {
-		// Non-bypass targets must pass SSRF check
-		if !isValidHost(parsed.Host) {
-			lifecycle.setProxyError(ErrInvalidHost)
-			lifecycle.setHTTPStatus(ErrInvalidHost.HTTPCode)
-			writeProxyError(w, ErrInvalidHost)
-			return
-		}
 		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host)
 		if routeErr != nil {
 			lifecycle.setProxyError(routeErr)
@@ -504,10 +521,8 @@ func resolveReverseAccount(
 	headers []string,
 ) (string, platform.ReverseProxyEmptyAccountBehavior, bool) {
 	behavior := effectiveEmptyAccountBehavior(plat)
-	if r != nil {
-		if headerAccount := r.Header.Get("X-Prism-Account"); headerAccount != "" {
-			return headerAccount, behavior, false
-		}
+	if headerAccount := accountOverrideHeader(r); headerAccount != "" {
+		return headerAccount, behavior, false
 	}
 
 	account := ""
@@ -532,6 +547,19 @@ func resolveReverseAccount(
 		return account, behavior, account == ""
 	}
 	return account, behavior, false
+}
+
+// accountOverrideHeader returns the explicit account override of a reverse
+// proxy request. The Prism header wins when both spellings are present, and
+// X-Resin-Account keeps upstream Resin clients working (deviation X4).
+func accountOverrideHeader(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if account := r.Header.Get("X-Prism-Account"); account != "" {
+		return account
+	}
+	return r.Header.Get("X-Resin-Account")
 }
 
 func (p *ReverseProxy) accountExtractionHeaders(parsed *parsedPath, plat *platform.Platform) []string {
@@ -584,17 +612,13 @@ func fixedAccountHeadersForPlatform(plat *platform.Platform) []string {
 
 // isValidHost validates that the host segment is a reasonable hostname or host:port.
 // Rejects empty hosts and hosts containing URL-unsafe characters.
-// For bypass rules, allows localhost and private IPs since those are explicitly configured.
-// For non-bypass requests, blocks localhost and private IP ranges to prevent SSRF attacks.
+//
+// This is a syntax check only. Private, loopback and link-local targets are
+// deliberately accepted: when a request is routed through a node the target is
+// reached from that node's network, so it is not a local SSRF surface. Local
+// direct (bypass) targets can be restricted separately through
+// PRISM_DIRECT_DENY_PRIVATE.
 func isValidHost(host string) bool {
-	return isValidHostInternal(host, false)
-}
-
-func isValidHostForBypass(host string) bool {
-	return isValidHostInternal(host, true)
-}
-
-func isValidHostInternal(host string, allowPrivate bool) bool {
 	if host == "" {
 		return false
 	}
@@ -616,38 +640,5 @@ func isValidHostInternal(host string, allowPrivate bool) bool {
 	if u.User != nil || u.Host == "" || u.Host != host {
 		return false
 	}
-	hostname := u.Hostname()
-	if hostname == "" {
-		return false
-	}
-
-	// SSRF protection: block localhost and private IP ranges (unless bypass)
-	if !allowPrivate {
-		hostname = strings.ToLower(hostname)
-		if hostname == "localhost" || hostname == "127.0.0.1" || hostname == "::1" {
-			return false
-		}
-
-		// Block private IPv4 ranges
-		if ip := net.ParseIP(hostname); ip != nil {
-			if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
-				return false
-			}
-		}
-
-		// Block private IPv4 CIDR ranges by prefix
-		privateRanges := []string{
-			"10.", "192.168.", "172.16.", "172.17.", "172.18.", "172.19.",
-			"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-			"172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-			"169.254.", // link-local
-		}
-		for _, prefix := range privateRanges {
-			if strings.HasPrefix(hostname, prefix) {
-				return false
-			}
-		}
-	}
-
-	return true
+	return u.Hostname() != ""
 }

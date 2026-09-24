@@ -38,10 +38,13 @@ func (s *ControlPlaneService) RequestIPQuality(ctx context.Context, rawIP string
 	}
 	result, err := s.Inspection.Request(ctx, ip, true)
 	if err != nil {
-		return result, inspectionError(err)
+		return RequestResult{}, inspectionError(err)
 	}
-	result.Quality = s.projectQuality(result.Quality)
-	return result, nil
+	return RequestResult{
+		Quality:  s.projectQuality(result.Quality),
+		Queued:   result.Queued,
+		Warnings: result.Warnings,
+	}, nil
 }
 
 func (s *ControlPlaneService) projectQuality(summary quality.Summary) quality.Summary {
@@ -105,19 +108,41 @@ func (s *ControlPlaneService) ProbeQuality(ctx context.Context, hash string) (Re
 	return s.RequestIPQuality(ctx, ip.Unmap().String())
 }
 
-func (s *ControlPlaneService) QualityStatus() Status {
-	status := Status{Sources: []SourceStatus{}}
+// QualityStatus returns the inspection status using the WebUI QualityStatus
+// contract (see internal/api/web/src/features/quality/types.ts).
+//
+// Quality inspection is disabled until the intel subsystem (WP08 §9) fills this
+// structure, so the disabled shape is returned with every list as an empty array
+// instead of null and storage_error as a string.
+func (s *ControlPlaneService) QualityStatus() inspection.Status {
+	status := inspection.Status{
+		Sources:         []inspection.SourceStatus{},
+		ManualSources:   []inspection.ManualSourceStatus{},
+		RegistrySources: []inspection.RegistryStatus{},
+	}
 	if s.Inspection != nil {
 		status = s.Inspection.Status()
 	}
+	// A nil slice would marshal as null and break the frontend contract.
+	if status.Sources == nil {
+		status.Sources = []inspection.SourceStatus{}
+	}
+	if status.ManualSources == nil {
+		status.ManualSources = []inspection.ManualSourceStatus{}
+	}
+	if status.RegistrySources == nil {
+		status.RegistrySources = []inspection.RegistryStatus{}
+	}
 	if s.IPPure != nil {
-		status.Sources = append(status.Sources, SourceStatus{
+		status.Sources = append(status.Sources, inspection.SourceStatus{
+			ID:         "ippure",
 			Name:       "IPPure",
 			Configured: true,
 		})
 	}
 	if s.TorRegistry != nil {
-		status.Sources = append(status.Sources, SourceStatus{
+		status.Sources = append(status.Sources, inspection.SourceStatus{
+			ID:         "torproject",
 			Name:       "TorRegistry",
 			Configured: true,
 		})

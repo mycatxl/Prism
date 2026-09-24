@@ -1,0 +1,31 @@
+services:
+  prism:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/mycatxl/prism:latest
+    container_name: prism
+    restart: unless-stopped
+    environment:
+      PRISM_ADMIN_TOKEN: ${PRISM_ADMIN_TOKEN}
+      PRISM_PROXY_TOKEN: ${PRISM_PROXY_TOKEN}
+      PRISM_LISTEN_ADDRESS: 0.0.0.0
+      PRISM_PORT: 2260
+      # TZ: <Your Time Zone>
+    ports:
+      - "2260:2260"
+    volumes:
+      - prism_cache:/var/cache/prism
+      - prism_state:/var/lib/prism
+      - prism_log:/var/log/prism
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2260/healthz >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  prism_cache:
+  prism_state:
+  prism_log:

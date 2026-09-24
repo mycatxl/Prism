@@ -1,0 +1,52 @@
+# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
+#
+# 标题页 ID 必须在校准时重新选定：一个 Netflix 自制剧、一个非自制剧。
+# 这里用的是长期存在的条目：
+#   - 80100172  Netflix 自制剧（Dark）
+#   - 70143836  非自制剧（Breaking Bad）
+# 两者都返回 200 => available；只有自制剧返回 200 => region_limited；403 或拦截页 => blocked。
+#
+# 注意：一个 when 只能引用一个 step（matcher 是 AND 语义但共享同一个 step 字段），
+# 所以先按 original 排除彻底不可用，再按 licensed 区分 available 与 region_limited。
+id: netflix
+version: 1
+name: Netflix
+category: video
+enabled: true
+ttl: 12h
+timeout: 15s
+calibrated: "uncalibrated (signals from plan §5.4; title IDs need re-selection)"
+steps:
+  - id: original
+    request:
+      method: GET
+      url: https://www.netflix.com/title/80100172
+      follow_redirects: false
+      headers:
+        Accept-Language: "en-US,en;q=0.9"
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
+      max_body_bytes: 262144
+  - id: licensed
+    request:
+      method: GET
+      url: https://www.netflix.com/title/70143836
+      follow_redirects: false
+      headers:
+        Accept-Language: "en-US,en;q=0.9"
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
+      max_body_bytes: 262144
+outcomes:
+  - when: {step: original, status_in: [403, 451]}
+    outcome: blocked
+  - when: {step: original, status_not_in: [200, 301, 302, 307]}
+    outcome: blocked
+  - when: {step: licensed, status_in: [200]}
+    outcome: available
+  - when: {step: licensed, status_in: [403, 404]}
+    outcome: region_limited
+  - when: {step: original, error: timeout}
+    outcome: error
+default: unknown
+region:
+  step: original
+  body_regex: '\"region\":\"([A-Z]{2})\"'

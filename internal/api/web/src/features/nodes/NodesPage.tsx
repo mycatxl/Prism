@@ -34,17 +34,18 @@ import { useToast } from "../../hooks/useToast";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
-import { formatDateTime, formatRelativeTime } from "../../lib/time";
+import { formatDateTime } from "../../lib/time";
 import { listPlatforms } from "../platforms/api";
 import { listSubscriptions } from "../subscriptions/api";
 import { getNode, listNodes, probeEgress, probeLatency } from "./api";
 import { getAllRegions, getRegionName } from "./regions";
-import type { NodeSummary, NodeSortBy } from "./types";
+import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
 import { getQualityStatus, inspectNode, qualityPollingInterval } from "../quality/api";
-import { IPTypeBadge, NetworkSignals, QualityBadge, QualityDetails, VerdictBadge } from "../quality/QualityDetails";
+import { IPTypeBadge, NetworkSignals, QualityDetails, VerdictBadge } from "../quality/QualityDetails";
 import { ExitRecordsPanel } from "../quality/QualityPage";
 import { PurityGuide } from "../quality/PurityGuide";
-import { evidenceFor, purityBands, typeLabels } from "../quality/presentation";
+import { purityBands, typeLabels } from "../quality/presentation";
+import { NodeIntelCell, NodeIntelPanel } from "./NodeIntel";
 
 function status(node: NodeSummary): {
   label: string;
@@ -64,10 +65,20 @@ function nameOf(node: NodeSummary) {
 }
 const sizes = [20, 50, 100, 200] as const;
 const protocolLabels: Record<string, string> = { shadowsocks: "Shadowsocks", vmess: "VMess", vless: "VLESS", trojan: "Trojan", hysteria: "Hysteria", hysteria2: "Hysteria 2", tuic: "TUIC", wireguard: "WireGuard", shadowtls: "ShadowTLS", socks: "SOCKS", http: "HTTP", ssh: "SSH", anytls: "AnyTLS", direct: "Direct" };
-const sorts = ["tag", "created_at", "failure_count", "region"] as const;
+// Sort keys offered by the sort select. purity_score, latency and assessed_at
+// are the WP10 §4 keys; the backend rejects anything else.
+const sorts = ["tag", "created_at", "failure_count", "region", "purity_score", "latency", "assessed_at"] as const;
 function integer(value: string | null, fallback: number) {
   const n = Number(value);
   return value !== null && Number.isSafeInteger(n) && n >= 0 ? n : fallback;
+}
+
+// optionalInteger reads a numeric filter input. An empty or invalid value means
+// "no filter" and is left out of the request entirely.
+function optionalInteger(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
 }
 
 export function NodesPage() {
@@ -111,6 +122,14 @@ export function NodesPage() {
     subscription_id: params.get("subscription_id") || "",
     region: params.get("region") || "",
     egress_ip: params.get("egress_ip") || "",
+    purity_min: params.get("purity_min") || "",
+    purity_max: params.get("purity_max") || "",
+    verdict: params.get("verdict") || "",
+    confidence_min: params.get("confidence_min") || "",
+    native: params.get("native") || "",
+    asn: params.get("asn") || "",
+    country: params.get("country") || "",
+    check: params.get("check") || "",
     enabled: mode === "disabled" ? false : mode !== "all" ? true : undefined,
     has_outbound:
       mode === "error"
@@ -125,6 +144,19 @@ export function NodesPage() {
     sort_by: sort,
     sort_order: order,
   } as const;
+  // The URL keeps the raw text of every filter (inputs bind to it); the API
+  // query converts the intel filters to their typed form.
+  const nodeQuery: NodeListQuery = {
+    ...filter,
+    purity_min: optionalInteger(filter.purity_min),
+    purity_max: optionalInteger(filter.purity_max),
+    asn: optionalInteger(filter.asn),
+    native: filter.native === "true" ? true : filter.native === "false" ? false : undefined,
+    verdict: filter.verdict || undefined,
+    confidence_min: filter.confidence_min || undefined,
+    country: filter.country || undefined,
+    check: params.getAll("check").map((value) => value.trim()).filter(Boolean),
+  };
   const qualityStatus = useQuery({
     queryKey: ["quality", "status"],
     queryFn: getQualityStatus,
@@ -132,7 +164,7 @@ export function NodesPage() {
   });
   const nodesQuery = useQuery({
     queryKey: ["nodes", filter],
-    queryFn: ({ signal }) => listNodes(filter, signal),
+    queryFn: ({ signal }) => listNodes(nodeQuery, signal),
     enabled: view === "nodes",
     placeholderData: (previous) => previous,
     refetchInterval: qualityPollingInterval(qualityStatus.data),
@@ -248,6 +280,14 @@ export function NodesPage() {
     "risk_grade",
     "purity_band",
     "protocol",
+    "purity_min",
+    "purity_max",
+    "verdict",
+    "confidence_min",
+    "native",
+    "asn",
+    "country",
+    "check",
   ].filter((key) => params.get(key)).length;
   const sortButton = (key: NodeSortBy, label: string) => (
     <button className="table-sort-btn" onClick={() => changeSort(key)}>
@@ -373,6 +413,21 @@ export function NodesPage() {
           {purityBands.map(band => <option value={band.id} key={band.id}>{band.min}–{band.max} · {t(band.label)}</option>)}
           <option value="review">{t("需要复核")}</option><option value="unknown">{t("评级未知")}</option>
         </Select>
+        <Select aria-label={t("排序")} value={sort} onChange={event => update("sort", event.target.value)}>
+          {[
+            ["tag", "节点名称"],
+            ["created_at", "创建时间"],
+            ["failure_count", "连续失败"],
+            ["region", "地区"],
+            ["purity_score", "纯净度评分"],
+            ["latency", "参考延迟"],
+            ["assessed_at", "评估时间"],
+          ].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
+        </Select>
+        <Select aria-label={t("排序方向")} value={order} onChange={event => update("order", event.target.value)}>
+          <option value="asc">{t("升序")}</option>
+          <option value="desc">{t("降序")}</option>
+        </Select>
         <span><ShieldCheck size={13} />{t("质量按出口 IP 共享")}</span>
       </div>
       <PurityGuide />
@@ -437,6 +492,87 @@ export function NodesPage() {
           <label>{t("来源风险等级")}<Select aria-label={t("风险等级")} value={filter.risk_grade} onChange={event => update("risk_grade", event.target.value)}>
             {[["", "全部风险等级"], ["low", "较低风险"], ["moderate", "一般风险"], ["high", "较高风险"], ["severe", "严重风险"], ["review", "有滥用记录"], ["unknown", "评级未知"]].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
           </Select></label>
+          <label>
+            {t("最低纯净度")}
+            <Input
+              aria-label={t("最低纯净度")}
+              type="number"
+              min={0}
+              max={100}
+              value={filter.purity_min}
+              onChange={(event) => update("purity_min", event.target.value)}
+              placeholder="0"
+            />
+          </label>
+          <label>
+            {t("最高纯净度")}
+            <Input
+              aria-label={t("最高纯净度")}
+              type="number"
+              min={0}
+              max={100}
+              value={filter.purity_max}
+              onChange={(event) => update("purity_max", event.target.value)}
+              placeholder="100"
+            />
+          </label>
+          <label>
+            {t("判定")}
+            <Select aria-label={t("判定")} value={filter.verdict} onChange={event => update("verdict", event.target.value)}>
+              <option value="">{t("全部判定")}</option>
+              {[
+                ["favorable", "未见明显风险"],
+                ["caution", "谨慎使用"],
+                ["incomplete", "特征未齐"],
+                ["review", "需要复核"],
+                ["conflicting", "类型有分歧"],
+                ["high_risk", "风险较高"],
+                ["pending", "等待评估"],
+              ].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
+            </Select>
+          </label>
+          <label>
+            {t("最低置信度")}
+            <Select aria-label={t("最低置信度")} value={filter.confidence_min} onChange={event => update("confidence_min", event.target.value)}>
+              <option value="">{t("全部置信度")}</option>
+              {[["low", "置信度低"], ["medium", "置信度中"], ["high", "置信度高"]].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
+            </Select>
+          </label>
+          <label>
+            {t("原生 IP")}
+            <Select aria-label={t("原生 IP")} value={filter.native} onChange={event => update("native", event.target.value)}>
+              <option value="">{t("全部原生类型")}</option>
+              <option value="true">{t("原生 IP")}</option>
+              <option value="false">{t("广播 IP")}</option>
+            </Select>
+          </label>
+          <label>
+            ASN
+            <Input
+              aria-label="ASN"
+              value={filter.asn}
+              onChange={(event) => update("asn", event.target.value)}
+              placeholder="13335"
+            />
+          </label>
+          <label>
+            {t("国家 / 地区")}
+            <Input
+              aria-label={t("国家 / 地区")}
+              value={filter.country}
+              onChange={(event) => update("country", event.target.value)}
+              placeholder="JP"
+            />
+          </label>
+          <label>
+            {t("检测结果")}
+            <Input
+              aria-label={t("检测结果")}
+              value={filter.check}
+              onChange={(event) => update("check", event.target.value)}
+              placeholder={t("格式 检测项:结果，如 chatgpt:available")}
+            />
+          </label>
           <Button
             variant="ghost"
             onClick={() => setParams({}, { replace: true })}
@@ -508,16 +644,15 @@ export function NodesPage() {
               <tr>
                 <th>{sortButton("tag", "节点名称")}</th>
                 <th>{sortButton("region", "出口 / 类型")}</th>
-                <th>{t("纯净度")}<small>IPPure</small></th>
+                <th>{sortButton("purity_score", "纯净度")}<small>prism-purity-v2</small></th>
                 <th>{t("网络特征")}<small>ProxyCheck</small></th>
-                <th>{t("参考延迟")}</th>
+                <th>{sortButton("latency", "参考延迟")}</th>
                 <th>{t("操作")}</th>
               </tr>
             </thead>
             <tbody>
               {nodes.map((node) => {
                 const state = status(node);
-                const pure = evidenceFor(node.quality,"ippure");
                 return (
                   <tr
                     key={node.node_hash}
@@ -548,9 +683,7 @@ export function NodesPage() {
                       <span className="node-exit-meta"><IPTypeBadge summary={node.quality} />{node.region && <span className="node-region" title={getRegionName(node.region.toUpperCase())}>{node.region.toUpperCase()}</span>}</span>
                       {node.quality?.assessment?.native !== null && node.quality?.assessment?.native !== undefined && <small>{t(node.quality.assessment.native ? "原生 IP" : "广播 IP")}</small>}
                     </div></td>
-                    <td><div className="node-quality-cell"><QualityBadge summary={node.quality} />
-                      <small>{pure ? t("复核于") + " " + formatRelativeTime(pure.observed_at) : t("通过节点获取评分")}</small>
-                    </div></td>
+                    <td><NodeIntelCell intel={node.intel} /></td>
                     <td><div className="node-network-cell"><NetworkSignals summary={node.quality} />{node.quality?.assessment?.verdict && node.quality.assessment.verdict !== "pending" && <VerdictBadge summary={node.quality} />}</div></td>
                     <td>
                       <span
@@ -705,6 +838,10 @@ export function NodesPage() {
                 </section>
                 <section className="inspector-section">
                   <QualityDetails summary={detail.quality} nodeHash={detail.node_hash} nodeIP={detail.egress_ip} nodeReady={detail.has_outbound} />
+                </section>
+                <section className="inspector-section">
+                  <h3>{t("纯净度评估")}</h3>
+                  <NodeIntelPanel intel={detail.intel} />
                 </section>
                 <section className="inspector-section">
                   <h3>{t("来源与标签")}</h3>

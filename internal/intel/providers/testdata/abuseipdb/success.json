@@ -1,0 +1,15 @@
+{
+  "data": {
+    "ipAddress": "8.8.8.8",
+    "isPublic": true,
+    "ipVersion": 4,
+    "countryCode": "US",
+    "usageType": "Data Center/Web Hosting/Transit",
+    "isp": "Google LLC",
+    "isTor": false,
+    "abuseConfidenceScore": 0,
+    "totalReports": 0,
+    "numDistinctUsers": 0,
+    "lastReportedAt": null
+  }
+}

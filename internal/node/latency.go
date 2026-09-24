@@ -43,10 +43,10 @@ type LatencyTable struct {
 }
 
 // NewLatencyTable creates a new LatencyTable whose regular partition
-// is bounded to maxEntries. Returns nil if maxEntries is invalid.
+// is bounded to maxEntries.
 func NewLatencyTable(maxEntries int) *LatencyTable {
 	if maxEntries <= 0 {
-		return nil
+		panic("node: latency table max entries must be positive")
 	}
 	return &LatencyTable{
 		regular: make([]latencySlot, maxEntries),

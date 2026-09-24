@@ -30,6 +30,14 @@ type RuntimeConfig struct {
 	// Persistence
 	CacheFlushInterval       Duration `json:"cache_flush_interval"`
 	CacheFlushDirtyThreshold int      `json:"cache_flush_dirty_threshold"`
+
+	// Intel batch detection (WP08 §3.4)
+	IntelEnabled                  bool   `json:"intel_enabled"`
+	IntelNodeWorkers              int    `json:"intel_node_workers"`
+	IntelCheckConcurrencyPerCheck int    `json:"intel_check_concurrency_per_check"`
+	IntelMaxRunningJobs           int    `json:"intel_max_running_jobs"`
+	IntelAutoChecks               bool   `json:"intel_auto_checks"`
+	IntelRefreshSchedule          string `json:"intel_refresh_schedule"`
 }
 
 // NewDefaultRuntimeConfig returns a RuntimeConfig populated with the default
@@ -56,5 +64,12 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 
 		CacheFlushInterval:       Duration(5 * time.Minute),
 		CacheFlushDirtyThreshold: 1000,
+
+		IntelEnabled:                  true,
+		IntelNodeWorkers:              16,
+		IntelCheckConcurrencyPerCheck: 2,
+		IntelMaxRunningJobs:           2,
+		IntelAutoChecks:               false,
+		IntelRefreshSchedule:          "0 4 * * *",
 	}
 }

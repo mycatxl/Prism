@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "8.8.8.8": {
+    "risk": 10,
+    "network": {"type": "residential"},
+    "detections": {"risk": 90}
+  }
+}

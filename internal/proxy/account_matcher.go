@@ -166,14 +166,11 @@ func normalizeMatchHost(host string) string {
 }
 
 // extractAccountFromHeaders extracts the account from the first non-empty
-// header value in the given ordered list. Limited to 256 bytes to prevent DoS.
+// header value in the given ordered list. The header size is already bounded
+// by http.Server.MaxHeaderBytes, so no additional truncation is applied.
 func extractAccountFromHeaders(r *http.Request, headers []string) string {
-	const maxAccountLen = 256
 	for _, h := range headers {
 		if v := r.Header.Get(h); v != "" {
-			if len(v) > maxAccountLen {
-				return v[:maxAccountLen]
-			}
 			return v
 		}
 	}

@@ -1,0 +1,9 @@
+{
+  "status": "ok",
+  "8.8.8.8": {
+    "risk": 78,
+    "network": {"asn": "AS9009", "organisation": "M247 Europe SRL", "provider": "M247", "type": "hosting"},
+    "location": {"country_code": "NL", "city": "Amsterdam", "region": "North Holland"},
+    "detections": {"proxy": true, "vpn": true, "tor": false, "hosting": true, "compromised": true, "scraper": null, "anonymous": true, "risk": 78, "confidence": 88}
+  }
+}

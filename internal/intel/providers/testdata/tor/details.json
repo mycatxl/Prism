@@ -1,0 +1,23 @@
+{
+  "relays_published": "2026-01-01 00:00:00",
+  "relays": [
+    {
+      "or_addresses": ["8.8.8.8:9001", "[2606:4700:4700::1111]:9001"],
+      "exit_addresses": ["8.8.8.8"],
+      "flags": ["Exit", "Running", "Valid"],
+      "last_seen": "2026-01-01 00:00:00"
+    },
+    {
+      "or_addresses": ["1.1.1.1:443"],
+      "exit_addresses": [],
+      "flags": ["Guard", "Running", "V2Dir"],
+      "last_seen": "2026-01-01 00:00:00"
+    },
+    {
+      "or_addresses": ["9.9.9.9:9001"],
+      "exit_addresses": [],
+      "flags": ["Running"],
+      "last_seen": "2019-01-01 00:00:00"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "status": "success",
+  "country": "Japan",
+  "countryCode": "JP",
+  "regionName": "Tokyo",
+  "city": "Tokyo",
+  "isp": "Example Mobile",
+  "org": "Example Mobile",
+  "as": "AS2497 IIJ",
+  "asname": "IIJ",
+  "mobile": true,
+  "proxy": true,
+  "hosting": false,
+  "query": "8.8.8.8"
+}

@@ -39,11 +39,22 @@ type GlobalNodePool struct {
 	// Quality lookup — injected at construction.
 	qualityLookup platform.QualityLookupFunc
 
+	// qualitySnapshot is the read-only intel projection injected by the intel
+	// service (WP10 §2). It is what the quality admission path reads.
+	qualitySnapshot platform.QualitySnapshotReader
+
+	// egressIndex maps an observed egress IP to the nodes that used it, so an
+	// assessment change can notify exactly the affected nodes (WP10 §2).
+	egressMu    sync.Mutex
+	egressIndex map[netip.Addr]map[node.Hash]struct{}
 	// Persistence callbacks (optional, nil in tests without persistence).
 	onNodeAdded      func(hash node.Hash)                        // called after a new node is created
 	onNodeRemoved    func(hash node.Hash, entry *node.NodeEntry) // called after a node is deleted from pool
 	onSubNodeChanged func(subID string, hash node.Hash, added bool)
-
+	// extraOnNodeAdded holds additional node-added observers registered with
+	// AddOnNodeAdded. They run after onNodeAdded and never replace it (WP09
+	// §3.6 uses the hook for the subscription intel auto-enqueue).
+	extraOnNodeAdded []func(hash node.Hash)
 	// Health callbacks (optional).
 	onNodeDynamicChanged func(hash node.Hash)                // fired on circuit/failure/egress changes
 	onNodeLatencyChanged func(hash node.Hash, domain string) // fired on latency upserts and evictions
@@ -60,6 +71,7 @@ type PoolConfig struct {
 	SubLookup              func(subID string) *subscription.Subscription
 	GeoLookup              platform.GeoLookupFunc
 	QualityLookup          platform.QualityLookupFunc
+	QualitySnapshot        platform.QualitySnapshotReader
 	OnNodeAdded            func(hash node.Hash)
 	OnNodeRemoved          func(hash node.Hash, entry *node.NodeEntry)
 	OnSubNodeChanged       func(subID string, hash node.Hash, added bool)
@@ -79,11 +91,10 @@ var (
 )
 
 // NewGlobalNodePool creates a new GlobalNodePool.
-// Returns nil if required configuration is invalid.
 func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 	maxConsecutiveFailuresFn := cfg.MaxConsecutiveFailures
 	if maxConsecutiveFailuresFn == nil {
-		return nil
+		panic("topology: NewGlobalNodePool requires non-nil MaxConsecutiveFailures")
 	}
 
 	return &GlobalNodePool{
@@ -91,6 +102,8 @@ func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 		subLookup:              cfg.SubLookup,
 		geoLookup:              cfg.GeoLookup,
 		qualityLookup:          cfg.QualityLookup,
+		qualitySnapshot:        cfg.QualitySnapshot,
+		egressIndex:            make(map[netip.Addr]map[node.Hash]struct{}),
 		onNodeAdded:            cfg.OnNodeAdded,
 		onNodeRemoved:          cfg.OnNodeRemoved,
 		onSubNodeChanged:       cfg.OnSubNodeChanged,
@@ -123,8 +136,13 @@ func (p *GlobalNodePool) AddNodeFromSub(hash node.Hash, rawOpts json.RawMessage,
 		return entry, xsync.UpdateOp
 	})
 
-	if isNew && p.onNodeAdded != nil {
-		p.onNodeAdded(hash)
+	if isNew {
+		if p.onNodeAdded != nil {
+			p.onNodeAdded(hash)
+		}
+		for _, extra := range p.extraOnNodeAdded {
+			extra(hash)
+		}
 	}
 	if p.onSubNodeChanged != nil {
 		p.onSubNodeChanged(subID, hash, true)
@@ -156,6 +174,9 @@ func (p *GlobalNodePool) RemoveNodeFromSub(hash node.Hash, subID string) {
 	if p.onSubNodeChanged != nil {
 		p.onSubNodeChanged(subID, hash, false)
 	}
+	if wasDeleted {
+		p.removeEgressIndex(hash)
+	}
 	if wasDeleted && p.onNodeRemoved != nil {
 		p.onNodeRemoved(hash, deletedEntry)
 	}
@@ -186,6 +207,7 @@ func (p *GlobalNodePool) LoadNodeFromBootstrap(entry *node.NodeEntry) {
 
 // RegisterPlatform adds a platform to receive dirty notifications.
 func (p *GlobalNodePool) RegisterPlatform(plat *platform.Platform) {
+	plat.SetQualitySnapshot(p.qualitySnapshot)
 	p.platMu.Lock()
 	defer p.platMu.Unlock()
 	// Check for existing ID to avoid duplicates.
@@ -226,6 +248,7 @@ func (p *GlobalNodePool) ReplacePlatform(next *platform.Platform) error {
 
 	// Build the new platform's view before publish so readers never observe
 	// an empty, not-yet-built view due only to replacement.
+	p.instrumentQuality(next)
 	p.RebuildPlatform(next)
 
 	p.platMu.Lock()
@@ -254,6 +277,33 @@ func (p *GlobalNodePool) ReplacePlatform(next *platform.Platform) error {
 	}
 
 	return nil
+}
+
+// SetQualitySnapshot injects the intel projection used by quality admission
+// (WP10 §2) and propagates it to every registered platform and to platforms
+// registered later.
+func (p *GlobalNodePool) SetQualitySnapshot(snap platform.QualitySnapshotReader) {
+	p.platMu.Lock()
+	p.qualitySnapshot = snap
+	platforms := make([]*platform.Platform, 0, len(p.platformByID))
+	for _, plat := range p.platformByID {
+		platforms = append(platforms, plat)
+	}
+	p.platMu.Unlock()
+	for _, plat := range platforms {
+		plat.SetQualitySnapshot(snap)
+	}
+}
+
+// instrumentQuality wires the injected snapshot into one platform.
+func (p *GlobalNodePool) instrumentQuality(plat *platform.Platform) {
+	if plat == nil {
+		return
+	}
+	p.platMu.RLock()
+	snap := p.qualitySnapshot
+	p.platMu.RUnlock()
+	plat.SetQualitySnapshot(snap)
 }
 
 // GetPlatform retrieves a platform by ID.
@@ -505,6 +555,17 @@ func (p *GlobalNodePool) SetOnNodeAdded(fn func(hash node.Hash)) {
 	p.onNodeAdded = fn
 }
 
+// AddOnNodeAdded registers an additional node-added observer. Unlike
+// SetOnNodeAdded it never replaces the upstream wiring; every registered
+// observer runs after it, in registration order. It must be called before the
+// background workers start (WP09 §3.6 subscription intel auto-enqueue).
+func (p *GlobalNodePool) AddOnNodeAdded(fn func(hash node.Hash)) {
+	if fn == nil {
+		return
+	}
+	p.extraOnNodeAdded = append(p.extraOnNodeAdded, fn)
+}
+
 // SetOnNodeRemoved sets the callback fired when a node is removed from the pool.
 // Must be called before any background workers are started.
 func (p *GlobalNodePool) SetOnNodeRemoved(fn func(hash node.Hash, entry *node.NodeEntry)) {
@@ -666,6 +727,7 @@ func (p *GlobalNodePool) UpdateNodeEgressIP(hash node.Hash, ip *netip.Addr, loc 
 		if oldIP != *ip {
 			entry.SetEgressIP(*ip)
 			ipChanged = true
+			p.indexEgressIP(hash, oldIP, *ip)
 		}
 	}
 
@@ -692,6 +754,70 @@ func (p *GlobalNodePool) UpdateNodeEgressIP(hash node.Hash, ip *netip.Addr, loc 
 	if p.onNodeDynamicChanged != nil {
 		p.onNodeDynamicChanged(hash)
 	}
+}
+
+// indexEgressIP moves one node between the egress-IP buckets.
+func (p *GlobalNodePool) indexEgressIP(hash node.Hash, oldIP, newIP netip.Addr) {
+	p.egressMu.Lock()
+	defer p.egressMu.Unlock()
+	if p.egressIndex == nil {
+		p.egressIndex = make(map[netip.Addr]map[node.Hash]struct{})
+	}
+	if oldIP.IsValid() {
+		if bucket, ok := p.egressIndex[oldIP.Unmap()]; ok {
+			delete(bucket, hash)
+			if len(bucket) == 0 {
+				delete(p.egressIndex, oldIP.Unmap())
+			}
+		}
+	}
+	if newIP.IsValid() {
+		key := newIP.Unmap()
+		bucket, ok := p.egressIndex[key]
+		if !ok {
+			bucket = make(map[node.Hash]struct{})
+			p.egressIndex[key] = bucket
+		}
+		bucket[hash] = struct{}{}
+	}
+}
+
+// removeEgressIndex drops every bucket entry of one node.
+func (p *GlobalNodePool) removeEgressIndex(hash node.Hash) {
+	p.egressMu.Lock()
+	defer p.egressMu.Unlock()
+	for ip, bucket := range p.egressIndex {
+		delete(bucket, hash)
+		if len(bucket) == 0 {
+			delete(p.egressIndex, ip)
+		}
+	}
+}
+
+// EgressIPOwners returns the nodes whose last observed egress IP equals ip.
+func (p *GlobalNodePool) EgressIPOwners(ip netip.Addr) []node.Hash {
+	if !ip.IsValid() {
+		return nil
+	}
+	p.egressMu.Lock()
+	defer p.egressMu.Unlock()
+	bucket := p.egressIndex[ip.Unmap()]
+	out := make([]node.Hash, 0, len(bucket))
+	for hash := range bucket {
+		out = append(out, hash)
+	}
+	return out
+}
+
+// NotifyEgressIPDirty re-evaluates every node that used an egress IP, which is
+// what the intel pipeline calls after a new assessment was stored (WP10 §2).
+// It returns the number of nodes that were re-evaluated.
+func (p *GlobalNodePool) NotifyEgressIPDirty(ip netip.Addr) int {
+	hashes := p.EgressIPOwners(ip)
+	for _, hash := range hashes {
+		p.notifyAllPlatformsDirty(hash)
+	}
+	return len(hashes)
 }
 
 func (p *GlobalNodePool) isAuthorityDomain(domain string) bool {

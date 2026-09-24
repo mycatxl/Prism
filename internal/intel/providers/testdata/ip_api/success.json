@@ -1,0 +1,15 @@
+{
+  "status": "success",
+  "country": "United States",
+  "countryCode": "US",
+  "regionName": "California",
+  "city": "Mountain View",
+  "isp": "Google LLC",
+  "org": "Google LLC",
+  "as": "AS15169 Google LLC",
+  "asname": "GOOGLE",
+  "mobile": false,
+  "proxy": false,
+  "hosting": true,
+  "query": "8.8.8.8"
+}
