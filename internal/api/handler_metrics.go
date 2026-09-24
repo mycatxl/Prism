@@ -12,9 +12,19 @@ import (
 
 // parseMetricsTimeRange extracts from/to from query params (RFC3339Nano).
 // Defaults: to=now, from=to-1h. Returns 400 on parse error or from>=to.
-func parseMetricsTimeRange(w http.ResponseWriter, r *http.Request) (from, to time.Time, ok bool) {
+//
+// maxWindow > 0 clamps 'from' to reference-maxWindow, so a request can never ask
+// for a range wider than the retention of the metric family it reads (G-08). The
+// clamp is silent on purpose: the realtime rings have always returned only their
+// configured window, and metrics.db now prunes to the same window, so a 24-hour
+// request against a 1-hour retention returns the retained hour instead of an
+// unbounded scan. The reference is the earlier of 'to' and the present, because
+// no metric can exist in the future and a future 'to' must not push the window
+// past data the caller asked for.
+func parseMetricsTimeRange(w http.ResponseWriter, r *http.Request, maxWindow time.Duration) (from, to time.Time, ok bool) {
 	q := r.URL.Query()
-	to = time.Now()
+	now := time.Now()
+	to = now
 
 	if v := q.Get("to"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
@@ -33,6 +43,16 @@ func parseMetricsTimeRange(w http.ResponseWriter, r *http.Request) (from, to tim
 		from = t
 	} else {
 		from = to.Add(-1 * time.Hour)
+	}
+
+	if maxWindow > 0 {
+		reference := to
+		if now.Before(reference) {
+			reference = now
+		}
+		if earliest := reference.Add(-maxWindow); from.Before(earliest) {
+			from = earliest
+		}
 	}
 
 	if !from.Before(to) {
@@ -149,7 +169,7 @@ func HandleRealtimeThroughput(mgr *metrics.Manager) http.Handler {
 		if rejectUnsupportedPlatformDimension(w, r) {
 			return
 		}
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ThroughputRetentionWindow())
 		if !ok {
 			return
 		}
@@ -174,7 +194,7 @@ func HandleRealtimeConnections(mgr *metrics.Manager) http.Handler {
 		if rejectUnsupportedPlatformDimension(w, r) {
 			return
 		}
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ConnectionsRetentionWindow())
 		if !ok {
 			return
 		}
@@ -201,7 +221,7 @@ func HandleRealtimeLeases(mgr *metrics.Manager) http.Handler {
 			return
 		}
 		scopeGlobal := platformID == ""
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.LeasesRetentionWindow())
 		if !ok {
 			return
 		}
@@ -238,7 +258,7 @@ func HandleHistoryTraffic(mgr *metrics.Manager) http.Handler {
 		if rejectUnsupportedPlatformDimension(w, r) {
 			return
 		}
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ThroughputRetentionWindow())
 		if !ok {
 			return
 		}
@@ -268,7 +288,7 @@ func HandleHistoryTraffic(mgr *metrics.Manager) http.Handler {
 // HandleHistoryRequests handles GET /api/v1/metrics/history/requests.
 func HandleHistoryRequests(mgr *metrics.Manager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ThroughputRetentionWindow())
 		if !ok {
 			return
 		}
@@ -307,7 +327,7 @@ func HandleHistoryRequests(mgr *metrics.Manager) http.Handler {
 // HandleHistoryAccessLatency handles GET /api/v1/metrics/history/access-latency.
 func HandleHistoryAccessLatency(mgr *metrics.Manager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ThroughputRetentionWindow())
 		if !ok {
 			return
 		}
@@ -353,7 +373,7 @@ func HandleHistoryProbes(mgr *metrics.Manager) http.Handler {
 		if rejectUnsupportedPlatformDimension(w, r) {
 			return
 		}
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ThroughputRetentionWindow())
 		if !ok {
 			return
 		}
@@ -385,7 +405,7 @@ func HandleHistoryNodePool(mgr *metrics.Manager) http.Handler {
 		if rejectUnsupportedPlatformDimension(w, r) {
 			return
 		}
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.ThroughputRetentionWindow())
 		if !ok {
 			return
 		}
@@ -420,7 +440,7 @@ func HandleHistoryLeaseLifetime(mgr *metrics.Manager) http.Handler {
 		if !ok {
 			return
 		}
-		from, to, ok := parseMetricsTimeRange(w, r)
+		from, to, ok := parseMetricsTimeRange(w, r, mgr.LeasesRetentionWindow())
 		if !ok {
 			return
 		}

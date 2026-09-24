@@ -14,6 +14,13 @@ type inheritLeaseRequest struct {
 }
 
 // NewTokenActionHandler returns the handler for token-path actions.
+//
+// The route changes lease state, so a successful mutation is recorded in the
+// audit trail exactly like the management writes of WP04 §4.7 (G-07): the actor
+// is the sha256 prefix of the proxy token, never the token itself, and the
+// credential path parameter is not copied into the record. The request-body
+// limit wraps the audit middleware so the audit payload peek reads a body that
+// is already bounded by apiMaxBodyBytes.
 func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, apiMaxBodyBytes int64) http.Handler {
 	if cp == nil {
 		return http.NotFoundHandler()
@@ -47,5 +54,9 @@ func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, a
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
 
-	return RequestBodyLimitMiddleware(apiMaxBodyBytes, mux)
+	var handler http.Handler = mux
+	if cp.Engine != nil {
+		handler = AuditMiddleware(cp.Engine, proxyToken, apiMaxBodyBytes, mux)
+	}
+	return RequestBodyLimitMiddleware(apiMaxBodyBytes, handler)
 }

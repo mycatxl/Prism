@@ -223,6 +223,18 @@ func (s *ControlPlaneService) PatchRuntimeConfig(patchJSON json.RawMessage) (*co
 	return newCfg, nil
 }
 
+// requestLogCaptureMaxBytes is the largest value accepted for the four
+// `reverse_proxy_log_*_max_bytes` runtime settings.
+//
+// The capture buffer is allocated per in-flight proxied request
+// (internal/proxy/request_log_capture.go, payloadCaptureReadCloser), so a
+// value near 1 GiB would let anyone holding the admin token make every
+// concurrent proxied request allocate that much heap. The shipped defaults are
+// 1 KiB and the largest realistic diagnostic need is a few hundred KiB of
+// request/response body, so 1 MiB is the ceiling a real operator never has to
+// exceed. `0` keeps meaning "capture nothing"; negatives stay rejected.
+const requestLogCaptureMaxBytes = 1 << 20
+
 func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	latencyURL := strings.TrimSpace(cfg.LatencyTestURL)
 	u, verr := parseHTTPAbsoluteURL("latency_test_url", latencyURL)
@@ -236,18 +248,22 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	if cfg.CacheFlushDirtyThreshold < 0 {
 		return invalidArg("cache_flush_dirty_threshold: must be non-negative")
 	}
-	// Request log bytes fields must be non-negative.
-	if cfg.ReverseProxyLogReqHeadersMaxBytes < 0 {
-		return invalidArg("reverse_proxy_log_req_headers_max_bytes: must be non-negative")
-	}
-	if cfg.ReverseProxyLogReqBodyMaxBytes < 0 {
-		return invalidArg("reverse_proxy_log_req_body_max_bytes: must be non-negative")
-	}
-	if cfg.ReverseProxyLogRespHeadersMaxBytes < 0 {
-		return invalidArg("reverse_proxy_log_resp_headers_max_bytes: must be non-negative")
-	}
-	if cfg.ReverseProxyLogRespBodyMaxBytes < 0 {
-		return invalidArg("reverse_proxy_log_resp_body_max_bytes: must be non-negative")
+	// Request log capture limits must be non-negative and bounded: the buffer
+	// is per in-flight request, so the ceiling is what keeps a single runtime
+	// config patch from turning into an unbounded per-request allocation.
+	for _, field := range []struct {
+		name  string
+		value int
+	}{
+		{"reverse_proxy_log_req_headers_max_bytes", cfg.ReverseProxyLogReqHeadersMaxBytes},
+		{"reverse_proxy_log_req_body_max_bytes", cfg.ReverseProxyLogReqBodyMaxBytes},
+		{"reverse_proxy_log_resp_headers_max_bytes", cfg.ReverseProxyLogRespHeadersMaxBytes},
+		{"reverse_proxy_log_resp_body_max_bytes", cfg.ReverseProxyLogRespBodyMaxBytes},
+	} {
+		if field.value < 0 || field.value > requestLogCaptureMaxBytes {
+			return invalidArg(fmt.Sprintf(
+				"%s: must be between 0 and %d", field.name, requestLogCaptureMaxBytes))
+		}
 	}
 	minProbeInterval := 30 * time.Second
 	// Probe intervals must be at least 30s (DESIGN.md).

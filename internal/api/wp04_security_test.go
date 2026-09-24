@@ -141,6 +141,57 @@ func TestAuthRateLimit_TrustsConfiguredProxyXForwardedFor(t *testing.T) {
 	}
 }
 
+// TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor pins the
+// trusted-proxy hop selection with 127.0.0.1/32 as the trusted proxy and eleven
+// distinct X-Forwarded-For values.
+//
+// Part 1 is the supported deployment: the trusted proxy appends the address it
+// observed, so the rightmost untrusted hop is the real client and an attacker
+// cannot rotate the header prefix to escape the limit. Part 2 documents the
+// operational precondition of docs/SECURITY.md §1.2: a proxy that forwards a
+// client-supplied header verbatim gives every request its own bucket, which is
+// exactly why only an appending proxy may be listed in PRISM_TRUSTED_PROXIES.
+func TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor(t *testing.T) {
+	const (
+		peer     = "127.0.0.1:4000"
+		realPeer = "198.51.100.4"
+	)
+	trusted := []string{"127.0.0.1/32"}
+
+	// Part 1: the trusted proxy appends the observed peer address.
+	appending := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, trusted)
+	handler := AuthMiddleware("correct-token", appending, okHandler())
+	for i := 1; i <= 10; i++ {
+		xff := "203.0.113." + strconv.Itoa(i) + ", " + realPeer
+		if rec := doAuthedRequest(handler, peer, xff, "wrong-token"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("appended XFF attempt %d: got %d, want 401", i, rec.Code)
+		}
+	}
+	if keys := len(appending.entries); keys != 1 {
+		t.Fatalf("bucket keys: got %d, want 1 (the rightmost untrusted hop)", keys)
+	}
+	if rec := doAuthedRequest(handler, peer, "203.0.113.200, "+realPeer, "wrong-token"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("rotating prefix escaped the limit: got %d, want 429", rec.Code)
+	}
+	if rec := doAuthedRequest(handler, peer, "203.0.113.201, "+realPeer, "correct-token"); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("blocked forwarded client with a valid token: got %d, want 429", rec.Code)
+	}
+
+	// Part 2: the documented failure mode — the proxy passes a client-supplied
+	// header through verbatim, so each distinct value is its own bucket.
+	forwarding := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, trusted)
+	handler = AuthMiddleware("correct-token", forwarding, okHandler())
+	for i := 1; i <= 11; i++ {
+		xff := "203.0.113." + strconv.Itoa(i)
+		if rec := doAuthedRequest(handler, peer, xff, "wrong-token"); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("forwarded-only XFF attempt %d: got %d, want 401", i, rec.Code)
+		}
+	}
+	if keys := len(forwarding.entries); keys != 11 {
+		t.Fatalf("bucket keys: got %d, want 11 (one per distinct forwarded value)", keys)
+	}
+}
+
 // TestAuthRateLimit_SuccessfulRequestsAreNotCounted verifies that only failed
 // authentications count towards the limit.
 func TestAuthRateLimit_SuccessfulRequestsAreNotCounted(t *testing.T) {
@@ -347,6 +398,61 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 	}
 	if got := len(store.snapshot()); got != 2 {
 		t.Fatalf("failed write was audited: got %d entries, want 2", got)
+	}
+}
+
+// TestAuditLog_BodyLimitWrapsAuditPeek covers G-12: production wraps the audit
+// middleware inside RequestBodyLimitMiddleware (internal/api/server.go), so the
+// payload peek reads a body that is already bounded by the configured limit and
+// can never observe bytes beyond it. The test uses the same order as production;
+// reversing the two wrappers makes the second key visible in the audit detail
+// and fails here.
+func TestAuditLog_BodyLimitWrapsAuditPeek(t *testing.T) {
+	const (
+		adminToken = "admin-token-for-body-limit"
+		// bodyLimit cuts inside the second key of the payload.
+		bodyLimit = 13
+		// `{"aaaa":1,"bb` is the first bodyLimit bytes.
+		payload = `{"aaaa":1,"bbbb":2}`
+	)
+
+	store := &fakeAuditStore{}
+	var (
+		handlerBody []byte
+		handlerErr  error
+	)
+
+	authed := http.NewServeMux()
+	authed.Handle("PATCH /api/v1/platforms/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlerBody, handlerErr = io.ReadAll(r.Body)
+		WriteJSON(w, http.StatusOK, map[string]string{"status": "patched"})
+	}))
+
+	handler := RequestBodyLimitMiddleware(bodyLimit, AuditMiddleware(store, adminToken, 1<<20, authed))
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/v1/platforms/plat-1", strings.NewReader(payload))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PATCH: got %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+
+	entries := store.snapshot()
+	if len(entries) != 1 {
+		t.Fatalf("audit entries: got %d, want 1", len(entries))
+	}
+	detail := entries[0].Detail
+	if !strings.Contains(detail, "aaaa") {
+		t.Fatalf("audit detail %q lost the first body key", detail)
+	}
+	if strings.Contains(detail, "bbbb") {
+		t.Fatalf("audit detail %q saw bytes past the request-body limit: the payload peek is outside the limit", detail)
+	}
+	if string(handlerBody) != payload[:bodyLimit] {
+		t.Fatalf("handler body length: got %d, want %d", len(handlerBody), bodyLimit)
+	}
+	if handlerErr == nil {
+		t.Fatal("the handler body reader must report the size limit")
 	}
 }
 

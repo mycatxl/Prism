@@ -591,8 +591,13 @@ func restoreBackup(opts restoreOptions, fromDir string, force bool, logw io.Writ
 	stamp := time.Now().Format("20060102-150405")
 	for _, file := range manifest.Files {
 		dest := targets[file.Name]
-		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		// The target directories hold state.db/cache.db, so they are created
+		// (and repaired) 0700 just like the backup output directory.
+		if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 			return fmt.Errorf("restore: create %s: %w", filepath.Dir(dest), err)
+		}
+		if err := os.Chmod(filepath.Dir(dest), 0o700); err != nil {
+			return fmt.Errorf("restore: secure %s: %w", filepath.Dir(dest), err)
 		}
 		for _, candidate := range []string{dest, dest + "-wal", dest + "-shm"} {
 			if _, err := os.Stat(candidate); err != nil {

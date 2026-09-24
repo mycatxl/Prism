@@ -50,7 +50,9 @@ type prismApp struct {
 	apiHandler      http.Handler
 	adminListener   *adminListener
 	stopAuditPruner func()
-
+	// G-08: the metrics retention loop and the policy it applies.
+	stopMetricsPruner func()
+	metricsRetention  metrics.RetentionPolicy
 	// WP08: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
@@ -432,6 +434,11 @@ func (a *prismApp) initObservability() error {
 		return fmt.Errorf("metrics DB: %w", err)
 	}
 	a.metricsDB = metricsDB
+	a.metricsRetention = metrics.RetentionPolicy{
+		ThroughputSeconds:  metricsCfg.ThroughputRetentionSec,
+		ConnectionsSeconds: metricsCfg.ConnectionsRetentionSec,
+		LeasesSeconds:      metricsCfg.LeasesRetentionSec,
+	}
 
 	a.metricsManager = metrics.NewManager(metrics.ManagerConfig{
 		Repo:                        a.metricsDB,
@@ -444,6 +451,7 @@ func (a *prismApp) initObservability() error {
 		ConnectionsIntervalSec:      metricsCfg.ConnectionsIntervalSec,
 		LeasesRealtimeCapacity:      metricsCfg.LeasesRealtimeCapacity,
 		LeasesIntervalSec:           metricsCfg.LeasesIntervalSec,
+		Retention:                   a.metricsRetention,
 		RuntimeStats: &runtimeStatsAdapter{
 			pool:   a.topoRuntime.pool,
 			router: a.topoRuntime.router,
@@ -542,6 +550,12 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 
 	// WP04 §4.7: audit retention runs once a day (90 days, at most 100000 rows).
 	a.stopAuditPruner = api.StartAuditPruner(engine, 24*time.Hour)
+	// G-08: the same published retention windows bound metrics.db. The pruner
+	// deletes in bounded batches, so it never holds the write lock for long.
+	if a.metricsDB != nil {
+		a.stopMetricsPruner = metrics.StartRetentionPruner(
+			a.metricsDB, a.metricsRetention, metrics.RetentionPruneInterval)
+	}
 
 	apiSrv := api.NewServerWithAddress(
 		a.envCfg.ListenAddress,
@@ -817,6 +831,9 @@ func (a *prismApp) shutdown() {
 	}
 	log.Println("Request log repo closed")
 
+	if a.stopMetricsPruner != nil {
+		a.stopMetricsPruner()
+	}
 	shutdownBlocking("metrics manager", a.metricsManager.Stop)
 	log.Println("Metrics manager stopped")
 	if err := a.metricsDB.Close(); err != nil {

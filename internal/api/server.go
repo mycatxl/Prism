@@ -207,15 +207,15 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/metrics/snapshots/node-latency-distribution", HandleSnapshotNodeLatencyDistribution(metricsManager))
 	}
 
-	limitedAuthed := RequestBodyLimitMiddleware(apiMaxBodyBytes, authed)
-
-	// Management write auditing (WP04 §4.7). The audit middleware stays inside
-	// the request-body limit so its payload peek cannot read unbounded data.
-	var authedHandler http.Handler = limitedAuthed
+	// Management write auditing (WP04 §4.7). The request-body limit wraps the
+	// audit middleware, so the raw body its payload peek reads is already bounded
+	// by apiMaxBodyBytes before the peek's own 64 KiB cap applies (G-12).
+	var authedHandler http.Handler = authed
 	if cp != nil && cp.Engine != nil {
 		authed.Handle("GET /api/v1/audit-logs", HandleListAuditLogs(cp.Engine))
-		authedHandler = AuditMiddleware(cp.Engine, adminToken, apiMaxBodyBytes, limitedAuthed)
+		authedHandler = AuditMiddleware(cp.Engine, adminToken, apiMaxBodyBytes, authed)
 	}
+	authedHandler = RequestBodyLimitMiddleware(apiMaxBodyBytes, authedHandler)
 
 	// Login failure limiting (WP04 §4.6). Only failed authentications count and
 	// X-Forwarded-For is honoured solely for PRISM_TRUSTED_PROXIES.
