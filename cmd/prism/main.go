@@ -264,6 +264,9 @@ func newTopologyRuntime(
 
 	// 8. Probe manager. SetOnProbeEvent is registered in
 	// startBackgroundServices; WP08 attaches SetOnEgressObserved there as well.
+	// Probe outcomes are recorded on each node entry; the pool logs only
+	// failure-class transitions so the frequent probes do not flood the log.
+	pool.SetLogf(log.Printf)
 	probeMgr := probe.NewProbeManager(probe.ProbeConfig{
 		Pool:        pool,
 		Concurrency: envCfg.ProbeConcurrency,

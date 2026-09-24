@@ -769,6 +769,14 @@ type PlatformSpecFilter struct {
 	RegionFilters []string `json:"region_filters"`
 }
 
+// ProbeErrorView is the read model of NodeEntry.GetProbeFailure: the classified
+// reason of the last failed probe. It is deliberately separate from LastError.
+type ProbeErrorView struct {
+	Class  string `json:"class"`
+	Detail string `json:"detail"`
+	At     string `json:"at"`
+}
+
 // NodeSummary is the API response for a node.
 type NodeSummary struct {
 	Quality                          quality.Summary `json:"quality"`
@@ -790,6 +798,10 @@ type NodeSummary struct {
 	ReferenceLatencyMs               *float64        `json:"reference_latency_ms,omitempty"`
 	LastEgressUpdateAttempt          string          `json:"last_egress_update_attempt,omitempty"`
 	Tags                             []NodeTag       `json:"tags"`
+	// LastProbeError is the reason this node's last probe failed, or nil when the
+	// last probe succeeded. Probe failures never touch LastError: that one means
+	// the node could not be built at all and drives the ephemeral cleaner.
+	LastProbeError *ProbeErrorView `json:"last_probe_error,omitempty"`
 }
 
 // IsHealthyAndEnabled follows the node-summary health rule used by API/UI
@@ -815,6 +827,14 @@ func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEn
 		HasOutbound:  entry.HasOutbound(),
 		LastError:    entry.GetLastError(),
 		FailureCount: int(entry.FailureCount.Load()),
+	}
+
+	if class, detail, at := entry.GetProbeFailure(); class != node.ProbeErrorNone {
+		ns.LastProbeError = &ProbeErrorView{
+			Class:  class.String(),
+			Detail: detail,
+			At:     at.UTC().Format(time.RFC3339Nano),
+		}
 	}
 
 	if s != nil && s.Pool != nil {
