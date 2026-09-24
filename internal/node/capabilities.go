@@ -8,7 +8,7 @@ import "sync"
 
 const (
 	// SingboxVersion is the locked sing-box version (decision R9).
-	SingboxVersion = "1.14.1"
+	SingboxVersion = "1.14.2"
 	// MihomoVersion is the locked mihomo version used by WP07.
 	MihomoVersion = "1.19.31"
 )

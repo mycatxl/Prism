@@ -16,17 +16,19 @@ import (
 // quietPlatformInterface replaces sing-box's netlink default-interface monitor
 // with a no-op one.
 //
-// Why this exists: on Linux, `box.Start()` creates a netlink network monitor
-// whose callback spawns a goroutine that reads `NetworkManager.started`, while
-// `NetworkManager.Start` writes that field without synchronization
-// (sing-box v1.14.0 route/network.go:220 vs :574). `go test -race` therefore
-// reports a data race for every embedded box on Linux, which would make
-// `make verify` fail for reasons outside Prism's control.
+// History: sing-box v1.12.21 through v1.14.1 wrote NetworkManager.started as a
+// plain bool (route/network.go:220) while the netlink callback goroutine read it
+// (route/network.go:574), so `go test -race` reported a data race for every
+// embedded box on Linux. sing-box v1.14.2 rewrote NetworkManager onto
+// startedCtx/startedCancel plus explicit mutexes (stateAccess,
+// interfaceUpdateAccess, resetRunAccess, powerUpdateAccess) and that field no
+// longer exists: Prism's `make verify` is race-clean against v1.14.2 with or
+// without this stub.
 //
-// Prism never relies on interface auto-detection: node outbounds are dialed
-// through `adapter.Outbound.DialContext` without `auto_detect_interface` or
-// `bind_interface`. Tests therefore install this stub; the production runtime
-// keeps sing-box's real monitor.
+// The stub is kept because the tests want no live netlink monitor at all: Prism
+// never uses `auto_detect_interface` or `bind_interface`, and dropping the
+// monitor keeps the test binary independent of the host network stack. The
+// production runtime keeps sing-box's real monitor.
 type quietPlatformInterface struct {
 	monitor *quietInterfaceMonitor
 }

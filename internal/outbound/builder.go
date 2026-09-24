@@ -18,11 +18,15 @@ type SingboxBuilderConfig struct {
 	// DNSUpstreams configures Prism's node DNS chain.
 	// Values are DNS upstream URI strings and the slice must not be empty.
 	DNSUpstreams []string
-	// QuietInterfaceMonitor replaces sing-box's netlink default-interface
-	// monitor with a no-op one. Unit tests enable it because the upstream
-	// monitor trips a data race in sing-box v1.14.0 route.NetworkManager
-	// (route/network.go:220 vs :574) that `go test -race` reports. Production
-	// keeps the real monitor.
+	// QuietInterfaceMonitor replaces sing-box's netlink default-interface monitor
+	// with a no-op one.
+	//
+	// It was introduced because sing-box v1.12.21 through v1.14.1 tripped a data
+	// race in route.NetworkManager (a plain `started` bool written at :220 and
+	// read at :574). sing-box v1.14.2 removed that field in favour of
+	// startedCtx/startedCancel, so the race is gone; the switch stays because the
+	// tests want no live netlink monitor in the first place. Production keeps the
+	// real monitor.
 	QuietInterfaceMonitor bool
 }
 
