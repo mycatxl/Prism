@@ -1,0 +1,23 @@
+FROM alpine:3.21
+
+# Docker platform args automatically provided by buildx
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN apk add --no-cache ca-certificates tzdata su-exec \
+  && addgroup -S prism \
+  && adduser -S -G prism -h /var/lib/prism prism \
+  && mkdir -p /var/cache/prism /var/lib/prism /var/log/prism \
+  && chown -R prism:prism /var/cache/prism /var/lib/prism /var/log/prism
+
+# Copy the pre-built binaries from the GitHub Actions host into the image.
+# Buildx provides TARGETOS (linux) and TARGETARCH (amd64 or arm64).
+COPY release-bin/${TARGETOS}/${TARGETARCH}/prism-${TARGETOS}-${TARGETARCH} /usr/local/bin/prism
+COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+EXPOSE 2260
+VOLUME ["/var/cache/prism", "/var/lib/prism", "/var/log/prism"]
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/prism"]

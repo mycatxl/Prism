@@ -9,6 +9,7 @@ const LoginPage = lazy(() => import("../features/auth/LoginPage").then(m => ({ d
 const WorkbenchPage = lazy(() => import("../features/dashboard/WorkbenchPage").then(m => ({ default: m.WorkbenchPage })));
 const EndpointsPage = lazy(() => import("../features/endpoints/EndpointsPage").then(m => ({ default: m.EndpointsPage })));
 const GeoIPPage = lazy(() => import("../features/geoip/GeoIPPage").then(m => ({ default: m.GeoIPPage })));
+const IntelSettingsPage = lazy(() => import("../features/intelSettings/IntelSettingsPage").then(m => ({ default: m.IntelSettingsPage })));
 const NodesPage = lazy(() => import("../features/nodes/NodesPage").then(m => ({ default: m.NodesPage })));
 const PlatformDetailPage = lazy(() => import("../features/platforms/PlatformDetailPage").then(m => ({ default: m.PlatformDetailPage })));
 const PlatformPage = lazy(() => import("../features/platforms/PlatformPage").then(m => ({ default: m.PlatformPage })));
@@ -56,6 +57,7 @@ export function AppRoutes() {
       <Route path="/rules" element={<Page><RulesPage /></Page>} />
       <Route path="/request-logs" element={<Page><RequestLogsPage /></Page>} />
       <Route path="/resources" element={<Page><GeoIPPage /></Page>} />
+      <Route path="/intel-settings" element={<Page><IntelSettingsPage /></Page>} />
       <Route path="/system-config" element={<Page><SystemConfigPage /></Page>} />
       <Route path="*" element={<NotFoundPage />} />
     </Route>

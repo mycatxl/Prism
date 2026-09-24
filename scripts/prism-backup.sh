@@ -1,18 +1,34 @@
-#!/bin/bash
-
-# Prism Backup and Restore Tool
-# Backs up and restores Prism state and configuration
+#!/usr/bin/env bash
+#
+# Prism backup and restore wrapper (WP04 §4.11).
+#
+# Delegates to `prism backup` and `prism restore`:
+#   * `prism backup` snapshots state.db, cache.db and intel.db with
+#     VACUUM INTO through read-only connections, so a running service is safe,
+#   * `prism restore` verifies the manifest and every sha256 before it touches
+#     the live databases, and refuses to run while Prism is active.
+#
+# The previous tar-based copy of a live SQLite database is gone: it could
+# capture a torn WAL state and it never knew what a consistent snapshot is.
 
 set -euo pipefail
 
-VERSION="1.0.0"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
+
+DEPLOY_DIR="$DEFAULT_DEPLOY_DIR"
+OUT_DIR=""
+KEEP="10"
+FROM_DIR=""
+FORCE=false
+DRY_RUN=false
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+BLUE='\033[0;34m'
+NC='\033[0m'
 
 log_info() {
     echo -e "${GREEN}[INFO]${NC} $1"
@@ -23,315 +39,335 @@ log_warn() {
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+}
+
+log_step() {
+    echo -e "${BLUE}[STEP]${NC} $1"
 }
 
 usage() {
     cat <<EOF
-Prism Backup and Restore Tool v${VERSION}
+Prism backup and restore wrapper
 
-Usage: $0 <command> [options]
+Usage: $(basename "$0") <command> [options]
 
 Commands:
-    backup      Create a backup of Prism state
-    restore     Restore Prism state from a backup
-    list        List available backups
-    clean       Remove old backups
+  backup     Create a backup in <out-dir>/<timestamp> (default: backups/)
+  restore    Restore a backup created by "backup" (requires --from)
+  list       List the backups in <out-dir>
+  clean      Remove old backups from <out-dir> (per --keep)
 
-Backup Options:
-    -d, --dir <path>        State directory (default: ./state)
-    -o, --output <path>     Output directory for backup (default: ./backups)
-    -n, --name <name>       Backup name (default: timestamp)
-    -c, --compress          Compress backup with gzip
+Options:
+  --dir <path>         Deployment directory with .env (default: $DEFAULT_DEPLOY_DIR)
+  -o, --out <path>     Backup directory holding one <timestamp> folder per run
+                       (default: <deploy-dir>/backups)
+  -k, --keep <n>       Keep the newest n backups (default: 10, 0 = keep all)
+  -b, --from <path>    Backup folder to restore from (command: restore)
+  -f, --force          Replace existing databases with the backup (command: restore)
+  --dry-run            Print the underlying command without running it
+  -h, --help           Show this help message
 
-Restore Options:
-    -b, --backup <path>     Backup file to restore
-    -d, --dir <path>        State directory to restore to (default: ./state)
-    -f, --force             Force restore without confirmation
-
-List Options:
-    -o, --output <path>     Backup directory (default: ./backups)
-
-Clean Options:
-    -o, --output <path>     Backup directory (default: ./backups)
-    -k, --keep <number>     Number of backups to keep (default: 10)
+Backups contain state.db, cache.db and intel.db plus a manifest.json with the
+sha256 of every file. .env and other files are never included.
 
 Examples:
-    $0 backup -d ./state -o ./backups
-    $0 backup -d ./state -o ./backups -n my-backup -c
-    $0 restore -b ./backups/backup-20260912.tar.gz -d ./state
-    $0 list -o ./backups
-    $0 clean -o ./backups -k 5
-
+  ./scripts/prism-backup.sh backup
+  ./scripts/prism-backup.sh backup --out /srv/prism-backups --keep 7
+  ./scripts/prism-backup.sh list --out /srv/prism-backups
+  sudo systemctl stop prism
+  ./scripts/prism-backup.sh restore --from /srv/prism-backups/20260924T101500Z --force
+  sudo systemctl start prism
 EOF
-    exit 1
 }
 
-backup_prism() {
-    local state_dir="./state"
-    local output_dir="./backups"
-    local backup_name=""
-    local compress=false
+# --- helpers ------------------------------------------------------------------
 
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -d|--dir)
-                state_dir="$2"
-                shift 2
-                ;;
-            -o|--output)
-                output_dir="$2"
-                shift 2
-                ;;
-            -n|--name)
-                backup_name="$2"
-                shift 2
-                ;;
-            -c|--compress)
-                compress=true
-                shift
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    if [[ ! -d "$state_dir" ]]; then
-        log_error "State directory does not exist: $state_dir"
+require_value() {
+    local flag="$1"
+    shift
+    if [[ $# -eq 0 || -z "$1" ]]; then
+        log_error "$flag requires a value"
         exit 1
     fi
-
-    mkdir -p "$output_dir"
-
-    if [[ -z "$backup_name" ]]; then
-        backup_name="backup-$(date +%Y%m%d-%H%M%S)"
-    fi
-
-    local backup_path="$output_dir/$backup_name.tar"
-    if [[ "$compress" == true ]]; then
-        backup_path="$backup_path.gz"
-    fi
-
-    log_info "Creating backup of $state_dir..."
-    log_info "Backup will be saved to: $backup_path"
-
-    if [[ "$compress" == true ]]; then
-        tar -czf "$backup_path" -C "$(dirname "$state_dir")" "$(basename "$state_dir")"
-    else
-        tar -cf "$backup_path" -C "$(dirname "$state_dir")" "$(basename "$state_dir")"
-    fi
-
-    local backup_size=$(du -h "$backup_path" | cut -f1)
-    log_info "Backup created successfully: $backup_path ($backup_size)"
-
-    # Create metadata file
-    cat > "$backup_path.meta" <<META
-{
-  "backup_name": "$backup_name",
-  "timestamp": "$(date -Iseconds)",
-  "state_dir": "$state_dir",
-  "compressed": $compress,
-  "size": "$backup_size"
-}
-META
-
-    log_info "Backup complete!"
+    printf '%s' "$1"
 }
 
-restore_prism() {
-    local backup_path=""
-    local state_dir="./state"
-    local force=false
-
+parse_options() {
     while [[ $# -gt 0 ]]; do
-        case $1 in
-            -b|--backup)
-                backup_path="$2"
+        case "$1" in
+            --dir)
+                DEPLOY_DIR="$(require_value "$1" "${2:-}")"
                 shift 2
                 ;;
-            -d|--dir)
-                state_dir="$2"
+            -o|--out|--output)
+                OUT_DIR="$(require_value "$1" "${2:-}")"
+                shift 2
+                ;;
+            -k|--keep)
+                KEEP="$(require_value "$1" "${2:-}")"
+                shift 2
+                ;;
+            -b|--from|--backup)
+                FROM_DIR="$(require_value "$1" "${2:-}")"
                 shift 2
                 ;;
             -f|--force)
-                force=true
+                FORCE=true
                 shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
                 ;;
             *)
                 log_error "Unknown option: $1"
-                usage
+                usage >&2
+                exit 1
                 ;;
         esac
     done
 
-    if [[ -z "$backup_path" ]]; then
-        log_error "Backup path required (-b/--backup)"
-        usage
+    if [[ ! "$KEEP" =~ ^[0-9]+$ ]]; then
+        log_error "--keep must be a non-negative integer, got: $KEEP"
+        exit 1
+    fi
+}
+
+# abs_path resolves a path against the deployment directory.
+abs_path() {
+    local path="$1"
+    if [[ "$path" == /* ]]; then
+        printf '%s' "$path"
+        return 0
+    fi
+    path="${path#./}"
+    printf '%s/%s' "${DEPLOY_DIR%/}" "$path"
+}
+
+resolve_paths() {
+    if [[ ! -d "$DEPLOY_DIR" ]]; then
+        log_error "Deployment directory does not exist: $DEPLOY_DIR"
+        exit 1
+    fi
+    DEPLOY_DIR="$(cd "$DEPLOY_DIR" && pwd)"
+
+    if [[ -z "$OUT_DIR" ]]; then
+        OUT_DIR="$DEPLOY_DIR/backups"
+    else
+        OUT_DIR="$(abs_path "$OUT_DIR")"
+    fi
+    if [[ -n "$FROM_DIR" ]]; then
+        FROM_DIR="$(abs_path "$FROM_DIR")"
+    fi
+}
+
+require_binary() {
+    local binary="$DEPLOY_DIR/bin/prism"
+    if [[ ! -x "$binary" ]]; then
+        log_error "Prism binary not found or not executable: $binary"
+        log_info "Build it first: make build   (this produces bin/prism in the repository root)"
+        exit 1
+    fi
+}
+
+require_env_file() {
+    if [[ ! -f "$DEPLOY_DIR/.env" ]]; then
+        log_error "No .env in $DEPLOY_DIR: the state and cache directories are unknown"
+        log_info "Create one with: $DEPLOY_DIR/scripts/deploy.sh   (or: cd $DEPLOY_DIR && ./bin/prism init)"
+        exit 1
+    fi
+}
+
+# run_prism runs the binary from the deployment directory so that ./.env is
+# loaded exactly like the service does.
+run_prism() {
+    ( cd "$DEPLOY_DIR" && exec ./bin/prism "$@" )
+}
+
+# list_backup_dirs prints the timestamped backup directories, newest first.
+list_backup_dirs() {
+    if [[ ! -d "$OUT_DIR" ]]; then
+        return 0
+    fi
+    find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*T*Z' -print |
+        LC_ALL=C sort -r
+}
+
+prune_backups() {
+    if (( KEEP < 1 )); then
+        log_info "Keeping every backup (--keep 0)"
+        return 0
     fi
 
-    if [[ ! -f "$backup_path" ]]; then
-        log_error "Backup file does not exist: $backup_path"
+    local -a entries=()
+    local entry
+    while IFS= read -r entry; do
+        if [[ -n "$entry" ]]; then
+            entries+=("$entry")
+        fi
+    done < <(list_backup_dirs)
+
+    local total="${#entries[@]}"
+    if (( total <= KEEP )); then
+        log_info "Keeping all $total backup(s) (--keep $KEEP)"
+        return 0
+    fi
+
+    local i path
+    for (( i = KEEP; i < total; i++ )); do
+        path="${entries[i]}"
+        case "$path" in
+            "$OUT_DIR"/*) ;;
+            *)
+                log_warn "Refusing to remove path outside $OUT_DIR: $path"
+                continue
+                ;;
+        esac
+        if [[ "$DRY_RUN" == true ]]; then
+            log_info "[dry-run] would remove old backup: $path"
+            continue
+        fi
+        log_info "Removing old backup: $path"
+        rm -rf -- "$path"
+    done
+}
+
+# --- commands -----------------------------------------------------------------
+
+do_backup() {
+    require_binary
+    require_env_file
+
+    local stamp target
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    target="$OUT_DIR/$stamp"
+
+    if [[ -e "$target" ]]; then
+        log_error "Backup target already exists: $target"
         exit 1
     fi
 
-    if [[ -d "$state_dir" ]] && [[ "$force" != true ]]; then
-        log_warn "State directory already exists: $state_dir"
-        read -p "This will overwrite existing state. Continue? (yes/no): " confirm
-        if [[ "$confirm" != "yes" ]]; then
-            log_info "Restore cancelled"
-            exit 0
-        fi
+    log_step "Creating backup: $target"
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[dry-run] would run: (cd $DEPLOY_DIR && ./bin/prism backup --out $target)"
+        return 0
     fi
 
-    # Backup existing state if it exists
-    if [[ -d "$state_dir" ]]; then
-        local backup_existing="$state_dir.backup-$(date +%Y%m%d-%H%M%S)"
-        log_info "Backing up existing state to: $backup_existing"
-        mv "$state_dir" "$backup_existing"
-    fi
+    run_prism backup --out "$target"
+    log_info "Backup written to $target"
 
-    log_info "Restoring from: $backup_path"
-    log_info "Restoring to: $state_dir"
-
-    mkdir -p "$(dirname "$state_dir")"
-
-    if [[ "$backup_path" == *.gz ]]; then
-        tar -xzf "$backup_path" -C "$(dirname "$state_dir")"
-    else
-        tar -xf "$backup_path" -C "$(dirname "$state_dir")"
-    fi
-
-    log_info "Restore complete!"
-    log_info "State directory: $state_dir"
+    prune_backups
 }
 
-list_backups() {
-    local output_dir="./backups"
+do_restore() {
+    require_binary
+    require_env_file
 
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -o|--output)
-                output_dir="$2"
-                shift 2
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    if [[ ! -d "$output_dir" ]]; then
-        log_warn "Backup directory does not exist: $output_dir"
-        exit 0
+    if [[ -z "$FROM_DIR" ]]; then
+        log_error "restore requires --from <backup-directory>"
+        usage >&2
+        exit 1
+    fi
+    if [[ ! -d "$FROM_DIR" ]]; then
+        log_error "Backup directory does not exist: $FROM_DIR"
+        exit 1
+    fi
+    if [[ ! -f "$FROM_DIR/manifest.json" ]]; then
+        log_error "$FROM_DIR/manifest.json is missing; that is not a backup created by 'prism backup'"
+        exit 1
     fi
 
-    log_info "Backups in $output_dir:"
-    echo ""
+    log_warn "'prism restore' refuses to run while a Prism instance is active: stop the service first"
+    log_info "Restoring from $FROM_DIR (existing databases are moved to *.pre-restore-<timestamp>)"
 
-    local count=0
-    for backup in "$output_dir"/*.tar "$output_dir"/*.tar.gz; do
-        if [[ -f "$backup" ]]; then
-            count=$((count + 1))
-            local size=$(du -h "$backup" | cut -f1)
-            local date=$(stat -c %y "$backup" | cut -d' ' -f1,2 | cut -d'.' -f1)
-            echo "  [$count] $(basename "$backup")"
-            echo "      Size: $size"
-            echo "      Date: $date"
+    local -a args=(restore --from "$FROM_DIR")
+    if [[ "$FORCE" == true ]]; then
+        args+=(--force)
+    fi
 
-            if [[ -f "$backup.meta" ]]; then
-                echo "      Meta: $(cat "$backup.meta" | tr '\n' ' ')"
-            fi
-            echo ""
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "[dry-run] would run: (cd $DEPLOY_DIR && ./bin/prism ${args[*]})"
+        return 0
+    fi
+
+    run_prism "${args[@]}"
+    log_info "Restore complete"
+}
+
+do_list() {
+    if [[ ! -d "$OUT_DIR" ]]; then
+        log_warn "Backup directory does not exist: $OUT_DIR"
+        return 0
+    fi
+
+    log_info "Backups in $OUT_DIR:"
+    local count=0 entry size created
+    while IFS= read -r entry; do
+        if [[ -z "$entry" ]]; then
+            continue
         fi
-    done
+        count=$((count + 1))
+        size="$(du -sh -- "$entry" 2>/dev/null | cut -f1 || true)"
+        created=""
+        if [[ -f "$entry/manifest.json" ]]; then
+            created="$(grep -m1 -o '"created_at": *"[^"]*"' "$entry/manifest.json" 2>/dev/null | sed 's/.*"\([^"]*\)"$/\1/' || true)"
+        fi
+        echo "  $((count)). $(basename "$entry")  (${size:-?}${created:+, created $created})"
+    done < <(list_backup_dirs)
 
-    if [[ $count -eq 0 ]]; then
+    if (( count == 0 )); then
         log_warn "No backups found"
     else
         log_info "Total backups: $count"
     fi
 }
 
-clean_backups() {
-    local output_dir="./backups"
-    local keep=10
-
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -o|--output)
-                output_dir="$2"
-                shift 2
-                ;;
-            -k|--keep)
-                keep="$2"
-                shift 2
-                ;;
-            *)
-                log_error "Unknown option: $1"
-                usage
-                ;;
-        esac
-    done
-
-    if [[ ! -d "$output_dir" ]]; then
-        log_warn "Backup directory does not exist: $output_dir"
-        exit 0
+do_clean() {
+    if [[ ! -d "$OUT_DIR" ]]; then
+        log_warn "Backup directory does not exist: $OUT_DIR"
+        return 0
     fi
-
-    log_info "Cleaning backups in $output_dir (keeping $keep most recent)..."
-
-    # Count backups
-    local count=$(find "$output_dir" -name "*.tar" -o -name "*.tar.gz" | wc -l)
-    if [[ $count -le $keep ]]; then
-        log_info "No cleanup needed (found $count backups, keeping $keep)"
-        exit 0
-    fi
-
-    # Remove old backups
-    local to_remove=$((count - keep))
-    log_info "Removing $to_remove old backup(s)..."
-
-    find "$output_dir" \( -name "*.tar" -o -name "*.tar.gz" \) -printf '%T+ %p\n' | \
-        sort | \
-        head -n "$to_remove" | \
-        cut -d' ' -f2- | \
-        while read -r backup; do
-            log_info "Removing: $(basename "$backup")"
-            rm -f "$backup" "$backup.meta"
-        done
-
-    log_info "Cleanup complete!"
+    log_step "Cleaning $OUT_DIR (keeping the newest $KEEP)"
+    prune_backups
+    log_info "Cleanup complete"
 }
 
-# Main command dispatcher
-if [[ $# -eq 0 ]]; then
-    usage
-fi
+main() {
+    local command="${1:-}"
 
-command=$1
-shift
+    case "$command" in
+        backup|restore|list|clean)
+            shift
+            ;;
+        -h|--help|help)
+            usage
+            exit 0
+            ;;
+        "")
+            usage >&2
+            exit 1
+            ;;
+        *)
+            log_error "Unknown command: $command"
+            usage >&2
+            exit 1
+            ;;
+    esac
 
-case $command in
-    backup)
-        backup_prism "$@"
-        ;;
-    restore)
-        restore_prism "$@"
-        ;;
-    list)
-        list_backups "$@"
-        ;;
-    clean)
-        clean_backups "$@"
-        ;;
-    -h|--help|help)
-        usage
-        ;;
-    *)
-        log_error "Unknown command: $command"
-        usage
-        ;;
-esac
+    parse_options "$@"
+    resolve_paths
+
+    case "$command" in
+        backup) do_backup ;;
+        restore) do_restore ;;
+        list) do_list ;;
+        clean) do_clean ;;
+    esac
+}
+
+main "$@"

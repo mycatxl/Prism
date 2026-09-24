@@ -114,9 +114,13 @@ func (p *OutboundTransportPool) newReusableOutboundTransport(ob adapter.Outbound
 	}
 }
 
-func newDirectHTTPTransport(cfg OutboundTransportConfig, sink MetricsEventSink) *http.Transport {
+// newDirectHTTPTransport builds the transport for local direct (bypass) HTTP
+// requests. Its dialer carries the local dial guard, so the address that is
+// actually connected to is validated even when the target name is resolved
+// again after the request was checked.
+func newDirectHTTPTransport(cfg OutboundTransportConfig, sink MetricsEventSink, guard DirectDialGuard) *http.Transport {
 	cfg = normalizeOutboundTransportConfig(cfg)
-	dialer := &net.Dialer{}
+	dialer := guard.dialer()
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := dialer.DialContext(ctx, network, addr)

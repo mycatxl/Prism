@@ -1,0 +1,32 @@
+# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
+id: tiktok
+version: 1
+name: TikTok
+category: social
+enabled: true
+ttl: 12h
+timeout: 12s
+calibrated: "uncalibrated (signals from plan §5.4)"
+steps:
+  - id: home
+    request:
+      method: GET
+      url: https://www.tiktok.com/
+      follow_redirects: true
+      headers:
+        Accept-Language: "en-US,en;q=0.9"
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
+      max_body_bytes: 262144
+outcomes:
+  - when: {step: home, body_contains: "Your account is currently unavailable"}
+    outcome: blocked
+  - when: {step: home, status_in: [403, 451]}
+    outcome: blocked
+  - when: {step: home, status_in: [200]}
+    outcome: available
+  - when: {step: home, error: timeout}
+    outcome: error
+default: unknown
+region:
+  step: home
+  body_regex: '"region":"([A-Z]{2})"'

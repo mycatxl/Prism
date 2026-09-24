@@ -6,8 +6,32 @@ export type NodeTag = {
   tag: string;
 };
 
+// NodeIntel is the WP10 purity assessment of a node's egress IP (API field
+// `intel`). Every field of an unassessed node is empty and state is
+// "unassessed": a missing assessment is never reported as a score of 0.
+export type NodeIntel = {
+  state: "unassessed" | "pending" | "valid" | "unsupported" | "stale" | string;
+  egress_ipv4: string;
+  egress_ipv6: string;
+  colo: string;
+  asn: number;
+  as_org: string;
+  country: string;
+  city: string;
+  ip_type: string;
+  native: boolean | null;
+  purity_score: number | null;
+  purity_band: string;
+  confidence: string;
+  verdict: string;
+  flags: string[];
+  checks: Record<string, string>;
+  assessed_at: string;
+};
+
 export type NodeSummary = {
   quality?: QualitySummary;
+  intel?: NodeIntel | null;
   node_hash: string;
   protocol?: string;
   created_at: string;
@@ -36,7 +60,15 @@ export type PageResponse<T> = {
   unique_healthy_egress_ips: number;
 };
 
-export type NodeSortBy = "tag" | "created_at" | "failure_count" | "region";
+export type NodeSortBy =
+  | "tag"
+  | "created_at"
+  | "failure_count"
+  | "region"
+  | "purity_score"
+  | "latency"
+  | "assessed_at";
+
 export type SortOrder = "asc" | "desc";
 
 export type NodeListFilters = {
@@ -54,6 +86,16 @@ export type NodeListFilters = {
   enabled?: boolean;
   circuit_open?: boolean;
   has_outbound?: boolean;
+  // WP10 §4 intel filters. `check` is repeatable and each entry is
+  // "<check id>:<outcome>".
+  purity_min?: number;
+  purity_max?: number;
+  verdict?: string;
+  confidence_min?: string;
+  native?: boolean;
+  asn?: number;
+  country?: string;
+  check?: string[];
 };
 
 export type NodeListQuery = NodeListFilters & {

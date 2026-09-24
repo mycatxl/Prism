@@ -21,6 +21,7 @@ type tunnelDeps struct {
 	health      HealthRecorder
 	metricsSink MetricsEventSink
 	bypass      *TargetBypassMatcher
+	directGuard DirectDialGuard
 }
 
 type preparedTunnel struct {
@@ -73,6 +74,11 @@ func prepareConnectTunnel(
 	target string,
 ) tunnelPrepareResult {
 	if deps.bypass != nil && deps.bypass.ShouldBypass(target) {
+		// PRISM_DIRECT_DENY_PRIVATE governs this local dial path too: the
+		// CONNECT tunnel and the SOCKS5 inbound share it.
+		if err := deps.directGuard.CheckTarget(ctx, target); err != nil {
+			return tunnelPrepareResult{proxyErr: ErrDirectTargetDenied}
+		}
 		return prepareDirectConnectTunnel(ctx, deps, target)
 	}
 
@@ -135,7 +141,9 @@ func prepareConnectTunnel(
 }
 
 func prepareDirectConnectTunnel(ctx context.Context, deps tunnelDeps, target string) tunnelPrepareResult {
-	var dialer net.Dialer
+	// The dial-time half of the guard runs inside this dialer, so the address
+	// connected to is validated even after a re-resolution.
+	dialer := deps.directGuard.dialer()
 	rawConn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		proxyErr := classifyConnectError(err)

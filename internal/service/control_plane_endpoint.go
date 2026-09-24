@@ -77,7 +77,7 @@ func boolOrDefault(value *bool, fallback bool) bool {
 // NewDefaultEndpoint builds the environment-defined, read-only endpoint policy.
 func NewDefaultEndpoint(port int) model.Endpoint {
 	if port == 0 {
-		port = 1080
+		port = 2260
 	}
 	return model.Endpoint{
 		ID:               DefaultEndpointID,

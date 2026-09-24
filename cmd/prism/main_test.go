@@ -1,0 +1,1020 @@
+package main
+
+import (
+	"encoding/json"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"prism/internal/config"
+	"prism/internal/model"
+	"prism/internal/node"
+	"prism/internal/outbound"
+	"prism/internal/platform"
+	"prism/internal/state"
+	"prism/internal/testutil"
+	"prism/internal/topology"
+)
+
+func unsetEnvForDotenvTest(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		oldValue, hadOldValue := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("Unsetenv(%s): %v", key, err)
+		}
+		key := key
+		t.Cleanup(func() {
+			if hadOldValue {
+				_ = os.Setenv(key, oldValue)
+			} else {
+				_ = os.Unsetenv(key)
+			}
+		})
+	}
+}
+
+func newBootstrapTestRuntime(runtimeCfg *config.RuntimeConfig) (*topology.SubscriptionManager, *topology.GlobalNodePool) {
+	subManager := topology.NewSubscriptionManager()
+	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		SubLookup:              subManager.Lookup,
+		GeoLookup:              func(netip.Addr) string { return "" },
+		MaxLatencyTableEntries: 16,
+		MaxConsecutiveFailures: func() int { return runtimeCfg.MaxConsecutiveFailures },
+		LatencyDecayWindow: func() time.Duration {
+			return time.Duration(runtimeCfg.LatencyDecayWindow)
+		},
+	})
+	return subManager, pool
+}
+
+func newDefaultPlatformEnvConfig() *config.EnvConfig {
+	return &config.EnvConfig{
+		AuthVersion:                                     config.AuthVersionV1,
+		DefaultPlatformStickyTTL:                        7 * 24 * time.Hour,
+		DefaultPlatformRegexFilters:                     []string{},
+		DefaultPlatformRegionFilters:                    []string{},
+		DefaultPlatformReverseProxyMissAction:           "TREAT_AS_EMPTY",
+		DefaultPlatformReverseProxyEmptyAccountBehavior: "ACCOUNT_HEADER_RULE",
+		DefaultPlatformReverseProxyFixedAccountHeader:   "Authorization",
+		DefaultPlatformAllocationPolicy:                 "BALANCED",
+		NodeDNSUpstreams:                                config.DefaultNodeDNSUpstreams(),
+	}
+}
+
+func TestLoadDotenvFile_LoadsEmptyProxyToken(t *testing.T) {
+	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_ADMIN_TOKEN", "RESIN_PROXY_TOKEN")
+
+	// PRISM-DEVIATION: X2 — disabling authentication by leaving a token empty
+	// now requires an explicit opt-in; upstream Resin accepted it silently.
+	t.Setenv("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "true")
+	t.Setenv("PRISM_ALLOW_EMPTY_PROXY_TOKEN", "true")
+	// PRISM-DEVIATION: X3 — RESIN_ADMIN_TOKEN now feeds PRISM_ADMIN_TOKEN, and
+	// this fixture uses a short token on purpose. Turn the Prism strong-token
+	// policy off so the test keeps covering dotenv loading and empty tokens
+	// rather than the token length gate.
+	t.Setenv("PRISM_ENFORCE_STRONG_TOKENS", "false")
+
+	path := filepath.Join(t.TempDir(), ".env")
+	content := strings.Join([]string{
+		"RESIN_AUTH_VERSION=V1",
+		"RESIN_ADMIN_TOKEN=admin-secret",
+		"RESIN_PROXY_TOKEN=",
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(.env): %v", err)
+	}
+
+	if err := loadDotenvFile(path); err != nil {
+		t.Fatalf("loadDotenvFile: %v", err)
+	}
+
+	proxyToken, ok := os.LookupEnv("RESIN_PROXY_TOKEN")
+	if !ok {
+		t.Fatal("expected RESIN_PROXY_TOKEN to be defined from .env")
+	}
+	if proxyToken != "" {
+		t.Fatalf("RESIN_PROXY_TOKEN = %q, want empty", proxyToken)
+	}
+
+	cfg, err := config.LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("LoadEnvConfig: %v", err)
+	}
+	if cfg.ProxyToken != "" {
+		t.Fatalf("cfg.ProxyToken = %q, want empty", cfg.ProxyToken)
+	}
+}
+
+func TestLoadDotenvFile_DoesNotOverrideExistingEnv(t *testing.T) {
+	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_ADMIN_TOKEN", "RESIN_PROXY_TOKEN")
+	if err := os.Setenv("RESIN_PROXY_TOKEN", "real-env-token"); err != nil {
+		t.Fatalf("Setenv(RESIN_PROXY_TOKEN): %v", err)
+	}
+
+	path := filepath.Join(t.TempDir(), ".env")
+	content := strings.Join([]string{
+		"RESIN_AUTH_VERSION=V1",
+		"RESIN_ADMIN_TOKEN=admin-secret",
+		"RESIN_PROXY_TOKEN=dotenv-token",
+	}, "\n") + "\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile(.env): %v", err)
+	}
+
+	if err := loadDotenvFile(path); err != nil {
+		t.Fatalf("loadDotenvFile: %v", err)
+	}
+
+	if got := os.Getenv("RESIN_PROXY_TOKEN"); got != "real-env-token" {
+		t.Fatalf("RESIN_PROXY_TOKEN = %q, want real-env-token", got)
+	}
+	if got := os.Getenv("RESIN_AUTH_VERSION"); got != "V1" {
+		t.Fatalf("RESIN_AUTH_VERSION = %q, want V1", got)
+	}
+}
+
+func TestLoadDotenvFile_IgnoresMissingFile(t *testing.T) {
+	if err := loadDotenvFile(filepath.Join(t.TempDir(), ".env")); err != nil {
+		t.Fatalf("loadDotenvFile missing file: %v", err)
+	}
+}
+
+func TestBootstrapTopology_CreatesDefaultPlatformWhenMissing(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	envCfg := newDefaultPlatformEnvConfig()
+	envCfg.DefaultPlatformStickyTTL = 2 * time.Hour
+	envCfg.DefaultPlatformRegexFilters = []string{`^Provider/.*`}
+	envCfg.DefaultPlatformRegionFilters = []string{"us", "hk"}
+	envCfg.DefaultPlatformReverseProxyMissAction = "REJECT"
+	envCfg.DefaultPlatformReverseProxyEmptyAccountBehavior = "FIXED_HEADER"
+	envCfg.DefaultPlatformReverseProxyFixedAccountHeader = "X-Account-Id"
+	envCfg.DefaultPlatformAllocationPolicy = "PREFER_LOW_LATENCY"
+
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("bootstrapTopology: %v", err)
+	}
+
+	platforms, err := engine.ListPlatforms()
+	if err != nil {
+		t.Fatalf("ListPlatforms: %v", err)
+	}
+	if len(platforms) != 1 {
+		t.Fatalf("expected 1 platform, got %d", len(platforms))
+	}
+
+	defaultPlat := platforms[0]
+	if defaultPlat.ID != platform.DefaultPlatformID {
+		t.Fatalf("default id: got %q, want %q", defaultPlat.ID, platform.DefaultPlatformID)
+	}
+	if defaultPlat.Name != platform.DefaultPlatformName {
+		t.Fatalf("default name: got %q, want %q", defaultPlat.Name, platform.DefaultPlatformName)
+	}
+	if defaultPlat.StickyTTLNs != int64(2*time.Hour) {
+		t.Fatalf("sticky_ttl_ns: got %d, want %d", defaultPlat.StickyTTLNs, int64(2*time.Hour))
+	}
+	if defaultPlat.ReverseProxyMissAction != "REJECT" {
+		t.Fatalf("reverse_proxy_miss_action: got %q, want %q", defaultPlat.ReverseProxyMissAction, "REJECT")
+	}
+	if defaultPlat.ReverseProxyEmptyAccountBehavior != "FIXED_HEADER" {
+		t.Fatalf(
+			"reverse_proxy_empty_account_behavior: got %q, want %q",
+			defaultPlat.ReverseProxyEmptyAccountBehavior,
+			"FIXED_HEADER",
+		)
+	}
+	if defaultPlat.ReverseProxyFixedAccountHeader != "X-Account-Id" {
+		t.Fatalf(
+			"reverse_proxy_fixed_account_header: got %q, want %q",
+			defaultPlat.ReverseProxyFixedAccountHeader,
+			"X-Account-Id",
+		)
+	}
+	if defaultPlat.AllocationPolicy != "PREFER_LOW_LATENCY" {
+		t.Fatalf("allocation_policy: got %q, want %q", defaultPlat.AllocationPolicy, "PREFER_LOW_LATENCY")
+	}
+	if defaultPlat.PassiveCircuitBreakerDisabled {
+		t.Fatal("passive_circuit_breaker_disabled: got true, want false")
+	}
+
+	if !reflect.DeepEqual(defaultPlat.RegexFilters, []string{`^Provider/.*`}) {
+		t.Fatalf("regex_filters: got %v", defaultPlat.RegexFilters)
+	}
+	if !reflect.DeepEqual(defaultPlat.RegionFilters, []string{"us", "hk"}) {
+		t.Fatalf("region_filters: got %v", defaultPlat.RegionFilters)
+	}
+
+	if _, ok := pool.GetPlatform(platform.DefaultPlatformID); !ok {
+		t.Fatal("default platform should be registered in pool by ID")
+	}
+	if _, ok := pool.GetPlatformByName(platform.DefaultPlatformName); !ok {
+		t.Fatal("default platform should be registered in pool by name")
+	}
+}
+
+func TestBootstrapTopology_DefaultPlatformCreationIsIdempotent(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	envCfg := newDefaultPlatformEnvConfig()
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("first bootstrapTopology: %v", err)
+	}
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("second bootstrapTopology: %v", err)
+	}
+
+	platforms, err := engine.ListPlatforms()
+	if err != nil {
+		t.Fatalf("ListPlatforms: %v", err)
+	}
+	if len(platforms) != 1 {
+		t.Fatalf("expected exactly 1 platform after repeated bootstrap, got %d", len(platforms))
+	}
+	if platforms[0].ID != platform.DefaultPlatformID {
+		t.Fatalf("unexpected platform id after repeated bootstrap: %q", platforms[0].ID)
+	}
+}
+
+func TestEnsureDefaultAccountHeaderRule_CreatesFallbackWhenMissing(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
+		t.Fatalf("ensureDefaultAccountHeaderRule: %v", err)
+	}
+	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
+		t.Fatalf("ensureDefaultAccountHeaderRule second call: %v", err)
+	}
+
+	rules, err := engine.ListAccountHeaderRules()
+	if err != nil {
+		t.Fatalf("ListAccountHeaderRules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 fallback rule, got %d", len(rules))
+	}
+	if rules[0].URLPrefix != "*" {
+		t.Fatalf("fallback url_prefix = %q, want %q", rules[0].URLPrefix, "*")
+	}
+	if !reflect.DeepEqual(rules[0].Headers, []string{"Authorization", "x-api-key"}) {
+		t.Fatalf("fallback headers = %v, want %v", rules[0].Headers, []string{"Authorization", "x-api-key"})
+	}
+}
+
+func TestEnsureDefaultAccountHeaderRule_DoesNotOverwriteExistingFallback(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	custom := model.AccountHeaderRule{
+		URLPrefix:   "*",
+		Headers:     []string{"X-Custom-Account"},
+		UpdatedAtNs: time.Now().UnixNano(),
+	}
+	if _, err := engine.UpsertAccountHeaderRuleWithCreated(custom); err != nil {
+		t.Fatalf("seed fallback rule: %v", err)
+	}
+
+	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
+		t.Fatalf("ensureDefaultAccountHeaderRule: %v", err)
+	}
+
+	rules, err := engine.ListAccountHeaderRules()
+	if err != nil {
+		t.Fatalf("ListAccountHeaderRules: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 fallback rule, got %d", len(rules))
+	}
+	if !reflect.DeepEqual(rules[0].Headers, custom.Headers) {
+		t.Fatalf("fallback headers should stay custom, got %v, want %v", rules[0].Headers, custom.Headers)
+	}
+}
+
+func TestBootstrapTopology_DefaultPlatformByNameDoesNotSatisfyDefaultID(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	now := time.Now().UnixNano()
+	if err := engine.UpsertPlatform(model.Platform{
+		ID:                     "legacy-default-id",
+		Name:                   platform.DefaultPlatformName,
+		StickyTTLNs:            int64(time.Hour),
+		RegexFilters:           []string{},
+		RegionFilters:          []string{},
+		ReverseProxyMissAction: "TREAT_AS_EMPTY",
+		AllocationPolicy:       "BALANCED",
+		UpdatedAtNs:            now,
+	}); err != nil {
+		t.Fatalf("seed legacy default-by-name platform: %v", err)
+	}
+
+	subManager, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	err = bootstrapTopology(engine, subManager, pool, newDefaultPlatformEnvConfig())
+	if err == nil {
+		t.Fatal("expected bootstrapTopology to fail when default ID is missing but default name is occupied")
+	}
+	if !strings.Contains(err.Error(), "ensure default platform") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "platform name already exists") {
+		t.Fatalf("unexpected error detail: %v", err)
+	}
+}
+
+func TestBootstrapTopology_FailsFastOnCorruptPlatformFilters(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	now := time.Now().UnixNano()
+	if err := engine.UpsertPlatform(model.Platform{
+		ID:                     "plat-1",
+		Name:                   "BrokenOnRead",
+		StickyTTLNs:            int64(time.Hour),
+		RegexFilters:           []string{`^ok$`},
+		RegionFilters:          []string{"us"},
+		ReverseProxyMissAction: "TREAT_AS_EMPTY",
+		AllocationPolicy:       "BALANCED",
+		UpdatedAtNs:            now,
+	}); err != nil {
+		t.Fatalf("UpsertPlatform: %v", err)
+	}
+
+	db, err := state.OpenDB(filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatalf("OpenDB(state.db): %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(
+		`UPDATE platforms SET regex_filters_json = ? WHERE id = ?`,
+		`["(broken"]`,
+		"plat-1",
+	); err != nil {
+		t.Fatalf("corrupt platform row: %v", err)
+	}
+
+	subManager, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	err = bootstrapTopology(engine, subManager, pool, newDefaultPlatformEnvConfig())
+	if err == nil {
+		t.Fatal("expected bootstrapTopology to fail on corrupt platform filters")
+	}
+	if !strings.Contains(err.Error(), "regex_filters") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBootstrapTopology_V1RejectsPersistedInvalidPlatformName(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	now := time.Now().UnixNano()
+	if err := engine.UpsertPlatform(model.Platform{
+		ID:                     "plat-1",
+		Name:                   "StoredPlatform",
+		StickyTTLNs:            int64(time.Hour),
+		RegexFilters:           []string{},
+		RegionFilters:          []string{},
+		ReverseProxyMissAction: "TREAT_AS_EMPTY",
+		AllocationPolicy:       "BALANCED",
+		UpdatedAtNs:            now,
+	}); err != nil {
+		t.Fatalf("UpsertPlatform: %v", err)
+	}
+
+	db, err := state.OpenDB(filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatalf("OpenDB(state.db): %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE platforms SET name = ? WHERE id = ?`, "invalid:bad", "plat-1"); err != nil {
+		t.Fatalf("corrupt platform name row: %v", err)
+	}
+
+	subManager, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	err = bootstrapTopology(engine, subManager, pool, newDefaultPlatformEnvConfig())
+	if err == nil {
+		t.Fatal("expected bootstrapTopology to fail when V1 detects invalid persisted platform name")
+	}
+	if !strings.Contains(err.Error(), "incompatible with V1") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBootstrapTopology_V1RejectsPersistedPlatformNameWithLeadingSpace(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	now := time.Now().UnixNano()
+	if err := engine.UpsertPlatform(model.Platform{
+		ID:                     "plat-1",
+		Name:                   "StoredPlatform",
+		StickyTTLNs:            int64(time.Hour),
+		RegexFilters:           []string{},
+		RegionFilters:          []string{},
+		ReverseProxyMissAction: "TREAT_AS_EMPTY",
+		AllocationPolicy:       "BALANCED",
+		UpdatedAtNs:            now,
+	}); err != nil {
+		t.Fatalf("UpsertPlatform: %v", err)
+	}
+
+	db, err := state.OpenDB(filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatalf("OpenDB(state.db): %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE platforms SET name = ? WHERE id = ?`, " legacy-space", "plat-1"); err != nil {
+		t.Fatalf("corrupt platform name row: %v", err)
+	}
+
+	subManager, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	err = bootstrapTopology(engine, subManager, pool, newDefaultPlatformEnvConfig())
+	if err == nil {
+		t.Fatal("expected bootstrapTopology to fail when V1 detects leading space in persisted platform name")
+	}
+	if !strings.Contains(err.Error(), "incompatible with V1") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBootstrapTopology_V1RejectsPersistedReservedPlatformNameAPI(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	now := time.Now().UnixNano()
+	if err := engine.UpsertPlatform(model.Platform{
+		ID:                     "plat-1",
+		Name:                   "StoredPlatform",
+		StickyTTLNs:            int64(time.Hour),
+		RegexFilters:           []string{},
+		RegionFilters:          []string{},
+		ReverseProxyMissAction: "TREAT_AS_EMPTY",
+		AllocationPolicy:       "BALANCED",
+		UpdatedAtNs:            now,
+	}); err != nil {
+		t.Fatalf("UpsertPlatform: %v", err)
+	}
+
+	db, err := state.OpenDB(filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatalf("OpenDB(state.db): %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE platforms SET name = ? WHERE id = ?`, "api", "plat-1"); err != nil {
+		t.Fatalf("corrupt platform name row: %v", err)
+	}
+
+	subManager, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	err = bootstrapTopology(engine, subManager, pool, newDefaultPlatformEnvConfig())
+	if err == nil {
+		t.Fatal("expected bootstrapTopology to fail when V1 detects reserved platform name api")
+	}
+	if !strings.Contains(err.Error(), "incompatible with V1") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBootstrapTopology_V1RejectsAllPersistedInvalidPlatformNames(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	cacheDir := filepath.Join(root, "cache")
+
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	now := time.Now().UnixNano()
+	for _, p := range []model.Platform{
+		{
+			ID:                     "plat-1",
+			Name:                   "StoredPlatformOne",
+			StickyTTLNs:            int64(time.Hour),
+			RegexFilters:           []string{},
+			RegionFilters:          []string{},
+			ReverseProxyMissAction: "TREAT_AS_EMPTY",
+			AllocationPolicy:       "BALANCED",
+			UpdatedAtNs:            now,
+		},
+		{
+			ID:                     "plat-2",
+			Name:                   "StoredPlatformTwo",
+			StickyTTLNs:            int64(time.Hour),
+			RegexFilters:           []string{},
+			RegionFilters:          []string{},
+			ReverseProxyMissAction: "TREAT_AS_EMPTY",
+			AllocationPolicy:       "BALANCED",
+			UpdatedAtNs:            now,
+		},
+	} {
+		if err := engine.UpsertPlatform(p); err != nil {
+			t.Fatalf("UpsertPlatform(%s): %v", p.ID, err)
+		}
+	}
+
+	db, err := state.OpenDB(filepath.Join(stateDir, "state.db"))
+	if err != nil {
+		t.Fatalf("OpenDB(state.db): %v", err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`UPDATE platforms SET name = ? WHERE id = ?`, "invalid:bad-one", "plat-1"); err != nil {
+		t.Fatalf("corrupt platform name row (plat-1): %v", err)
+	}
+	if _, err := db.Exec(`UPDATE platforms SET name = ? WHERE id = ?`, "api", "plat-2"); err != nil {
+		t.Fatalf("corrupt platform name row (plat-2): %v", err)
+	}
+
+	subManager, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	err = bootstrapTopology(engine, subManager, pool, newDefaultPlatformEnvConfig())
+	if err == nil {
+		t.Fatal("expected bootstrapTopology to fail when V1 detects multiple invalid persisted platform names")
+	}
+	if !strings.Contains(err.Error(), "2 platform(s) are incompatible with V1") {
+		t.Fatalf("unexpected error summary: %v", err)
+	}
+	if !strings.Contains(err.Error(), "\"invalid:bad-one\"") || !strings.Contains(err.Error(), "\"api\"") {
+		t.Fatalf("expected all invalid platform names in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Platform name rules:") {
+		t.Fatalf("expected platform-name rules in error, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "\"invalid:bad-one\":") || strings.Contains(err.Error(), "\"api\":") {
+		t.Fatalf("error should list invalid platform names without per-platform reason details, got: %v", err)
+	}
+}
+
+func TestBootstrapNodes_MissingDynamicDefaultsCircuitOpen(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	const subID = "sub-bootstrap-missing-dynamic"
+	now := time.Now().UnixNano()
+	if err := engine.UpsertSubscription(model.Subscription{
+		ID:               subID,
+		Name:             "BootstrapSub",
+		URL:              "https://example.com/sub",
+		UpdateIntervalNs: int64(30 * time.Minute),
+		Enabled:          true,
+		Ephemeral:        false,
+		CreatedAtNs:      now,
+		UpdatedAtNs:      now,
+	}); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	raw := json.RawMessage(`{"type":"stub","server":"198.51.100.77","server_port":443}`)
+	hash := node.HashFromRawOptions(raw)
+	if err := engine.BulkUpsertNodesStatic([]model.NodeStatic{{
+		Hash:        hash.Hex(),
+		RawOptions:  raw,
+		CreatedAtNs: now - int64(time.Hour),
+	}}); err != nil {
+		t.Fatalf("BulkUpsertNodesStatic: %v", err)
+	}
+	if err := engine.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{{
+		SubscriptionID: subID,
+		NodeHash:       hash.Hex(),
+		Tags:           []string{"bootstrap-tag"},
+	}}); err != nil {
+		t.Fatalf("BulkUpsertSubscriptionNodes: %v", err)
+	}
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	envCfg := newDefaultPlatformEnvConfig()
+	envCfg.MaxLatencyTableEntries = 16
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("bootstrapTopology: %v", err)
+	}
+
+	outboundMgr := outbound.NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
+	if err := bootstrapNodes(engine, pool, subManager, outboundMgr, envCfg, runtimeCfg.LatencyAuthorities); err != nil {
+		t.Fatalf("bootstrapNodes: %v", err)
+	}
+
+	entry, ok := pool.GetEntry(hash)
+	if !ok {
+		t.Fatalf("node %s missing after bootstrapNodes", hash.Hex())
+	}
+	if !entry.IsCircuitOpen() {
+		t.Fatal("node without dynamic record should default to circuit-open on bootstrap")
+	}
+	if entry.CircuitOpenSince.Load() <= 0 {
+		t.Fatalf("CircuitOpenSince should be set, got %d", entry.CircuitOpenSince.Load())
+	}
+}
+
+func TestBootstrapNodes_DynamicRecordOverridesDefaultCircuitOpen(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	const subID = "sub-bootstrap-with-dynamic"
+	now := time.Now().UnixNano()
+	if err := engine.UpsertSubscription(model.Subscription{
+		ID:               subID,
+		Name:             "BootstrapSub",
+		URL:              "https://example.com/sub",
+		UpdateIntervalNs: int64(30 * time.Minute),
+		Enabled:          true,
+		Ephemeral:        false,
+		CreatedAtNs:      now,
+		UpdatedAtNs:      now,
+	}); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	raw := json.RawMessage(`{"type":"stub","server":"198.51.100.88","server_port":443}`)
+	hash := node.HashFromRawOptions(raw)
+	if err := engine.BulkUpsertNodesStatic([]model.NodeStatic{{
+		Hash:        hash.Hex(),
+		RawOptions:  raw,
+		CreatedAtNs: now - int64(time.Hour),
+	}}); err != nil {
+		t.Fatalf("BulkUpsertNodesStatic: %v", err)
+	}
+	if err := engine.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{{
+		SubscriptionID: subID,
+		NodeHash:       hash.Hex(),
+		Tags:           []string{"bootstrap-tag"},
+	}}); err != nil {
+		t.Fatalf("BulkUpsertSubscriptionNodes: %v", err)
+	}
+	if err := engine.BulkUpsertNodesDynamic([]model.NodeDynamic{{
+		Hash:             hash.Hex(),
+		FailureCount:     0,
+		CircuitOpenSince: 0,
+	}}); err != nil {
+		t.Fatalf("BulkUpsertNodesDynamic: %v", err)
+	}
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	envCfg := newDefaultPlatformEnvConfig()
+	envCfg.MaxLatencyTableEntries = 16
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("bootstrapTopology: %v", err)
+	}
+
+	outboundMgr := outbound.NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
+	if err := bootstrapNodes(engine, pool, subManager, outboundMgr, envCfg, runtimeCfg.LatencyAuthorities); err != nil {
+		t.Fatalf("bootstrapNodes: %v", err)
+	}
+
+	entry, ok := pool.GetEntry(hash)
+	if !ok {
+		t.Fatalf("node %s missing after bootstrapNodes", hash.Hex())
+	}
+	if entry.IsCircuitOpen() {
+		t.Fatal("persisted nodes_dynamic should override bootstrap default circuit-open")
+	}
+}
+
+func TestBootstrapNodes_RestoreEvictedSubscriptionNodeWithoutPoolRef(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	const subID = "sub-bootstrap-evicted"
+	now := time.Now().UnixNano()
+	if err := engine.UpsertSubscription(model.Subscription{
+		ID:               subID,
+		Name:             "BootstrapSub",
+		URL:              "https://example.com/sub",
+		UpdateIntervalNs: int64(30 * time.Minute),
+		Enabled:          true,
+		Ephemeral:        false,
+		CreatedAtNs:      now,
+		UpdatedAtNs:      now,
+	}); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	raw := []byte(`{"type":"stub","server":"198.51.100.199","server_port":443}`)
+	hash := node.HashFromRawOptions(raw)
+	if err := engine.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{{
+		SubscriptionID: subID,
+		NodeHash:       hash.Hex(),
+		Tags:           []string{"evicted-tag"},
+		Evicted:        true,
+	}}); err != nil {
+		t.Fatalf("BulkUpsertSubscriptionNodes: %v", err)
+	}
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	envCfg := newDefaultPlatformEnvConfig()
+	envCfg.MaxLatencyTableEntries = 16
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("bootstrapTopology: %v", err)
+	}
+
+	outboundMgr := outbound.NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
+	if err := bootstrapNodes(engine, pool, subManager, outboundMgr, envCfg, runtimeCfg.LatencyAuthorities); err != nil {
+		t.Fatalf("bootstrapNodes: %v", err)
+	}
+
+	sub, ok := subManager.Get(subID)
+	if !ok {
+		t.Fatalf("subscription %q missing after bootstrap", subID)
+	}
+	managed, ok := sub.ManagedNodes().LoadNode(hash)
+	if !ok {
+		t.Fatalf("evicted subscription node %s missing from managed view", hash.Hex())
+	}
+	if !managed.Evicted {
+		t.Fatal("restored subscription node should keep Evicted=true")
+	}
+	if _, ok := pool.GetEntry(hash); ok {
+		t.Fatal("evicted subscription node should not restore subscription hold in pool")
+	}
+}
+
+func TestBootstrapNodes_TrimRegularLatencyKeepsAuthorities(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	const subID = "sub-bootstrap-trim-latency"
+	now := time.Now().UnixNano()
+	if err := engine.UpsertSubscription(model.Subscription{
+		ID:               subID,
+		Name:             "BootstrapSub",
+		URL:              "https://example.com/sub",
+		UpdateIntervalNs: int64(30 * time.Minute),
+		Enabled:          true,
+		Ephemeral:        false,
+		CreatedAtNs:      now,
+		UpdatedAtNs:      now,
+	}); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	raw := json.RawMessage(`{"type":"stub","server":"198.51.100.120","server_port":443}`)
+	hash := node.HashFromRawOptions(raw)
+	hashHex := hash.Hex()
+	if err := engine.BulkUpsertNodesStatic([]model.NodeStatic{{
+		Hash:        hashHex,
+		RawOptions:  raw,
+		CreatedAtNs: now - int64(time.Hour),
+	}}); err != nil {
+		t.Fatalf("BulkUpsertNodesStatic: %v", err)
+	}
+	if err := engine.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{{
+		SubscriptionID: subID,
+		NodeHash:       hashHex,
+		Tags:           []string{"bootstrap-tag"},
+	}}); err != nil {
+		t.Fatalf("BulkUpsertSubscriptionNodes: %v", err)
+	}
+
+	// 2 authority domains + 3 regular domains (capacity=2, one regular should be trimmed).
+	if err := engine.BulkUpsertNodeLatency([]model.NodeLatency{
+		{NodeHash: hashHex, Domain: "gstatic.com", EwmaNs: int64(10 * time.Millisecond), LastUpdatedNs: now - int64(1*time.Second)},
+		{NodeHash: hashHex, Domain: "github.com", EwmaNs: int64(20 * time.Millisecond), LastUpdatedNs: now - int64(2*time.Second)},
+		{NodeHash: hashHex, Domain: "recent-a.com", EwmaNs: int64(30 * time.Millisecond), LastUpdatedNs: now - int64(3*time.Second)},
+		{NodeHash: hashHex, Domain: "recent-b.com", EwmaNs: int64(40 * time.Millisecond), LastUpdatedNs: now - int64(4*time.Second)},
+		{NodeHash: hashHex, Domain: "old-c.com", EwmaNs: int64(50 * time.Millisecond), LastUpdatedNs: now - int64(5*time.Second)},
+	}); err != nil {
+		t.Fatalf("BulkUpsertNodeLatency: %v", err)
+	}
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	runtimeCfg.LatencyAuthorities = []string{"gstatic.com", "github.com"}
+	envCfg := newDefaultPlatformEnvConfig()
+	envCfg.MaxLatencyTableEntries = 2
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("bootstrapTopology: %v", err)
+	}
+
+	outboundMgr := outbound.NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
+	if err := bootstrapNodes(engine, pool, subManager, outboundMgr, envCfg, runtimeCfg.LatencyAuthorities); err != nil {
+		t.Fatalf("bootstrapNodes: %v", err)
+	}
+
+	entry, ok := pool.GetEntry(hash)
+	if !ok || entry.LatencyTable == nil {
+		t.Fatalf("node %s missing or no latency table after bootstrap", hashHex)
+	}
+	restored := make(map[string]bool)
+	entry.LatencyTable.Range(func(domain string, _ node.DomainLatencyStats) bool {
+		restored[domain] = true
+		return true
+	})
+	for _, domain := range []string{"gstatic.com", "github.com", "recent-a.com", "recent-b.com"} {
+		if !restored[domain] {
+			t.Fatalf("expected domain %q to be restored", domain)
+		}
+	}
+	if restored["old-c.com"] {
+		t.Fatal("old regular domain should be trimmed at bootstrap")
+	}
+	// Post-bootstrap first regular insert should evict the oldest kept regular
+	// entry (recent-b.com), not the newest one (recent-a.com).
+	entry.LatencyTable.Update("fresh-d.com", 60*time.Millisecond, 30*time.Second)
+	if _, ok := entry.LatencyTable.GetDomainStats("recent-a.com"); !ok {
+		t.Fatal("recent-a.com should remain as the newer regular entry")
+	}
+	if _, ok := entry.LatencyTable.GetDomainStats("recent-b.com"); ok {
+		t.Fatal("recent-b.com should be evicted as the oldest regular entry")
+	}
+	if _, ok := entry.LatencyTable.GetDomainStats("fresh-d.com"); !ok {
+		t.Fatal("fresh-d.com should be inserted into regular LRU")
+	}
+
+	if err := engine.FlushDirtySets(newFlushReaders(pool, subManager, nil)); err != nil {
+		t.Fatalf("FlushDirtySets: %v", err)
+	}
+	latencies, err := engine.LoadAllNodeLatency()
+	if err != nil {
+		t.Fatalf("LoadAllNodeLatency: %v", err)
+	}
+	domains := make(map[string]bool)
+	for _, row := range latencies {
+		if row.NodeHash == hashHex {
+			domains[row.Domain] = true
+		}
+	}
+	for _, domain := range []string{"gstatic.com", "github.com", "recent-a.com", "recent-b.com"} {
+		if !domains[domain] {
+			t.Fatalf("expected persisted domain %q after trim flush", domain)
+		}
+	}
+	if domains["old-c.com"] {
+		t.Fatal("trimmed regular domain should be deleted from persistence")
+	}
+}
+
+func TestMarkNodeRemovedDirty_DeletesStaticDynamicAndLatency(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	raw := json.RawMessage(`{"type":"stub","server":"198.51.100.42","server_port":443}`)
+	hash := node.HashFromRawOptions(raw)
+	hashHex := hash.Hex()
+
+	entry := node.NewNodeEntry(hash, raw, time.Now(), 16)
+	entry.FailureCount.Store(2)
+	entry.CircuitOpenSince.Store(time.Now().Add(-time.Minute).UnixNano())
+	entry.SetEgressIP(netip.MustParseAddr("203.0.113.50"))
+	entry.LastEgressUpdate.Store(time.Now().UnixNano())
+	entry.LastEgressUpdateAttempt.Store(time.Now().UnixNano())
+	entry.LastLatencyProbeAttempt.Store(time.Now().UnixNano())
+	entry.LastAuthorityLatencyProbeAttempt.Store(time.Now().UnixNano())
+	entry.LatencyTable.Update("example.com", 55*time.Millisecond, 5*time.Minute)
+	entry.LatencyTable.Update("cloudflare.com", 65*time.Millisecond, 5*time.Minute)
+
+	readers := state.CacheReaders{
+		ReadNodeStatic: func(h string) *model.NodeStatic {
+			if h != hashHex {
+				return nil
+			}
+			return &model.NodeStatic{
+				Hash:        hashHex,
+				RawOptions:  append(json.RawMessage(nil), raw...),
+				CreatedAtNs: entry.CreatedAt.UnixNano(),
+			}
+		},
+		ReadNodeDynamic: func(h string) *model.NodeDynamic {
+			if h != hashHex {
+				return nil
+			}
+			return &model.NodeDynamic{
+				Hash:                               hashHex,
+				FailureCount:                       int(entry.FailureCount.Load()),
+				CircuitOpenSince:                   entry.CircuitOpenSince.Load(),
+				EgressIP:                           entry.GetEgressIP().String(),
+				EgressUpdatedAtNs:                  entry.LastEgressUpdate.Load(),
+				LastLatencyProbeAttemptNs:          entry.LastLatencyProbeAttempt.Load(),
+				LastAuthorityLatencyProbeAttemptNs: entry.LastAuthorityLatencyProbeAttempt.Load(),
+				LastEgressUpdateAttemptNs:          entry.LastEgressUpdateAttempt.Load(),
+			}
+		},
+		ReadNodeLatency: func(key model.NodeLatencyKey) *model.NodeLatency {
+			if key.NodeHash != hashHex {
+				return nil
+			}
+			stats, ok := entry.LatencyTable.GetDomainStats(key.Domain)
+			if !ok {
+				return nil
+			}
+			return &model.NodeLatency{
+				NodeHash:      hashHex,
+				Domain:        key.Domain,
+				EwmaNs:        int64(stats.Ewma),
+				LastUpdatedNs: stats.LastUpdated.UnixNano(),
+			}
+		},
+	}
+
+	// Seed cache rows for this node.
+	engine.MarkNodeStatic(hashHex)
+	engine.MarkNodeDynamic(hashHex)
+	engine.MarkNodeLatency(hashHex, "example.com")
+	engine.MarkNodeLatency(hashHex, "cloudflare.com")
+	if err := engine.FlushDirtySets(readers); err != nil {
+		t.Fatalf("seed FlushDirtySets: %v", err)
+	}
+
+	// Simulate node removed callback and flush deletes.
+	markNodeRemovedDirty(engine, hash, entry)
+	if err := engine.FlushDirtySets(state.CacheReaders{}); err != nil {
+		t.Fatalf("delete FlushDirtySets: %v", err)
+	}
+
+	nodesStatic, err := engine.LoadAllNodesStatic()
+	if err != nil {
+		t.Fatalf("LoadAllNodesStatic: %v", err)
+	}
+	if len(nodesStatic) != 0 {
+		t.Fatalf("nodes_static not deleted: %+v", nodesStatic)
+	}
+
+	nodesDynamic, err := engine.LoadAllNodesDynamic()
+	if err != nil {
+		t.Fatalf("LoadAllNodesDynamic: %v", err)
+	}
+	if len(nodesDynamic) != 0 {
+		t.Fatalf("nodes_dynamic not deleted: %+v", nodesDynamic)
+	}
+
+	latencies, err := engine.LoadAllNodeLatency()
+	if err != nil {
+		t.Fatalf("LoadAllNodeLatency: %v", err)
+	}
+	if len(latencies) != 0 {
+		t.Fatalf("node_latency not deleted: %+v", latencies)
+	}
+}

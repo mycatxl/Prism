@@ -1,0 +1,44 @@
+# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4，尚未用真实响应校准。
+#
+# 两步：先用 Cloudflare trace 取出口地区（loc），再问 iOS 端点是否拦截。
+# Location 重定向到 /xx-en/ 时地区从路径提取。
+id: chatgpt
+version: 1
+name: ChatGPT
+category: ai
+enabled: true
+ttl: 12h
+timeout: 15s
+calibrated: "uncalibrated (signals from plan §5.4)"
+steps:
+  - id: trace
+    request:
+      method: GET
+      url: https://chatgpt.com/cdn-cgi/trace
+      follow_redirects: true
+      headers:
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
+      max_body_bytes: 65536
+  - id: probe
+    request:
+      method: GET
+      url: https://ios.chat.openai.com/
+      follow_redirects: true
+      headers:
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
+      max_body_bytes: 262144
+outcomes:
+  - when: {step: probe, body_contains: "unsupported_country"}
+    outcome: blocked
+  - when: {step: probe, body_contains: "VPN"}
+    outcome: captcha
+  - when: {step: probe, status_in: [403]}
+    outcome: blocked
+  - when: {step: probe, status_in: [200, 301, 302, 307]}
+    outcome: available
+  - when: {step: trace, error: timeout}
+    outcome: error
+default: unknown
+region:
+  step: trace
+  body_regex: '(?m)^loc=([A-Z]{2})$'

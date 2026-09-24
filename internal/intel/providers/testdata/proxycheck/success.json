@@ -1,0 +1,12 @@
+{
+  "status": "ok",
+  "8.8.8.8": {
+    "risk": 12,
+    "network": {"asn": "AS15169", "organisation": "Google LLC", "provider": "Google", "type": "business"},
+    "location": {"country_code": "US", "city": "Mountain View", "region": "California"},
+    "detections": {"proxy": false, "vpn": false, "tor": false, "hosting": false, "compromised": false, "scraper": false, "anonymous": false, "risk": 12, "confidence": 97},
+    "operator": {"name": "Google Fiber", "services": ["isp", "hosting"]},
+    "attack_history": {"http": 3, "smtp": 0},
+    "last_updated": "2020-01-01T00:00:00Z"
+  }
+}

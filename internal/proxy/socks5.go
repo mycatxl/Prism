@@ -16,21 +16,22 @@ import (
 )
 
 const (
-	socks5Version                 = 0x05
-	socks5MethodNoAuth            = 0x00
-	socks5MethodUserPass          = 0x02
-	socks5MethodNoAcceptable      = 0xFF
-	socks5CommandConnect          = 0x01
-	socks5AddressTypeIPv4         = 0x01
-	socks5AddressTypeDomain       = 0x03
-	socks5AddressTypeIPv6         = 0x04
-	socks5ReplySucceeded          = 0x00
-	socks5ReplyGeneralFailure     = 0x01
-	socks5ReplyCommandUnsupported = 0x07
-	socks5ReplyAddressUnsupported = 0x08
-	socks5UserPassVersion         = 0x01
-	socks5UserPassStatusSuccess   = 0x00
-	socks5UserPassStatusFailure   = 0x01
+	socks5Version                   = 0x05
+	socks5MethodNoAuth              = 0x00
+	socks5MethodUserPass            = 0x02
+	socks5MethodNoAcceptable        = 0xFF
+	socks5CommandConnect            = 0x01
+	socks5AddressTypeIPv4           = 0x01
+	socks5AddressTypeDomain         = 0x03
+	socks5AddressTypeIPv6           = 0x04
+	socks5ReplySucceeded            = 0x00
+	socks5ReplyGeneralFailure       = 0x01
+	socks5ReplyConnectionNotAllowed = 0x02
+	socks5ReplyCommandUnsupported   = 0x07
+	socks5ReplyAddressUnsupported   = 0x08
+	socks5UserPassVersion           = 0x01
+	socks5UserPassStatusSuccess     = 0x00
+	socks5UserPassStatusFailure     = 0x01
 )
 
 var socks5HandshakeTimeout = 15 * time.Second
@@ -44,6 +45,9 @@ type Socks5InboundConfig struct {
 	Events           EventEmitter
 	MetricsSink      MetricsEventSink
 	ProxyBypassRules []string
+	// DirectDenyPrivate enables the local dial guard (PRISM_DIRECT_DENY_PRIVATE)
+	// on this inbound's local direct branch, keeping Resin behaviour when false.
+	DirectDenyPrivate bool
 }
 
 // Socks5Inbound implements SOCKS5 CONNECT over a raw TCP connection.
@@ -74,6 +78,7 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 			health:      cfg.Health,
 			metricsSink: cfg.MetricsSink,
 			bypass:      NewTargetBypassMatcher(cfg.ProxyBypassRules),
+			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate),
 		},
 		events: ev,
 	}
@@ -135,7 +140,7 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 				lifecycle.setUpstreamError(prepare.upstreamStage, prepare.upstreamErr)
 			}
 			lifecycle.setNetOK(false)
-			_ = writeSocks5Reply(conn, socks5ReplyGeneralFailure, nil)
+			_ = writeSocks5Reply(conn, socks5ReplyForProxyError(prepare.proxyErr), nil)
 		} else if prepare.canceled {
 			lifecycle.setNetOK(true)
 		}
@@ -163,6 +168,15 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 	prepare.session.recordResult(relay.netOK)
 }
 
+// socks5ReplyForProxyError maps a proxy error onto the closest SOCKS5 reply
+// code. A refused local direct target is "connection not allowed by ruleset"
+// (RFC 1928 §6), not a generic failure.
+func socks5ReplyForProxyError(proxyErr *ProxyError) byte {
+	if proxyErr == ErrDirectTargetDenied {
+		return socks5ReplyConnectionNotAllowed
+	}
+	return socks5ReplyGeneralFailure
+}
 func (s *Socks5Inbound) performHandshake(conn net.Conn, reader *bufio.Reader, requireAuthInfo bool) socks5HandshakeResult {
 	method, ok := s.negotiateMethod(conn, reader, requireAuthInfo)
 	if !ok {

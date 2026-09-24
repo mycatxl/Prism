@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"prism/internal/model"
 	"prism/internal/node"
 )
 
@@ -32,7 +33,7 @@ type Platform struct {
 	// Filter configuration.
 	RegexFilters  node.TagFilter
 	RegionFilters []string // lowercase ISO codes, supports negation "!xx"
-	QualityPolicy QualityPolicy
+	QualityPolicy model.QualityPolicy
 
 	// Other config fields.
 	StickyTTLNs                      int64
@@ -44,11 +45,17 @@ type Platform struct {
 	PassiveCircuitBreakerDisabled    bool
 	ScheduledRotationIntervalNs      int64
 	ScheduledRotationEnabled         bool
-
+	// RotationAvoidPreviousIP makes the router avoid the account's previous
+	// egress IP on the next rotation (WP10 §3).
+	RotationAvoidPreviousIP bool
 	// Routable view & its lock.
 	// viewMu serializes both FullRebuild and NotifyDirty.
 	view   *RoutableView
 	viewMu sync.Mutex
+
+	// qualitySnapshot is the read-only intel projection the quality admission
+	// path reads (WP10 §2). It is nil until the intel service is wired.
+	qualitySnapshot QualitySnapshotReader
 }
 
 // NewPlatform creates a Platform with an empty routable view.
@@ -162,14 +169,24 @@ func (p *Platform) evaluateNode(
 	}
 
 	// 6. Quality policy check (when configured).
-	if !p.QualityPolicy.Empty() && qualityLookup != nil {
-		summary := qualityLookup(egressIP)
-		egressObservedAt := entry.GetLastEgressUpdate()
-		if !p.QualityPolicy.Evaluate(summary, egressObservedAt, time.Now()) {
+	if !p.QualityPolicy.IsEmpty() {
+		switch {
+		case p.qualitySnapshot != nil:
+			if ok, _ := AdmitQuality(p.QualityPolicy, entry, p.qualitySnapshot, time.Now()); !ok {
+				return false
+			}
+		case qualityLookup != nil:
+			// Legacy quality.Summary path; it runs the same rule engine.
+			summary := qualityLookup(egressIP)
+			if !EvaluateQuality(p.QualityPolicy, summary, entry.GetLastEgressUpdate(), time.Now()) {
+				return false
+			}
+		default:
+			// Fail closed: a non-empty policy that cannot be verified never
+			// admits a node (WP10 §2, deviation X5 covers the empty policy).
 			return false
 		}
 	}
-
 	return true
 }
 
@@ -222,3 +239,9 @@ func (p *Platform) GetScheduledRotationInterval() time.Duration {
 	return time.Duration(p.ScheduledRotationIntervalNs)
 }
 
+// SetQualitySnapshot injects the intel projection used by quality admission.
+// It must be called before the first FullRebuild/NotifyDirty that uses a
+// non-empty quality policy.
+func (p *Platform) SetQualitySnapshot(snap QualitySnapshotReader) {
+	p.qualitySnapshot = snap
+}

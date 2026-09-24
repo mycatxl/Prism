@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sagernet/sing-box/adapter"
 	"prism/internal/netutil"
@@ -14,6 +15,25 @@ import (
 )
 
 var ErrOutboundNotReady = errors.New("outbound not ready")
+
+// maxNodeErrorBytes bounds the error text stored on a node entry. Engine build
+// errors can quote the content of a file named by the node document (a node
+// document is untrusted subscription content: see node.RejectLocalFileRefs),
+// and the stored text is returned through the node APIs and the request log, so
+// it is capped instead of growing with whatever the engine read.
+const maxNodeErrorBytes = 512
+
+// boundNodeError truncates msg at a rune boundary.
+func boundNodeError(msg string) string {
+	if len(msg) <= maxNodeErrorBytes {
+		return msg
+	}
+	cut := maxNodeErrorBytes
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+	return msg[:cut] + "(truncated)"
+}
 
 // PoolAccessor provides read-only access to the node pool.
 type PoolAccessor interface {
@@ -71,7 +91,7 @@ func (m *OutboundManager) EnsureNodeOutbound(hash node.Hash) {
 
 	ob, err := buildOutboundSafely(m.builder, entry.RawOptions)
 	if err != nil {
-		entry.SetLastError("outbound build: " + err.Error())
+		entry.SetLastError(boundNodeError("outbound build: " + err.Error()))
 		return
 	}
 

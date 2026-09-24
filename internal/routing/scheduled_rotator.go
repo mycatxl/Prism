@@ -19,7 +19,7 @@ type ScheduledRotator struct {
 	minInterval time.Duration
 	jitterRange time.Duration
 
-	// test hook: called at the beginning of each sweep.
+	// test hook: called after each sweep completes (used as a barrier).
 	sweepHook func()
 }
 
@@ -51,8 +51,10 @@ func (r *ScheduledRotator) Stop() {
 }
 
 func (r *ScheduledRotator) sweep() {
+	// The hook signals sweep completion: it runs after all per-platform
+	// rotations below have finished, so tests can use it as a barrier.
 	if r.sweepHook != nil {
-		r.sweepHook()
+		defer r.sweepHook()
 	}
 
 	now := time.Now()
@@ -132,11 +134,7 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 	intervalNs := int64(interval)
 
 	// Collect accounts that need rotation
-	type rotationCandidate struct {
-		account string
-		lease   Lease
-	}
-	candidates := make([]rotationCandidate, 0)
+	candidates := make([]string, 0)
 
 	state.Leases.Range(func(account string, lease Lease) bool {
 		select {
@@ -146,25 +144,25 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 		}
 
 		// Check if lease age exceeds rotation interval
-		ageNs := nowNs - lease.CreatedAtNs
-		if ageNs >= intervalNs {
-			candidates = append(candidates, rotationCandidate{
-				account: account,
-				lease:   lease,
-			})
+		if nowNs-lease.CreatedAtNs >= intervalNs {
+			candidates = append(candidates, account)
 		}
 		return true
 	})
 
-	// Rotate collected candidates
-	for _, candidate := range candidates {
+	// Rotate collected candidates.
+	// Re-check the lease age atomically before deleting: between the scan above
+	// and this point a concurrent request may have replaced the lease, and
+	// deleting that fresh lease would rotate an account twice.
+	floorNs := nowNs - intervalNs
+	for _, account := range candidates {
 		select {
 		case <-r.stopCh:
 			return
 		default:
 		}
 
-		// Delete the lease to trigger re-routing on next request
-		r.router.DeleteLease(platID, candidate.account)
+		// Delete the lease to trigger re-routing on next request.
+		r.router.DeleteLeaseIfOlderThan(platID, account, floorNs)
 	}
 }

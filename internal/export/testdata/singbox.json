@@ -1,0 +1,192 @@
+{
+  "outbounds": [
+    {
+      "outbounds": [
+        "AUTO",
+        "ss-tokyo",
+        "vmess-ws",
+        "vless-reality",
+        "trojan-1",
+        "hy2-1",
+        "tuic-1",
+        "anytls-1",
+        "socks-1",
+        "http-1",
+        "wg-1",
+        "ss-shadowtls"
+      ],
+      "tag": "PROXY",
+      "type": "selector"
+    },
+    {
+      "interval": "5m",
+      "outbounds": [
+        "ss-tokyo",
+        "vmess-ws",
+        "vless-reality",
+        "trojan-1",
+        "hy2-1",
+        "tuic-1",
+        "anytls-1",
+        "socks-1",
+        "http-1",
+        "wg-1",
+        "ss-shadowtls"
+      ],
+      "tag": "AUTO",
+      "type": "urltest",
+      "url": "https://www.gstatic.com/generate_204"
+    },
+    {
+      "method": "aes-256-gcm",
+      "password": "ss-secret-credential",
+      "server": "198.51.100.10",
+      "server_port": 8388,
+      "tag": "ss-tokyo",
+      "type": "shadowsocks"
+    },
+    {
+      "alter_id": 0,
+      "security": "auto",
+      "server": "vmess.example.com",
+      "server_port": 443,
+      "tag": "vmess-ws",
+      "tls": {
+        "enabled": true,
+        "server_name": "vmess.example.com"
+      },
+      "transport": {
+        "headers": {
+          "Host": "vmess.example.com"
+        },
+        "path": "/ws",
+        "type": "ws"
+      },
+      "type": "vmess",
+      "uuid": "11111111-2222-3333-4444-555555555555"
+    },
+    {
+      "flow": "xtls-rprx-vision",
+      "server": "vless.example.com",
+      "server_port": 443,
+      "tag": "vless-reality",
+      "tls": {
+        "enabled": true,
+        "reality": {
+          "enabled": true,
+          "public_key": "PUBLIC-KEY-FIXTURE",
+          "short_id": "0123abcd"
+        },
+        "server_name": "www.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      },
+      "type": "vless",
+      "uuid": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    },
+    {
+      "password": "trojan-secret-credential",
+      "server": "trojan.example.org",
+      "server_port": 8443,
+      "tag": "trojan-1",
+      "tls": {
+        "enabled": true,
+        "server_name": "trojan.example.org"
+      },
+      "type": "trojan"
+    },
+    {
+      "obfs": {
+        "password": "obfs-secret",
+        "type": "salamander"
+      },
+      "password": "hy2-secret-credential",
+      "server": "hy2.example.net",
+      "server_port": 443,
+      "tag": "hy2-1",
+      "tls": {
+        "enabled": true,
+        "server_name": "hy2.example.net"
+      },
+      "type": "hysteria2"
+    },
+    {
+      "password": "tuic-secret-credential",
+      "server": "tuic.example.org",
+      "server_port": 443,
+      "tag": "tuic-1",
+      "tls": {
+        "enabled": true,
+        "server_name": "tuic.example.org"
+      },
+      "type": "tuic",
+      "uuid": "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+    },
+    {
+      "password": "anytls-secret-credential",
+      "server": "anytls.example.com",
+      "server_port": 443,
+      "tag": "anytls-1",
+      "tls": {
+        "enabled": true,
+        "server_name": "anytls.example.com"
+      },
+      "type": "anytls"
+    },
+    {
+      "password": "socks-secret-credential",
+      "server": "socks.example.com",
+      "server_port": 1080,
+      "tag": "socks-1",
+      "type": "socks",
+      "username": "socks-user"
+    },
+    {
+      "password": "http-secret-credential",
+      "server": "http.example.com",
+      "server_port": 8080,
+      "tag": "http-1",
+      "type": "http",
+      "username": "http-user"
+    },
+    {
+      "detour": "ss-shadowtls/d0",
+      "method": "aes-256-gcm",
+      "password": "chain-secret-credential",
+      "server": "198.51.100.20",
+      "server_port": 443,
+      "tag": "ss-shadowtls",
+      "type": "shadowsocks"
+    },
+    {
+      "password": "shadowtls-secret-credential",
+      "server": "198.51.100.20",
+      "server_port": 443,
+      "tag": "ss-shadowtls/d0",
+      "type": "shadowtls",
+      "version": 3
+    }
+  ],
+  "endpoints": [
+    {
+      "address": [
+        "10.7.0.2/32"
+      ],
+      "peers": [
+        {
+          "address": "203.0.113.9",
+          "allowed_ips": [
+            "0.0.0.0/0"
+          ],
+          "port": 51820,
+          "public_key": "WG-PUBLIC-KEY-FIXTURE"
+        }
+      ],
+      "private_key": "WG-PRIVATE-KEY-FIXTURE",
+      "tag": "wg-1",
+      "type": "wireguard"
+    }
+  ]
+}

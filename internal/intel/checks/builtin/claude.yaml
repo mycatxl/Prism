@@ -1,0 +1,32 @@
+# 校准状态：结构取自 docs/plan/09-intel-providers-checks.md §5.1 的示例，尚未用真实响应校准。
+id: claude
+version: 1
+name: Claude
+category: ai
+enabled: true
+ttl: 24h
+timeout: 10s
+calibrated: "uncalibrated (structure from plan §5.1)"
+steps:
+  - id: home
+    request:
+      method: GET
+      url: https://claude.ai/
+      follow_redirects: false
+      headers:
+        Accept-Language: "en-US,en;q=0.9"
+        User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
+      max_body_bytes: 262144
+outcomes:
+  - when: {step: home, header_contains: {Location: "app-unavailable-in-region"}}
+    outcome: blocked
+  - when: {step: home, status_in: [403, 503], body_contains: "challenge-platform"}
+    outcome: captcha
+  - when: {step: home, status_in: [200, 301, 302, 307]}
+    outcome: available
+  - when: {step: home, error: timeout}
+    outcome: error
+default: unknown
+region:
+  step: home
+  body_regex: '"countryCode":"([A-Z]{2})"'

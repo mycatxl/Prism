@@ -64,18 +64,13 @@ func NewServerWithAddress(
 	// Public (no auth)
 	mux.Handle("GET /healthz", HandleHealthz())
 
-	// WebUI routes (no auth for now - served under /ui/)
-	webUI := newWebUIHandler()
-	mux.Handle("/ui/", http.StripPrefix("/ui", webUI))
-
-	// Root redirect to UI
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			http.Redirect(w, r, "/ui/", http.StatusFound)
-			return
-		}
-		http.NotFound(w, r)
-	})
+	// WebUI routes (no auth - served under /ui/).
+	//
+	// newWebUIHandler inspects the full "/ui/" prefixed path itself, so it must
+	// be registered without http.StripPrefix.
+	mux.Handle("/", newRootRedirectHandler())
+	mux.Handle("/ui", newUIRootRedirectHandler())
+	mux.Handle("/ui/", newWebUIHandler())
 
 	// Authenticated routes
 	authed := http.NewServeMux()
@@ -83,6 +78,7 @@ func NewServerWithAddress(
 	authed.Handle("GET /api/v1/system/config", HandleSystemConfig(runtimeCfg))
 	authed.Handle("GET /api/v1/system/config/default", HandleSystemDefaultConfig())
 	authed.Handle("GET /api/v1/system/config/env", HandleSystemEnvConfig(envCfg))
+	authed.Handle("GET /api/v1/system/capabilities", HandleSystemCapabilities())
 
 	if cp != nil {
 		// System config mutations.
@@ -98,6 +94,7 @@ func NewServerWithAddress(
 		authed.Handle("POST /api/v1/platforms/{id}/actions/reset-to-default", HandleResetPlatform(cp))
 		authed.Handle("POST /api/v1/platforms/{id}/actions/rebuild-routable-view", HandleRebuildPlatform(cp))
 
+		authed.Handle("GET /api/v1/platforms/{id}/nodes/{hash}/explain", HandleExplainPlatformNode(cp))
 		// Endpoints.
 		authed.Handle("GET /api/v1/endpoints", HandleListEndpoints(cp))
 		authed.Handle("POST /api/v1/endpoints", HandleCreateEndpoint(cp))
@@ -120,6 +117,7 @@ func NewServerWithAddress(
 		authed.Handle("DELETE /api/v1/subscriptions/{id}", HandleDeleteSubscription(cp))
 		authed.Handle("POST /api/v1/subscriptions/{id}/actions/refresh", HandleRefreshSubscription(cp))
 		authed.Handle("POST /api/v1/subscriptions/{id}/actions/cleanup-circuit-open-nodes", HandleCleanupSubscriptionCircuitOpenNodes(cp))
+		authed.Handle("GET /api/v1/subscriptions/{id}/parse-report", HandleGetSubscriptionParseReport(cp))
 
 		// Account header rules.
 		authed.Handle("GET /api/v1/account-header-rules", HandleListRules(cp))
@@ -130,6 +128,7 @@ func NewServerWithAddress(
 
 		// Nodes.
 		authed.Handle("GET /api/v1/nodes", HandleListNodes(cp))
+		authed.Handle("GET /api/v1/nodes/export", HandleExportNodes(cp))
 		authed.Handle("GET /api/v1/nodes/{hash}", HandleGetNode(cp))
 		authed.Handle("POST /api/v1/nodes/{hash}/actions/probe-egress", HandleProbeEgress(cp))
 		authed.Handle("POST /api/v1/nodes/{hash}/actions/probe-latency", HandleProbeLatency(cp))
@@ -140,11 +139,44 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/quality/ip/{ip}", HandleQualityIP(cp))
 		authed.Handle("POST /api/v1/quality/ip/{ip}/actions/probe", HandleQualityProbeIP(cp))
 
+		// Intel store and batch jobs (WP08 §7). The SSE stream is registered
+		// outside this mux so it can also accept ?access_token=.
+		authed.Handle("POST /api/v1/intel/jobs", HandleIntelCreateJob(cp))
+		authed.Handle("GET /api/v1/intel/jobs", HandleIntelListJobs(cp))
+		authed.Handle("GET /api/v1/intel/jobs/{id}", HandleIntelGetJob(cp))
+		authed.Handle("GET /api/v1/intel/jobs/{id}/items", HandleIntelListJobItems(cp))
+		authed.Handle("POST /api/v1/intel/jobs/{id}/actions/cancel", HandleIntelCancelJob(cp))
+		authed.Handle("POST /api/v1/intel/jobs/{id}/actions/retry-failed", HandleIntelRetryFailedJob(cp))
+		authed.Handle("GET /api/v1/intel/status", HandleIntelStatus(cp))
+		authed.Handle("GET /api/v1/intel/nodes/{hash}", HandleIntelNode(cp))
+		authed.Handle("GET /api/v1/intel/ip/{ip}", HandleIntelIP(cp))
+		// Data source and unlock check settings (WP09 §4/§5.4).
+		authed.Handle("GET /api/v1/intel/providers", HandleIntelListProviders(cp))
+		authed.Handle("PATCH /api/v1/intel/providers/{id}", HandleIntelUpdateProvider(cp))
+		authed.Handle("POST /api/v1/intel/providers/{id}/actions/resume", HandleIntelResumeProvider(cp))
+		authed.Handle("POST /api/v1/intel/providers/{id}/actions/refresh", HandleIntelRefreshProvider(cp))
+		authed.Handle("GET /api/v1/intel/checks", HandleIntelListChecks(cp))
+		authed.Handle("PATCH /api/v1/intel/checks/{id}", HandleIntelUpdateCheck(cp))
+
 		// GeoIP.
 		authed.Handle("GET /api/v1/geoip/status", HandleGeoIPStatus(cp))
 		authed.Handle("GET /api/v1/geoip/lookup", HandleGeoIPLookup(cp))
 		authed.Handle("POST /api/v1/geoip/lookup", HandleGeoIPLookupPost(cp))
 		authed.Handle("POST /api/v1/geoip/actions/update-now", HandleGeoIPUpdate(cp))
+		// Export profiles and the public subscription they mint (WP11 §4.2/§4.3).
+		authed.Handle("GET /api/v1/export-profiles", HandleListExportProfiles(cp))
+		authed.Handle("POST /api/v1/export-profiles", HandleCreateExportProfile(cp))
+		authed.Handle("GET /api/v1/export-profiles/{id}", HandleGetExportProfile(cp))
+		authed.Handle("PATCH /api/v1/export-profiles/{id}", HandleUpdateExportProfile(cp))
+		authed.Handle("DELETE /api/v1/export-profiles/{id}", HandleDeleteExportProfile(cp))
+		authed.Handle("POST /api/v1/export-profiles/{id}/actions/rotate-token", HandleRotateExportProfileToken(cp))
+	}
+	// Public subscription endpoints (WP11 §4.3). They are registered on the main
+	// listener without the admin token: the token in the path is the credential.
+	if cp != nil {
+		subscriptionHandler := NewSubscriptionHandler(cp)
+		mux.Handle("/sub/", subscriptionHandler)
+		mux.Handle("GET /sub/{token}", subscriptionHandler)
 	}
 
 	// Request log endpoints (always registered if repo is available).
@@ -176,7 +208,29 @@ func NewServerWithAddress(
 	}
 
 	limitedAuthed := RequestBodyLimitMiddleware(apiMaxBodyBytes, authed)
-	mux.Handle("/api/", AuthMiddleware(adminToken, limitedAuthed))
+
+	// Management write auditing (WP04 §4.7). The audit middleware stays inside
+	// the request-body limit so its payload peek cannot read unbounded data.
+	var authedHandler http.Handler = limitedAuthed
+	if cp != nil && cp.Engine != nil {
+		authed.Handle("GET /api/v1/audit-logs", HandleListAuditLogs(cp.Engine))
+		authedHandler = AuditMiddleware(cp.Engine, adminToken, apiMaxBodyBytes, limitedAuthed)
+	}
+
+	// Login failure limiting (WP04 §4.6). Only failed authentications count and
+	// X-Forwarded-For is honoured solely for PRISM_TRUSTED_PROXIES.
+	var trustedProxies []string
+	if envCfg != nil {
+		trustedProxies = envCfg.TrustedProxies
+	}
+	authLimiter := NewAuthFailureLimiter(
+		authFailuresPerWindow,
+		authFailureWindow,
+		authFailureBlock,
+		trustedProxies,
+	)
+	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(adminToken, authLimiter, cp))
+	mux.Handle("/api/", AuthMiddleware(adminToken, authLimiter, authedHandler))
 
 	srv := &http.Server{
 		Addr:    net.JoinHostPort(listenAddress, strconv.Itoa(port)),

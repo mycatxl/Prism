@@ -27,6 +27,13 @@ type ForwardProxyConfig struct {
 	OutboundTransport OutboundTransportConfig
 	TransportPool     *OutboundTransportPool
 	ProxyBypassRules  []string
+	// DirectDenyPrivate enables the local dial guard (PRISM_DIRECT_DENY_PRIVATE)
+	// on this proxy's local direct branch, keeping Resin behaviour when false.
+	DirectDenyPrivate bool
+	// AuthGuard optionally rate limits failed proxy authentications. A nil
+	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
+	// defaults to 0, which disables it).
+	AuthGuard AuthFailureGuard
 }
 
 // ForwardProxy implements an HTTP forward proxy with Proxy-Authorization
@@ -44,6 +51,8 @@ type ForwardProxy struct {
 	directTransport   *http.Transport
 	directOnce        sync.Once
 	bypass            *TargetBypassMatcher
+	directGuard       DirectDialGuard
+	authGuard         AuthFailureGuard
 }
 
 // NewForwardProxy creates a new forward proxy handler.
@@ -67,6 +76,8 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 		transportConfig: transportCfg,
 		transportPool:   transportPool,
 		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
+		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate),
+		authGuard:       cfg.AuthGuard,
 	}
 }
 
@@ -81,7 +92,7 @@ func (p *ForwardProxy) outboundHTTPTransport(routed routedOutbound) *http.Transp
 
 func (p *ForwardProxy) directHTTPTransport() *http.Transport {
 	p.directOnce.Do(func() {
-		p.directTransport = newDirectHTTPTransport(p.transportConfig, p.metricsSink)
+		p.directTransport = newDirectHTTPTransport(p.transportConfig, p.metricsSink, p.directGuard)
 	})
 	return p.directTransport
 }
@@ -216,8 +227,12 @@ func prepareForwardOutboundRequest(in *http.Request) *http.Request {
 }
 
 func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
+	if guardProxyAuthFailure(w, r, p.authGuard) {
+		return
+	}
 	platName, account, authErr := p.authenticate(r)
 	if authErr != nil {
+		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, authErr)
 		return
 	}
@@ -231,6 +246,14 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var hasRoute bool
 	var transport *http.Transport
 	if p.bypass != nil && p.bypass.ShouldBypass(r.Host) {
+		// PRISM_DIRECT_DENY_PRIVATE applies to this local dial path exactly as
+		// it does to the reverse-proxy bypass branch and to CONNECT/SOCKS5.
+		if err := p.directGuard.CheckTarget(r.Context(), r.Host); err != nil {
+			lifecycle.setProxyError(ErrDirectTargetDenied)
+			lifecycle.setHTTPStatus(ErrDirectTargetDenied.HTTPCode)
+			writeProxyError(w, ErrDirectTargetDenied)
+			return
+		}
 		transport = p.directHTTPTransport()
 	} else {
 		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, platName, account, r.Host)
@@ -314,8 +337,12 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	target := r.Host
+	if guardProxyAuthFailure(w, r, p.authGuard) {
+		return
+	}
 	platName, account, authErr := p.authenticate(r)
 	if authErr != nil {
+		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, authErr)
 		return
 	}
@@ -333,6 +360,7 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 			health:      p.health,
 			metricsSink: p.metricsSink,
 			bypass:      p.bypass,
+			directGuard: p.directGuard,
 		},
 		platName,
 		account,

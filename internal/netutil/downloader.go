@@ -47,10 +47,13 @@ type DirectDownloader struct {
 }
 
 // NewDirectDownloader creates a downloader that pulls timeout/user-agent
-// from callbacks on each request. Returns nil if parameters are invalid.
+// from callbacks on each request.
 func NewDirectDownloader(timeoutFn func() time.Duration, userAgentFn func() string) *DirectDownloader {
-	if timeoutFn == nil || userAgentFn == nil {
-		return nil
+	if timeoutFn == nil {
+		panic("netutil: NewDirectDownloader requires non-nil timeoutFn")
+	}
+	if userAgentFn == nil {
+		panic("netutil: NewDirectDownloader requires non-nil userAgentFn")
 	}
 	return &DirectDownloader{
 		Client:       &http.Client{CheckRedirect: resourceRedirect},

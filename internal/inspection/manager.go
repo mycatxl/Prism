@@ -56,6 +56,9 @@ type SourceStatus struct {
 	ErrorCode     string     `json:"error_code,omitempty"`
 }
 
+// Status is the /api/v1/quality/status wire shape and must stay identical to
+// the WebUI QualityStatus type (internal/api/web/src/features/quality/types.ts).
+// Empty lists are always serialized as arrays, never as null.
 type Status struct {
 	Enabled             bool                 `json:"enabled"`
 	KnownIPs            int                  `json:"known_ips"`
@@ -65,10 +68,10 @@ type Status struct {
 	StaleIPs            int                  `json:"stale_ips"`
 	QueueCapacity       int                  `json:"queue_capacity"`
 	DroppedObservations uint64               `json:"dropped_observations"`
-	StorageError        string               `json:"storage_error,omitempty"`
+	StorageError        string               `json:"storage_error"`
 	Sources             []SourceStatus       `json:"sources"`
-	ManualSources       []ManualSourceStatus `json:"manual_sources,omitempty"`
-	RegistrySources     []RegistryStatus     `json:"registry_sources,omitempty"`
+	ManualSources       []ManualSourceStatus `json:"manual_sources"`
+	RegistrySources     []RegistryStatus     `json:"registry_sources"`
 }
 
 type RequestResult struct {

@@ -4,10 +4,14 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -24,7 +28,12 @@ type EnvConfig struct {
 	LogDir   string
 
 	// Network
+	// ListenAddress is the primary listener host (UI + API + proxies).
 	ListenAddress string
+	// AdminListen is the optional independent management listener "host:port".
+	// An empty value disables it: /ui, /api and /healthz stay on the primary
+	// listener only.
+	AdminListen string
 
 	// Ports
 	ProxyPort       int
@@ -49,6 +58,16 @@ type EnvConfig struct {
 	ProxyTransportMaxIdleConnsPerHost               int
 	ProxyTransportIdleConnTimeout                   time.Duration
 	ProxyBypassRules                                []string
+	// TrustedProxies lists the CIDRs (or plain IP literals) whose
+	// X-Forwarded-For header is trusted when deriving the client IP used for
+	// authentication failure limiting. Empty means "trust no proxy".
+	TrustedProxies []string
+	// DirectDenyPrivate refuses loopback, private and link-local targets on the
+	// local direct reverse-proxy path (PRISM_DIRECT_DENY_PRIVATE).
+	DirectDenyPrivate bool
+	// ProxyAuthFailLimit enables the same failure limiter on the proxy entry
+	// points. 0 disables it, which keeps the upstream Resin behaviour.
+	ProxyAuthFailLimit int
 
 	// Request log
 	RequestLogQueueSize           int
@@ -96,10 +115,12 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.Quality = qualityConfig
 
 	// --- Directories ---
-	cfg.CacheDir = cleanDirPath(envStr("PRISM_CACHE_DIR", "./.local/cache"), &errs)
-	cfg.StateDir = cleanDirPath(envStr("PRISM_STATE_DIR", "./.local/state"), &errs)
-	cfg.LogDir = cleanDirPath(envStr("PRISM_LOG_DIR", "./.local/logs"), &errs)
+	cfg.CacheDir = cleanDirPath("PRISM_CACHE_DIR", envStr("PRISM_CACHE_DIR", "./.local/cache"), &errs)
+	cfg.StateDir = cleanDirPath("PRISM_STATE_DIR", envStr("PRISM_STATE_DIR", "./.local/state"), &errs)
+	cfg.LogDir = cleanDirPath("PRISM_LOG_DIR", envStr("PRISM_LOG_DIR", "./.local/logs"), &errs)
 	cfg.ListenAddress = strings.TrimSpace(envStr("PRISM_LISTEN_ADDRESS", "127.0.0.1"))
+	// Optional independent management listener (empty disables it).
+	cfg.AdminListen = strings.TrimSpace(envStr("PRISM_ADMIN_LISTEN", ""))
 
 	// --- Ports ---
 	cfg.ProxyPort = envInt("PRISM_PORT", 2260, &errs)
@@ -136,6 +157,9 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.ProxyTransportMaxIdleConnsPerHost = envInt("PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS_PER_HOST", 64, &errs)
 	cfg.ProxyTransportIdleConnTimeout = envDuration("PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT", 90*time.Second, &errs)
 	cfg.ProxyBypassRules = envDelimitedStringSlice("PRISM_PROXY_BYPASS", []string{})
+	cfg.TrustedProxies = envDelimitedStringSlice("PRISM_TRUSTED_PROXIES", []string{})
+	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", false, &errs)
+	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 0, &errs)
 
 	// --- Request log ---
 	cfg.RequestLogQueueSize = envInt("PRISM_REQUEST_LOG_QUEUE_SIZE", 8192, &errs)
@@ -145,9 +169,11 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.RequestLogDBRetainCount = envInt("PRISM_REQUEST_LOG_DB_RETAIN_COUNT", 2, &errs)
 
 	// --- Auth (Prism never starts listeners with missing or empty tokens) ---
-	authVersionRaw := os.Getenv("PRISM_AUTH_VERSION")
-	adminToken, hasAdminToken := os.LookupEnv("PRISM_ADMIN_TOKEN")
-	proxyToken, hasProxyToken := os.LookupEnv("PRISM_PROXY_TOKEN")
+	// The token reads go through lookupEnv as well, so a Resin installation
+	// keeping RESIN_ADMIN_TOKEN / RESIN_PROXY_TOKEN keeps working (X3).
+	authVersionRaw, _ := lookupEnv("PRISM_AUTH_VERSION")
+	adminToken, hasAdminToken := lookupEnv("PRISM_ADMIN_TOKEN")
+	proxyToken, hasProxyToken := lookupEnv("PRISM_PROXY_TOKEN")
 	cfg.AuthVersion = AuthVersionV1
 	if strings.TrimSpace(authVersionRaw) != "" {
 		cfg.AuthVersion = NormalizeAuthVersion(authVersionRaw)
@@ -155,6 +181,15 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.AdminToken = adminToken
 	cfg.ProxyToken = proxyToken
 
+	// PRISM-DEVIATION: X1 — strong tokens are required by default.
+	// PRISM_ENFORCE_STRONG_TOKENS=false restores the upstream Resin behaviour,
+	// where weak tokens are only reported through /api/v1/system/config/env.
+	enforceStrongTokens := envBool("PRISM_ENFORCE_STRONG_TOKENS", true, &errs)
+	// PRISM-DEVIATION: X2 — empty tokens disable authentication and require an
+	// explicit opt-in plus a loopback listener.
+	allowEmptyAdminToken := envBool("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", false, &errs)
+	allowEmptyProxyToken := envBool("PRISM_ALLOW_EMPTY_PROXY_TOKEN", false, &errs)
+	allowInsecureListen := envBool("PRISM_ALLOW_INSECURE_LISTEN", false, &errs)
 	// --- Metrics ---
 	cfg.MetricThroughputIntervalSeconds = envInt("PRISM_METRIC_THROUGHPUT_INTERVAL_SECONDS", 2, &errs)
 	cfg.MetricThroughputRetentionSeconds = envInt("PRISM_METRIC_THROUGHPUT_RETENTION_SECONDS", 3600, &errs)
@@ -178,29 +213,72 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		)
 	}
 
-	if !hasAdminToken || strings.TrimSpace(cfg.AdminToken) == "" {
-		errs = append(errs, "PRISM_ADMIN_TOKEN must be defined and non-empty; run prism init to generate private tokens")
-	} else if len(cfg.AdminToken) < 16 {
+	adminTokenEmpty := !hasAdminToken || strings.TrimSpace(cfg.AdminToken) == ""
+	proxyTokenEmpty := !hasProxyToken || strings.TrimSpace(cfg.ProxyToken) == ""
+
+	// PRISM-DEVIATION: X1 — weak tokens are rejected by default; setting
+	// PRISM_ENFORCE_STRONG_TOKENS=false restores the upstream Resin behaviour
+	// where they are only flagged in /api/v1/system/config/env.
+	if adminTokenEmpty {
+		if !allowEmptyAdminToken {
+			errs = append(errs, "PRISM_ADMIN_TOKEN must be defined and non-empty; run prism init to generate private tokens, or set PRISM_ALLOW_EMPTY_ADMIN_TOKEN=true to disable admin authentication")
+		}
+	} else if enforceStrongTokens && len(cfg.AdminToken) < 16 {
 		errs = append(errs, "PRISM_ADMIN_TOKEN must be at least 16 characters")
 	}
-	if !hasProxyToken || strings.TrimSpace(cfg.ProxyToken) == "" {
-		errs = append(errs, "PRISM_PROXY_TOKEN must be defined and non-empty; run prism init to generate private tokens")
+
+	// PRISM-DEVIATION: X2 — an empty token disables that authentication scope
+	// and must be requested explicitly.
+	if proxyTokenEmpty {
+		if !allowEmptyProxyToken {
+			errs = append(errs, "PRISM_PROXY_TOKEN must be defined and non-empty; run prism init to generate private tokens, or set PRISM_ALLOW_EMPTY_PROXY_TOKEN=true to disable proxy authentication")
+		}
 	} else {
-		if cfg.ProxyToken != "" {
-			if err := ValidateProxyTokenForV1(cfg.ProxyToken); err != nil {
-				errs = append(errs, fmt.Sprintf("PRISM_PROXY_TOKEN: %v", err))
-			}
+		// PRISM-DEVIATION: X1 — the 16-character minimum is part of the Prism
+		// policy gate (PRISM_ENFORCE_STRONG_TOKENS), not of the upstream V1
+		// validator.
+		if enforceStrongTokens && len(cfg.ProxyToken) < 16 {
+			errs = append(errs, "PRISM_PROXY_TOKEN must be at least 16 characters")
+		}
+		if err := ValidateProxyTokenForV1(cfg.ProxyToken); err != nil {
+			errs = append(errs, fmt.Sprintf("PRISM_PROXY_TOKEN: %v", err))
 		}
 		if cfg.ProxyToken == "api" || cfg.ProxyToken == "healthz" || cfg.ProxyToken == "ui" {
 			errs = append(errs, "PRISM_PROXY_TOKEN must not be reserved keyword: api, healthz, ui")
 		}
 	}
+
+	// PRISM-DEVIATION: X2 — with authentication disabled the listener must stay
+	// on loopback unless PRISM_ALLOW_INSECURE_LISTEN=true is set explicitly.
+	if (adminTokenEmpty || proxyTokenEmpty) && !allowInsecureListen && !isLoopbackListenAddress(cfg.ListenAddress) {
+		errs = append(errs, "PRISM_LISTEN_ADDRESS must be a loopback address when a token is empty; set PRISM_ALLOW_INSECURE_LISTEN=true to override")
+	}
+	// PRISM-DEVIATION: X2 — the management listener is bound verbatim, so it
+	// needs the same loopback gate as PRISM_LISTEN_ADDRESS: otherwise a token
+	// that is empty in one scope exposes the management plane on a public
+	// interface while the primary listener still looks compliant.
+	if (adminTokenEmpty || proxyTokenEmpty) && !allowInsecureListen &&
+		cfg.AdminListen != "" && !isLoopbackListenAddress(cfg.AdminListen) {
+		errs = append(errs, fmt.Sprintf(
+			"PRISM_ADMIN_LISTEN (%s) must be a loopback address when a token is empty; set PRISM_ALLOW_INSECURE_LISTEN=true to override",
+			cfg.AdminListen,
+		))
+	}
 	if cfg.ListenAddress == "" {
 		errs = append(errs, "PRISM_LISTEN_ADDRESS must not be empty")
 	}
+	validateOptionalListenAddress("PRISM_ADMIN_LISTEN", cfg.AdminListen, &errs)
 
 	validatePort("PRISM_PORT", cfg.ProxyPort, &errs)
 	validatePositive("PRISM_API_MAX_BODY_BYTES", cfg.APIMaxBodyBytes, &errs)
+	for i, proxy := range cfg.TrustedProxies {
+		if err := validateTrustedProxy(proxy); err != nil {
+			errs = append(errs, fmt.Sprintf("PRISM_TRUSTED_PROXIES[%d]: %v", i, err))
+		}
+	}
+	if cfg.ProxyAuthFailLimit < 0 {
+		errs = append(errs, "PRISM_PROXY_AUTH_FAIL_LIMIT must not be negative")
+	}
 
 	validatePositive("PRISM_MAX_LATENCY_TABLE_ENTRIES", cfg.MaxLatencyTableEntries, &errs)
 	if cfg.MaxLatencyTableEntries > 32 {
@@ -332,16 +410,99 @@ func LoadEnvConfig() (*EnvConfig, error) {
 
 // --- helpers ---
 
+// --- environment compatibility (deviation X3) ---
+
+const (
+	prismEnvPrefix = "PRISM_"
+	resinEnvPrefix = "RESIN_"
+)
+
+// legacyEnvWarned records the RESIN_<X> variables that already produced a
+// deprecation warning, so each of them warns exactly once per process.
+var (
+	legacyEnvWarnMu     sync.Mutex
+	legacyEnvWarned     = map[string]bool{}
+	legacyEnvWarnLogger = log.Printf
+)
+
+// lookupEnv resolves name by checking PRISM_<X> first and falling back to the
+// upstream Resin spelling RESIN_<X>. A RESIN_ hit is used as-is and logged once
+// per variable, because operators still have to rename it:
+//
+//	config: RESIN_PORT is deprecated, use PRISM_PORT
+//
+// PRISM_QUALITY_* deliberately has no fallback: those variables only exist in
+// Prism.
+func lookupEnv(name string) (string, bool) {
+	if value, ok := os.LookupEnv(name); ok {
+		return value, true
+	}
+	legacy := legacyEnvName(name)
+	if legacy == "" {
+		return "", false
+	}
+	value, ok := os.LookupEnv(legacy)
+	if !ok {
+		return "", false
+	}
+	warnLegacyEnv(legacy, name)
+	return value, true
+}
+
+// legacyEnvName maps a PRISM_<X> variable onto its RESIN_<X> predecessor.
+func legacyEnvName(name string) string {
+	if !strings.HasPrefix(name, prismEnvPrefix) {
+		return ""
+	}
+	return resinEnvPrefix + strings.TrimPrefix(name, prismEnvPrefix)
+}
+
+// warnLegacyEnv emits the deprecation warning for a RESIN_ variable at most
+// once.
+func warnLegacyEnv(legacy, name string) {
+	legacyEnvWarnMu.Lock()
+	alreadyWarned := legacyEnvWarned[legacy]
+	if !alreadyWarned {
+		legacyEnvWarned[legacy] = true
+	}
+	logf := legacyEnvWarnLogger
+	legacyEnvWarnMu.Unlock()
+	if alreadyWarned {
+		return
+	}
+	if logf == nil {
+		logf = log.Printf
+	}
+	logf("config: %s is deprecated, use %s", legacy, name)
+}
+func envBool(key string, defaultVal bool, errs *[]string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return defaultVal
+	}
+	switch strings.ToLower(v) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		*errs = append(*errs, fmt.Sprintf("%s: invalid boolean %q", key, v))
+		return defaultVal
+	}
+}
+
+// envStr reads a string setting. envBool stays out of the compatibility layer
+// on purpose: every PRISM_* boolean switch is Prism-only.
 func envStr(key, defaultVal string) string {
-	if v, ok := os.LookupEnv(key); ok {
+	if v, ok := lookupEnv(key); ok {
 		return v
 	}
 	return defaultVal
 }
 
 func envInt(key string, defaultVal int, errs *[]string) int {
-	v := os.Getenv(key)
-	if v == "" {
+	v, ok := lookupEnv(key)
+	if !ok || v == "" {
 		return defaultVal
 	}
 	n, err := strconv.Atoi(v)
@@ -353,8 +514,8 @@ func envInt(key string, defaultVal int, errs *[]string) int {
 }
 
 func envDuration(key string, defaultVal time.Duration, errs *[]string) time.Duration {
-	v := os.Getenv(key)
-	if v == "" {
+	v, ok := lookupEnv(key)
+	if !ok || v == "" {
 		return defaultVal
 	}
 	d, err := time.ParseDuration(v)
@@ -366,8 +527,8 @@ func envDuration(key string, defaultVal time.Duration, errs *[]string) time.Dura
 }
 
 func envStringSlice(key string, defaultVal []string, errs *[]string) []string {
-	v := os.Getenv(key)
-	if v == "" {
+	v, ok := lookupEnv(key)
+	if !ok || v == "" {
 		return defaultVal
 	}
 	var out []string
@@ -382,8 +543,8 @@ func envStringSlice(key string, defaultVal []string, errs *[]string) []string {
 }
 
 func envDelimitedStringSlice(key string, defaultVal []string) []string {
-	v := os.Getenv(key)
-	if v == "" {
+	v, ok := lookupEnv(key)
+	if !ok || v == "" {
 		return defaultVal
 	}
 	return splitDelimitedStringSlice(v)
@@ -406,22 +567,72 @@ func splitDelimitedStringSlice(raw string) []string {
 	return out
 }
 
-func cleanDirPath(path string, errs *[]string) string {
+// cleanDirPath normalises a directory path. Absolute paths are allowed (Docker
+// deployments use paths such as /var/lib/prism); only a path segment that is
+// exactly ".." is rejected.
+func cleanDirPath(name, path string, errs *[]string) string {
 	if path == "" {
 		return path
 	}
-	cleaned := filepath.Clean(path)
-	if strings.Contains(cleaned, "..") {
-		*errs = append(*errs, fmt.Sprintf("directory path contains invalid traversal: %s", path))
+	if containsDotDotSegment(path) {
+		*errs = append(*errs, fmt.Sprintf("%s: must not contain '..' segments", name))
 		return path
 	}
-	return cleaned
+	return filepath.Clean(path)
+}
+
+// containsDotDotSegment reports whether any path segment is exactly "..".
+func containsDotDotSegment(path string) bool {
+	for _, segment := range strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == '\\'
+	}) {
+		if segment == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// validateTrustedProxy accepts an IP literal or CIDR list entry.
+func validateTrustedProxy(value string) error {
+	if strings.Contains(value, "/") {
+		if _, err := netip.ParsePrefix(value); err != nil {
+			return fmt.Errorf("must be an IP address or CIDR, got %q", value)
+		}
+		return nil
+	}
+	if _, err := netip.ParseAddr(strings.Trim(value, "[]")); err != nil {
+		return fmt.Errorf("must be an IP address or CIDR, got %q", value)
+	}
+	return nil
 }
 
 func validatePort(name string, value int, errs *[]string) {
 	if value < 1 || value > 65535 {
 		*errs = append(*errs, fmt.Sprintf("%s: port must be 1-65535, got %d", name, value))
 	}
+}
+
+// validateOptionalListenAddress validates an optional "host:port" listener
+// address. An empty value is valid and means the listener is disabled.
+func validateOptionalListenAddress(name, value string, errs *[]string) {
+	if value == "" {
+		return
+	}
+	host, portRaw, err := net.SplitHostPort(value)
+	if err != nil {
+		*errs = append(*errs, fmt.Sprintf("%s: must be host:port, got %q", name, value))
+		return
+	}
+	if strings.TrimSpace(host) == "" {
+		*errs = append(*errs, fmt.Sprintf("%s: host must not be empty, got %q", name, value))
+	}
+	port, err := strconv.Atoi(portRaw)
+	if err != nil {
+		*errs = append(*errs, fmt.Sprintf("%s: port must be numeric, got %q", name, portRaw))
+		return
+	}
+	validatePort(name, port, errs)
 }
 
 func validatePositive(name string, value int, errs *[]string) {
@@ -437,9 +648,9 @@ const (
 
 // ValidateProxyTokenForV1 validates proxy token constraints used by auth version V1.
 func ValidateProxyTokenForV1(token string) error {
-	if len(token) < 16 {
-		return fmt.Errorf("must be at least 16 characters")
-	}
+	// PRISM-DEVIATION: X1 — the upstream V1 validator only rejects forbidden
+	// characters. The 16-character minimum is a separate Prism policy enforced
+	// while PRISM_ENFORCE_STRONG_TOKENS is true.
 	if strings.ContainsAny(token, v1ProxyTokenForbiddenChars) {
 		return fmt.Errorf("must not contain any of %q", v1ProxyTokenForbiddenChars)
 	}
@@ -447,4 +658,25 @@ func ValidateProxyTokenForV1(token string) error {
 		return fmt.Errorf("must not contain spaces, tabs, newlines, or carriage returns")
 	}
 	return nil
+}
+
+// isLoopbackListenAddress reports whether addr binds to the loopback interface.
+func isLoopbackListenAddress(addr string) bool {
+	trimmed := strings.TrimSpace(addr)
+	if trimmed == "" {
+		return false
+	}
+	host := trimmed
+	if h, _, err := net.SplitHostPort(trimmed); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback()
 }

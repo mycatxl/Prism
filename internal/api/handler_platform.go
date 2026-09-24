@@ -198,6 +198,17 @@ func HandleRebuildPlatform(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+// previewFilterResponse is the WP10 §2.1 preview envelope: the standard page
+// plus the excluded_by counters. The page fields are embedded, so the
+// pagination contract (items/total/limit/offset) stays exactly the one every
+// other list endpoint uses.
+type previewFilterResponse struct {
+	PageResponse[service.NodeSummary]
+	// ExcludedBy counts the nodes rejected per rule, keyed by "regex",
+	// "region" and the quality admission reasons (QUALITY_MIN_PURITY, ...).
+	ExcludedBy map[string]int `json:"excluded_by"`
+}
+
 // HandlePreviewFilter returns a handler for POST /api/v1/platforms/preview-filter.
 func HandlePreviewFilter(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +221,7 @@ func HandlePreviewFilter(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeInvalidArgument(w, "platform_id: must be a valid UUID")
 			return
 		}
-		nodes, err := cp.PreviewFilter(req)
+		report, err := cp.PreviewFilterReport(req)
 		if err != nil {
 			writeServiceError(w, err)
 			return
@@ -219,6 +230,20 @@ func HandlePreviewFilter(cp *service.ControlPlaneService) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		WritePage(w, http.StatusOK, nodes, pg)
+		items := PaginateSlice(report.Nodes, pg)
+		cp.FillNodeIntelEgress(r.Context(), items)
+		excludedBy := report.ExcludedBy
+		if excludedBy == nil {
+			excludedBy = map[string]int{}
+		}
+		WriteJSON(w, http.StatusOK, previewFilterResponse{
+			PageResponse: PageResponse[service.NodeSummary]{
+				Items:  items,
+				Total:  len(report.Nodes),
+				Limit:  pg.Limit,
+				Offset: pg.Offset,
+			},
+			ExcludedBy: excludedBy,
+		})
 	}
 }

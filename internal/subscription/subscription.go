@@ -129,6 +129,10 @@ type Subscription struct {
 	// ephemeralNodeEvictDelayNs is the per-subscription eviction delay for
 	// circuit-broken nodes when Ephemeral is enabled.
 	ephemeralNodeEvictDelayNs int64
+	// autoIntel is the per-subscription switch of the §3.6 automatic intel
+	// batch. Persisted as `subscriptions.auto_intel` (default true) and read by
+	// the intel pipeline through the state store, not through this struct.
+	autoIntel bool
 
 	// Persistence timestamps (written under mu or single-writer context).
 	CreatedAtNs int64
@@ -148,6 +152,11 @@ type Subscription struct {
 	// Swapped atomically on subscription update.
 	managedNodes atomic.Pointer[ManagedNodes]
 
+	// parseSummary is the grouped summary of the last refresh attempt's parse
+	// report (Workplan WP06 §9). Nil until the first parse. Read by the API
+	// response, written by the scheduler after every parse.
+	parseSummary atomic.Pointer[SkipSummary]
+
 	// configVersion is incremented whenever refresh-input-related config changes
 	// (URL/source/content/update-interval). Scheduler uses it for stale-guard.
 	configVersion atomic.Int64
@@ -156,12 +165,15 @@ type Subscription struct {
 // NewSubscription creates a Subscription with an empty ManagedNodes map.
 func NewSubscription(id, name, url string, enabled, ephemeral bool) *Subscription {
 	s := &Subscription{
-		ID:                        id,
-		url:                       url,
-		sourceType:                SourceTypeRemote,
-		name:                      name,
-		enabled:                   enabled,
-		ephemeral:                 ephemeral,
+		ID:         id,
+		url:        url,
+		sourceType: SourceTypeRemote,
+		name:       name,
+		enabled:    enabled,
+		ephemeral:  ephemeral,
+		// The persisted default is 1 (migration 000011), so a subscription
+		// created in memory must default to the same value.
+		autoIntel:                 true,
 		incrementalAliveNodes:     UpdateModeReplace,
 		ephemeralNodeEvictDelayNs: defaultEphemeralNodeEvictDelayNs,
 	}
@@ -171,6 +183,33 @@ func NewSubscription(id, name, url string, enabled, ephemeral bool) *Subscriptio
 	s.LastError.Store(&emptyErr)
 	s.configVersion.Store(1)
 	return s
+}
+
+// SetParseSummary atomically stores the grouped summary of the last parse.
+// A nil summary clears it (the runtime value is stale after a config change
+// until the next parse).
+func (s *Subscription) SetParseSummary(summary *SkipSummary) {
+	if summary == nil {
+		s.parseSummary.Store(nil)
+		return
+	}
+	copied := *summary
+	// append to an empty (non-nil) slice: an empty reason list must serialise as
+	// [] and never as null, because the API/UI read it as an array.
+	copied.Reasons = append([]SkipReason{}, summary.Reasons...)
+	s.parseSummary.Store(&copied)
+}
+
+// ParseSummary returns the grouped summary of the last parse, or nil when this
+// subscription has not been parsed yet.
+func (s *Subscription) ParseSummary() *SkipSummary {
+	stored := s.parseSummary.Load()
+	if stored == nil {
+		return nil
+	}
+	copied := *stored
+	copied.Reasons = append([]SkipReason{}, stored.Reasons...)
+	return &copied
 }
 
 // SetLastError atomically sets the last error string.
@@ -294,6 +333,20 @@ func (s *Subscription) Ephemeral() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.ephemeral
+}
+
+// AutoIntel returns the per-subscription automatic-intel switch (thread-safe).
+func (s *Subscription) AutoIntel() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.autoIntel
+}
+
+// SetAutoIntel updates the per-subscription automatic-intel switch (thread-safe).
+func (s *Subscription) SetAutoIntel(v bool) {
+	s.mu.Lock()
+	s.autoIntel = v
+	s.mu.Unlock()
 }
 
 // SetEphemeral updates the ephemeral flag (thread-safe).

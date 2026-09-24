@@ -1,23 +1,41 @@
 GO ?= go
 NPM ?= npm
-BUILD_TAGS ?= with_quic with_wireguard with_grpc with_utls with_gvisor http2legacy
+WEB_DIR := internal/api/web
+TAGS_BASE := with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
+# The mihomo fallback kernel was evaluated and rejected; see
+# docs/ENGINE_DECISIONS.md. The with_mihomo build tag and its code seam remain
+# in the tree so the decision can be revisited, but the tag is deliberately not
+# part of any default build. sing-box is the only engine.
+TAGS_FULL := $(TAGS_BASE)
+BUILD_TAGS ?= $(TAGS_FULL)
 VERSION ?= dev
-GIT_COMMIT ?= unknown
-BUILD_TIME ?= unknown
-LDFLAGS = -X prism/internal/buildinfo.Version=$(VERSION) -X prism/internal/buildinfo.GitCommit=$(GIT_COMMIT) -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME)
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
-.PHONY: build web backend test test-race lint test-ui init start
+empty :=
+space := $(empty) $(empty)
+comma := ,
 
-build:
-	$(MAKE) web
-	$(MAKE) backend
+LDFLAGS := -s -w \
+  -X prism/internal/buildinfo.Version=$(VERSION) \
+  -X prism/internal/buildinfo.GitCommit=$(GIT_COMMIT) \
+  -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
+  -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
+
+.PHONY: build web backend backend-lite test test-race lint protocol-matrix verify test-ui init start clean
+
+build: web backend
 
 web:
-	$(NPM) --prefix web run build
+	$(NPM) --prefix $(WEB_DIR) ci
+	$(NPM) --prefix $(WEB_DIR) run build
 
 backend:
 	mkdir -p bin
-	$(GO) build -buildvcs=false -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/prism ./cmd/prism
+	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/prism ./cmd/prism
+
+backend-lite:
+	$(MAKE) backend BUILD_TAGS='$(TAGS_BASE)'
 
 test:
 	$(GO) test -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
@@ -25,16 +43,26 @@ test:
 test-race:
 	$(GO) test -race -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
 
+protocol-matrix:
+	$(GO) test -tags '$(BUILD_TAGS)' -run 'TestProtocolMatrix' -count=1 -v ./internal/outbound/...
+
 lint:
-	$(NPM) --prefix web run lint
 	$(GO) vet -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
+	$(NPM) --prefix $(WEB_DIR) run lint
+
+verify: lint test test-race protocol-matrix
+	$(GO) vet -tags '$(TAGS_BASE)' ./cmd/... ./internal/...
+	$(GO) test -tags '$(TAGS_BASE)' ./internal/...
 
 test-ui:
-	$(NPM) --prefix web run test:config
-	$(NPM) --prefix web run test:e2e
+	$(NPM) --prefix $(WEB_DIR) run test:config
+	$(NPM) --prefix $(WEB_DIR) run test:e2e
 
 init:
 	./bin/prism init
 
 start:
-	./bin/prism standalone
+	./bin/prism
+
+clean:
+	rm -rf bin

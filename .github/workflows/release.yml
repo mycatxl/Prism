@@ -1,0 +1,261 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # TAGS_FULL is deliberately identical to TAGS_BASE: the mihomo fallback
+  # kernel was rejected (docs/ENGINE_DECISIONS.md D-1), so a release artifact
+  # must never be compiled with with_mihomo. Passing that tag would flip
+  # node.EngineCapabilities() to report mihomo as built while every mihomo node
+  # still fails with ENGINE_NOT_BUILT.
+  TAGS_BASE: with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
+  TAGS_FULL: with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
+
+jobs:
+  build-binaries:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            variant: full
+          - goos: linux
+            goarch: amd64
+            variant: lite
+          - goos: linux
+            goarch: arm64
+            variant: full
+          - goos: linux
+            goarch: arm64
+            variant: lite
+          - goos: darwin
+            goarch: amd64
+            variant: full
+          - goos: darwin
+            goarch: arm64
+            variant: full
+          - goos: windows
+            goarch: amd64
+            variant: full
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: internal/api/web/package-lock.json
+
+      - name: Build WebUI
+        working-directory: ./internal/api/web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build Go Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+
+          VERSION=${GITHUB_REF_NAME}
+          GIT_COMMIT=${GITHUB_SHA::8}
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+          if [ "$VARIANT" = "lite" ]; then
+            TAGS="$TAGS_BASE"
+            SUFFIX="-lite"
+          else
+            TAGS="$TAGS_FULL"
+            SUFFIX=""
+          fi
+
+          OUTPUT_NAME=prism-${GOOS}-${GOARCH}${SUFFIX}
+          if [ "$GOOS" = "windows" ]; then
+            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+          fi
+          echo "OUTPUT_NAME=${OUTPUT_NAME}" >> "$GITHUB_ENV"
+
+          mkdir -p build
+
+          # buildinfo.Tags is a comma-separated list (the linker splits -ldflags
+          # on spaces), so the space-separated tag set is converted first. This is
+          # what makes a released binary print the same BuildTags as `make backend`.
+          TAGS_CSV=$(printf '%s' "$TAGS" | tr ' ' ',')
+
+          go build -trimpath -tags "$TAGS" \
+            -ldflags="-s -w \
+            -X prism/internal/buildinfo.Version=${VERSION} \
+            -X prism/internal/buildinfo.GitCommit=${GIT_COMMIT} \
+            -X prism/internal/buildinfo.BuildTime=${BUILD_TIME} \
+            -X prism/internal/buildinfo.Tags=${TAGS_CSV}" \
+            -o "build/${OUTPUT_NAME}" ./cmd/prism
+
+          cd build
+
+          SIMPLE_NAME="prism${SUFFIX}"
+          if [ "$GOOS" = "windows" ]; then
+            SIMPLE_NAME="${SIMPLE_NAME}.exe"
+          fi
+          cp "${OUTPUT_NAME}" "${SIMPLE_NAME}"
+
+          if [ "$GOOS" = "windows" ]; then
+            zip "prism-${GOOS}-${GOARCH}${SUFFIX}.zip" "${SIMPLE_NAME}"
+            PACKAGE_NAME="prism-${GOOS}-${GOARCH}${SUFFIX}.zip"
+          else
+            tar -czvf "prism-${GOOS}-${GOARCH}${SUFFIX}.tar.gz" "${SIMPLE_NAME}"
+            PACKAGE_NAME="prism-${GOOS}-${GOARCH}${SUFFIX}.tar.gz"
+          fi
+
+          rm "${SIMPLE_NAME}"
+          echo "PACKAGE_NAME=${PACKAGE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload Release Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}-${{ matrix.variant }}
+          path: build/${{ env.PACKAGE_NAME }}
+          retention-days: 1
+
+      - name: Upload Linux bin for Docker
+        if: matrix.goos == 'linux' && matrix.variant == 'full'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: build/${{ env.OUTPUT_NAME }}
+          retention-days: 1
+
+  publish-release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Find Release Note
+        id: release_note
+        env:
+          RELEASE_NOTE_PATH: docs/release-notes/${{ github.ref_name }}.md
+        run: |
+          if [[ -f "$RELEASE_NOTE_PATH" ]]; then
+            echo "path=$RELEASE_NOTE_PATH" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download Release Package Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: build
+          merge-multiple: true
+
+      - name: Check if Pre-release
+        id: check_prerelease
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *"-"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          body_path: ${{ steps.release_note.outputs.path }}
+          generate_release_notes: true
+          prerelease: ${{ steps.check_prerelease.outputs.is_prerelease == 'true' }}
+
+  docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build-binaries
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Linux amd64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-linux-amd64
+          path: release-bin/linux/amd64/
+
+      - name: Download Linux arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-linux-arm64
+          path: release-bin/linux/arm64/
+
+      - name: Give binaries execute permission
+        run: chmod +x release-bin/linux/amd64/prism-linux-amd64 release-bin/linux/arm64/prism-linux-arm64
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if Pre-release
+        id: check_prerelease
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *"-"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ steps.check_prerelease.outputs.is_prerelease == 'false' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./.github/Dockerfile.release
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

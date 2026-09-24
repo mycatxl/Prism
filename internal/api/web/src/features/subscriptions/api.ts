@@ -3,6 +3,7 @@ import type {
   PageResponse,
   Subscription,
   SubscriptionCreateInput,
+  SubscriptionParseReportDetail,
   SubscriptionUpdateInput,
 } from "./types";
 
@@ -11,6 +12,8 @@ const basePath = "/api/v1/subscriptions";
 type ApiSubscription = Omit<Subscription, "last_checked" | "last_updated" | "last_error"> & {
   source_type?: "remote" | "local";
   content?: string;
+  auto_intel?: boolean;
+  parse_report?: Subscription["parse_report"] | null;
   last_checked?: string | null;
   last_updated?: string | null;
   last_error?: string | null;
@@ -21,6 +24,8 @@ function normalizeSubscription(raw: ApiSubscription): Subscription {
     ...raw,
     source_type: raw.source_type ?? "remote",
     content: raw.content ?? "",
+    auto_intel: raw.auto_intel ?? true,
+    parse_report: raw.parse_report ?? null,
     last_checked: raw.last_checked || "",
     last_updated: raw.last_updated || "",
     last_error: raw.last_error || "",
@@ -98,4 +103,8 @@ export async function cleanupSubscriptionCircuitOpenNodes(id: string): Promise<n
     method: "POST",
   });
   return data.cleaned_count;
+}
+
+export async function getSubscriptionParseReport(id: string): Promise<SubscriptionParseReportDetail> {
+  return apiRequest<SubscriptionParseReportDetail>(`${basePath}/${encodeURIComponent(id)}/parse-report`);
 }

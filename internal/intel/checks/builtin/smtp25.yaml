@@ -1,0 +1,23 @@
+# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4。
+# 这条规则只看 TCP 连通性，不涉及 HTTP，因此不需要响应体校准。
+id: smtp25
+version: 1
+name: SMTP port 25
+category: mail
+enabled: true
+ttl: 24h
+timeout: 8s
+calibrated: "structural (connectivity only)"
+steps:
+  - id: smtp
+    tcp:
+      host: smtp.gmail.com
+      port: 25
+outcomes:
+  - when: {step: smtp, connected: true}
+    outcome: available
+  - when: {step: smtp, connected: false}
+    outcome: blocked
+  - when: {step: smtp, error: timeout}
+    outcome: error
+default: unknown

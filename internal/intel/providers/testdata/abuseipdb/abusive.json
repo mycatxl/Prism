@@ -1,0 +1,14 @@
+{
+  "data": {
+    "ipAddress": "8.8.8.8",
+    "isPublic": true,
+    "countryCode": "SG",
+    "usageType": "Fixed Line ISP",
+    "isp": "Example Transit Pte Ltd",
+    "isTor": true,
+    "abuseConfidenceScore": 92,
+    "totalReports": 41,
+    "numDistinctUsers": 17,
+    "lastReportedAt": "2026-01-01T00:00:00Z"
+  }
+}

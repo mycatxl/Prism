@@ -65,6 +65,19 @@ type Evidence struct {
 	DistinctReporters *int       `json:"distinct_reporters,omitempty"`
 	LastReportedAt    *time.Time `json:"last_reported_at,omitempty"`
 	ReportWindowDays  int        `json:"report_window_days,omitempty"`
+
+	// WP09 additions. Every field is optional so the existing decoders and the
+	// evidence already stored in intel.db keep decoding unchanged.
+	ASNNumber     int      `json:"asn_number,omitempty"`
+	City          string   `json:"city,omitempty"`
+	Region        string   `json:"region,omitempty"`
+	RegisteredCC  string   `json:"registered_country,omitempty"`
+	UsageType     string   `json:"usage_type,omitempty"`
+	IsMobile      *bool    `json:"is_mobile,omitempty"`
+	IsResidential *bool    `json:"is_residential,omitempty"`
+	FraudScore    *int     `json:"fraud_score,omitempty"`
+	DNSBLListed   []string `json:"dnsbl_listed,omitempty"`
+	DNSBLChecked  []string `json:"dnsbl_checked,omitempty"`
 }
 
 type Task struct {

@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"runtime"
 	"sync"
@@ -32,6 +33,11 @@ type SubscriptionScheduler struct {
 	// onSubReenabledNode is called for each non-evicted node hash when a
 	// subscription transitions from disabled to enabled.
 	onSubReenabledNode func(hash node.Hash)
+	// onParseReport persists the parse report of one refresh attempt. The report
+	// is already bounded (subscription.MaxSkippedNodes records) and the state
+	// store truncates anything beyond 64 KiB, so a pathological subscription
+	// cannot bloat the database.
+	onParseReport func(subscriptionID string, reportJSON string)
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -46,6 +52,9 @@ type SchedulerConfig struct {
 	OnSubUpdated func(sub *subscription.Subscription)
 	// OnSubReenabledNode is fired after false->true enabled transition.
 	OnSubReenabledNode func(hash node.Hash)
+	// OnParseReport receives the JSON of every subscription parse report
+	// (subscription.ParseResult, already bounded). Nil disables persistence.
+	OnParseReport func(subscriptionID string, reportJSON string)
 }
 
 // NewSubscriptionScheduler creates a new scheduler.
@@ -59,6 +68,7 @@ func NewSubscriptionScheduler(cfg SchedulerConfig) *SubscriptionScheduler {
 		cancelDownload:     cancelDownload,
 		onSubUpdated:       cfg.OnSubUpdated,
 		onSubReenabledNode: cfg.OnSubReenabledNode,
+		onParseReport:      cfg.OnParseReport,
 		stopCh:             make(chan struct{}),
 	}
 	if cfg.Fetcher != nil {
@@ -213,12 +223,16 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 		}
 	}
 
-	// 2. Parse (lock-free).
-	parsed, err := subscription.ParseGeneralSubscription(body)
-	if err != nil {
-		s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", err)
+	// 2. Parse (lock-free). ParseWithReport keeps the parse report: every node
+	// the parser refuses carries a reason, and the report is both persisted and
+	// exposed through the subscription API instead of being discarded here.
+	result, parseErr := subscription.ParseWithReport(body)
+	s.recordParseReport(sub, result)
+	if parseErr != nil {
+		s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", parseErr)
 		return
 	}
+	parsed := result.Nodes
 
 	// 3. Build refreshed managed nodes map (lock-free, pure computation).
 	refreshedManagedNodes := subscription.NewManagedNodes()
@@ -337,10 +351,35 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	}
 }
 
-// handleUpdateFailure applies a fetch/parse failure to subscription state.
-// It ignores stale failures from an outdated attempt (config-version guard +
-// LastUpdatedNs stale-success guard).
+// recordParseReport keeps the parse report of one attempt: the grouped summary
+// on the subscription (read by the API responses), one log line with the reason
+// counts, and the full bounded JSON through the persistence hook
+// (StateRepo.SetSubscriptionParseReport). Nothing here contains node content
+// beyond the redacted sample names of the in-memory summary.
+func (s *SubscriptionScheduler) recordParseReport(sub *subscription.Subscription, result subscription.ParseResult) {
+	summary := subscription.SummarizeParseResult(result)
+	sub.SetParseSummary(&summary)
 
+	if result.Stats.Total > 0 || len(result.Skipped) > 0 {
+		log.Printf(
+			"[scheduler] parse %s: imported=%d skipped=%d overflow=%d %s",
+			sub.ID, result.Stats.Imported, result.Stats.Skipped, result.Stats.SkippedOverflow,
+			subscription.SortedSkipSummary(result.Skipped),
+		)
+	}
+	if s.onParseReport == nil {
+		return
+	}
+	reportJSON, err := json.Marshal(result)
+	if err != nil {
+		log.Printf("[scheduler] parse report %s: cannot render report: %v", sub.ID, err)
+		return
+	}
+	s.onParseReport(sub.ID, string(reportJSON))
+}
+
+// shouldRemoveUnhealthyNodeForIncrementalMode reports whether an existing node
+// must be dropped from the merged view in incremental-alive mode.
 func shouldRemoveUnhealthyNodeForIncrementalMode(entry *node.NodeEntry) bool {
 	if entry == nil {
 		return false
@@ -348,6 +387,9 @@ func shouldRemoveUnhealthyNodeForIncrementalMode(entry *node.NodeEntry) bool {
 	return entry.IsCircuitOpen() || (!entry.HasOutbound() && entry.GetLastError() != "")
 }
 
+// handleUpdateFailure applies a fetch/parse failure to subscription state.
+// It ignores stale failures from an outdated attempt (config-version guard +
+// LastUpdatedNs stale-success guard).
 func (s *SubscriptionScheduler) handleUpdateFailure(
 	sub *subscription.Subscription,
 	attemptStartedNs int64,

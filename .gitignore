@@ -1,81 +1,44 @@
-# Binaries
-prism
-*.exe
-*.dll
-*.so
-*.dylib
-
-# Test binaries and test files
+# Build output
+/bin/
+/prism
+/prism.exe
 *.test
 *.out
-*_test.go
-coverage.out
-coverage.html
+coverage.*
+*.coverprofile
 
-# Local state and verification
-.local/
-state/
-
-# Internal documentation
-docs/design/
-docs/AUDIT_*.md
-docs/IMPLEMENTATION_PLAN_*.md
-docs/PRISMX_DEVELOPMENT_PLAN_*.md
-
-# References (original Resin)
-references/
-
-# Go workspace
-go.work
-go.work.sum
-
-# Runtime state
-state/
+# Local runtime data (repo root only)
+/.local/
+/state/
+/data/
+/backups/
 *.db
 *.db-shm
 *.db-wal
-
-# Backups
-backups/
-.local/
-
-# Logs
 *.log
-logs/
 
-# Environment
+# Secrets
 .env
 .env.local
 .admin_token
 
-# IDE
+# Frontend
+node_modules/
+/internal/api/web/dist/*
+!/internal/api/web/dist/.gitkeep
+
+# Private notes
+/docs/design/
+/references/
+
+# Editors / OS
 .vscode/
 .idea/
 *.swp
-*.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Development and reference
-references/
-docs/design/
-docs/AUDIT_*.md
-docs/IMPLEMENTATION_PLAN_*.md
-docs/PRISMX_DEVELOPMENT_PLAN_*.md
-
-# Node modules
-node_modules/
-
-# Coverage reports
-*.coverprofile
-coverage.html
-test-*.txt
-test-*.md
+# Go workspace
+go.work
+go.work.sum

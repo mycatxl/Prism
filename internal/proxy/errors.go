@@ -54,6 +54,19 @@ var (
 		PrismError: "ACCOUNT_REJECTED",
 		Message:    "Account extraction failed and platform rejects unmatched requests",
 	}
+	// Returned only while PRISM_DIRECT_DENY_PRIVATE is enabled, on every local
+	// dial path: the reverse-proxy bypass branch, the forward HTTP proxy, the
+	// CONNECT tunnel and the SOCKS5 inbound (WP04 §4.1, DirectDialGuard).
+	ErrDirectTargetDenied = &ProxyError{
+		HTTPCode:   http.StatusForbidden,
+		PrismError: "DIRECT_TARGET_DENIED",
+		Message:    "Direct target is not allowed",
+	}
+	ErrRateLimited = &ProxyError{
+		HTTPCode:   http.StatusTooManyRequests,
+		PrismError: "RATE_LIMITED",
+		Message:    "Too many failed authentication attempts; retry later",
+	}
 	ErrNoAvailableNodes = &ProxyError{
 		HTTPCode:   http.StatusServiceUnavailable,
 		PrismError: "NO_AVAILABLE_NODES",
@@ -83,11 +96,16 @@ var (
 
 // writeProxyError writes a standardised proxy error response.
 // For 407 responses, the Proxy-Authenticate header is added automatically.
+//
+// PRISM-DEVIATION: X4 — every error response carries the Prism header and the
+// upstream Resin spelling with the same value, so Resin clients that read
+// X-Resin-Error keep working.
 func writeProxyError(w http.ResponseWriter, pe *ProxyError) {
 	if pe.HTTPCode == http.StatusProxyAuthRequired {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Prism"`)
 	}
 	w.Header().Set("X-Prism-Error", pe.PrismError)
+	w.Header().Set("X-Resin-Error", pe.PrismError)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(pe.HTTPCode)
 	w.Write([]byte(pe.Message))

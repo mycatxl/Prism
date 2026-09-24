@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,20 +23,22 @@ import (
 
 // PlatformResponse is the API response model for a platform.
 type PlatformResponse struct {
-	ID                               string   `json:"id"`
-	Name                             string   `json:"name"`
-	StickyTTL                        string   `json:"sticky_ttl"`
-	RegexFilters                     []string `json:"regex_filters"`
-	RegionFilters                    []string `json:"region_filters"`
-	RoutableNodeCount                int      `json:"routable_node_count"`
-	ReverseProxyMissAction           string   `json:"reverse_proxy_miss_action"`
-	ReverseProxyEmptyAccountBehavior string   `json:"reverse_proxy_empty_account_behavior"`
-	ReverseProxyFixedAccountHeader   string   `json:"reverse_proxy_fixed_account_header"`
-	AllocationPolicy                 string   `json:"allocation_policy"`
-	PassiveCircuitBreakerDisabled    bool     `json:"passive_circuit_breaker_disabled"`
-	ScheduledRotationInterval        string   `json:"scheduled_rotation_interval"`
-	ScheduledRotationEnabled         bool     `json:"scheduled_rotation_enabled"`
-	UpdatedAt                        string   `json:"updated_at"`
+	ID                               string              `json:"id"`
+	Name                             string              `json:"name"`
+	StickyTTL                        string              `json:"sticky_ttl"`
+	RegexFilters                     []string            `json:"regex_filters"`
+	RegionFilters                    []string            `json:"region_filters"`
+	RoutableNodeCount                int                 `json:"routable_node_count"`
+	ReverseProxyMissAction           string              `json:"reverse_proxy_miss_action"`
+	ReverseProxyEmptyAccountBehavior string              `json:"reverse_proxy_empty_account_behavior"`
+	ReverseProxyFixedAccountHeader   string              `json:"reverse_proxy_fixed_account_header"`
+	AllocationPolicy                 string              `json:"allocation_policy"`
+	PassiveCircuitBreakerDisabled    bool                `json:"passive_circuit_breaker_disabled"`
+	ScheduledRotationInterval        string              `json:"scheduled_rotation_interval"`
+	ScheduledRotationEnabled         bool                `json:"scheduled_rotation_enabled"`
+	RotationAvoidPreviousIP          bool                `json:"rotation_avoid_previous_ip"`
+	QualityPolicy                    model.QualityPolicy `json:"quality_policy"`
+	UpdatedAt                        string              `json:"updated_at"`
 }
 
 func platformToResponse(p model.Platform) PlatformResponse {
@@ -55,6 +58,8 @@ func platformToResponse(p model.Platform) PlatformResponse {
 		PassiveCircuitBreakerDisabled:    p.PassiveCircuitBreakerDisabled,
 		ScheduledRotationInterval:        time.Duration(p.ScheduledRotationIntervalNs).String(),
 		ScheduledRotationEnabled:         p.ScheduledRotationEnabled,
+		RotationAvoidPreviousIP:          p.RotationAvoidPreviousIP,
+		QualityPolicy:                    p.QualityPolicy,
 		UpdatedAt:                        time.Unix(0, p.UpdatedAtNs).UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -76,7 +81,7 @@ type platformConfig struct {
 	StickyTTLNs                      int64
 	RegexFilters                     []string
 	RegionFilters                    []string
-	QualityPolicy                    platform.QualityPolicy
+	QualityPolicy                    model.QualityPolicy
 	ReverseProxyMissAction           string
 	ReverseProxyEmptyAccountBehavior string
 	ReverseProxyFixedAccountHeader   string
@@ -84,6 +89,7 @@ type platformConfig struct {
 	PassiveCircuitBreakerDisabled    bool
 	ScheduledRotationIntervalNs      int64
 	ScheduledRotationEnabled         bool
+	RotationAvoidPreviousIP          bool
 }
 
 func normalizePlatformMissAction(raw string) string {
@@ -134,6 +140,8 @@ func platformConfigFromModel(mp model.Platform) platformConfig {
 		PassiveCircuitBreakerDisabled:    mp.PassiveCircuitBreakerDisabled,
 		ScheduledRotationIntervalNs:      mp.ScheduledRotationIntervalNs,
 		ScheduledRotationEnabled:         mp.ScheduledRotationEnabled,
+		RotationAvoidPreviousIP:          mp.RotationAvoidPreviousIP,
+		QualityPolicy:                    mp.QualityPolicy,
 	}
 }
 
@@ -144,7 +152,7 @@ func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 		StickyTTLNs:                      cfg.StickyTTLNs,
 		RegexFilters:                     append([]string(nil), cfg.RegexFilters...),
 		RegionFilters:                    append([]string(nil), cfg.RegionFilters...),
-		QualityPolicy:                    platform.EncodeQualityPolicy(cfg.QualityPolicy),
+		QualityPolicy:                    cfg.QualityPolicy,
 		ReverseProxyMissAction:           cfg.ReverseProxyMissAction,
 		ReverseProxyEmptyAccountBehavior: cfg.ReverseProxyEmptyAccountBehavior,
 		ReverseProxyFixedAccountHeader:   cfg.ReverseProxyFixedAccountHeader,
@@ -152,6 +160,7 @@ func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 		PassiveCircuitBreakerDisabled:    cfg.PassiveCircuitBreakerDisabled,
 		ScheduledRotationIntervalNs:      cfg.ScheduledRotationIntervalNs,
 		ScheduledRotationEnabled:         cfg.ScheduledRotationEnabled,
+		RotationAvoidPreviousIP:          cfg.RotationAvoidPreviousIP,
 		UpdatedAtNs:                      updatedAtNs,
 	}
 }
@@ -161,7 +170,7 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 	if err != nil {
 		return nil, err
 	}
-	return platform.NewConfiguredPlatform(
+	plat := platform.NewConfiguredPlatform(
 		id,
 		cfg.Name,
 		compiledRegexFilters,
@@ -173,7 +182,9 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.ReverseProxyFixedAccountHeader,
 		cfg.AllocationPolicy,
 		cfg.PassiveCircuitBreakerDisabled,
-	), nil
+	)
+	plat.RotationAvoidPreviousIP = cfg.RotationAvoidPreviousIP
+	return plat, nil
 }
 
 func validatePlatformMissAction(raw string) *ServiceError {
@@ -281,7 +292,92 @@ func validatePlatformConfig(cfg *platformConfig, validateRegionFilters bool) *Se
 	if err := validatePlatformEmptyAccountConfig(cfg); err != nil {
 		return err
 	}
+	return validateQualityPolicy(cfg.QualityPolicy)
+}
+
+// validateQualityPolicy enforces the WP10 §2.1 enum, range and duration rules.
+func validateQualityPolicy(policy model.QualityPolicy) *ServiceError {
+	if policy.MinPurity != nil && (*policy.MinPurity < 0 || *policy.MinPurity > 100) {
+		return invalidArg("quality_policy.min_purity must be between 0 and 100")
+	}
+	for _, ipType := range policy.IPTypes {
+		if !qualityIPTypes[ipType] {
+			return invalidArg(fmt.Sprintf(
+				"quality_policy.ip_types: %q must be one of residential, mobile, business, wireless, datacenter, non_residential",
+				ipType,
+			))
+		}
+	}
+	for _, verdict := range policy.AllowedVerdicts {
+		if !qualityVerdicts[verdict] {
+			return invalidArg(fmt.Sprintf(
+				"quality_policy.allowed_verdicts: %q must be one of favorable, caution, review, high_risk, conflicting, incomplete, pending",
+				verdict,
+			))
+		}
+	}
+	if policy.MinConfidence != "" && !qualityConfidences[policy.MinConfidence] {
+		return invalidArg("quality_policy.min_confidence must be low, medium or high")
+	}
+	switch policy.UnknownAction {
+	case "", "allow", "exclude":
+	default:
+		return invalidArg("quality_policy.unknown_action must be allow or exclude")
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{"max_assessment_age", policy.MaxAssessmentAge},
+		{"max_egress_age", policy.MaxEgressAge},
+	} {
+		if field.value == "" {
+			continue
+		}
+		d, err := time.ParseDuration(field.value)
+		if err != nil {
+			return invalidArg("quality_policy." + field.name + ": " + err.Error())
+		}
+		if d < 0 {
+			return invalidArg("quality_policy." + field.name + " must be non-negative")
+		}
+	}
+	for id := range policy.RequiredChecks {
+		if !validCheckID(id) {
+			return invalidArg("quality_policy.required_checks: " + strconv.Quote(id) + " is not a valid check id")
+		}
+	}
 	return nil
+}
+
+// qualityIPTypes, qualityVerdicts and qualityConfidences mirror the enum values
+// of WP10 §2.1.
+var qualityIPTypes = map[string]bool{
+	"residential": true, "mobile": true, "business": true,
+	"wireless": true, "datacenter": true, "non_residential": true,
+}
+
+var qualityVerdicts = map[string]bool{
+	"favorable": true, "caution": true, "review": true,
+	"high_risk": true, "conflicting": true, "incomplete": true, "pending": true,
+}
+
+var qualityConfidences = map[string]bool{"low": true, "medium": true, "high": true}
+
+// validCheckID matches the WP09 rule id shape ([a-z0-9_]+). The live rule set is
+// not consulted here because the checks registry belongs to the intel service;
+// an unknown id simply never passes admission (fail-closed).
+func validCheckID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (s *ControlPlaneService) compileAndUpsertPlatform(id string, cfg platformConfig) (model.Platform, *platform.Platform, *ServiceError) {
@@ -348,17 +444,19 @@ func (s *ControlPlaneService) GetPlatform(id string) (*PlatformResponse, error) 
 
 // CreatePlatformRequest holds create platform parameters.
 type CreatePlatformRequest struct {
-	Name                             *string  `json:"name"`
-	StickyTTL                        *string  `json:"sticky_ttl"`
-	RegexFilters                     []string `json:"regex_filters"`
-	RegionFilters                    []string `json:"region_filters"`
-	ReverseProxyMissAction           *string  `json:"reverse_proxy_miss_action"`
-	ReverseProxyEmptyAccountBehavior *string  `json:"reverse_proxy_empty_account_behavior"`
-	ReverseProxyFixedAccountHeader   *string  `json:"reverse_proxy_fixed_account_header"`
-	AllocationPolicy                 *string  `json:"allocation_policy"`
-	PassiveCircuitBreakerDisabled    *bool    `json:"passive_circuit_breaker_disabled"`
-	ScheduledRotationInterval        *string  `json:"scheduled_rotation_interval"`
-	ScheduledRotationEnabled         *bool    `json:"scheduled_rotation_enabled"`
+	Name                             *string              `json:"name"`
+	StickyTTL                        *string              `json:"sticky_ttl"`
+	RegexFilters                     []string             `json:"regex_filters"`
+	RegionFilters                    []string             `json:"region_filters"`
+	ReverseProxyMissAction           *string              `json:"reverse_proxy_miss_action"`
+	ReverseProxyEmptyAccountBehavior *string              `json:"reverse_proxy_empty_account_behavior"`
+	ReverseProxyFixedAccountHeader   *string              `json:"reverse_proxy_fixed_account_header"`
+	AllocationPolicy                 *string              `json:"allocation_policy"`
+	PassiveCircuitBreakerDisabled    *bool                `json:"passive_circuit_breaker_disabled"`
+	ScheduledRotationInterval        *string              `json:"scheduled_rotation_interval"`
+	ScheduledRotationEnabled         *bool                `json:"scheduled_rotation_enabled"`
+	RotationAvoidPreviousIP          *bool                `json:"rotation_avoid_previous_ip"`
+	QualityPolicy                    *model.QualityPolicy `json:"quality_policy"`
 }
 
 // CreatePlatform creates a new platform.
@@ -431,6 +529,12 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 	}
 	if req.ScheduledRotationEnabled != nil {
 		cfg.ScheduledRotationEnabled = *req.ScheduledRotationEnabled
+	}
+	if req.RotationAvoidPreviousIP != nil {
+		cfg.RotationAvoidPreviousIP = *req.RotationAvoidPreviousIP
+	}
+	if req.QualityPolicy != nil {
+		cfg.QualityPolicy = *req.QualityPolicy
 	}
 	if err := validatePlatformConfig(&cfg, true); err != nil {
 		return nil, err
@@ -562,10 +666,23 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 	} else if ok {
 		cfg.ScheduledRotationEnabled = enabled
 	}
+	if avoid, ok, err := patch.optionalBool("rotation_avoid_previous_ip"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.RotationAvoidPreviousIP = avoid
+	}
+	if raw, ok, err := patch.optionalObject("quality_policy"); err != nil {
+		return nil, err
+	} else if ok {
+		var policy model.QualityPolicy
+		if err := json.Unmarshal(raw, &policy); err != nil {
+			return nil, invalidArg("quality_policy: " + err.Error())
+		}
+		cfg.QualityPolicy = policy
+	}
 	if err := validatePlatformConfig(&cfg, regionFiltersPatched); err != nil {
 		return nil, err
 	}
-
 	mp, plat, svcErr := s.compileAndUpsertPlatform(id, cfg)
 	if svcErr != nil {
 		return nil, svcErr
@@ -640,8 +757,13 @@ func (s *ControlPlaneService) RebuildPlatformView(id string) error {
 type PreviewFilterRequest struct {
 	PlatformID   *string             `json:"platform_id"`
 	PlatformSpec *PlatformSpecFilter `json:"platform_spec"`
+	// QualityPolicy overrides the platform's stored quality policy for this
+	// preview only (WP10 §2.1). When it is nil the platform's own policy is
+	// used, so the preview counts match the platform's routable view.
+	QualityPolicy *model.QualityPolicy `json:"quality_policy,omitempty"`
 }
 
+// PlatformSpecFilter is the inline filter spec of a preview request.
 type PlatformSpecFilter struct {
 	RegexFilters  []string `json:"regex_filters"`
 	RegionFilters []string `json:"region_filters"`
@@ -650,6 +772,7 @@ type PlatformSpecFilter struct {
 // NodeSummary is the API response for a node.
 type NodeSummary struct {
 	Quality                          quality.Summary `json:"quality"`
+	Intel                            NodeIntel       `json:"intel"`
 	NodeHash                         string          `json:"node_hash"`
 	Protocol                         string          `json:"protocol"`
 	CreatedAt                        string          `json:"created_at"`
@@ -706,6 +829,10 @@ func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEn
 
 	egressIP := entry.GetEgressIP()
 	ns.Quality = s.nodeQuality(egressIP)
+	// WP10 §4: the assessment view of the node's egress IP, read from the
+	// in-memory projection. The node_egress display facts are added by
+	// FillNodeIntelEgress for a whole page at once.
+	ns.Intel = s.nodeIntel(entry, time.Now().UTC())
 	if egressIP.IsValid() {
 		ns.EgressIP = egressIP.String()
 		ns.Region = entry.GetRegion(nil)
@@ -763,42 +890,90 @@ func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEn
 
 // PreviewFilter returns nodes matching the given filter spec.
 func (s *ControlPlaneService) PreviewFilter(req PreviewFilterRequest) ([]NodeSummary, error) {
+	report, err := s.PreviewFilterReport(req)
+	if err != nil {
+		return nil, err
+	}
+	return report.Nodes, nil
+}
+
+// Exclusion counter keys used by PreviewFilterResult.
+const (
+	PreviewExcludedRegex  = "regex"
+	PreviewExcludedRegion = "region"
+)
+
+// PreviewFilterResult is the WP10 §2.1 preview outcome: the matching nodes plus
+// the per-rule exclusion counters, so a caller can see why a platform's routable
+// view is smaller than the node pool.
+type PreviewFilterResult struct {
+	Nodes      []NodeSummary
+	ExcludedBy map[string]int
+}
+
+// PreviewFilterReport runs the preview and returns the §2.1 excluded_by
+// counters with it.
+//
+// A node is counted under the first rule that rejects it: "regex", then
+// "region", then the first failing quality admission rule, whose counter is the
+// admission reason itself (QUALITY_MIN_PURITY, QUALITY_TOR, QUALITY_CHECK:<id>,
+// ...). The quality policy is the platform's own policy, unless the request
+// carries an explicit quality_policy, which wins (that is what the preview UI
+// experiments with). The admission is evaluated against the in-memory intel
+// projection, exactly like the routing path, so the counters match what a
+// rebuilt platform view would keep.
+func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (PreviewFilterResult, error) {
 	hasPlatformID := req.PlatformID != nil && *req.PlatformID != ""
 	hasPlatformSpec := req.PlatformSpec != nil
 
 	if hasPlatformID == hasPlatformSpec {
-		return nil, invalidArg("exactly one of platform_id or platform_spec is required")
+		return PreviewFilterResult{}, invalidArg("exactly one of platform_id or platform_spec is required")
 	}
 
-	var regexFilters node.TagFilter
-	var regionFilters []string
+	var (
+		regexFilters  node.TagFilter
+		regionFilters []string
+		policy        model.QualityPolicy
+	)
 
 	if hasPlatformID {
 		plat, ok := s.Pool.GetPlatform(*req.PlatformID)
 		if !ok {
-			return nil, notFound("platform not found")
+			return PreviewFilterResult{}, notFound("platform not found")
 		}
 		regexFilters = plat.RegexFilters
 		regionFilters = plat.RegionFilters
+		policy = plat.QualityPolicy
 	} else {
 		compiled, err := platform.CompileRegexFilters(req.PlatformSpec.RegexFilters)
 		if err != nil {
-			return nil, invalidArg(err.Error())
+			return PreviewFilterResult{}, invalidArg(err.Error())
 		}
 		regexFilters = compiled
 		regionFilters = req.PlatformSpec.RegionFilters
 		if err := platform.ValidateRegionFilters(regionFilters); err != nil {
-			return nil, invalidArg(err.Error())
+			return PreviewFilterResult{}, invalidArg(err.Error())
 		}
+	}
+	if req.QualityPolicy != nil {
+		policy = *req.QualityPolicy
 	}
 
 	var subLookup node.SubLookupFunc
 	if s.Pool != nil {
 		subLookup = s.Pool.MakeSubLookup()
 	}
-	var result []NodeSummary
+	var snap platform.QualitySnapshotReader
+	if projection := s.intelProjection(); projection != nil {
+		snap = projection
+	}
+	now := time.Now().UTC()
+
+	result := make([]NodeSummary, 0, 32)
+	excluded := make(map[string]int, 4)
 	s.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
 		if !entry.MatchTagFilter(regexFilters, subLookup) {
+			excluded[PreviewExcludedRegex]++
 			return true
 		}
 		if len(regionFilters) > 0 {
@@ -807,11 +982,21 @@ func (s *ControlPlaneService) PreviewFilter(req PreviewFilterRequest) ([]NodeSum
 				region = entry.GetRegion(s.GeoIP.Lookup)
 			}
 			if !platform.MatchRegionFilter(region, regionFilters) {
+				excluded[PreviewExcludedRegion]++
+				return true
+			}
+		}
+		if !policy.IsEmpty() {
+			if ok, reason := platform.AdmitQuality(policy, entry, snap, now); !ok {
+				if reason == "" {
+					reason = platform.ReasonQualityUnknown
+				}
+				excluded[reason]++
 				return true
 			}
 		}
 		result = append(result, s.nodeEntryToSummary(h, entry))
 		return true
 	})
-	return result, nil
+	return PreviewFilterResult{Nodes: result, ExcludedBy: excluded}, nil
 }
