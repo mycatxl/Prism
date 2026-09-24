@@ -4,7 +4,9 @@
 
 - Resin 提交：`9b8ef8e5cf83071fbac4de29bd7187268b9cff7b`。
 - 原 Resin 模块声明：`go 1.25.5`；Prism 当前声明：`go 1.26.0`，由安全依赖的最低要求决定。
-- sing-box：`v1.14.1`（1.14 系列最新稳定补丁版；1.15.0 仍在 alpha，不采用）。
+- sing-box：`v1.14.2`（1.14 系列最新稳定补丁版；1.15.0 仍在 alpha，不采用）。v1.14.2 重写了
+  `route.NetworkManager` 的并发模型，顺带修掉了 v1.12.21–v1.14.1 的 `started` 数据竞争（见
+  `docs/ENGINE_DECISIONS.md` D-3）。
 - mihomo：`v1.19.31`（模块 `github.com/metacubex/mihomo`，GPL-3.0）。**不引入**：见
   `docs/ENGINE_DECISIONS.md` 的 D-1，`go.mod` 不含该模块，只有 `internal/node/mihomo_built.go` /
   `mihomo_notbuilt.go` 保留构建标签接缝。

@@ -384,17 +384,24 @@ lands:
 (`internal/geoip/geoip.go`, `POST /api/v1/geoip/actions/update-now`); it answers
 `PROVIDER_UNAVAILABLE` with `country.mmdb is not available` until then.
 
-### 10.5 Upstream sing-box data race
+### 10.5 Upstream sing-box data race (fixed upstream in v1.14.2)
 
-Exercising the embedded sing-box runtime with the real route/netlink monitor under the Go race
-detector produces a `WARNING: DATA RACE` inside sing-box's own `route/network.go` — upstream
-code, not Prism, and no workaround or vendored patch exists in this tree. `make verify` (which
-includes `go test -race`) passes, and `go test -race -run TestProtocolMatrix ./internal/outbound/`
-was clean on 2026-09-24, so the race is load- and timing-dependent. Treat a race report naming
-`github.com/sagernet/sing-box/route` as a known upstream finding, not a Prism regression.
-Decision D-3 in `docs/ENGINE_DECISIONS.md` records it honestly: the race is upstream, it is
-timing-dependent, a previous reproduction was not re-triggerable at this revision, and Prism has
-not fixed it (the options are a local fork plus a `replace` directive, or waiting for upstream).
+sing-box v1.12.21 through v1.14.1 wrote `NetworkManager.started` as a plain `bool`
+(`route/network.go:220`) while the netlink callback goroutine read it (`route/network.go:574`),
+so exercising the embedded runtime with the real route/netlink monitor under the Go race detector
+produced a `WARNING: DATA RACE` inside sing-box's own `route/network.go` — upstream code, not Prism.
+
+v1.14.2 rewrote `NetworkManager` onto `startedCtx`/`startedCancel` plus explicit mutexes
+(`stateAccess`, `environmentUpdateAccess`, `interfaceUpdateAccess`, `resetRunAccess`,
+`powerUpdateAccess`), and the plain field no longer exists. Prism is locked to v1.14.2 and
+`make verify` (which includes `go test -race`) is race-clean on it: zero `DATA RACE` and zero
+`FAIL` lines in the run.
+
+The test-only no-op interface monitor (`SingboxBuilderConfig.QuietInterfaceMonitor`) is still
+installed, but no longer as a race workaround — the tests simply want no live netlink monitor.
+Decision D-3 in `docs/ENGINE_DECISIONS.md` records the history and the closure. A NEW race report
+naming `github.com/sagernet/sing-box/route` is therefore a regression to investigate, not the known
+upstream finding.
 
 ### 10.6 No remaining parse-report gap (kept for the record)
 
