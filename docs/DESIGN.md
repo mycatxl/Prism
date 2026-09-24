@@ -96,12 +96,12 @@ flowchart LR
 
 | 阶段 | 运行形态 | 数据归属 |
 |---|---|---|
-| 个人版 | `prism standalone`，同进程独立工作池 | 本地 SQLite 保存配置、质量证据、运行缓存和滚动日志 |
+| 个人版 | 单个 `prism run` 进程（`bin/prism` 无子命令即启动），同进程独立工作池 | 本地 SQLite 保存配置、质量证据、运行缓存和滚动日志 |
 | 可选高级部署 | 单机多个进程或只读分析工具 | 仍由一个 Prism 进程拥有写入权；不保证跨机器状态同步 |
 
 默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。state.db 可靠保存配置、节点库存与质量证据，cache.db 仅保存可重建运行快照，metrics.db 和 request_logs 分别保存统计与滚动日志。
 
-管理面板默认监听 `127.0.0.1:8080`，后端 API/代理 listener 独立配置，默认目标为 `127.0.0.1:1080`。面板监听由 PRISM_UI_HOST/PRISM_UI_PORT 设置，API 反代由 PRISM_API_TARGET 设置；后端 token 从 PRISM_ADMIN_TOKEN/PRISM_PROXY_TOKEN 读取，不打包进前端。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
+Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与 `PRISM_PORT`（默认 `2260`）上的同一个 listener 同时提供 `/ui/` 管理面板、`/api/v1/` 接口、HTTP/SOCKS5 正向代理、`/<token>/...` 反向代理与 `/sub/{token}` 订阅入口。可选的管理面通过 `PRISM_ADMIN_LISTEN` 单独开放，默认关闭且必须是 loopback。`PRISM_ADMIN_TOKEN` / `PRISM_PROXY_TOKEN` 从 `.env` 读取，不打包进前端。前端开发服务器（`npm run dev`）另有自己的端口与 `PRISM_API_TARGET` 反代目标，那只用于本地开发，不是产品部署形态。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
 
 ### 4.2 模块与依赖
 

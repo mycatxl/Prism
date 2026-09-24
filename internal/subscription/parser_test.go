@@ -3161,3 +3161,57 @@ func TestParseGeneralSubscription_ClashJSON_TrojanSharedTLSFields(t *testing.T) 
 		t.Fatalf("tls.reality.short_id: got %v", got)
 	}
 }
+
+// TestParseGeneralSubscription_Socks4ProxyURILines pins the legacy SOCKS schemes in
+// the plain-URI form. Before they were added, "socks4://" fell through to the
+// plain-text parser, which rejects anything containing "://", so a public SOCKS4
+// list imported as plain text was dropped without even a skip record. The Clash
+// path always accepted socks4/socks4a (clashSOCKSVersion), so this was a URI-path
+// gap rather than a deliberate omission.
+func TestParseGeneralSubscription_Socks4ProxyURILines(t *testing.T) {
+	data := []byte(`
+socks4://user-s4:pass-s4@1.2.3.4:1080#SOCKS4%20Node
+socks4a://user-s4a:pass-s4a@5.6.7.8:1081#SOCKS4A%20Node
+socks5://user-s5:pass-s5@9.9.9.9:1082#SOCKS5%20Node
+`)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 3 {
+		t.Fatalf("expected 3 parsed nodes, got %d", len(nodes))
+	}
+
+	for _, tc := range []struct {
+		index   int
+		version string
+	}{
+		{index: 0, version: "4"},
+		{index: 1, version: "4a"},
+		{index: 2, version: ""},
+	} {
+		obj := parseNodeRaw(t, nodes[tc.index].RawOptions)
+		if got := obj["type"]; got != "socks" {
+			t.Fatalf("node %d type: got %v, want socks", tc.index, got)
+		}
+		if tc.version == "" {
+			// Omitting version means SOCKS5, so the modern scheme must not set it.
+			if _, present := obj["version"]; present {
+				t.Fatalf("node %d must omit version, got %v", tc.index, obj["version"])
+			}
+			continue
+		}
+		if got := obj["version"]; got != tc.version {
+			t.Fatalf("node %d version: got %v, want %v", tc.index, got, tc.version)
+		}
+	}
+
+	first := parseNodeRaw(t, nodes[0].RawOptions)
+	if got := first["username"]; got != "user-s4" {
+		t.Fatalf("username: got %v", got)
+	}
+	if got := first["password"]; got != "pass-s4" {
+		t.Fatalf("password: got %v", got)
+	}
+}

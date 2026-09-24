@@ -1,7 +1,7 @@
 # Prism Protocol Support Matrix
 
 **中文摘要**：本文件是从代码与测试反推出来的协议支持矩阵，取代 `docs/plan/06-singbox-engine-protocols.md`
-中的计划表格。运行时内核只有 sing-box `1.14.1`；mihomo 按 `docs/ENGINE_DECISIONS.md` 的 D-1 被否决，
+中的计划表格。运行时内核只有 sing-box `1.14.2`；mihomo 按 `docs/ENGINE_DECISIONS.md` 的 D-1 被否决，
 `with_mihomo` 只保留构建标签接缝。第 2–6 节列出实际可导入并构建的 outbound / endpoint 类型、
 可识别的分享链接 scheme 与订阅文件格式，第 7 节列出**不支持**的 Clash/Surge 类型及其原因码，
 第 8 节说明解析报告与 `auto_intel` 如何到达 API 与 UI，第 10 节列出仍然存在的限制
@@ -36,7 +36,7 @@ Code citations name the file and the symbol. Test citations name the test.
 
 | Engine | Version | Compiled into this tree? | What a user sees otherwise |
 |---|---|---|---|
-| sing-box | 1.14.1 (`internal/node/capabilities.go`, `SingboxVersion`) | yes, always | — |
+| sing-box | 1.14.2 (`internal/node/capabilities.go`, `SingboxVersion`) | yes, always | — |
 | mihomo | 1.19.31 (`MihomoVersion`), declared only | no: `go.mod` has no `github.com/metacubex/mihomo`; the only tagged file is `internal/node/mihomo_built.go` (a `const bool`) | a mihomo node document fails at build time with `ENGINE_NOT_BUILT:<type> requires the with_mihomo build` (`internal/outbound/singbox_runtime.go`, `SingboxRuntime.Build`) |
 
 Decision D-1 (`docs/ENGINE_DECISIONS.md`) rejects mihomo as a runtime kernel. The
@@ -346,14 +346,14 @@ sing-box has no `with_naive_outbound` tag in this build, and `naive` is in the p
 `supportedOutboundTypes`, so a naive node appears in the pool and then cannot be built.
 The user-visible text is the sing-box stub message:
 `naive outbound is not included in this build, rebuild with -tags with_naive_outbound`
-(`internal/node/naive_outbound_stub.go` in sing-box 1.14.1; matrix case `naive-not-built`
+(`internal/node/naive_outbound_stub.go` in sing-box 1.14.2; matrix case `naive-not-built`
 asserts the `not included in this build` substring).
 Note: `docs/plan/06-singbox-engine-protocols.md` expected a parse-report
 `ENGINE_NOT_BUILT:naive`; the code does not do that.
 
 ### 10.2 `tor`: no claim
 
-`tor` is accepted by the parser (`supportedOutboundTypes`) and sing-box 1.14.1 registers the
+`tor` is accepted by the parser (`supportedOutboundTypes`) and sing-box 1.14.2 registers the
 `tor` outbound unconditionally (`include/registry.go` imports `protocol/tor`, the file has no
 build tag). It is absent from `SingboxOutboundTypes()`, from the protocol matrix and from the
 end-to-end entry-point tests. Whether a tor node dials successfully depends on reaching the

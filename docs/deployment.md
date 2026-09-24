@@ -1,7 +1,8 @@
 # Prism Deployment Guide
 
-This guide covers the supported deployment path: a compiled `bin/prism` managed by
-systemd through `scripts/deploy.sh`.
+This guide covers the two supported deployment paths: a compiled `bin/prism`
+managed by systemd through `scripts/deploy.sh`, and the container image
+described under [Docker](#docker).
 
 ## Requirements
 
@@ -155,6 +156,188 @@ unit sets `ProtectSystem=strict`, only the three directories listed in
 `ReadWritePaths` are writable for the service. If you change `PRISM_STATE_DIR`,
 `PRISM_CACHE_DIR` or `PRISM_LOG_DIR` later, re-run `sudo ./scripts/deploy.sh` so
 the unit is regenerated with the new paths.
+
+## Docker
+
+Prism also runs as a container, and the shape of the application keeps that
+deployment small:
+
+- **One port carries everything.** The single listener
+  `PRISM_LISTEN_ADDRESS`:`PRISM_PORT` (default `127.0.0.1:2260`) serves the Web
+  UI (`/ui/`), the API (`/api/v1/`), the HTTP and SOCKS5 forward proxy, the
+  `/<token>/...` reverse proxy and `/sub/{token}`. A container therefore
+  publishes exactly one port. `PRISM_ADMIN_LISTEN` is disabled by default and
+  must stay on loopback when it is enabled.
+- **All state is files.** `state.db`, `intel.db`, `cache.db`, `metrics.db`, the
+  request-log shards and the rolling logs live in the three data directories, so
+  mounting them is the complete persistence story.
+- **No external services.** There is no Redis, no PostgreSQL, no message broker
+  and no Kubernetes operator to install: the datastores are SQLite files inside
+  those directories. A Compose file, a plain `docker run` or a Pod with three
+  volumes is all the orchestration this needs.
+
+### Container files in this repository
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Full multi-stage build: `node:22-alpine` builds the web UI, `golang:1.26-alpine` compiles `cmd/prism` with the full tag set, and the runtime stage (`alpine:3.21`) installs `ca-certificates`, `tzdata` and `su-exec` and places the binary at `/usr/local/bin/prism`. |
+| `.github/Dockerfile.release` | Runtime-only image used by the release workflow: it copies the pre-built `linux/amd64` and `linux/arm64` binaries, which already embed the web UI, onto the same runtime stage. |
+| `docker/entrypoint.sh` | Container entrypoint: prepares and chowns the data directories, then drops privileges to the `prism` user. |
+| `docker-compose.yml.example` | Example service: `ghcr.io/mycatxl/prism:latest`, port `2260:2260`, three named volumes and a `/healthz` healthcheck. |
+
+### Compose quick start
+
+```bash
+cp docker-compose.yml.example docker-compose.yml
+
+# The example passes ${PRISM_ADMIN_TOKEN} and ${PRISM_PROXY_TOKEN} into the
+# container and `docker compose` interpolates them from ./.env — exactly the
+# file `prism init` writes (mode 0600, two 64-character hex tokens).
+./bin/prism init
+# ...or create ./.env yourself:
+#   PRISM_ADMIN_TOKEN=<at least 16 characters>
+#   PRISM_PROXY_TOKEN=<at least 16 characters>
+
+docker compose up -d
+docker compose ps               # State: running, then (healthy)
+docker compose logs -f prism
+```
+
+Then open `http://<host>:2260/ui/` and authenticate with the admin token from
+`.env`. `docker compose` uses `.env` only to substitute the variables the Compose
+file references; the container configuration is the service's `environment:`
+block, so the other keys (`PRISM_LISTEN_ADDRESS`, the data directories) do not
+reach the container from that file.
+
+The token rules are the same as for any other deployment:
+
+- `PRISM_ADMIN_TOKEN` and `PRISM_PROXY_TOKEN` must both be non-empty, and with
+  the default `PRISM_ENFORCE_STRONG_TOKENS=true` each must be at least 16
+  characters.
+- `PRISM_PROXY_TOKEN` must not contain any of `.:|/\@?#%~` or whitespace, and
+  must not be one of the reserved words `api`, `healthz` or `ui`.
+- Empty tokens are an explicit opt-in only: `PRISM_ALLOW_EMPTY_ADMIN_TOKEN=true`
+  and/or `PRISM_ALLOW_EMPTY_PROXY_TOKEN=true`, and Prism then refuses to start
+  with a non-loopback `PRISM_LISTEN_ADDRESS` (or `PRISM_ADMIN_LISTEN`) unless
+  `PRISM_ALLOW_INSECURE_LISTEN=true` is set as well. A published container port
+  is not loopback, so configure both tokens instead of using that mode.
+
+### Data directories, volumes and the container user
+
+| Volume in the example | Container path | Variable | Contents |
+|-----------------------|----------------|----------|----------|
+| `prism_state` | `/var/lib/prism` | `PRISM_STATE_DIR` | `state.db`, `intel.db`, `prism.pid` |
+| `prism_cache` | `/var/cache/prism` | `PRISM_CACHE_DIR` | `cache.db` and other rebuildable data (GeoIP downloads) |
+| `prism_log` | `/var/log/prism` | `PRISM_LOG_DIR` | `metrics.db`, request-log shards and the rolling logs |
+
+The runtime stage creates the system user and group `prism` (`adduser -S -G
+prism -h /var/lib/prism prism`), creates those three directories and chowns them
+to `prism:prism`. The entrypoint starts as root, runs `mkdir -p` and `chown -R
+prism:prism` over the three directories (skip the chown with
+`PRISM_SKIP_CHOWN=1`), and then `exec`s `su-exec prism:prism
+/usr/local/bin/prism`, so Prism itself never runs as root. A bind mount that the
+chown cannot fix fails fast with `fatal: <label> directory is not writable:
+<dir>` before Prism starts.
+
+Set the three directory variables explicitly in the container. The entrypoint
+reads `PRISM_STATE_DIR`, `PRISM_CACHE_DIR` and `PRISM_LOG_DIR` and falls back to
+the in-image paths above, but those fallbacks are shell variables: they are not
+exported into the Prism process, and the image sets no working directory. Without
+them in the environment Prism uses its own relative defaults (`./.local/state`,
+`./.local/cache`, `./.local/logs`) resolved against `/`, so the data would not
+land in the mounted volumes. `docker-compose.yml.example` does not set them yet,
+so add them to the service:
+
+```yaml
+    environment:
+      PRISM_ADMIN_TOKEN: ${PRISM_ADMIN_TOKEN}
+      PRISM_PROXY_TOKEN: ${PRISM_PROXY_TOKEN}
+      PRISM_LISTEN_ADDRESS: 0.0.0.0
+      PRISM_PORT: 2260
+      PRISM_STATE_DIR: /var/lib/prism
+      PRISM_CACHE_DIR: /var/cache/prism
+      PRISM_LOG_DIR: /var/log/prism
+```
+
+`PRISM_LISTEN_ADDRESS: 0.0.0.0` is what makes the published port reachable; keep
+a firewall rule or a reverse proxy in front of it (see
+[Reverse proxy and TLS](#reverse-proxy-and-tls)). There is no `.env` inside the
+image (`.dockerignore` excludes it) and `prism` loads `./.env` relative to its
+working directory, so configure the container through environment variables only.
+`docker compose run --rm prism /usr/local/bin/prism check-config` prints the
+effective configuration with every secret masked.
+
+### Health and verifying a start
+
+```bash
+docker compose ps                                                      # (healthy)
+curl -sS http://127.0.0.1:2260/healthz                                 # no token
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:2260/ui/    # 200 = UI served
+docker compose exec prism /usr/local/bin/prism version
+docker compose exec prism /usr/local/bin/prism check-config
+```
+
+The example healthcheck runs `wget -qO- http://127.0.0.1:2260/healthz >/dev/null
+|| exit 1` every 30 s with a 5 s timeout, three retries and a 20 s start period,
+so `(healthy)` in `docker compose ps` is the quickest confirmation that the
+listener is up. `/healthz` needs no token. `/ui/` answers `503` when the frontend
+is missing: the `Dockerfile` builds it and the release image embeds it, so a
+`503` points at the build. `prism version` prints version, git commit, build time
+and build tags (the release image carries the full tag set; mihomo is never
+compiled in).
+
+### Upgrading, backup and restore
+
+```bash
+# snapshot the databases into the state volume (safe while the container runs)
+docker compose exec prism /usr/local/bin/prism backup --out /var/lib/prism/backups
+
+# move to a new image
+docker compose pull              # or: docker compose build --pull
+docker compose up -d             # recreates the container, keeps the volumes
+docker compose ps
+```
+
+Images are published as `ghcr.io/mycatxl/prism` for `linux/amd64` and
+`linux/arm64` by the release workflow (`release.yml` builds
+`.github/Dockerfile.release` and tags `v<version>`, `<major>.<minor>` and
+`latest` for non-prereleases). Pin a version tag instead of `latest` so an
+upgrade is a deliberate step; the databases are migrated on start.
+
+`prism backup --out DIR` copies `state.db`, `cache.db` and `intel.db` with
+`VACUUM INTO` over read-only connections, so it needs no maintenance window, and
+databases that do not exist yet are skipped. A backup never contains `.env`, so
+keep a copy of the host `.env` (it holds the tokens). Write the snapshot into a
+volume as above, or copy it out:
+
+```bash
+docker compose cp prism:/var/lib/prism/backups ./prism-backups
+```
+
+`prism restore --from DIR [--force]` refuses to touch a live instance, so stop
+the container first and run the same binary through Compose:
+
+```bash
+docker compose stop prism
+docker compose run --rm prism /usr/local/bin/prism restore --from /var/lib/prism/backups/<timestamp>
+docker compose up -d
+```
+
+See [backup-restore.md](backup-restore.md) for retention and restore details.
+Migrating from Resin uses the same pattern: mount the upstream data directories
+read-only and import them in a one-off container —
+`docker compose run --rm prism /usr/local/bin/prism import-resin --from-state
+/var/lib/resin --from-cache /var/cache/resin`
+([MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md) has the complete example).
+
+### Not built or verified in this environment
+
+`Dockerfile`, `.github/Dockerfile.release`, `docker/entrypoint.sh` and
+`docker-compose.yml.example` are part of the repository, but the environment this
+guide was written in has no Docker daemon: **no image was built and no container
+was started or tested.** Build it once yourself before relying on it
+(`docker compose build`, or `docker build -t prism .`) and confirm that the
+container reaches `(healthy)`.
 
 ## Configuration
 
@@ -479,8 +662,18 @@ place; remove it with `sudo userdel prism` if it is no longer needed.
 ## Not implemented in this version
 
 - TLS listener and HSTS — terminate TLS in a reverse proxy.
+- Container manifests — `Dockerfile`, `docker/entrypoint.sh`,
+  `docker-compose.yml.example` and `.github/Dockerfile.release` ship with the
+  repository, but they were never built or run, because the environment this
+  guide was written in has no Docker daemon. See [Docker](#docker) for the caveats
+  and build the image once yourself before using it.
 - Prometheus exporter (`/metrics`) — scrape the JSON API instead.
-- `prism import-resin` — the subcommand exists but exits with
-  `prism import-resin is not available yet (WP05)` and status 1.
 - OpenAPI document and the `/ui/docs` page; the route table is
   `internal/api/server.go` and the main endpoints are listed in `README.md`.
+
+`prism import-resin` is **not** on this list: it is implemented and imports an
+upstream Resin `state.db`/`cache.db` (plus the optional request-log databases)
+with
+`prism import-resin --from-state DIR --from-cache DIR [--from-log DIR] [--force]`;
+[MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md) is the authoritative document
+for it — usage, the deviation list and a container example.
