@@ -1305,6 +1305,13 @@ code {
   font-size: 11px;
   white-space: nowrap;
 }
+.node-bulk-warning {
+  flex: 1 1 220px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
 .filter-count {
   min-width: 16px;
   text-align: center;
@@ -1531,6 +1538,13 @@ code {
   margin-top: auto;
   background: var(--surface);
   border-top: 1px solid var(--border);
+}
+.node-intel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 .platform-directory {
   min-width: 0;

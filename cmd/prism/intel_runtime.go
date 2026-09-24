@@ -381,9 +381,12 @@ func (a *prismApp) KnownNodeHashes() map[string]struct{} {
 	return known
 }
 
-// resolveIntelScope expands a job scope into node hashes. Every selector is a
-// union (WP08 §3.1); the expansion happens server-side and it never truncates:
-// a scope above jobs.MaxNodesPerJob fails with the named limit error.
+// resolveIntelScope expands a job scope into node hashes. The selectors (all,
+// subscription ids, platform ids, node hashes) are a union (WP08 §3.1) and an
+// explicit filter is applied on top of the all/subscription/platform selectors —
+// but never to node_hashes, because a node named by hash is taken as given. The
+// expansion happens server-side and it never truncates: a scope above
+// jobs.MaxNodesPerJob fails with the named limit error.
 func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]string, error) {
 	selected := make(map[string]struct{})
 	add := func(hash string) {
@@ -408,12 +411,33 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 		add(hash)
 	}
 
-	// An explicit filter is expanded against the running pool; an empty filter
-	// only expands when scope.all is set. The walk stops one node past the
-	// bound so the limit error below is always reported instead of a silent
-	// truncation.
-	if scope.All || len(scope.Filter) > 0 {
-		filter := newNodeFilter(scope.Filter)
+	// The filter narrows every selector EXCEPT the explicit node hashes: a node
+	// named by hash is taken as given, while the all/subscription/platform scopes
+	// are intersected with it. Without this, {subscription_ids:[x], filter:{...}}
+	// means "every filtered node in the pool UNION every node of x" instead of
+	// "the nodes of x that match the filter".
+	hasFilter := len(scope.Filter) > 0
+	filter := newNodeFilter(scope.Filter, a.intelScopeGeoLookup(), a.intelScopeSnapshot())
+	keep := func(hash string) bool {
+		if !hasFilter {
+			return true
+		}
+		parsed, err := node.ParseHex(hash)
+		if err != nil {
+			return false
+		}
+		entry, ok := a.topoRuntime.pool.GetEntry(parsed)
+		if !ok {
+			return false
+		}
+		return filter.matches(entry)
+	}
+
+	// An empty filter only expands when scope.all is set; otherwise the pool walk
+	// below is skipped and only the explicit selectors contribute. The walk stops
+	// one node past the bound so the limit error is always reported instead of a
+	// silent truncation.
+	if scope.All || hasFilter {
 		a.topoRuntime.pool.Range(func(hash node.Hash, entry *node.NodeEntry) bool {
 			if filter.matches(entry) {
 				add(hash.String())
@@ -439,6 +463,9 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 			if _, ok := wanted[link.SubscriptionID]; !ok {
 				continue
 			}
+			if !keep(link.NodeHash) {
+				continue
+			}
 			add(link.NodeHash)
 		}
 	}
@@ -450,7 +477,9 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 				continue
 			}
 			plat.View().Range(func(hash node.Hash) bool {
-				add(hash.String())
+				if keep(hash.String()) {
+					add(hash.String())
+				}
 				return true
 			})
 		}
@@ -472,21 +501,82 @@ func scopeHashes(selected map[string]struct{}) []string {
 	return out
 }
 
-// nodeFilter is the subset of the GET /api/v1/nodes query parameters the job
-// scope understands today. WP10 extends it with the purity filters.
+// nodeFilter is the subset of the GET /api/v1/nodes query parameters a job
+// scope understands (§3.1): the WP08 protocol/engine pair plus the WP10 §4
+// purity filters and the health switch.
+//
+// matches() runs once per node on the pool.Range hot path, so it only reads
+// in-memory state. protocol/engine/region/healthy come from the NodeEntry
+// itself (atomic loads; a GeoIP-backed region uses the same in-memory lookup
+// the node list uses), and the purity keys read the intel assessment
+// projection, which is a map lookup keyed by egress IP — never a database
+// query.
 type nodeFilter struct {
-	protocol string
-	engine   string
+	protocol   string
+	engine     string
+	region     string
+	ipType     string
+	purityBand string
+	// verdicts holds the comma-separated `verdict` values; empty means no
+	// verdict constraint.
+	verdicts []string
+	// healthy is true only for the literal "true"; every other value adds no
+	// constraint.
+	healthy bool
+
+	// geoLookup resolves a node region (nil degrades to the explicit probe
+	// region); snapshot is the intel projection (nil matches no purity key).
+	geoLookup func(netip.Addr) string
+	snapshot  *intel.Snapshot
 }
 
-func newNodeFilter(raw map[string]string) nodeFilter {
+// intelScopeGeoLookup returns the GeoIP lookup the region filter resolves
+// with, or nil when the service is not wired into this build.
+func (a *prismApp) intelScopeGeoLookup() func(netip.Addr) string {
+	if a == nil || a.geoSvc == nil {
+		return nil
+	}
+	return a.geoSvc.Lookup
+}
+
+// intelScopeSnapshot returns the in-memory assessment projection the purity
+// filters read, or nil when the intel subsystem is not wired into this build.
+func (a *prismApp) intelScopeSnapshot() *intel.Snapshot {
+	if a == nil || a.intelSvc == nil {
+		return nil
+	}
+	return a.intelSvc.Snapshot()
+}
+
+// nodeFilterValue lowercases and trims one scope filter value; every key of
+// the scope filter is compared normalized (§3.1).
+func nodeFilterValue(raw string) string {
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func newNodeFilter(raw map[string]string, geoLookup func(netip.Addr) string, snapshot *intel.Snapshot) nodeFilter {
 	if len(raw) == 0 {
 		return nodeFilter{}
 	}
-	return nodeFilter{
-		protocol: strings.ToLower(strings.TrimSpace(raw["protocol"])),
-		engine:   strings.ToLower(strings.TrimSpace(raw["engine"])),
+	filter := nodeFilter{
+		protocol:   nodeFilterValue(raw["protocol"]),
+		engine:     nodeFilterValue(raw["engine"]),
+		region:     nodeFilterValue(raw["region"]),
+		ipType:     nodeFilterValue(raw["ip_type"]),
+		purityBand: nodeFilterValue(raw["purity_band"]),
+		healthy:    nodeFilterValue(raw["healthy"]) == "true",
+		geoLookup:  geoLookup,
+		snapshot:   snapshot,
 	}
+	// verdict is the one §4 key that takes a comma-separated list: the node
+	// list reads "favorable,caution" as "either of the two", so the scope does
+	// too.
+	for _, value := range strings.Split(raw["verdict"], ",") {
+		if verdict := nodeFilterValue(value); verdict != "" {
+			filter.verdicts = append(filter.verdicts, verdict)
+		}
+	}
+	return filter
 }
 
 func (f nodeFilter) matches(entry *node.NodeEntry) bool {
@@ -499,7 +589,72 @@ func (f nodeFilter) matches(entry *node.NodeEntry) bool {
 	if f.engine != "" && !strings.EqualFold(nodeEngine(entry), f.engine) {
 		return false
 	}
+	if f.healthy && !entry.IsHealthy() {
+		return false
+	}
+	// GetRegion prefers the explicit probe region and falls back to the GeoIP
+	// lookup; an unknown region never matches a region filter, exactly like
+	// the node list.
+	if f.region != "" && !strings.EqualFold(entry.GetRegion(f.geoLookup), f.region) {
+		return false
+	}
+	if f.ipType == "" && f.purityBand == "" && len(f.verdicts) == 0 {
+		return true
+	}
+	// The purity keys require an assessment: an unknown value cannot satisfy
+	// a filter. This is the same fail-closed rule the node list uses
+	// (internal/service/control_plane_node_intel.go:243).
+	lite, ok := f.assessment(entry)
+	if !ok {
+		return false
+	}
+	if f.ipType != "" && !strings.EqualFold(intel.IPTypeName(lite.IPType), f.ipType) {
+		return false
+	}
+	if f.purityBand != "" && !f.bandMatches(lite) {
+		return false
+	}
+	if len(f.verdicts) > 0 {
+		verdict := intel.VerdictName(lite.Verdict)
+		matched := false
+		for _, want := range f.verdicts {
+			if strings.EqualFold(verdict, want) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
 	return true
+}
+
+// bandMatches applies purity_band. The API vocabulary also accepts "review",
+// the legacy name for the review/conflicting verdicts; the node list maps it
+// the same way (internal/service/control_plane_node_intel.go:250), so one
+// filter string selects the same nodes on both paths.
+func (f nodeFilter) bandMatches(lite intel.AssessmentLite) bool {
+	if f.purityBand == "review" {
+		verdict := intel.VerdictName(lite.Verdict)
+		return verdict == intel.VerdictName(intel.VerdictReview) ||
+			verdict == intel.VerdictName(intel.VerdictConflicting)
+	}
+	return strings.EqualFold(intel.BandName(lite.Band), f.purityBand)
+}
+
+// assessment resolves the projected assessment of one node's egress IP. The
+// projection is keyed by egress IP, so a node without an egress observation
+// has no assessment and never matches a purity key.
+func (f nodeFilter) assessment(entry *node.NodeEntry) (intel.AssessmentLite, bool) {
+	if f.snapshot == nil || entry == nil {
+		return intel.AssessmentLite{}, false
+	}
+	ip := entry.GetEgressIP()
+	if !ip.IsValid() {
+		return intel.AssessmentLite{}, false
+	}
+	return f.snapshot.Assessment(ip)
 }
 
 // nodeProtocol reads the outbound type of a node entry.

@@ -1,6 +1,7 @@
 import { AUDIT_TRANSLATIONS } from "./audit";
 import { EXPORT_TRANSLATIONS } from "./exports";
 import { JOBS_TRANSLATIONS } from "./jobs";
+import { NODES_TRANSLATIONS } from "./nodes";
 import { QUALITY_TRANSLATIONS } from "./quality";
 
 export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
@@ -8,6 +9,7 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   ...AUDIT_TRANSLATIONS,
   ...EXPORT_TRANSLATIONS,
   ...JOBS_TRANSLATIONS,
+  ...NODES_TRANSLATIONS,
   "查看节点状态、代理流量和正在使用的平台。":
     "Monitor your nodes, proxy traffic and active platforms.",
   建立你的第一个节点池: "Build your first node pool",
