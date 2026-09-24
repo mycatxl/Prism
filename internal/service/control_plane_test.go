@@ -83,6 +83,45 @@ func TestValidateRuntimeConfig_NegativeByteFields(t *testing.T) {
 	}
 }
 
+// TestValidateRuntimeConfig_RequestLogCaptureLimitIsBounded covers G-06: the
+// four capture limits are buffered per in-flight proxied request, so an
+// unbounded value would let an admin token holder make every concurrent request
+// allocate that much heap. `0` still means "capture nothing", negatives stay
+// rejected, and the ceiling itself is accepted.
+func TestValidateRuntimeConfig_RequestLogCaptureLimitIsBounded(t *testing.T) {
+	fields := map[string]func(*config.RuntimeConfig, int){
+		"reverse_proxy_log_req_headers_max_bytes": func(cfg *config.RuntimeConfig, v int) {
+			cfg.ReverseProxyLogReqHeadersMaxBytes = v
+		},
+		"reverse_proxy_log_req_body_max_bytes": func(cfg *config.RuntimeConfig, v int) {
+			cfg.ReverseProxyLogReqBodyMaxBytes = v
+		},
+		"reverse_proxy_log_resp_headers_max_bytes": func(cfg *config.RuntimeConfig, v int) {
+			cfg.ReverseProxyLogRespHeadersMaxBytes = v
+		},
+		"reverse_proxy_log_resp_body_max_bytes": func(cfg *config.RuntimeConfig, v int) {
+			cfg.ReverseProxyLogRespBodyMaxBytes = v
+		},
+	}
+
+	for name, set := range fields {
+		for _, value := range []int{0, 4096, requestLogCaptureMaxBytes} {
+			cfg := newDefaultCfg()
+			set(cfg, value)
+			if err := validateRuntimeConfig(cfg); err != nil {
+				t.Fatalf("%s=%d must be accepted, got %v", name, value, err)
+			}
+		}
+		for _, value := range []int{-1, requestLogCaptureMaxBytes + 1, 1 << 30} {
+			cfg := newDefaultCfg()
+			set(cfg, value)
+			if err := validateRuntimeConfig(cfg); err == nil {
+				t.Fatalf("%s=%d must be rejected", name, value)
+			}
+		}
+	}
+}
+
 func TestValidateRuntimeConfig_NegativeDurations(t *testing.T) {
 	cfg := newDefaultCfg()
 	cfg.MaxLatencyTestInterval = -1

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"prism/internal/config"
 	"prism/internal/state"
 )
 
@@ -52,6 +53,17 @@ func assertMode0600(t *testing.T, path string) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("%s mode = %o, want 600", path, perm)
+	}
+}
+
+func assertMode0700(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("%s mode = %o, want 700", path, perm)
 	}
 }
 
@@ -485,4 +497,75 @@ func TestStartAdminListenerDisabledWhenAddressEmpty(t *testing.T) {
 	if err := listener.Shutdown(context.Background()); err != nil {
 		t.Fatalf("Shutdown on a disabled listener: %v", err)
 	}
+}
+
+// TestPersistenceBootstrapHardensEnvConfiguredDirs covers G-04 for the paths an
+// operator configures through PRISM_STATE_DIR / PRISM_CACHE_DIR: both the
+// directories and the database files end up private, even when the directories
+// already existed with 0755.
+func TestPersistenceBootstrapHardensEnvConfiguredDirs(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "env-state")
+	cacheDir := filepath.Join(root, "env-cache")
+	for _, dir := range []string{stateDir, cacheDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatalf("chmod %s: %v", dir, err)
+		}
+	}
+	t.Setenv("PRISM_STATE_DIR", stateDir)
+	t.Setenv("PRISM_CACHE_DIR", cacheDir)
+
+	// The configuration validator requires explicit tokens to be present.
+	t.Setenv("PRISM_ADMIN_TOKEN", "0123456789abcdef0123456789abcdef")
+	t.Setenv("PRISM_PROXY_TOKEN", "fedcba9876543210fedcba9876543210")
+	t.Setenv("PRISM_ADMIN_LISTEN", "127.0.0.1:12346")
+
+	cfg, err := config.LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("LoadEnvConfig: %v", err)
+	}
+	if cfg.StateDir != stateDir || cfg.CacheDir != cacheDir {
+		t.Fatalf("PRISM_STATE_DIR/PRISM_CACHE_DIR not honoured: got %q / %q", cfg.StateDir, cfg.CacheDir)
+	}
+
+	_, closer, err := state.PersistenceBootstrap(cfg.StateDir, cfg.CacheDir)
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	assertMode0700(t, stateDir)
+	assertMode0700(t, cacheDir)
+	assertMode0600(t, filepath.Join(stateDir, "state.db"))
+	assertMode0600(t, filepath.Join(cacheDir, "cache.db"))
+}
+
+// TestRestoreHardensTargetDirectories covers G-04 for `prism restore`: the
+// directories it recreates must be 0700, not the process umask default.
+func TestRestoreHardensTargetDirectories(t *testing.T) {
+	backupDir := makeTestBackup(t)
+
+	targetState := filepath.Join(t.TempDir(), "live-state")
+	targetCache := filepath.Join(t.TempDir(), "live-cache")
+	for _, dir := range []string{targetState, targetCache} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatalf("chmod %s: %v", dir, err)
+		}
+	}
+
+	opts := restoreOptions{StateDir: targetState, CacheDir: targetCache, Port: 0}
+	if err := restoreBackup(opts, backupDir, true, io.Discard); err != nil {
+		t.Fatalf("restoreBackup: %v", err)
+	}
+
+	assertMode0700(t, targetState)
+	assertMode0700(t, targetCache)
+	assertMode0600(t, filepath.Join(targetState, "state.db"))
+	assertMode0600(t, filepath.Join(targetCache, "cache.db"))
 }

@@ -57,6 +57,18 @@ comma-separated CIDR list, empty by default), and then the last untrusted
 address in the header is used — a forged header from an untrusted peer has no
 effect.
 
+Operational precondition: the limiter is only as trustworthy as the hop it
+reads. The key is the **rightmost** address in `X-Forwarded-For` that is not
+itself a trusted proxy, which is the address the trusted proxy appended — but
+only if the proxy is configured to *append* the peer address it observed
+(`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` in nginx and the
+equivalent elsewhere). A trusted proxy that forwards a client-supplied header
+verbatim makes the key attacker-chosen, and a client can then rotate the header
+to get a fresh bucket for every guess. A proxy that strips the header entirely is
+safe but coarse: every client behind it shares the proxy's own bucket. Malformed
+header entries are ignored, and when every hop is trusted the peer address is
+used.
+
 Verified by:
 
 - `TestAuthRateLimit_BlocksAfterTenFailures`
@@ -68,6 +80,10 @@ Verified by:
 - `TestAuthRateLimit_SuccessfulRequestsAreNotCounted`
   (`internal/api/wp04_security_test.go`).
 - `TestAuthRateLimit_CapsTableSize` (`internal/api/wp04_security_test.go`).
+- `TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor`
+  (`internal/api/wp04_security_test.go`) pins the hop selection with
+  `127.0.0.1/32` trusted and eleven distinct `X-Forwarded-For` values, including
+  the documented failure mode of a proxy that does not append.
 
 The proxy entrypoints share the same limiter when `PRISM_PROXY_AUTH_FAIL_LIMIT`
 is positive. It covers the reverse-proxy path token as decided by the inbound
@@ -156,10 +172,19 @@ Verified by:
 
 ### 1.6 Audit logging of management writes
 
-`AuditMiddleware` (`internal/api/audit.go`, wired inside the body limit in
-`internal/api/server.go`) records every **successful** management write
-(`POST`, `PUT`, `PATCH`, `DELETE`, including `/actions/*` routes) into the
-`audit_log` table. Failed writes are not recorded because nothing changed.
+`AuditMiddleware` (`internal/api/audit.go`) records every **successful**
+management write (`POST`, `PUT`, `PATCH`, `DELETE`, including `/actions/*`
+routes) into the `audit_log` table. Failed writes are not recorded because
+nothing changed. It is wrapped by the request-body limit in
+`internal/api/server.go`, so the payload peek reads a body that is already
+bounded by `PRISM_API_MAX_BODY_BYTES` in addition to its own 64 KiB cap.
+
+The token-path task route
+`POST /{token}/api/v1/{platform}/actions/inherit-lease`
+(`internal/api/handler_token_action.go`) mutates lease state and is audited the
+same way; its actor is the sha256 prefix of `PRISM_PROXY_TOKEN`, the token is
+never stored, and path parameters that carry a credential (the `{token}` segment)
+are not copied into the record.
 
 Each record contains:
 
@@ -184,6 +209,14 @@ Verified by:
   (`internal/api/wp04_security_test.go`).
 - `TestAuditLog_ListEndpoint` (`internal/api/wp04_security_test.go`).
 - `TestAuditLog_RetentionPolicy` (`internal/api/wp04_security_test.go`).
+- `TestAuditLog_BodyLimitWrapsAuditPeek` (`internal/api/wp04_security_test.go`)
+  pins the middleware order: the body limit wraps the audit middleware, so the
+  payload peek cannot observe bytes past the limit.
+- `TestTokenActionHandler_TokenComparison` and
+  `TestTokenActionInheritLease_IsAudited`
+  (`internal/api/handler_token_action_test.go`) cover the constant-time token
+  compare (correct, wrong, missing token and the disabled compare) and the audit
+  record of the token-path mutation.
 - `TestStateRepo_PrismAuditAppendListAndPrune`
   (`internal/state/repo_state_prism_test.go`) covers the storage layer: append,
   descending cursor paging, age pruning and size pruning.
@@ -356,6 +389,29 @@ Verified by:
   the nesting, list values, and the bound on the reflected detail.
 - `TestParseKeepsInlineCertificateMaterial` and
   `TestEnsureNodeOutboundRecordsBoundedRefusal` (same file).
+
+### 1.13 State and cache databases are private
+
+`state.db` stores provider API keys in clear (`intel_provider_settings.api_key`),
+the audit log, export-profile token digests and subscription URLs, so the
+databases Prism owns are private by construction
+(`internal/state/schema.go`, `HardenDBFiles`): the containing directory is
+created or repaired to `0700` and the database file plus its `-wal`/`-shm` side
+files are forced to `0600`. Existing files are repaired too, so an installation
+created by an older revision (or by a permissive umask) is fixed on the next
+start (`state.OpenDB` hardens on every open, `PersistenceBootstrap` repeats it
+after the migrations). `prism restore` recreates the target directories as
+`0700` and copies the databases as `0600` (`cmd/prism/subcommands.go`).
+
+Verified by:
+
+- `TestPersistenceBootstrap_HardensStateAndCachePermissions`,
+  `TestOpenDB_HardensExistingDatabaseFile`, `TestHardenDBFiles_ForcesPrivateModes`
+  and `TestHardenDBFiles_MissingFileCreatesPrivateDir`
+  (`internal/state/permissions_test.go`).
+- `TestPersistenceBootstrapHardensEnvConfiguredDirs` and
+  `TestRestoreHardensTargetDirectories` (`cmd/prism/subcommands_test.go`) cover
+  `PRISM_STATE_DIR` / `PRISM_CACHE_DIR` and the restore path.
 
 ## 2. Implemented but not covered by an automated test
 

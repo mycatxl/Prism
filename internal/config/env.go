@@ -61,6 +61,10 @@ type EnvConfig struct {
 	// TrustedProxies lists the CIDRs (or plain IP literals) whose
 	// X-Forwarded-For header is trusted when deriving the client IP used for
 	// authentication failure limiting. Empty means "trust no proxy".
+	//
+	// Only list a proxy that appends the peer address it observed to
+	// X-Forwarded-For: a proxy that forwards a client-supplied header verbatim
+	// would let a client choose its own limit bucket (docs/SECURITY.md §1.2).
 	TrustedProxies []string
 	// DirectDenyPrivate refuses loopback, private and link-local targets on the
 	// local direct reverse-proxy path (PRISM_DIRECT_DENY_PRIVATE).

@@ -43,7 +43,14 @@ type authFailureEntry struct {
 //
 // The client key comes from the RemoteAddr host; X-Forwarded-For is honoured
 // only when RemoteAddr itself belongs to one of the configured trusted proxy
-// CIDRs, in which case the last untrusted address in the header is used.
+// CIDRs, in which case the rightmost untrusted address in the header is used.
+//
+// Operational precondition (docs/SECURITY.md §1.2): that rightmost untrusted hop
+// is the observed client only when the trusted proxy *appends* the peer address
+// it saw. A proxy that forwards a client-supplied header verbatim makes the key
+// attacker-chosen, and a client can then rotate the header to get a fresh bucket
+// for every guess. Malformed entries are ignored, and when every hop in the
+// header is trusted the peer address itself is used.
 type AuthFailureLimiter struct {
 	mu          sync.Mutex
 	maxFailures int

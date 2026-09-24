@@ -148,6 +148,11 @@ type metricsManagerSettings struct {
 	ConnectionsRealtimeCapacity int
 	LeasesIntervalSec           int
 	LeasesRealtimeCapacity      int
+	// Published retention windows (PRISM_METRIC_*_RETENTION_SECONDS); they bound
+	// the realtime rings and, since G-08, the persisted metrics history.
+	ThroughputRetentionSec  int
+	ConnectionsRetentionSec int
+	LeasesRetentionSec      int
 }
 
 func deriveMetricsManagerSettings(envCfg *config.EnvConfig) metricsManagerSettings {
@@ -161,6 +166,9 @@ func deriveMetricsManagerSettings(envCfg *config.EnvConfig) metricsManagerSettin
 		ConnectionsRealtimeCapacity: realtimeCapacity(envCfg.MetricConnectionsRetentionSeconds, envCfg.MetricConnectionsIntervalSeconds),
 		LeasesIntervalSec:           envCfg.MetricLeasesIntervalSeconds,
 		LeasesRealtimeCapacity:      realtimeCapacity(envCfg.MetricLeasesRetentionSeconds, envCfg.MetricLeasesIntervalSeconds),
+		ThroughputRetentionSec:      envCfg.MetricThroughputRetentionSeconds,
+		ConnectionsRetentionSec:     envCfg.MetricConnectionsRetentionSeconds,
+		LeasesRetentionSec:          envCfg.MetricLeasesRetentionSeconds,
 	}
 }
 

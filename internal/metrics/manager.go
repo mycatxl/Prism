@@ -40,6 +40,9 @@ type ManagerConfig struct {
 	LeasesRealtimeCapacity      int
 	LeasesIntervalSec           int
 	RuntimeStats                RuntimeStatsProvider
+	// Retention is the persisted-metrics retention (G-08). The zero value keeps
+	// the defaults of internal/config/env.go.
+	Retention RetentionPolicy
 }
 
 // Manager is the central metrics coordinator.
@@ -60,6 +63,7 @@ type Manager struct {
 	connectionsInterval time.Duration
 	leasesInterval      time.Duration
 	bucketSeconds       int
+	retention           RetentionPolicy
 
 	// Previous cumulative byte counts for delta calculation (throughput B/s).
 	prevIngressBytes int64
@@ -143,6 +147,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		connectionsInterval: time.Duration(connectionsSec) * time.Second,
 		leasesInterval:      time.Duration(leasesSec) * time.Second,
 		bucketSeconds:       bucketSec,
+		retention:           cfg.Retention,
 		prevBucketPlatforms: make(map[string]bucketCounterBaseline),
 		leaseSamplesCh:      make(chan leaseLifetimeSample, leaseSampleQueueSize),
 		stopCh:              make(chan struct{}),
@@ -247,6 +252,27 @@ func (m *Manager) Repo() *MetricsRepo { return m.repo }
 
 // BucketSeconds returns the configured bucket duration in seconds.
 func (m *Manager) BucketSeconds() int { return m.bucketSeconds }
+
+// Retention returns the persisted-metrics retention policy (G-08).
+func (m *Manager) Retention() RetentionPolicy { return m.retention }
+
+// ThroughputRetentionWindow is the window that bounds the throughput/traffic
+// history and the query range of the endpoints serving it.
+func (m *Manager) ThroughputRetentionWindow() time.Duration {
+	return m.retention.ThroughputWindow()
+}
+
+// ConnectionsRetentionWindow is the window that bounds the realtime connections
+// samples.
+func (m *Manager) ConnectionsRetentionWindow() time.Duration {
+	return m.retention.ConnectionsWindow()
+}
+
+// LeasesRetentionWindow is the window that bounds the lease lifetime samples and
+// the query range of the endpoints serving them.
+func (m *Manager) LeasesRetentionWindow() time.Duration {
+	return m.retention.LeasesWindow()
+}
 
 // ThroughputIntervalSeconds returns the configured throughput realtime interval in seconds.
 func (m *Manager) ThroughputIntervalSeconds() int { return int(m.throughputInterval.Seconds()) }

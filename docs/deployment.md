@@ -301,6 +301,26 @@ used endpoints. There is **no Prometheus exporter** in this version — no
 or `/ui/docs` page. Scrape the JSON endpoints above or use `journalctl` for
 service-level monitoring.
 
+### Metrics retention
+
+Three environment variables bound how much metric data Prism keeps, and all three
+are published by `GET /api/v1/system/config/env` and shown in the WebUI's system
+configuration page:
+
+| Variable | Default | Bounds |
+| --- | --- | --- |
+| `PRISM_METRIC_THROUGHPUT_RETENTION_SECONDS` | 3600 | the realtime throughput ring, and the `metric_traffic_bucket` / `metric_request_bucket` / `metric_access_latency_bucket` / `metric_probe_bucket` / `metric_node_pool_bucket` history |
+| `PRISM_METRIC_CONNECTIONS_RETENTION_SECONDS` | 18000 | the realtime connections ring (connections have no persisted table) |
+| `PRISM_METRIC_LEASES_RETENTION_SECONDS` | 18000 | the realtime leases ring, and `metric_lease_lifetime_bucket` |
+
+`metrics.db` is pruned in bounded batches every 5 minutes, so a pass never holds
+the SQLite write lock for long. The history and realtime endpoints clamp `from`
+to the matching window, so a request can never scan more history than the
+retention keeps: asking for 24 hours while
+`PRISM_METRIC_THROUGHPUT_RETENTION_SECONDS=3600` returns the retained hour, not
+an error. Raise the value if you want a longer dashboard history — the values
+cost memory for the rings and disk for `metrics.db`.
+
 ## Reverse proxy and TLS
 
 Prism itself speaks plain HTTP; there is no TLS listener and no HSTS. Keep

@@ -810,3 +810,102 @@ func TestMetricsHandlers_HistoryLeaseLifetime_IncludesCurrentUnflushedBucket(t *
 		t.Fatalf("p50_ms: got %v, want 30000", item["p50_ms"])
 	}
 }
+
+// newTestMetricsManagerWithRetention builds a manager with an explicit retention
+// policy, which is what the query-range clamp of G-08 reads.
+func newTestMetricsManagerWithRetention(
+	t *testing.T,
+	policy metrics.RetentionPolicy,
+) *metrics.Manager {
+	t.Helper()
+
+	repo, err := metrics.NewMetricsRepo(filepath.Join(t.TempDir(), "metrics.db"))
+	if err != nil {
+		t.Fatalf("NewMetricsRepo: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+
+	return metrics.NewManager(metrics.ManagerConfig{
+		Repo:                        repo,
+		LatencyBinMs:                100,
+		LatencyOverflowMs:           3000,
+		BucketSeconds:               3600,
+		ThroughputRealtimeCapacity:  16,
+		ThroughputIntervalSec:       1,
+		ConnectionsRealtimeCapacity: 16,
+		ConnectionsIntervalSec:      5,
+		LeasesRealtimeCapacity:      16,
+		LeasesIntervalSec:           7,
+		Retention:                   policy,
+		RuntimeStats: testRuntimeStatsProvider{
+			testPlatformStats: testPlatformStats{platforms: map[string]struct{}{}},
+		},
+	})
+}
+
+// TestParseMetricsTimeRange_ClampsFromToRetention covers G-08: 'from' is moved
+// forward to to-maxWindow, so the scanned range is bounded by the retention of
+// the metric family. The request itself stays valid.
+func TestParseMetricsTimeRange_ClampsFromToRetention(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/metrics/history/traffic?from=1970-01-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+
+	from, to, ok := parseMetricsTimeRange(rec, req, time.Hour)
+	if !ok {
+		t.Fatalf("parseMetricsTimeRange: not ok, body=%s", rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("clamping must not write an error, body=%s", rec.Body.String())
+	}
+	if want := to.Add(-time.Hour); !from.Equal(want) {
+		t.Fatalf("from: got %v, want %v", from, want)
+	}
+
+	// Without a window the caller's 'from' is kept.
+	rec = httptest.NewRecorder()
+	from, to, ok = parseMetricsTimeRange(rec, req, 0)
+	if !ok {
+		t.Fatalf("parseMetricsTimeRange(no window): not ok, body=%s", rec.Body.String())
+	}
+	if want := time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC); !from.Equal(want) {
+		t.Fatalf("from without a window: got %v, want %v", from, want)
+	}
+	if !from.Before(to) {
+		t.Fatalf("from %v must stay before to %v", from, to)
+	}
+}
+
+// TestMetricsHandlers_RealtimeThroughputIsBoundedByRetention covers G-08 end to
+// end: a sample older than the throughput retention window is not returned even
+// when the request asks for it, while a sample inside the window is.
+func TestMetricsHandlers_RealtimeThroughputIsBoundedByRetention(t *testing.T) {
+	mgr := newTestMetricsManagerWithRetention(t, metrics.RetentionPolicy{ThroughputSeconds: 3600})
+
+	now := time.Now()
+	mgr.ThroughputRing().Push(metrics.RealtimeSample{Timestamp: now.Add(-24 * time.Hour), IngressBPS: 1})
+	mgr.ThroughputRing().Push(metrics.RealtimeSample{Timestamp: now, IngressBPS: 2})
+
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/v1/metrics/realtime/throughput?from=1970-01-01T00:00:00Z", nil)
+	rec := httptest.NewRecorder()
+	HandleRealtimeThroughput(mgr).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal body: %v", err)
+	}
+	items, ok := body["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items: got %T len=%d, want len=1 (only the sample inside the retention window)", body["items"], len(items))
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("item type: got %T", items[0])
+	}
+	if item["ingress_bps"] != float64(2) {
+		t.Fatalf("ingress_bps: got %v, want 2 (the old sample must be clamped away)", item["ingress_bps"])
+	}
+}

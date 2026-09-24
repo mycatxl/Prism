@@ -20,8 +20,10 @@ import (
 // Audit logging (WP04 §4.7).
 //
 // Every successful management write (POST, PUT, PATCH, DELETE, including the
-// /actions/* routes) is appended to the audit_log table. Only the key names of
-// the request body are recorded, never the values.
+// /actions/* routes and the token-path task actions) is appended to the
+// audit_log table. Only the key names of the request body are recorded, never
+// the values, and path parameters that carry a credential are not recorded at
+// all.
 const (
 	auditRetentionDays   = 90
 	auditMaxEntries      = 100000
@@ -117,13 +119,28 @@ func auditAction(r *http.Request) string {
 	return r.Method + " " + pattern
 }
 
-// auditTarget records the request's path parameter values.
+// auditCredentialParams lists the path parameter names whose value is a
+// credential. The value is never copied into the audit trail: the token-path
+// task routes carry the proxy token in the path, so recording it would put the
+// token into state.db (where an operator lists the log back).
+var auditCredentialParams = map[string]bool{
+	"token":    true,
+	"secret":   true,
+	"password": true,
+	"apikey":   true,
+	"api_key":  true,
+}
+
+// auditTarget records the request's non-credential path parameter values.
 func auditTarget(r *http.Request) string {
 	if r == nil || r.Pattern == "" {
 		return ""
 	}
 	parts := make([]string, 0, 4)
 	for _, name := range auditPatternParamNames(r.Pattern) {
+		if auditCredentialParams[strings.ToLower(name)] {
+			continue
+		}
 		if value := r.PathValue(name); value != "" {
 			parts = append(parts, name+"="+value)
 		}
