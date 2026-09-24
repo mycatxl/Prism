@@ -62,7 +62,7 @@ npm run lint
 npm run build
 ```
 
-`test:config` 验证默认端口、新旧环境变量覆盖、危险 target 拒绝、深链接、静态文件边界、分块请求体限制，以及凭证不会被自动注入。浏览器回归位于 scripts/，默认启动根目录 `bin/prism standalone`，也可用 `PRISM_TEST_BACKEND` 指定二进制，旧 `PRISMX_TEST_BACKEND` 继续兼容。
+`test:config` 验证默认端口、新旧环境变量覆盖、危险 target 拒绝、深链接、静态文件边界、分块请求体限制，以及凭证不会被自动注入。浏览器回归位于 scripts/，默认启动根目录 `bin/prism`（无子命令；`standalone` 是 WP03 之前的旧入口，已不存在），也可用 `PRISM_TEST_BACKEND` 指定二进制，旧 `PRISMX_TEST_BACKEND` 继续兼容。
 
 本次已接入的是 Resin 现有节点、订阅、平台、探测、接入点、日志和设置 API。新增信誉评分、住宅类型、同出口优先级与 rotate 服务仍属后端设计，当前前端不伪造这些结果。
 
