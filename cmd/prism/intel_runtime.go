@@ -40,6 +40,19 @@ const intelGeoDirName = "geo"
 // intelHTTPTimeout bounds one online data source request (host side only).
 const intelHTTPTimeout = 15 * time.Second
 
+// intelEgressTraceURL returns the egress trace target the intel probe must use.
+//
+// It reads the same runtime setting as the main egress probe, so a deployment
+// that points Prism at a self-hosted (or loopback) trace endpoint gets the same
+// behaviour from the intel pipeline. An empty result means "use the package
+// default", which is what the probe already does when the field is empty.
+func (a *prismApp) intelEgressTraceURL() string {
+	if a == nil || a.runtimeCfg == nil {
+		return ""
+	}
+	return strings.TrimSpace(runtimeConfigSnapshot(a.runtimeCfg).EgressTraceURL)
+}
+
 // initIntelJobs wires the intel store, the in-memory projection and the batch
 // executor into the running application (assembly step 12).
 func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.Store) error {
@@ -48,9 +61,21 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	}
 	a.stateEngine = engine
 
+	// The intel probe follows the same runtime setting as the main egress probe,
+	// so pointing Prism at a self-hosted trace endpoint (or running fully offline
+	// against a loopback one) applies to both. Leaving these empty would keep
+	// this probe on the compiled-in Cloudflare default while the main probe
+	// honoured the configuration.
+	//
+	// The value is read here rather than through a callback because egress.Probe
+	// takes a plain string; a later change of the setting takes effect on the
+	// next start, which is the same contract the offline smoke run relies on.
+	traceURL := a.intelEgressTraceURL()
 	prober := &egress.Probe{
 		Fetcher: a.topoRuntime.outboundMgr,
 		Store:   intelStore,
+		URLv4:   traceURL,
+		URLv6:   traceURL,
 		ProbeEgressSync: func(_ context.Context, hash node.Hash) error {
 			if a.topoRuntime.probeMgr == nil {
 				return nil
@@ -416,15 +441,13 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 		selected[trimmed] = struct{}{}
 	}
 
-	if a == nil || a.topoRuntime == nil || a.topoRuntime.pool == nil {
-		for _, hash := range scope.NodeHashes {
-			add(hash)
-		}
-		if len(selected) > maxIntelScopeNodes {
-			return nil, fmt.Errorf("%w: %d > %d", jobs.ErrTooManyNodes, len(selected), maxIntelScopeNodes)
-		}
-		return scopeHashes(selected), nil
-	}
+	// A missing pool is not a reason to skip the subscription branch: that branch
+	// reads state.db, not the pool. Only the pool-backed selectors (all, filter,
+	// platform ids) need it, and those are guarded where they are used below.
+	// Returning early here used to drop subscription scopes entirely, so a job
+	// created with {subscription_ids:[x]} resolved to an empty scope and silently
+	// did nothing.
+	hasPool := a != nil && a.topoRuntime != nil && a.topoRuntime.pool != nil
 
 	for _, hash := range scope.NodeHashes {
 		add(hash)
@@ -440,9 +463,14 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 	// Reading len(scope.Filter) instead would treat any non-empty map as a
 	// narrowing request.
 	hasFilter := filter.constrained()
+	// keep decides whether a node found through a selector passes the filter. It
+	// needs the pool, so without one it can only answer "no filter, keep".
 	keep := func(hash string) bool {
 		if !hasFilter {
 			return true
+		}
+		if !hasPool {
+			return false
 		}
 		parsed, err := node.ParseHex(hash)
 		if err != nil {
@@ -459,7 +487,7 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 	// below is skipped and only the explicit selectors contribute. The walk stops
 	// one node past the bound so the limit error is always reported instead of a
 	// silent truncation.
-	if scope.All || hasFilter {
+	if hasPool && (scope.All || hasFilter) {
 		a.topoRuntime.pool.Range(func(hash node.Hash, entry *node.NodeEntry) bool {
 			if filter.matches(entry) {
 				add(hash.String())
@@ -485,6 +513,13 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 			if _, ok := wanted[link.SubscriptionID]; !ok {
 				continue
 			}
+			// A persisted link can carry a hash that is not a real node hash (a
+			// hand-edited cache.db, a legacy row). Such a hash would become a job
+			// item that can never resolve, so it is dropped here exactly like an
+			// explicit node_hashes entry is rejected above.
+			if _, err := node.ParseHex(strings.TrimSpace(link.NodeHash)); err != nil {
+				continue
+			}
 			if !keep(link.NodeHash) {
 				continue
 			}
@@ -492,7 +527,7 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 		}
 	}
 
-	if len(scope.PlatformIDs) > 0 {
+	if hasPool && len(scope.PlatformIDs) > 0 {
 		for _, platformID := range scope.PlatformIDs {
 			plat, ok := a.topoRuntime.pool.GetPlatform(strings.TrimSpace(platformID))
 			if !ok {
