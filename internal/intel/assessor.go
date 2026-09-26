@@ -228,7 +228,7 @@ func (a *Assessor) loadEvidence(ctx context.Context, ip netip.Addr) ([]quality.E
 			}
 			continue
 		}
-		ev, err := evidenceFromRow(row)
+		ev, err := EvidenceFromRow(row)
 		if err != nil {
 			a.logf("[intel] decode evidence %s/%s: %v", row.IP, provider, err)
 			continue
@@ -238,8 +238,13 @@ func (a *Assessor) loadEvidence(ctx context.Context, ip netip.Addr) ([]quality.E
 	return evidence, failed, nil
 }
 
-// evidenceFromRow decodes one stored row into the normalised evidence shape.
-func evidenceFromRow(row store.Evidence) (quality.Evidence, error) {
+// EvidenceFromRow decodes one stored evidence row into the normalised
+// quality.Evidence shape.
+//
+// It is exported because the legacy /api/v1/quality/* alias surface maps intel
+// rows back onto quality.Summary (WP08 §9), and re-deriving the same
+// normalisation there would be a second implementation of this contract.
+func EvidenceFromRow(row store.Evidence) (quality.Evidence, error) {
 	var ev quality.Evidence
 	raw := row.NormalizedJSON
 	if raw != "" {

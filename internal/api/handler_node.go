@@ -298,6 +298,9 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 		// from the in-memory projection.
 		page := PaginateSlice(nodes, pg)
 		cp.FillNodeIntelEgress(r.Context(), page)
+		// WP08 §9: the per-provider quality evidence of the page, in one batched
+		// query. The assessment itself already came from the projection.
+		cp.FillNodeQualityEvidence(r.Context(), page)
 		WriteJSON(w, http.StatusOK, nodeListPageResponse{
 			Items:                  page,
 			Total:                  len(nodes),
@@ -324,6 +327,7 @@ func HandleGetNode(cp *service.ControlPlaneService) http.HandlerFunc {
 		}
 		items := []service.NodeSummary{*n}
 		cp.FillNodeIntelEgress(r.Context(), items)
+		cp.FillNodeQualityEvidence(r.Context(), items)
 		WriteJSON(w, http.StatusOK, items[0])
 	}
 }

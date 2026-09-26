@@ -2,11 +2,8 @@
 package service
 
 import (
-	"context"
-	"net/netip"
 	"time"
 
-	"prism/internal/inspection"
 	"prism/internal/node"
 	"prism/internal/probe"
 	"prism/internal/quality"
@@ -27,26 +24,18 @@ type ProbeManager interface {
 	ProbeLatencySync(hash node.Hash) (*probe.LatencyProbeResult, error)
 }
 
-// InspectionManager interface for quality inspection operations.
+// RequestResult holds the result of a legacy quality request
+// (POST /api/v1/quality/ip/{ip}/actions/probe and the two node actions).
 //
-// *inspection.Manager satisfies it directly: the lossy adapter that used to
-// project inspection.Status onto a partial service.Status is gone, so the
-// /api/v1/quality/status wire shape stays identical to the WebUI contract.
-type InspectionManager interface {
-	Snapshot(ip netip.Addr) quality.Summary
-	List(query string) []quality.Summary
-	Request(ctx context.Context, ip netip.Addr, force bool) (inspection.RequestResult, error)
-	Status() inspection.Status
-}
-
-// WP08 wires the intel-backed inspection manager; the concrete manager must
-// satisfy this interface without a lossy projection adapter.
-var _ InspectionManager = (*inspection.Manager)(nil)
-
-// RequestResult holds the result of an inspection request.
+// The legacy InspectionManager interface and its projection adapter are gone:
+// WP08 §8 replaced the in-memory inspection manager with intel.db, and
+// internal/service/control_plane_quality.go projects the intel rows directly.
 type RequestResult struct {
 	Quality  quality.Summary `json:"quality"`
 	Action   string          `json:"action"`
 	Queued   bool            `json:"queued"`
 	Warnings []string        `json:"warnings,omitempty"`
+	// JobID is the intel job created by the node actions (WP08 §9). It is empty
+	// for the per-IP probe, which enqueues provider lookups instead of a job.
+	JobID string `json:"job_id,omitempty"`
 }

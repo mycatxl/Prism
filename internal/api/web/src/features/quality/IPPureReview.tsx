@@ -29,6 +29,9 @@ export function IPPureReviewPanel({ nodeHash, nodeIP, ready }: { nodeHash: strin
   const band = purityBand(score);
   const expired = evidence && Date.parse(evidence.valid_until) <= now;
   const sameExit = result?.matches_node_ip && evidence?.ip === nodeIP;
+  // WP08 §9: the review waits up to 15 seconds for the evidence; a 202 means the
+  // intel job is still running, so the panel says so instead of showing a score.
+  const queued = Boolean(result?.queued && !evidence);
   const errorCode = review.error && "code" in review.error ? String(review.error.code) : "";
   return <section className="ippure-review" aria-label={t("IPPure 节点复核")}>
     <div className="quality-detail-heading">
@@ -45,6 +48,7 @@ export function IPPureReviewPanel({ nodeHash, nodeIP, ready }: { nodeHash: strin
     </div>
     {!nodeIP && <p className="quality-explanation">{t("请先完成出口探测，再通过节点查询 IPPure。")}</p>}
     {review.error && <p className="quality-inline-warning" role="alert"><AlertCircle size={14} />{t(failures[errorCode] || "复核失败，请检查节点连接后重试")}</p>}
+    {queued && <p className="quality-explanation" role="status">{t("已创建复核任务，仍在等待节点返回；稍后会自动刷新。")}{result?.job_id ? <span> #{result.job_id.slice(0, 8)}</span> : null}</p>}
     {evidence && <div className="ippure-result" aria-live="polite">
       <div className="ippure-result-top"><div><span>{t("本次实际出口")}</span><strong>{evidence.ip}</strong></div>
         <Badge variant={sameExit ? "success" : "warning"}>{t(sameExit ? "与节点出口一致" : "与节点记录不同")}</Badge></div>
