@@ -276,6 +276,11 @@ func newTopologyRuntime(
 		return nil, fmt.Errorf("singbox builder: %w", err)
 	}
 	outboundMgr := outbound.NewOutboundManager(pool, singboxBuilder)
+	// Node-admission address policy (PRISM_DENY_PRIVATE_NODES). It is applied
+	// when a node's outbound is built, which is the one point every dial path
+	// passes through, so a node that names loopback, the LAN or a metadata
+	// endpoint is refused no matter how it entered the pool.
+	outboundMgr.SetDenyForbiddenTargets(envCfg.DenyPrivateNodes)
 
 	// 8. Probe manager. SetOnProbeEvent is registered in
 	// startBackgroundServices; WP08 attaches SetOnEgressObserved there as well.
