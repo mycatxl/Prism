@@ -47,8 +47,7 @@ func TestPoolCapacity_BulkImport(t *testing.T) {
 			subID := "capacity-test-sub"
 
 			var m0, m1 runtime.MemStats
-			runtime.GC()
-			runtime.ReadMemStats(&m0)
+			testutil.ReadMemStatsStable(&m0)
 
 			start := time.Now()
 			for i := 0; i < tc.count; i++ {
@@ -58,8 +57,7 @@ func TestPoolCapacity_BulkImport(t *testing.T) {
 			}
 			elapsed := time.Since(start)
 
-			runtime.GC()
-			runtime.ReadMemStats(&m1)
+			testutil.ReadMemStatsStable(&m1)
 
 			// Count nodes by iterating
 			registered := 0
@@ -68,11 +66,10 @@ func TestPoolCapacity_BulkImport(t *testing.T) {
 				return true
 			})
 
-			allocMB := float64(m1.Alloc-m0.Alloc) / 1024 / 1024
-			totalAllocMB := float64(m1.TotalAlloc-m0.TotalAlloc) / 1024 / 1024
-
+			allocMB := testutil.AllocDeltaMB(m0, m1)
+			totalAllocMB := testutil.TotalAllocDeltaMB(m0, m1)
 			t.Logf("Imported %d nodes in %v", registered, elapsed)
-			t.Logf("Memory: Alloc=%.2fMB TotalAlloc=%.2fMB", allocMB, totalAllocMB)
+			t.Logf("Memory: Live=%.2fMB TotalAlloc=%.2fMB", allocMB, totalAllocMB)
 			t.Logf("Throughput: %.0f nodes/sec", float64(tc.count)/elapsed.Seconds())
 
 			if registered != tc.count {
@@ -109,8 +106,7 @@ func TestPoolCapacity_LiveNodeOutboundCreation(t *testing.T) {
 			}
 
 			var m0, m1 runtime.MemStats
-			runtime.GC()
-			runtime.ReadMemStats(&m0)
+			testutil.ReadMemStatsStable(&m0)
 
 			start := time.Now()
 			createdCount := 0
@@ -123,14 +119,14 @@ func TestPoolCapacity_LiveNodeOutboundCreation(t *testing.T) {
 			})
 			elapsed := time.Since(start)
 
-			runtime.GC()
-			runtime.ReadMemStats(&m1)
+			testutil.ReadMemStatsStable(&m1)
 
-			allocMB := float64(m1.Alloc-m0.Alloc) / 1024 / 1024
+			allocMB := testutil.AllocDeltaMB(m0, m1)
+			totalMB := testutil.TotalAllocDeltaMB(m0, m1)
 			fdCount := createdCount // Each noop outbound is lightweight, actual FD count would be higher with real connections
 
 			t.Logf("Created %d outbound connections in %v", createdCount, elapsed)
-			t.Logf("Memory: Alloc=%.2fMB", allocMB)
+			t.Logf("Memory: Live=%.2fMB TotalAlloc=%.2fMB", allocMB, totalMB)
 			t.Logf("Approx FD usage: %d", fdCount)
 
 			if createdCount != tc.count {

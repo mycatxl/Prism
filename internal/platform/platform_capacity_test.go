@@ -57,8 +57,7 @@ func TestPlatformCapacity_FullRebuildLargePool(t *testing.T) {
 			}
 
 			var m0, m1 runtime.MemStats
-			runtime.GC()
-			runtime.ReadMemStats(&m0)
+			testutil.ReadMemStatsStable(&m0)
 
 			start := time.Now()
 			plat.FullRebuild(
@@ -75,14 +74,14 @@ func TestPlatformCapacity_FullRebuildLargePool(t *testing.T) {
 			)
 			elapsed := time.Since(start)
 
-			runtime.GC()
-			runtime.ReadMemStats(&m1)
+			testutil.ReadMemStatsStable(&m1)
 
 			viewSize := plat.View().Size()
-			allocMB := float64(m1.Alloc-m0.Alloc) / 1024 / 1024
+			allocMB := testutil.AllocDeltaMB(m0, m1)
+			totalMB := testutil.TotalAllocDeltaMB(m0, m1)
 
 			t.Logf("Rebuilt platform view with %d nodes in %v", viewSize, elapsed)
-			t.Logf("Memory: Alloc=%.2fMB", allocMB)
+			t.Logf("Memory: Live=%.2fMB TotalAlloc=%.2fMB", allocMB, totalMB)
 			t.Logf("Throughput: %.0f nodes/sec", float64(tc.count)/elapsed.Seconds())
 
 			if viewSize != tc.count {

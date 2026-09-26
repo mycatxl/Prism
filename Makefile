@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend backend-lite test test-race lint protocol-matrix verify test-ui init start clean
+.PHONY: build web backend backend-lite test test-race capacity lint protocol-matrix verify test-ui init start clean
 
 build: web backend
 
@@ -53,6 +53,11 @@ protocol-matrix:
 lint:
 	$(GO) vet -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
 	$(NPM) --prefix $(WEB_DIR) run lint
+capacity:
+	# In-process capacity figures for the platform view, the routing table and the
+	# node pool. Honours testing.Short(), so `go test -short` skips these cases and
+	# the normal verify target stays fast. Recorded results: docs/PERFORMANCE.md.
+	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
 verify: lint test test-race protocol-matrix
 	$(GO) vet -tags '$(TAGS_BASE)' ./cmd/... ./internal/...
