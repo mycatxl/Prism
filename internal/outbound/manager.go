@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 	"unicode/utf8"
 
 	"github.com/sagernet/sing-box/adapter"
+	"prism/internal/addrpolicy"
 	"prism/internal/netutil"
 	"prism/internal/node"
 )
@@ -65,15 +67,116 @@ func buildOutboundSafely(builder OutboundBuilder, rawOptions json.RawMessage) (o
 type OutboundManager struct {
 	pool    PoolAccessor
 	builder OutboundBuilder
+	// denyForbiddenTargets enables the node-admission address policy: a node
+	// whose server names loopback, the LAN or a cloud metadata endpoint is
+	// refused before an outbound is built for it. Off by default, so a deployment
+	// that intentionally routes through a private node keeps working.
+	denyForbiddenTargets bool
 }
 
 func NewOutboundManager(pool PoolAccessor, builder OutboundBuilder) *OutboundManager {
 	return &OutboundManager{pool: pool, builder: builder}
 }
 
+// SetDenyForbiddenTargets turns the node-admission address policy on or off.
+// It must be called before the pool starts serving traffic.
+func (m *OutboundManager) SetDenyForbiddenTargets(enabled bool) {
+	if m == nil {
+		return
+	}
+	m.denyForbiddenTargets = enabled
+}
+
 func (m *OutboundManager) isLiveEntry(hash node.Hash, entry *node.NodeEntry) bool {
 	current, ok := m.pool.GetEntry(hash)
 	return ok && current == entry
+}
+
+// forbiddenTargetReason applies the node-admission address policy to a node.
+//
+// It is the second gate over node targets, and the one that matters for nodes
+// that entered the pool by some route other than the public-source collector (a
+// hand-added subscription, a restored state.db). The collector screens untrusted
+// gist content lexically; this screens the *resolved* target of anything that is
+// about to be dialled, which is what catches a public-looking hostname whose DNS
+// answer is loopback ("127.0.0.1.nip.io").
+//
+// The policy is opt-in. A deployment that deliberately routes through a node on
+// a private network (a home server, a jump host) keeps working with it off.
+func (m *OutboundManager) forbiddenTargetReason(entry *node.NodeEntry) (string, bool) {
+	if m == nil || !m.denyForbiddenTargets || entry == nil || len(entry.RawOptions) == 0 {
+		return "", false
+	}
+	hosts := nodeServerHosts(entry.RawOptions)
+	if len(hosts) == 0 {
+		// No server field means the builder will refuse it anyway; nothing to
+		// classify here.
+		return "", false
+	}
+	for _, host := range hosts {
+		if denied, reason := addrpolicy.NodeTargetIsForbidden(context.Background(), host, nil); denied {
+			return reason + ": " + host, true
+		}
+	}
+	return "", false
+}
+
+// nodeServerHosts returns every "server" value a node document carries, at any
+// nesting depth.
+//
+// A single node can name more than one target: a chain names its first hop in the
+// main object and the next hop in a dep, and an endpoint names its peer. Every one
+// of them is a dial target, so every one of them is classified. The walk is
+// depth-bounded so a hostile document cannot drive unbounded recursion.
+func nodeServerHosts(raw json.RawMessage) []string {
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return nil
+	}
+	hosts := make([]string, 0, 2)
+	collectNodeServerHosts(document, 0, &hosts)
+	return hosts
+}
+
+// maxNodeTargetDepth bounds nodeServerHosts' walk. A node document nests a few
+// levels (envelope, main, transport, tls); anything deeper is not a node.
+const maxNodeTargetDepth = 16
+
+func collectNodeServerHosts(value any, depth int, out *[]string) {
+	if depth > maxNodeTargetDepth {
+		return
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		// "server" is the dial target of a proxy outbound; a wireguard endpoint
+		// names the same thing as a peer's "address".
+		keys := []string{"server"}
+		if isWireGuardPeer(typed) {
+			keys = append(keys, "address")
+		}
+		for _, key := range keys {
+			if host, ok := typed[key].(string); ok && strings.TrimSpace(host) != "" {
+				*out = append(*out, host)
+			}
+		}
+		for _, entry := range typed {
+			collectNodeServerHosts(entry, depth+1, out)
+		}
+	case []any:
+		for _, entry := range typed {
+			collectNodeServerHosts(entry, depth+1, out)
+		}
+	}
+}
+
+// isWireGuardPeer reports whether object is a wireguard endpoint peer, whose
+// dial target lives in "address" rather than "server".
+func isWireGuardPeer(object map[string]any) bool {
+	if _, ok := object["public_key"]; !ok {
+		return false
+	}
+	_, ok := object["address"]
+	return ok
 }
 
 // EnsureNodeOutbound idempotently creates and stores an outbound for a node.
@@ -86,6 +189,10 @@ func (m *OutboundManager) EnsureNodeOutbound(hash node.Hash) {
 	}
 	// Fast path: already has outbound.
 	if entry.Outbound.Load() != nil {
+		return
+	}
+	if reason, denied := m.forbiddenTargetReason(entry); denied {
+		entry.SetLastError(boundNodeError("outbound denied: " + reason))
 		return
 	}
 

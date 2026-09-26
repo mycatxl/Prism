@@ -118,6 +118,7 @@ prints the effective values with every secret masked.
 | `PRISM_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is trusted for client-IP limiting |
 | `PRISM_PROXY_AUTH_FAIL_LIMIT` | `0` | Failed proxy authentications per minute per IP. Covers the HTTP forward proxy and CONNECT (`Proxy-Authorization`), the reverse-proxy path token and the SOCKS5 username/password check; `0` disables proxy-entry limiting. `/api/*` and `/sub/{token}` keep their own limiters |
 | `PRISM_DIRECT_DENY_PRIVATE` | `false` | Refuse loopback, private, link-local, CGNAT, reserved and cloud-metadata targets on every local dial path (reverse-proxy bypass, forward HTTP, CONNECT, SOCKS5). Opt-in: with the default `false` the local dial paths carry no address policy (upstream Resin behaviour) |
+| `PRISM_DENY_PRIVATE_NODES` | `false` | Refuse a **node** whose own `server` names loopback, the LAN, a link-local address or a cloud metadata endpoint. A name that is not a literal is resolved, so a public-looking hostname whose DNS answer is private (`127.0.0.1.nip.io`, `sslip.io`, `xip.io`, …) is refused as well; a name that resolves only into a transparent proxy's fake-IP pool (`198.18.0.0/15`) is allowed, because on such a machine that answer says nothing about the target. Off by default: a deployment may deliberately route through a private node |
 
 ### Usage
 

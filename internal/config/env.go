@@ -71,6 +71,21 @@ type EnvConfig struct {
 	// DirectDenyPrivate refuses loopback, private and link-local targets on the
 	// local direct reverse-proxy path (PRISM_DIRECT_DENY_PRIVATE).
 	DirectDenyPrivate bool
+	// DenyPrivateNodes refuses a node whose server names loopback, the LAN, a
+	// link-local address or a cloud metadata endpoint, resolving the name when it
+	// is not a literal (PRISM_DENY_PRIVATE_NODES).
+	//
+	// It is separate from DirectDenyPrivate because the two protect different
+	// things: DirectDenyPrivate governs the direct (bypass) branch of the local
+	// proxies, while this governs the nodes themselves. A deployment that
+	// deliberately routes through a node on a private network (a home server, a
+	// jump host) wants the second one off and does not care about the first.
+	//
+	// A name that resolves only into the transparent-proxy fake-IP pool
+	// (198.18.0.0/15) is not refused: on a machine running such a proxy that is
+	// what every name resolves to, so the answer carries no information about the
+	// target.
+	DenyPrivateNodes bool
 	// ProxyAuthFailLimit enables the same failure limiter on the proxy entry
 	// points. 0 disables it, which keeps the upstream Resin behaviour.
 	ProxyAuthFailLimit int
@@ -170,6 +185,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.ProxyBypassRules = envDelimitedStringSlice("PRISM_PROXY_BYPASS", []string{})
 	cfg.TrustedProxies = envDelimitedStringSlice("PRISM_TRUSTED_PROXIES", []string{})
 	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", false, &errs)
+	cfg.DenyPrivateNodes = envBool("PRISM_DENY_PRIVATE_NODES", false, &errs)
 	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 0, &errs)
 
 	// --- Request log ---

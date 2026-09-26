@@ -6,11 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"strings"
+	"net/netip"
 	"sync"
 	"time"
 
+	"prism/internal/addrpolicy"
 	"prism/internal/netutil"
 	"prism/internal/node"
 )
@@ -596,96 +596,33 @@ func validNodeTargets(value any, depth int) bool {
 
 // validHost accepts a public IP literal or a dotted public hostname.
 //
-// A single-label name is rejected on purpose: it resolves through the resolver's
-// search domains, which is how a node ends up talking to whatever the host's
-// local network calls "gateway". Names whose every label is numeric are rejected
-// too, because they are the integers and short forms that inet_aton accepts for
-// an IPv4 address ("2130706433", "127.1") — net.ParseIP does not recognise
-// them, so without this rule they would pass as ordinary hostnames and then
-// resolve to loopback.
+// The rules live in internal/addrpolicy, which the outbound admission path also
+// uses: the two gates must agree, or a node that the collector accepts could be
+// refused (or worse, accepted) by the other for a different reason. See
+// addrpolicy.HostIsForbiddenLexically for what each rule rejects and why.
 func validHost(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
-	if host == "" || isForbiddenIP(host) || isForbiddenHostname(host) {
-		return false
-	}
-	if strings.ContainsAny(host, " \t\r\n/@") {
-		return false
-	}
-	// A public IP literal is a valid target and is already classified above.
-	if net.ParseIP(host) != nil {
-		return true
-	}
-	if len(host) > 253 || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
-		return false
-	}
-	labels := strings.Split(host, ".")
-	if len(labels) < 2 {
-		return false
-	}
-	numericLabels := 0
-	for _, label := range labels {
-		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
-			return false
-		}
-		// "0x7f.0.0.1" is another inet_aton spelling of 127.0.0.1.
-		if strings.HasPrefix(label, "0x") {
-			return false
-		}
-		for _, r := range label {
-			if !(r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
-				return false
-			}
-		}
-		if !strings.ContainsFunc(label, func(r rune) bool { return r < '0' || r > '9' }) {
-			numericLabels++
-		}
-	}
-	// Every label numeric: an IPv4 address written in a form net.ParseIP rejects.
-	return numericLabels != len(labels)
+	return !addrpolicy.HostIsForbiddenLexically(host)
 }
 
 // isForbiddenIP reports whether host is an IP literal that must never be a node
-// target. net.IP's helpers cover most of it; the extra cases are the ranges that
-// are neither "Private" nor "LinkLocal" to net.IP but behave like both:
-//   - 100.64.0.0/10, carrier-grade NAT (RFC 6598);
-//   - 64:ff9b::/96, NAT64 (RFC 6052), which maps straight back to an IPv4
-//     address and therefore reaches whatever that address reaches;
-//   - the cloud metadata endpoints that live outside those ranges
-//     (Alibaba 100.100.100.200, AWS IMDSv2 over IPv6 fd00:ec2::254).
+// target.
 func isForbiddenIP(host string) bool {
-	ip := net.ParseIP(host)
-	if ip == nil {
+	addr, err := netip.ParseAddr(addrpolicy.NormalizeHost(host))
+	if err != nil {
 		return false
 	}
-	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() ||
-		ip.IsInterfaceLocalMulticast() || ip.Equal(net.IPv4bcast) {
-		return true
-	}
-	return cgnatPrefix.Contains(ip) || nat64Prefix.Contains(ip) ||
-		ip.Equal(metadataIPv4) || ip.Equal(metadataIPv6)
+	return addrpolicy.AddrIsForbidden(addr)
 }
 
-var (
-	// cgnatPrefix is 100.64.0.0/10, the RFC 6598 shared address space.
-	cgnatPrefix = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
-	// nat64Prefix is 64:ff9b::/96, the RFC 6052 NAT64 well-known prefix.
-	nat64Prefix = net.IPNet{IP: net.ParseIP("64:ff9b::"), Mask: net.CIDRMask(96, 128)}
-	// metadataIPv4 / metadataIPv6 are cloud instance-metadata endpoints.
-	metadataIPv4 = net.ParseIP("100.100.100.200")
-	metadataIPv6 = net.ParseIP("fd00:ec2::254")
-)
-
 func isForbiddenHostname(host string) bool {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	switch host {
-	case "localhost", "localhost.localdomain", "local", "intranet", "internal", "router", "gateway", "home", "nas", "printer", "broadcasthost", "ip6-allnodes", "ip6-allrouters":
+	normalized := addrpolicy.NormalizeHost(host)
+	if normalized == "" {
 		return true
 	}
-	for _, suffix := range []string{".localhost", ".local", ".localdomain", ".home", ".home.arpa", ".lan", ".internal", ".intranet", ".corp", ".private"} {
-		if strings.HasSuffix(host, suffix) {
-			return true
-		}
+	// A name is forbidden when the shared policy refuses it and it is not an
+	// address literal (that case belongs to isForbiddenIP).
+	if _, err := netip.ParseAddr(normalized); err == nil {
+		return false
 	}
-	return false
+	return addrpolicy.HostIsForbiddenLexically(normalized)
 }

@@ -286,7 +286,76 @@ Verified by:
   (`internal/proxy/reverse_wp04_test.go`).
 - `TestReverseProxy_E2ESuccess` and `TestIsValidHost`
   (`internal/proxy/reverse_wp04_test.go`) pin the restored upstream host
+  (`internal/proxy/reverse_wp04_test.go`) pin the restored upstream host
   validation.
+
+### 1.9 Node target policy (`PRISM_DENY_PRIVATE_NODES`)
+
+`PRISM_DIRECT_DENY_PRIVATE` (1.7) governs the *local direct* branches, i.e. where
+Prism itself dials a request target. It deliberately does not touch the nodes: a
+private target reached through a remote node is that node's network. That left a
+different gap — a node whose own `server` names loopback or the LAN, which Prism
+would happily dial as the first hop.
+
+`PRISM_DENY_PRIVATE_NODES=true` (default `false`) closes it. The check runs in
+`OutboundManager.EnsureNodeOutbound` (`internal/outbound/manager.go`), which is
+the one point every dial path passes through: the probe manager, the batch jobs
+and the routing path all build their outbound there. A refused node gets no
+outbound and records `outbound denied: <reason>: <host>` in its node error, which
+the node APIs expose.
+
+The rules live in `internal/addrpolicy` and are shared with the public-source
+collector, so the two gates cannot drift apart:
+
+- **lexical** (`HostIsForbiddenLexically`): every spelling of an address that
+  `inet_aton` accepts but `net.ParseIP` does not (`2130706433`, `127.1`,
+  `0x7f.0.0.1`), all-numeric labels, single-label names (they resolve through the
+  resolver's search domains), the reserved suffixes (`.local`, `.lan`,
+  `.internal`, `.home.arpa`, …) and the address classes of 1.7;
+- **resolved** (`NodeTargetIsForbidden`): a name that is not a literal is
+  resolved and every answer is classified. This is what catches the wildcard-DNS
+  services — `127.0.0.1.nip.io`, `10.0.0.1.sslip.io`, `xip.io`, `traefik.me`,
+  `localtest.me` — which are ordinary public hostnames by every lexical rule and
+  only reveal themselves in the DNS answer. A name that resolves to a public
+  *and* a private address is refused, because the dialer may pick either.
+
+Two deliberate properties:
+
+- **fail-closed**: a name that does not resolve is refused. A node that cannot be
+  resolved cannot be dialled either, and an unresolved name may resolve to a
+  denied address a moment later.
+- **fake-IP answers are inconclusive, not denied**: a machine running a
+  transparent proxy in fake-IP mode (Clash, sing-box, mihomo, Surge) answers
+  *every* proxied name from `198.18.0.0/15`. Treating that as evidence of a
+  private target would refuse every node on such a machine — including the local
+  test nodes `scripts/smoke.sh` uses. When resolution yields only fake-IP
+  addresses the check returns "cannot classify" and allows the target; a literal
+  `198.18.x.x` in the node document is still refused, and a name that answers
+  with a fake IP *and* a real private address is still refused.
+
+The switch is off by default because a deployment may deliberately route through
+a node on a private network (a home server, a jump host). Turning it on is the
+recommended setting for a node pool fed by public sources.
+
+Verified by:
+
+- `TestAddrIsForbidden` (the address table, including CGNAT, NAT64, the cloud
+  metadata addresses and IPv4-mapped forms), `TestHostIsForbiddenLexically` (the
+  spelling rules) and `TestNormalizeHost` (`internal/addrpolicy/`).
+- `TestNodeTargetIsForbidden_CatchesWildcardDNS` — `nip.io`, `sslip.io`,
+  `xip.io`, `traefik.me`, `localtest.me`, and the public+private dual answer.
+- `TestNodeTargetIsForbidden_FakeIPIsInconclusive` (the carve-out, plus the
+  literal and dual-answer cases it must not mask) and
+  `TestNodeTargetIsForbidden_FailsClosed` (an unresolvable name is refused, and
+  no resolver call happens for a literal).
+- `TestEnsureNodeOutbound_DeniesForbiddenTargets` (nine node shapes, including a
+  chain whose *dep* is loopback), `TestEnsureNodeOutbound_PolicyIsOptIn` (the
+  default keeps a private node working) and
+  `TestEnsureNodeOutbound_PublicTargetBuilds`
+  (`internal/outbound/target_policy_test.go`).
+- `TestNodeServerHosts` and `TestNodeServerHosts_DepthBound` pin the extraction of
+  every dial target from a node document (a wireguard endpoint names its target
+  in the peer's `address`, not `server`) and the depth bound on the walk.
 
 ### 1.8 Token material: file mode and no silent overwrite
 
