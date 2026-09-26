@@ -124,3 +124,33 @@ outbound / endpoint 注册表并回归协议矩阵。补丁位升级（1.14.0 �
 **何时重新评估**：任何一次 `-race` 运行再次命中 `github.com/sagernet/sing-box/route`。
 
 **相关记录**：`docs/PROTOCOLS.md` §10.5。
+
+## D-4 mihomo **导出格式**已用真实 mihomo 二进制实测（与 D-1 无关）
+
+**决策**：mihomo 继续作为**导出格式**（`format=mihomo`）存在，但**不作为内核**（见 D-1）。本条目只记录
+「导出的 YAML 能否被真实 mihomo 解析」这一外部验证的结论。
+
+**日期**：2026-09-27。
+
+**验证方式（实测，不是读代码推断）**：下载 mihomo 官方二进制，用它自己的 `mihomo -t -d <dir> -f <config>`
+（只做配置解析与初始化，不监听、不出网）校验 Prism 的真实导出：
+
+1. 取两份真实订阅（802,810 B / 776,662 B，Clash YAML 格式），经 `subscription.ParseWithReport` +
+   `export.Export(..., FormatMihomo, ...)` 生成配置。结果：**280 / 235 个节点，导出 0 跳过**。
+2. 用 **mihomo v1.19.31**（2026-09-14 构建）校验两份导出：**两份都 `test is successful`，退出码 0**。
+
+**发现并澄清的两点**：
+
+- **`anytls` 需要较新的 mihomo。** v1.19.2（2025-02）报 `unsupport proxy type: anytls`；
+  v1.19.31（2026-09）正常接受。这不是 Prism 的导出缺陷，而是旧版 mihomo 尚无该类型。
+  mihomo 侧的 `anytls` 字段为 `password` / `server` / `port` + TLS 字段。
+- **hysteria 的 `up`/`down` 两种拼写都被接受。** 实测 6 种形态（hysteria2 与 hysteria v1 × 整数 /
+  数字字符串 / 带单位字符串）全部 `OK`；作为敏感性对照，`up: true`（bool）与 `up: {a: 1}`（map）
+  确实被拒（`expected type 'string', got unconvertible type 'bool'`）。因此
+  `clashHysteria2` 输出整数、`clashHysteria` 输出字符串（含单位）**都是正确**的，无需统一。
+
+**残留的非阻塞项**：`mihomo -t` 只校验配置结构与类型，不验证节点能否真正连通（那需要出网并实际拨号，
+属于订阅端到端测试的范围，见 `docs/release-notes/v3.0.0.md` §5）。`up: "abc"` 这类语义无效但类型正确的
+值不会被 `-t` 拦住——Prism 只在输入确实是数字时生成 `up`/`down`，所以不会产生这种值。
+
+**何时重新评估**：mihomo 更改 proxy 类型名或字段名时；或 Prism 新增需要导出的协议时，重跑同一套校验。
