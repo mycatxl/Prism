@@ -66,7 +66,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | 400 `PAYLOAD_TOO_LARGE` | 请求体超过 `PRISM_API_MAX_BODY_BYTES`（`errors.go` `writePayloadTooLarge`） |
 | 405 `METHOD_NOT_ALLOWED` | `/sub/{token}` 只接受 GET/HEAD（`handler_subscription_token.go`） |
 | 429 `RATE_LIMITED` | 管理面登录失败限流（§1）或 `/sub/{token}` 自己的限流（§4） |
-| 502 / 429 | 仅 `POST /api/v1/nodes/{hash}/actions/review-ippure`：IPPure 供应商错误为 502，`IPPURE_LIMIT` 为 429 并带 `Retry-After`（`handler_quality.go` `HandleReviewIPPure`） |
+| 502 / 429 | 仅 `POST /api/v1/nodes/{hash}/actions/review-ippure`：IPPure 数据源在 15 秒等待窗内未返回证据时是 **202** + `queued=true` + `job_id`（轮询 `GET /api/v1/intel/jobs/{id}`）；供应商自身失败不再直接映射到 HTTP 状态，而是记录在证据行里（`error_code`，见 §13） |
 | 503 `UNAVAILABLE` | 指标端点里运行时统计尚未就绪（`handler_metrics.go`） |
 
 ## 3. 请求体、查询参数与分页约定
@@ -150,8 +150,8 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | GET | `/api/v1/nodes/export` | 导出节点文件 | 见 §17 |
 | POST | `/api/v1/nodes/{hash}/actions/probe-egress` | 同步出口探测（阻塞） | 200 `{"egress_ip","region?","latency_ewma_ms"}`。失败分支：hash 非十六进制 → 400 `node_hash: invalid format`；节点不存在 → 404；探测本身失败（出站未就绪、无 fetcher 等）→ **500** `INTERNAL`「egress probe failed」（`control_plane_nodes.go` 用 `internal()` 包装，不区分 5xx 原因） |
 | POST | `/api/v1/nodes/{hash}/actions/probe-latency` | 同步延迟探测（阻塞） | 200 `{"latency_ewma_ms"}`；失败分支与 probe-egress 相同（400 / 404 / 500） |
-| POST | `/api/v1/nodes/{hash}/actions/probe-quality` | 按节点当前出口 IP 请求质量检测 | `{"quality":{…},"queued":bool,"warnings?":[…]}`；`queued=true` 时返回 **202**（`handler_quality.go`）；出口 IP 缺失或超过 15 分钟会先做一次同步出口探测 |
-| POST | `/api/v1/nodes/{hash}/actions/review-ippure` | 用该节点**当前**出口发起一次 IPPure 复核 | `Cache-Control: no-store`；结果含 `matched_node_ip`，只有匹配时才写入缓存；供应商错误 502、`IPPURE_LIMIT` 429 + `Retry-After`、IPPure 未配置或出站未就绪 → 409 |
+| POST | `/api/v1/nodes/{hash}/actions/probe-quality` | 创建节点的情报任务 | 建 `{kind:"intel", scope:{node_hashes:[hash]}, force:true}`，返回 **202** `{queued:true, job_id:"…"}`（WP08 §9）；hash 非十六进制 → 400，节点不存在 → 404 |
+| POST | `/api/v1/nodes/{hash}/actions/review-ippure` | 用该节点**当前**出口发起一次 IPPure 复核 | `Cache-Control: no-store`；建 `{kind:"intel", providers:["ippure"], scope:{node_hashes:[hash]}, force:true}` 并最多等待 15 秒（WP08 §9）：窗内拿到证据 → **200** 带 `evidence`（`matches_node_ip` 只有在证据 IP 与节点当前出口一致时才为 true）；未拿到 → **202** + `queued=true` + `job_id`，轮询 `GET /api/v1/intel/jobs/{id}`；hash 非十六进制 → 400，节点不存在 → 404 |
 
 `GET /api/v1/nodes` 的查询参数（全部可选，非法值 400，除注明外）：
 
@@ -225,10 +225,12 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 
 | 方法 | 路径 | 用途 | 备注 |
 |---|---|---|---|
-| GET | `/api/v1/quality/status` | 检测子系统状态 | 与 WebUI 契约一致：`enabled`、`known_ips`/`checked_ips`/`low_risk_ips`/`high_risk_ips`/`stale_ips`、`queue_capacity`、`dropped_observations`、`storage_error`、`sources[]`、`manual_sources[]`、`registry_sources[]`。**空列表永远是 `[]`，不是 `null`**（`internal/inspection/manager.go` `Status` 注释 + `ControlPlaneService.QualityStatus`） |
-| GET | `/api/v1/quality/assessments` | 质量评估列表 | `q` 子串匹配 IP、ASN、组织；按最近一次证据时间降序，同时间按 IP 升序；`limit`/`offset` |
-| GET | `/api/v1/quality/ip/{ip}` | 某个 IP 的质量摘要 | IP 非法 → 400；返回 `quality.Summary`（含 `assessment`） |
-| POST | `/api/v1/quality/ip/{ip}/actions/probe` | 手动请求该 IP 的质量检测 | `{"quality":{…},"queued":bool,"warnings?":[…]}`；`queued=true` → **202**。状态码分支见 §21 第 4 条 |
+| GET | `/api/v1/quality/status` | 检测子系统状态 | 与 WebUI 契约一致：`enabled`、`known_ips`/`checked_ips`/`low_risk_ips`/`high_risk_ips`/`stale_ips`、`queue_capacity`、`dropped_observations`、`storage_error`、`sources[]`、`manual_sources[]`、`registry_sources[]`。**空列表永远是 `[]`，不是 `null`**；`storage_error` 永远是字符串（读失败时是 `QUALITY_STORAGE_UNAVAILABLE`，计数器保持上一次的值） |
+| GET | `/api/v1/quality/assessments` | 质量评估列表 | 读 `ip_assessment` 映射为 `quality.Summary`；`q` 子串匹配 IP、ASN、组织与判定；按最近一次证据时间降序，同时间按 IP 升序；`limit`/`offset`。整页证据一次批量查询（`ListEvidenceByIPs`），最多 2000 行 |
+| GET | `/api/v1/quality/ip/{ip}` | 某个 IP 的质量摘要 | IP 非法 → 400；返回 `quality.Summary`（含 `assessment`）。`assessment` 缺失时不臆造，`state` 由证据行推导 |
+| POST | `/api/v1/quality/ip/{ip}/actions/probe` | 手动请求该 IP 的质量检测 | 在**所有**可运行的 online 数据源上以优先级 100 强制入队，返回 `{"quality":{…},"queued":bool}`；`queued=true` → **202**。私网/回环/保留段 → 400（`quality.PublicIP`）；IP 非法 → 400；intel 未启用或**没有任何可运行数据源** → 409。状态码分支见 §21 第 4 条 |
+
+**`/quality/status` 的字段来源**（WP08 §9）：`sources[]` = WP09 kind `online-ip` 的数据源（从本机查询），`manual_sources[]` = kind `via-node`（经被测节点查询，`current_ips` 是可用证据条数），`registry_sources[]` = kind `offline`（随包或下载的离线库，`entries` 是已安装文件数，不消耗额度）。三者都来自 provider registry 的**生效设置**，因此页面上的额度就是流水线实际使用的额度。
 
 ## 14. intel 任务与节点情报
 
@@ -342,19 +344,22 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 3. **`GET /api/v1/intel/jobs/{id}/events` 不走 `AuthMiddleware`**：它接受 `Authorization: Bearer` 或
    `?access_token=`，有自己的常量时间比较与失败计数（`handler_intel.go`）。它的「订阅数过多」错误是
    HTTP **429** + `code=RATE_LIMITED`（§2）。
-4. **`POST /api/v1/quality/ip/{ip}/actions/probe` 的真实分支**（与「私网地址返回 400」的直觉不同）：
+4. **`POST /api/v1/quality/ip/{ip}/actions/probe` 的真实分支**（WP08 §9 之后的重写结果）：该端点现在是 intel 子系统的别名，
+   它在**所有可运行的 online 数据源**（WP09 kind `online-ip`）上以优先级 100 强制入队（`store.EnqueueForce`），
+   然后返回刷新后的 `quality.Summary`。
 
    | 条件 | 结果 |
    |---|---|
-   | `ControlPlaneService.Inspection == nil`（**当前树里就是这个状态**：`internal/service/control_plane_quality.go` 只判断 nil，而全仓库没有任何生产代码给该字段赋值） | **409 CONFLICT**「quality inspection is disabled」——**与 IP 是公网还是私网无关** |
-   | manager 已装配且 `enabled=false`，或 `enabled=true` 但**没有任何已配置的数据源**（`inspection.Manager.Request` 循环里 `Configured` 全为 false → `quality.ErrDisabled`） | 409 CONFLICT「quality inspection is disabled」 |
-   | manager 已装配且 enabled、有已配置数据源，IP 是私网/回环/链路本地/保留段（`quality.PublicIP`） | **400 INVALID_ARGUMENT**「quality inspection requires a public IP address」 |
    | IP 不是合法地址（`netip.ParseAddr` 失败） | 400 INVALID_ARGUMENT「ip: invalid address」 |
+   | IP 是私网/回环/链路本地/保留段（`quality.PublicIP`） | **400 INVALID_ARGUMENT**「quality inspection requires a public IP address」 |
+   | intel 子系统未装配（`ControlPlaneService.Intel == nil`，即 `intel_enabled` 未接线） | 409 CONFLICT「intel subsystem is not available」 |
+   | intel 已装配但 `intel_enabled=false` | 409 CONFLICT「quality inspection is disabled」 |
+   | intel 已启用但**没有任何可运行的 online 数据源**（全部 `Enabled=false`，或 `RequiresKey` 而未配 Key） | 409 CONFLICT「quality inspection is disabled」 |
+   | 至少一个 online 数据源可运行 | 入队该 IP 并返回 200 `{"quality":{…},"queued":true}`（有入队时是 **202**） |
 
-   因此隔离实例（无任何 provider 凭据）实测到的 409 来自「无已配置数据源 / 未装配 manager」这条分支，
-   而不是 provider 可用性判定本身；私网 400 只在 manager 真正启用且有数据源时才可能出现。
-   该端点在树里**没有单测**（`internal/api/handler_quality_test` 未移植，见 `docs/MIGRATION_FROM_RESIN.md` 文末），
-   上表是代码路径结论。
+   注意与旧实现的区别：**私网地址现在稳定返回 400**（旧实现只在 manager 真正启用且有数据源时才走到这一步），
+   而「没有任何可运行数据源」不再静默成功——它给出 409，避免返回一个承诺了没人会执行的工作的 202。
+   端点测试见 `internal/service/control_plane_quality_test.go` 与 `internal/api/quality_status_test.go`。
 5. **`status` 过滤参数非法值被静默归一成「全部」。** `internal/service/control_plane_intel.go` 的
    `normalizeJobStatus` / `normalizeJobItemStatus` 对任何不在枚举里的值返回空串，空串等于「不过滤」：
 

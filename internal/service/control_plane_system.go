@@ -13,7 +13,6 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"prism/internal/config"
-	"prism/internal/inspection"
 	"prism/internal/intel"
 	"prism/internal/netutil"
 	"prism/internal/proxy"
@@ -74,11 +73,11 @@ type ControlPlaneService struct {
 	RuntimeCfg      *atomic.Pointer[config.RuntimeConfig]
 	EnvCfg          *config.EnvConfig
 	EndpointRuntime EndpointRuntime
-	Inspection      InspectionManager
-	IPPure          *inspection.IPPureChecker
-	TorRegistry     *inspection.TorRegistry
 	// Intel is the WP08 facade: the authoritative intel.db store, the in-memory
-	// projection and the batch job executor. It is nil until WP08 is wired.
+	// projection and the batch job executor. The legacy Inspection, IPPure and
+	// TorRegistry fields were removed in WP08 §8: the /quality/* surface is now
+	// projected from this facade (internal/service/control_plane_quality.go).
+	// It is nil until WP08 is wired.
 	Intel *intel.Service
 
 	configMu      sync.Mutex

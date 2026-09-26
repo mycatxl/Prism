@@ -232,6 +232,7 @@ func HandlePreviewFilter(cp *service.ControlPlaneService) http.HandlerFunc {
 		}
 		items := PaginateSlice(report.Nodes, pg)
 		cp.FillNodeIntelEgress(r.Context(), items)
+		cp.FillNodeQualityEvidence(r.Context(), items)
 		excludedBy := report.ExcludedBy
 		if excludedBy == nil {
 			excludedBy = map[string]int{}
