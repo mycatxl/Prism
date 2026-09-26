@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "start": "node scripts/start.mjs",
-    "test:config": "node --test tests/config.test.mjs tests/request-limit.test.mjs",
+    "test:config": "node --test tests/config.test.mjs tests/request-limit.test.mjs tests/intel-scope.test.mjs",
     "test:e2e": "node scripts/check-ui-live.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
