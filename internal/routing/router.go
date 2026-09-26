@@ -628,7 +628,7 @@ func (r *Router) DeleteLease(platformID, account string) bool {
 	if !ok {
 		return false
 	}
-	lease, deleted := state.Leases.DeleteLease(account)
+	lease, deleted := state.Leases.DeleteLease(account, nil)
 	if !deleted {
 		return false
 	}
@@ -650,12 +650,12 @@ func (r *Router) DeleteLease(platformID, account string) bool {
 // Returns the removed lease and true when a lease was deleted, so callers can
 // record a rotation tombstone for its egress IP (WP10 §3).
 // Emits a LeaseRemove event.
-func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBeforeOrAtNs int64) (Lease, bool) {
+func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
 	state, ok := r.states.Load(platformID)
 	if !ok {
 		return Lease{}, false
 	}
-	lease, deleted := state.Leases.DeleteLeaseIfOlderThan(account, createdBeforeOrAtNs)
+	lease, deleted := state.Leases.DeleteLeaseIfOlderThan(account, createdBeforeOrAtNs, onDelete)
 	if !deleted {
 		return Lease{}, false
 	}
@@ -674,6 +674,10 @@ func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBefor
 // the egress IP it was using, so the next lease for that account avoids it
 // (WP10 §3). Returns false when the account had no lease.
 // The tombstone lifetime is max(scheduled_rotation_interval, sticky_ttl).
+//
+// The tombstone is written inside the delete's critical section (not after it
+// returned), so a concurrent request for the same account cannot be handed the
+// IP that was just rotated away.
 func (r *Router) RotateLease(plat *platform.Platform, account string) bool {
 	if r == nil || plat == nil || account == "" {
 		return false
@@ -682,7 +686,11 @@ func (r *Router) RotateLease(plat *platform.Platform, account string) bool {
 	if !ok {
 		return false
 	}
-	lease, deleted := state.Leases.DeleteLease(account)
+	ttl := rotationTombstoneTTL(time.Duration(plat.ScheduledRotationIntervalNs), plat.StickyTTLNs)
+	nowNs := time.Now().UnixNano()
+	lease, deleted := state.Leases.DeleteLease(account, func(removed Lease) {
+		r.recordRotationTombstone(plat.ID, account, removed.EgressIP, nowNs, ttl)
+	})
 	if !deleted {
 		return false
 	}
@@ -694,8 +702,6 @@ func (r *Router) RotateLease(plat *platform.Platform, account string) bool {
 		EgressIP:    lease.EgressIP,
 		CreatedAtNs: lease.CreatedAtNs,
 	})
-	ttl := rotationTombstoneTTL(time.Duration(plat.ScheduledRotationIntervalNs), plat.StickyTTLNs)
-	r.recordRotationTombstone(plat.ID, account, lease.EgressIP, time.Now().UnixNano(), ttl)
 	return true
 }
 
@@ -708,7 +714,7 @@ func (r *Router) DeleteAllLeases(platformID string) int {
 	}
 	count := 0
 	state.Leases.Range(func(account string, _ Lease) bool {
-		removed, deleted := state.Leases.DeleteLease(account)
+		removed, deleted := state.Leases.DeleteLease(account, nil)
 		if deleted {
 			r.emitLeaseEvent(LeaseEvent{
 				Type:        LeaseRemove,
