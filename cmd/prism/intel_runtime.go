@@ -388,6 +388,25 @@ func (a *prismApp) KnownNodeHashes() map[string]struct{} {
 // expansion happens server-side and it never truncates: a scope above
 // jobs.MaxNodesPerJob fails with the named limit error.
 func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]string, error) {
+	// Reject an unknown filter key instead of ignoring it. Ignoring it would make
+	// a narrowing request expand to the whole pool, and the caller would never
+	// learn that the key it sent had no effect.
+	if unknown := unknownScopeFilterKeys(scope.Filter); len(unknown) > 0 {
+		return nil, fmt.Errorf("%w: unknown scope filter key(s) %s", jobs.ErrInvalidJob, strings.Join(unknown, ", "))
+	}
+	// An explicit hash must be a real node hash. Without this every other string
+	// becomes a job item that can never resolve: it burns the item attempt budget
+	// (maxItemAttempts) and produces nothing but churn.
+	for _, hash := range scope.NodeHashes {
+		trimmed := strings.TrimSpace(hash)
+		if trimmed == "" {
+			continue
+		}
+		if _, err := node.ParseHex(trimmed); err != nil {
+			return nil, fmt.Errorf("%w: malformed node hash %q", jobs.ErrInvalidJob, trimmed)
+		}
+	}
+
 	selected := make(map[string]struct{})
 	add := func(hash string) {
 		trimmed := strings.TrimSpace(hash)
@@ -416,8 +435,11 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 	// are intersected with it. Without this, {subscription_ids:[x], filter:{...}}
 	// means "every filtered node in the pool UNION every node of x" instead of
 	// "the nodes of x that match the filter".
-	hasFilter := len(scope.Filter) > 0
 	filter := newNodeFilter(scope.Filter, a.intelScopeGeoLookup(), a.intelScopeSnapshot())
+	// Only a filter that actually constrains something may widen the walk below.
+	// Reading len(scope.Filter) instead would treat any non-empty map as a
+	// narrowing request.
+	hasFilter := filter.constrained()
 	keep := func(hash string) bool {
 		if !hasFilter {
 			return true
@@ -552,6 +574,38 @@ func (a *prismApp) intelScopeSnapshot() *intel.Snapshot {
 // the scope filter is compared normalized (§3.1).
 func nodeFilterValue(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+// scopeFilterKeys is the closed set of keys `scope.filter` understands. The node
+// list exposes more filters than a job scope can honour (egress_ip, tag_keyword,
+// quality_state, purity_min, ...), so a request may carry a key this scope does
+// not know. Dropping such a key silently would turn a narrowing request into
+// "every node in the pool", which is the opposite of what the caller asked for,
+// so unknown keys are rejected instead (see unknownScopeFilterKeys).
+var scopeFilterKeys = map[string]struct{}{
+	"protocol": {}, "engine": {}, "region": {}, "ip_type": {},
+	"purity_band": {}, "verdict": {}, "healthy": {},
+}
+
+// unknownScopeFilterKeys returns the scope filter keys that are not part of the
+// documented set, sorted for a stable error message.
+func unknownScopeFilterKeys(raw map[string]string) []string {
+	var unknown []string
+	for key := range raw {
+		if _, ok := scopeFilterKeys[strings.ToLower(strings.TrimSpace(key))]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+// constrained reports whether this filter actually restricts anything. It is the
+// predicate the expansion uses to decide whether to walk the pool: a filter map
+// with no recognised key constrains nothing, whatever its length.
+func (f nodeFilter) constrained() bool {
+	return f.protocol != "" || f.engine != "" || f.region != "" ||
+		f.ipType != "" || f.purityBand != "" || len(f.verdicts) > 0 || f.healthy
 }
 
 func newNodeFilter(raw map[string]string, geoLookup func(netip.Addr) string, snapshot *intel.Snapshot) nodeFilter {

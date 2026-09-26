@@ -538,22 +538,71 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	return snapshot
 }
 
+// maxNodeTargetDepth bounds the walk in validNodeTargets. Node documents are
+// shallow (an outbound, or an envelope with main/deps); the bound exists so a
+// hostile document cannot turn validation into unbounded recursion.
+const maxNodeTargetDepth = 16
+
+// validRawOptions rejects a node that would connect somewhere other than a
+// public address.
+//
+// It walks the WHOLE document instead of looking only at the top level. A node
+// can be a chain envelope ({"prism_node":1,"main":{...},"deps":[{...}]}) or an
+// endpoints wrapper, and there the real target lives in main/deps — not at the
+// top. Checking only the top level meant "no top-level server" was accepted
+// unconditionally, so every envelope-shaped node bypassed this filter entirely
+// and could point at 127.0.0.1, a private range or a cloud metadata address.
 func validRawOptions(raw []byte) bool {
-	var options map[string]any
-	if err := json.Unmarshal(raw, &options); err != nil {
+	var document any
+	if err := json.Unmarshal(raw, &document); err != nil {
 		return false
 	}
-	server, hasServer := options["server"]
-	if !hasServer {
-		return true
-	}
-	host, ok := server.(string)
-	if !ok || strings.TrimSpace(host) == "" {
-		return false
-	}
-	return validHost(host)
+	return validNodeTargets(document, 0)
 }
 
+// validNodeTargets walks one decoded document and rejects the first "server"
+// value that is not a public host. Every other key is walked recursively, so a
+// target cannot hide behind a different nesting level.
+func validNodeTargets(value any, depth int) bool {
+	if depth > maxNodeTargetDepth {
+		return false
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, entry := range typed {
+			if key == "server" {
+				host, ok := entry.(string)
+				if !ok || !validHost(host) {
+					return false
+				}
+				continue
+			}
+			if !validNodeTargets(entry, depth+1) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		for _, entry := range typed {
+			if !validNodeTargets(entry, depth+1) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
+}
+
+// validHost accepts a public IP literal or a dotted public hostname.
+//
+// A single-label name is rejected on purpose: it resolves through the resolver's
+// search domains, which is how a node ends up talking to whatever the host's
+// local network calls "gateway". Names whose every label is numeric are rejected
+// too, because they are the integers and short forms that inet_aton accepts for
+// an IPv4 address ("2130706433", "127.1") — net.ParseIP does not recognise
+// them, so without this rule they would pass as ordinary hostnames and then
+// resolve to loopback.
 func validHost(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 	if host == "" || isForbiddenIP(host) || isForbiddenHostname(host) {
@@ -562,14 +611,24 @@ func validHost(host string) bool {
 	if strings.ContainsAny(host, " \t\r\n/@") {
 		return false
 	}
+	// A public IP literal is a valid target and is already classified above.
 	if net.ParseIP(host) != nil {
 		return true
 	}
 	if len(host) > 253 || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
 		return false
 	}
-	for _, label := range strings.Split(host, ".") {
+	labels := strings.Split(host, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	numericLabels := 0
+	for _, label := range labels {
 		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		// "0x7f.0.0.1" is another inet_aton spelling of 127.0.0.1.
+		if strings.HasPrefix(label, "0x") {
 			return false
 		}
 		for _, r := range label {
@@ -577,17 +636,45 @@ func validHost(host string) bool {
 				return false
 			}
 		}
+		if !strings.ContainsFunc(label, func(r rune) bool { return r < '0' || r > '9' }) {
+			numericLabels++
+		}
 	}
-	return true
+	// Every label numeric: an IPv4 address written in a form net.ParseIP rejects.
+	return numericLabels != len(labels)
 }
 
+// isForbiddenIP reports whether host is an IP literal that must never be a node
+// target. net.IP's helpers cover most of it; the extra cases are the ranges that
+// are neither "Private" nor "LinkLocal" to net.IP but behave like both:
+//   - 100.64.0.0/10, carrier-grade NAT (RFC 6598);
+//   - 64:ff9b::/96, NAT64 (RFC 6052), which maps straight back to an IPv4
+//     address and therefore reaches whatever that address reaches;
+//   - the cloud metadata endpoints that live outside those ranges
+//     (Alibaba 100.100.100.200, AWS IMDSv2 over IPv6 fd00:ec2::254).
 func isForbiddenIP(host string) bool {
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return false
 	}
-	return ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.Equal(net.IPv4bcast)
+	if ip.IsUnspecified() || ip.IsLoopback() || ip.IsPrivate() ||
+		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.Equal(net.IPv4bcast) {
+		return true
+	}
+	return cgnatPrefix.Contains(ip) || nat64Prefix.Contains(ip) ||
+		ip.Equal(metadataIPv4) || ip.Equal(metadataIPv6)
 }
+
+var (
+	// cgnatPrefix is 100.64.0.0/10, the RFC 6598 shared address space.
+	cgnatPrefix = net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+	// nat64Prefix is 64:ff9b::/96, the RFC 6052 NAT64 well-known prefix.
+	nat64Prefix = net.IPNet{IP: net.ParseIP("64:ff9b::"), Mask: net.CIDRMask(96, 128)}
+	// metadataIPv4 / metadataIPv6 are cloud instance-metadata endpoints.
+	metadataIPv4 = net.ParseIP("100.100.100.200")
+	metadataIPv6 = net.ParseIP("fd00:ec2::254")
+)
 
 func isForbiddenHostname(host string) bool {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")

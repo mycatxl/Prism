@@ -53,6 +53,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 			status = http.StatusNotFound
 		case "CONFLICT":
 			status = http.StatusConflict
+		case "RATE_LIMITED":
+			// The SSE subscriber cap is the one path that reaches this: the
+			// service documents it as 429 and the client should retry rather
+			// than treat it as a server fault.
+			status = http.StatusTooManyRequests
 		default:
 			status = http.StatusInternalServerError
 		}

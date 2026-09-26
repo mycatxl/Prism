@@ -89,12 +89,15 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// §4.3.4: record the access and write an audit entry. The actor is the
-	// export profile ID, never the token.
+	// export profile ID, never the token. The model.AuditActorExportPrefix actor
+	// puts the entry in the subscription bucket of the retention policy, so a
+	// caller holding only a subscription URL cannot push management entries out
+	// of the audit trail.
 	at := time.Now().UTC().UnixNano()
 	_ = h.cp.Engine.TouchExportProfileAccess(profile.ID, at)
 	_ = h.cp.Engine.AppendAudit(model.AuditEntry{
 		AtNs:       at,
-		Actor:      "export:" + profile.ID,
+		Actor:      model.AuditActorExportPrefix + profile.ID,
 		RemoteAddr: r.RemoteAddr,
 		Action:     "GET /sub/{token}",
 		Target:     profile.ID,

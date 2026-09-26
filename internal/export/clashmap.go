@@ -41,8 +41,11 @@ func clashProxyFromSingbox(object map[string]any) (map[string]any, bool) {
 		return clashSnell(object)
 	case "openvpn-client":
 		return clashOpenVPNClient(object)
-	case "openconnect":
-		return clashOpenConnect(object)
+		// "openconnect" is deliberately absent: mihomo has no openconnect proxy type,
+		// and this repository's own Clash importer (subscription.clashProtocolNames)
+		// does not recognise one either. Emitting `type: openconnect` would produce a
+		// document mihomo refuses to load, so the node is skipped with a reason
+		// instead. §2.2 lists only the openvpn-client form for the same reason.
 	}
 	return nil, false
 }
@@ -64,16 +67,35 @@ func clashShadowsocks(object map[string]any) (map[string]any, bool) {
 
 // applyShadowsocksPlugin translates a sing-box shadowsocks plugin into the
 // mihomo plugin spelling (obfs and v2ray-plugin are interchangeable).
+//
+// The two directions must agree on both the write shape and the option names:
+// mihomo reads the obfs parameters from plugin-opts.{mode,host}, and this
+// repository's own importer canonicalises them to obfs=/obfs-host= (see
+// subscription.normalizeSimpleObfsOptions). Writing a top-level obfs/obfs-host
+// pair and reading only mode/host lost every obfs parameter on the way back out.
 func applyShadowsocksPlugin(proxy map[string]any, plugin string, rawOpts string) {
 	options := parsePluginOptions(rawOpts)
+	// The same option may arrive under either spelling.
+	firstOption := func(keys ...string) string {
+		for _, key := range keys {
+			if value := options[key]; value != "" {
+				return value
+			}
+		}
+		return ""
+	}
 	switch {
 	case strings.Contains(plugin, "obfs"):
-		proxy["plugin"] = "obfs"
-		if mode := options["mode"]; mode != "" {
-			proxy["obfs"] = mode
+		pluginOpts := map[string]any{}
+		if mode := firstOption("mode", "obfs"); mode != "" {
+			pluginOpts["mode"] = mode
 		}
-		if host := options["host"]; host != "" {
-			proxy["obfs-host"] = host
+		if host := firstOption("host", "obfs-host", "obfs_host"); host != "" {
+			pluginOpts["host"] = host
+		}
+		proxy["plugin"] = "obfs"
+		if len(pluginOpts) > 0 {
+			proxy["plugin-opts"] = pluginOpts
 		}
 	case strings.Contains(plugin, "v2ray-plugin"):
 		pluginOpts := map[string]any{
@@ -479,24 +501,6 @@ func openVPNProto(network string) string {
 	default:
 		return "udp"
 	}
-}
-
-func clashOpenConnect(object map[string]any) (map[string]any, bool) {
-	server := mapString(object, "server")
-	if server == "" {
-		return nil, false
-	}
-	proxy := map[string]any{"type": "openconnect", "server": server}
-	if port := mapUint(object, "server_port"); port > 0 {
-		proxy["port"] = int(port)
-	}
-	if username := mapString(object, "username"); username != "" {
-		proxy["username"] = username
-	}
-	if password := mapString(object, "password"); password != "" {
-		proxy["password"] = password
-	}
-	return proxy, true
 }
 
 // clashChainProxy converts the one chain shape mihomo can express: a

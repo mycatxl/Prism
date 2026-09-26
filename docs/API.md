@@ -51,11 +51,13 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | `INVALID_ARGUMENT` | 400 |
 | `NOT_FOUND` | 404 |
 | `CONFLICT` | 409 |
-| 其他（含 `INTERNAL`、`RATE_LIMITED`） | **500** |
+| `RATE_LIMITED` | 429 |
+| 其他（含 `INTERNAL`） | **500** |
 
-最后一行是真实行为，不是笔误：`writeServiceError` 的 `default` 分支固定 500，却把原样 `code` 写进响应体。
-因此 `GET /api/v1/intel/jobs/{id}/events` 的订阅数超限（`jobs.ErrTooManySubscribers`）会收到
-**HTTP 500 + `{"error":{"code":"RATE_LIMITED",...}}`**（`internal/service/control_plane_intel.go` `mapIntelError`）。
+`RATE_LIMITED` 只有一条产生路径：`GET /api/v1/intel/jobs/{id}/events` 的订阅数超过
+`jobs.SSEMaxSubscribers`（`jobs.ErrTooManySubscribers` → `mapIntelError` →
+`internal/api/errors.go` 的 `RATE_LIMITED` 分支）。其余未列出的 code 落到 `default`，
+固定 500 并把原样 `code` 写进响应体。
 
 其他固定状态码：
 
@@ -232,13 +234,13 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 
 | 方法 | 路径 | 用途 | 备注 |
 |---|---|---|---|
-| POST | `/api/v1/intel/jobs` | 创建手动批量检测任务 | 体即 `jobs.Request`：`kind`、`scope{all?,subscription_ids?,platform_ids?,node_hashes?,filter?}`、`providers[]`、`checks[]`、`force`。**202**，响应 `{"job":{…}}`；队列满/单次节点数超限 → 400；`intel_enabled=false` → 409 |
+| POST | `/api/v1/intel/jobs` | 创建手动批量检测任务 | 体即 `jobs.Request`：`kind`、`scope{all?,subscription_ids?,platform_ids?,node_hashes?,filter?}`、`providers[]`、`checks[]`、`force`。**202**，响应 `{"job":{…}}`；队列满/单次节点数超限 → 400；`intel_enabled=false` → 409。`scope.filter` 只认 `scopeFilterKeys` 白名单里的键，`scope.node_hashes` 必须是 32 位十六进制，两者不合法都 → **400 `INVALID_ARGUMENT`** 并在消息里点名 |
 | GET | `/api/v1/intel/jobs` | 任务列表 | `status` 过滤见 §21 第 5 条（非法值静默变「全部」）；`limit`/`offset`；响应 `{items,total,limit,offset}`（空列表为 `[]`） |
 | GET | `/api/v1/intel/jobs/{id}` | 任务详情 | `{"job":{…},"progress":{…}}`；不存在 → 404 |
 | GET | `/api/v1/intel/jobs/{id}/items` | 任务内的节点条目 | `status` 过滤（非法值同样静默变「全部」）+ `limit`/`offset`；响应 `{items,total,limit,offset}` |
 | POST | `/api/v1/intel/jobs/{id}/actions/cancel` | 取消任务 | **202** `{"job":{…}}` |
 | POST | `/api/v1/intel/jobs/{id}/actions/retry-failed` | 失败条目重排 | **202** `{"job":{…},"retried":N}` |
-| GET | `/api/v1/intel/jobs/{id}/events` | SSE 进度流 | 见 §1 与 §4；事件 `progress`/`end`，15 秒心跳注释帧；订阅数超限 → HTTP 500 + `RATE_LIMITED`（§2） |
+| GET | `/api/v1/intel/jobs/{id}/events` | SSE 进度流 | 见 §1 与 §4；事件 `progress`/`end`，15 秒心跳注释帧；订阅数超限 → HTTP 429 + `RATE_LIMITED`（§2）。订阅时若任务**已是终态**（`succeeded`/`partial`/`failed`/`canceled`），会先回放当前状态再立刻发 `end` 并关闭——否则连接会一直挂着（`sseTerminalStatus`） |
 | GET | `/api/v1/intel/status` | 子系统总览 | `enabled`、`database{db_bytes,assessments,node_egress}`、`executor`、`discarded{egress_observations,sse_frames}`、`providers[]`（**只给 `has_key`，不给凭据**）、`jobs_by_status{}` |
 | GET | `/api/v1/intel/nodes/{hash}` | 单节点情报 | `{node_hash,egress,history[],checks[],ipv4_assessment?,ipv6_assessment?,ipv4_projection?,ipv6_projection?}` |
 | GET | `/api/v1/intel/ip/{ip}` | 单 IP 情报 | `{ip,evidence[],assessment?,projection?,nodes[]}`；`nodes[]` 上限 `maxIntelIPNodes`=100 |
@@ -289,8 +291,8 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 - `detail` 只记请求体的**顶层键名**（形如 `{"keys":["name","format"]}`），不记值；
 - `actor` 是管理员令牌的 SHA-256 前 8 个十六进制字符，令牌本身永不落库；
 - 路径参数里带凭据的名字（`token`、`secret`、`password`、`apikey`、`api_key`）不会写进 `target`；
-- `GET /sub/{token}` 由公开订阅处理器自己追加一条审计（`actor` 为 `export:<profileID>`），**不**经过审计中间件；
-- 保留策略：90 天或最多 100000 条，由后台清理任务执行（`PruneAuditLogs`）。
+- `GET /sub/{token}` 由公开订阅处理器自己追加一条审计（`actor` 为 `export:<profileID>`，即 `model.AuditActorExportPrefix` + 档案 ID），**不**经过审计中间件；
+- 保留策略：90 天或最多 100000 条，由后台清理任务执行（`PruneAuditLogs`）。**额度是分桶的**：`export:` 前缀的订阅访问单独限在 50000 条（`keepMax/2`），管理记录的 100000 条额度不受它影响。否则只拿到一个订阅 URL 的调用者可以按请求速率写满整张表，把更早的管理操作挤出审计链（`internal/state/repo_state.go` `PruneAudit`）；
 
 ## 19. 指标
 
@@ -339,7 +341,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
    只服务这些管理路径（`cmd/prism/admin_runtime.go`）。
 3. **`GET /api/v1/intel/jobs/{id}/events` 不走 `AuthMiddleware`**：它接受 `Authorization: Bearer` 或
    `?access_token=`，有自己的常量时间比较与失败计数（`handler_intel.go`）。它的「订阅数过多」错误是
-   HTTP **500** + `code=RATE_LIMITED`（§2）。
+   HTTP **429** + `code=RATE_LIMITED`（§2）。
 4. **`POST /api/v1/quality/ip/{ip}/actions/probe` 的真实分支**（与「私网地址返回 400」的直觉不同）：
 
    | 条件 | 结果 |

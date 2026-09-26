@@ -177,8 +177,9 @@ func presetLabel(presets []string) string {
 func logAttempt(attempt publicsource.Attempt) {
 	for _, result := range attempt.Results {
 		if result.Error != "" {
+			// The URL is redacted: a private source can embed a token or userinfo.
 			log.Printf("source=%s candidates=%d accepted=%d cached=%t error=%s",
-				result.URL, result.CandidateCount, result.AcceptedCount, result.UsedCache, result.Error)
+				redactSourceURL(result.URL), result.CandidateCount, result.AcceptedCount, result.UsedCache, result.Error)
 		}
 	}
 	if attempt.Err != nil {

@@ -407,6 +407,77 @@ func TestStateRepo_PrismAuditAppendListAndPrune(t *testing.T) {
 	}
 }
 
+// TestStateRepo_PrismAuditExportBucketIsSeparate pins the retention split that
+// keeps a low-privilege caller from erasing the management trail.
+//
+// GET /sub/{token} writes an audit entry per successful request, and its caller
+// holds nothing but a subscription URL. With a single global cap, writing that
+// many entries pushed every earlier management entry out of the newest-100000
+// window. The subscription entries are therefore capped in a bucket of their own.
+func TestStateRepo_PrismAuditExportBucketIsSeparate(t *testing.T) {
+	repo := newTestStateRepo(t)
+	const base = int64(1_700_000_000_000_000_000)
+	const step = int64(time.Second)
+
+	// Two management entries, written first so they are the oldest rows.
+	for i := 0; i < 2; i++ {
+		if err := repo.AppendAudit(model.AuditEntry{
+			AtNs:   base + int64(i)*step,
+			Actor:  "admin",
+			Action: "platform.update",
+			Target: "mgmt-" + itoa(i),
+			Detail: "{}",
+		}); err != nil {
+			t.Fatalf("AppendAudit(management %d): %v", i, err)
+		}
+	}
+	// More subscription accesses than the export bucket may hold.
+	for i := 0; i < 8; i++ {
+		if err := repo.AppendAudit(model.AuditEntry{
+			AtNs:   base + int64(10+i)*step,
+			Actor:  model.AuditActorExportPrefix + "profile-" + itoa(i),
+			Action: "GET /sub/{token}",
+			Target: "profile-" + itoa(i),
+			Detail: "{}",
+		}); err != nil {
+			t.Fatalf("AppendAudit(export %d): %v", i, err)
+		}
+	}
+
+	// keepMax 10 means the export bucket holds at most 5 and management keeps its
+	// own 10. Both management entries must survive.
+	if _, err := repo.PruneAudit(0, 10); err != nil {
+		t.Fatalf("PruneAudit: %v", err)
+	}
+	entries, err := repo.ListAudit(0, 50)
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+
+	var management, exports int
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Actor, model.AuditActorExportPrefix) {
+			exports++
+			continue
+		}
+		management++
+	}
+	if management != 2 {
+		t.Fatalf("management entries after prune = %d, want 2 (a subscription caller erased the management trail): %+v",
+			management, entries)
+	}
+	if exports != 5 {
+		t.Fatalf("export entries after prune = %d, want 5 (keepMax/2)", exports)
+	}
+
+	// The newest export entries are the ones kept.
+	for _, entry := range entries {
+		if entry.Actor == model.AuditActorExportPrefix+"profile-0" {
+			t.Fatalf("the oldest export entry survived the bucket prune: %+v", entries)
+		}
+	}
+}
+
 // --- subscription parse report ---
 
 func TestStateRepo_PrismSetSubscriptionParseReport(t *testing.T) {
