@@ -1,8 +1,21 @@
-# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+# 校准状态：2026-09-25 用真实响应校准；2026-10-02 复核地区判据并修正。
 #
-# 实测 https://www.youtube.com/premium 返回 200，正文含 "countryCode":"JP"，
-# 地区提取（body_regex 取第一个捕获组）成立；判定逻辑不变。
-# 本轮未观测到 "Premium is not available in your country" 文案，保留该分支作为兜底。
+# 实测 https://www.youtube.com/premium 返回 200，判定逻辑不变：
+#   body_contains "Premium is not available in your country" -> blocked
+#   403/429 -> blocked；200 -> available；timeout -> error
+# 本轮仍未观测到 "Premium is not available in your country" 文案，保留该分支作为兜底。
+#
+# 地区判据修正（2026-10-02 实测，同一出口连续 5 次）：
+#   正文里的 "countryCode":"XX" 首次出现在约 866312~878933 字节处，而正文总长约 882~895 KB；
+#   本规则的 max_body_bytes 是 262144，因此旧的 body_regex '"countryCode":"([A-Z]{2})"' 永远不可能命中，
+#   node_checks.region 对该规则恒为空。
+#   ytcfg 里的 "GL" 字段同样携带由出口 IP 推导的国家代码，首次出现在约 56145~56369 字节处，稳定落在 64 KiB 以内，
+#   5 次实测与 "countryCode" 完全一致。因此改用 '(?:"GL"|"countryCode")\s*:\s*"([A-Z]{2})"'：
+#   正则从左向右扫描，正文中先出现的是 "GL"，命中即取；"countryCode" 作为兜底保留（若将来 YouTube 把 ytcfg 前移）。
+#
+# 流量成本（2026-10-02 实测，同一出口）：正文总长约 882~895 KB，max_body_bytes: 262144 会读满 262145 字节，
+# 而判定只需要状态码、地区只需要约 56 KiB 处的 "GL"。下调到 131072 后实测只读 131073 字节，
+# 相对 "GL" 的位置仍留约 74 KiB 余量，判定与地区提取都不受影响，每个节点每次省约 128 KiB。
 id: youtube_premium
 version: 1
 name: YouTube Premium
@@ -10,7 +23,7 @@ category: video
 enabled: true
 ttl: 12h
 timeout: 12s
-calibrated: 'calibrated 2026-09-25 (real 200 with "countryCode":"JP" on youtube.com/premium)'
+calibrated: 'calibrated 2026-09-25 region re-measured 2026-10-02 (real 200: ytcfg "GL" inside 64 KiB, "countryCode" only at ~866 KB); max_body_bytes trimmed to 131072 on 2026-10-02'
 steps:
   - id: premium
     request:
@@ -20,7 +33,7 @@ steps:
       headers:
         Accept-Language: "en"
         User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
-      max_body_bytes: 262144
+      max_body_bytes: 131072
 outcomes:
   - when: {step: premium, body_contains: "Premium is not available in your country"}
     outcome: blocked
@@ -33,4 +46,4 @@ outcomes:
 default: unknown
 region:
   step: premium
-  body_regex: '"countryCode":"([A-Z]{2})"'
+  body_regex: '(?:"GL"|"countryCode")\s*:\s*"([A-Z]{2})"'

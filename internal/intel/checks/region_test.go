@@ -223,6 +223,55 @@ func TestCalibratedBuiltinOutcomes(t *testing.T) {
 	}
 }
 
+// TestYoutubeRegionMarkerIsInsideTheBodyCap pins the 2026-10-02 fix. Measured
+// against a real response, "countryCode":"XX" first appears at byte offset
+// ~866312 of an ~888 KB body, while youtube_premium reads at most 131072 bytes —
+// so a body_regex anchored on countryCode can never match and the region stayed
+// empty. The early ytcfg "GL" field carries the same value at ~56 KiB, inside the
+// cap. This test builds a body with exactly that layout: GL early, countryCode
+// far past the cap. It fails if the matcher regresses to countryCode only.
+func TestYoutubeRegionMarkerIsInsideTheBodyCap(t *testing.T) {
+	rule := builtinRuleForTest(t, "youtube_premium")
+	step, ok := rule.Steps[0].Request, rule.Steps[0].Request != nil
+	if !ok {
+		t.Fatal("youtube_premium has no request step")
+	}
+	cap := step.MaxBodyBytes
+	if cap <= 0 {
+		t.Fatalf("youtube_premium max_body_bytes = %d, want a positive cap", cap)
+	}
+
+	const glOffset = 56000
+	if cap <= glOffset {
+		t.Fatalf("max_body_bytes = %d leaves no room for the measured GL offset %d", cap, glOffset)
+	}
+	// The filler is one full cap wide, so countryCode lands past the truncation
+	// point and only the early GL marker survives.
+	body := strings.Repeat("x", glOffset) +
+		`{"GL":"JP","HL":"en"}` + strings.Repeat("y", cap) +
+		`"countryCode":"JP"` + strings.Repeat("z", 4096)
+
+	// The engine truncates the body at max_body_bytes before matching, so the
+	// countryCode marker is gone by the time the regex runs.
+	truncated := body
+	if len(truncated) > cap {
+		truncated = truncated[:cap]
+	}
+	if strings.Contains(truncated, `"countryCode"`) {
+		t.Fatal("test fixture is wrong: countryCode must fall outside the cap")
+	}
+
+	steps := map[string]stepResult{"premium": {
+		ID: "premium", Status: http.StatusOK, Connected: true, Body: truncated,
+	}}
+	if region := extractRegion(rule.Region, steps); region != "JP" {
+		t.Fatalf("region = %q, want %q: the matcher must read the early GL marker", region, "JP")
+	}
+	if outcome := classify(rule, steps); outcome != OutcomeAvailable {
+		t.Fatalf("outcome = %q, want %q", outcome, OutcomeAvailable)
+	}
+}
+
 // netflixRedirect builds the measured 301 answer of one Netflix title page: no
 // body, the region only in the Location header.
 func netflixRedirect(titleID string) stepResult {
