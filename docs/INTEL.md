@@ -428,9 +428,9 @@ region:                    # 可选
 | `tiktok` | `calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page)` | `https://www.tiktok.com/` 返回 **200 但正文只有 1462 字节的 WAF 挑战页**（`SlardarWAF`、`_wafchallengeid`、"Please wait..."）。两条挑战标记**必须排在 `status_in: [200]` 之前**，否则可用节点会被误判成 available。地区取自正文 `"region":"XX"`（校准注释只记录了挑战页标记，没有说明该页是否含 `region` 字段，所以这条取地区的能力未被本轮实测证实）。 |
 | `chatgpt` | `calibrated 2026-09-25 (real 403 with "type":"dc" on ios.chat.openai.com; trace 200 with loc=US)` | `trace` 步骤请求 `chatgpt.com/cdn-cgi/trace` 取 `loc=`；`probe` 步骤请求 `ios.chat.openai.com/`，实测 403 且正文含 **`"type":"dc"`（数据中心 IP 被拒）**，该条排在裸 `status_in: [403]` 之前。`unsupported_country` → blocked；`"VPN"` → captcha（**本轮未观测到，保留为兜底**）。地区用 `body_regex: '(?m)^loc=([A-Z]{2})$'`。 |
 | `claude` | `calibrated 2026-09-25 (real 403 with a 5656-byte challenge-platform body on claude.ai)` | `https://claude.ai/` 实测返回 403、正文 5656 字节，含 Cloudflare 挑战脚本 URL 片段 `challenge-platform`；所以 `status_in: [403,503]` + `body_contains: "challenge-platform"` → captcha 成立（不跟随重定向）。`Location: app-unavailable-in-region` 分支**本轮未观测到，保留为兜底**。 |
-| `youtube_premium` | `calibrated 2026-09-25 (real 200 with "countryCode":"JP" on youtube.com/premium)` | `https://www.youtube.com/premium`（`Accept-Language: en`）实测 200 且正文含 `"countryCode":"JP"`，地区提取成立（`body_regex` 取第一个捕获组）。`"Premium is not available in your country"` 分支**本轮未观测到，保留为兜底**；403/429 → blocked，200 → available。 |
-| `google_captcha` | `calibrated 2026-09-25 (real 200 without a /sorry/ redirect on google.com/search)` | `google.com/search?q=prism&hl=en` **不跟随重定向**，实测 200 且 `Location` 里没有 `/sorry/`。429 → captcha；`header_regex: {Location: "/sorry/"}` → captcha；200 → available（**本轮未观测到 429/挑战页**）。 |
-| `gemini` | `calibrated 2026-09-25 reachability only (no region marker in the real 200 response)` | `https://gemini.google.com/` 实测 200、正文 848704 字节，**既没有 `countryCode` 也没有任何地区提示**，因此**只做可达性判定**：403/451 → blocked，429 → captcha，200 → available。**该规则没有 `region` 块，也不判地区**——这是核过的事实，不是遗漏。 |
+| `youtube_premium` | `calibrated 2026-09-25 region re-measured 2026-10-02 (real 200: ytcfg "GL" inside 64 KiB, "countryCode" only at ~866 KB); max_body_bytes trimmed to 131072 on 2026-10-02` | `https://www.youtube.com/premium`（`Accept-Language: en`）实测 200。**2026-10-02 复核修正了地区判据**：正文里的 `"countryCode":"XX"` 首次出现在约 866312~878933 字节处，而正文总长约 882~895 KB，旧的 `body_regex` 在 262144 上限下**永远不可能命中**（详见 §8.4）；改用 ytcfg 的 `"GL"` 字段（约 56145~56369 字节处，5 次实测与 `countryCode` 一致），并保留下限兜底。`"Premium is not available in your country"` 分支**本轮未观测到，保留为兜底**；403/429 → blocked，200 → available。 |
+| `google_captcha` | `calibrated 2026-09-25 (real 200 without a /sorry/ redirect on google.com/search); max_body_bytes trimmed to 8192 on 2026-10-02 (body is unused by the outcomes)` | `google.com/search?q=prism&hl=en` **不跟随重定向**，实测 200 且 `Location` 里没有 `/sorry/`。429 → captcha；`header_regex: {Location: "/sorry/"}` → captcha；200 → available（**本轮未观测到 429/挑战页**）。**正文完全不被 outcomes 读取**（只看状态码和 Location 响应头），所以上限从 262144 降到 8192（每个节点每次省约 84 KiB）。 |
+| `gemini` | `calibrated 2026-09-25 reachability only (no region marker in the real 200 response); max_body_bytes trimmed to 8192 on 2026-10-02 (body is unused by the outcomes)` | `https://gemini.google.com/` 实测 200、正文 848704 字节，**既没有 `countryCode` 也没有任何地区提示**，因此**只做可达性判定**：403/451 → blocked，429 → captcha，200 → available。**该规则没有 `region` 块，也不判地区**——这是核过的事实，不是遗漏。**正文完全不被 outcomes 读取**，所以上限从 262144 降到 8192（每个节点每次省约 248 KiB）。 |
 | `smtp25` | `structural (connectivity only)` | tcp 连接 `smtp.gmail.com:25`：`connected: true` → available，`false` → blocked，`timeout` → error。只看 25 端口通不通，**不判地区**，与 HTTP 响应体无关。 |
 
 `GET /api/v1/intel/checks` 会返回每条规则的 `source`（`builtin` 或 `user`）、`steps`、`ttl`、`timeout` 与 `calibrated`，
@@ -554,12 +554,88 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 `POST /api/v1/intel/jobs/{id}/actions/cancel` 取消、`POST /api/v1/intel/jobs/{id}/actions/retry-failed` 重试失败项，
 `GET /api/v1/intel/jobs/{id}/events` 是 SSE 实时进度（每秒最多一帧）。
 
-## 8. 已知限制与未确定的点
+## 8. 每个节点的流量成本（2026-10-02 实测）
+
+一个节点跑完 `kind=full`（出口探测 → 离线 → 在线入队 → 经节点数据源 → 解锁检测 → 评分）
+会经过下面这些**经过节点**的请求。数字是**隧道字节**（客户端发出 + 服务端返回 + TLS 握手），
+也就是代理商计费的口径，不是正文长度。
+
+采集方式：本机经一个逐字节计数的 CONNECT 代理请求各目标，同一出口重复测量。
+
+### 8.1 逐步成本
+
+| 步骤 | 目标 | 隧道字节 | 备注 |
+|---|---|---|---|
+| 1 出口探测 | `1.1.1.1/cdn-cgi/trace` | **~6.1 KB** | 314 B 正文 + TLS |
+| 1 出口探测 | `[2606:4700:4700::1111]/cdn-cgi/trace` | 同上 | 无 v6 时失败，仍会尝试一次 |
+| 4 经节点 | `my.ippure.com/v1/info` | **~6.7 KB** | 508 B 正文 |
+| 4 经节点 | `ip-api.com/json/?fields=…` | **~0.8 KB** | 纯 HTTP（**无 TLS**），252 B 正文 |
+| 4 经节点 | `proxycheck.io/v3/<ip>` | **~7.7 KB** | 1545 B 正文 |
+| 5 解锁 | `chatgpt.com/cdn-cgi/trace` | ~6.9 KB | 322 B |
+| 5 解锁 | `ios.chat.openai.com/` | ~6.7 KB | 403，77 B |
+| 5 解锁 | `claude.ai/` | ~7.3 KB | 403，5634 B |
+| 5 解锁 | `gemini.google.com/` | **~35 KB** | 已把上限下调到 8192（原 ~275 KB） |
+| 5 解锁 | `www.google.com/search?q=prism&hl=en` | **~27 KB** | 已把上限下调到 8192（原 ~103 KB） |
+| 5 解锁 | `www.netflix.com/title/80100172` | ~7.9 KB | 301，0 B 正文 |
+| 5 解锁 | `www.netflix.com/title/70143836` | ~7.9 KB | 301，0 B 正文 |
+| 5 解锁 | `www.tiktok.com/` | ~11 KB | 200，挑战页 |
+| 5 解锁 | `www.youtube.com/premium` | **~201 KB** | 已把上限下调到 131072（原 ~340 KB） |
+| 5 解锁 | `smtp.gmail.com:25` | **~0.1 KB** | 裸 TCP 连接后关闭 |
+
+另外，**周期探测**（不属于 intel 流水线，但同样经节点）每次约 **6.6 KB**
+（`www.gstatic.com/generate_204`，204 无正文，成本全是 TLS）。
+
+### 8.2 一个订阅跑一轮要多少
+
+按上面的实测值累加，**一个节点跑一次 `kind=full`**：
+
+| 构成 | 隧道字节 |
+|---|---|
+| 出口探测（v4 + v6 尝试） | ~12 KB |
+| 经节点数据源（ippure + ip_api + proxycheck_node） | ~15 KB |
+| 解锁检测（8 条规则，含 v4/v6 各一次的数据源） | ~305 KB |
+| **合计** | **~330 KB / 节点** |
+
+于是：
+
+| 场景 | 每节点 | 300 节点订阅 | 1000 节点订阅 |
+|---|---|---|---|
+| 只采集数据源（`kind=intel`，默认） | **~27 KB** | ~8 MB | ~27 MB |
+| 数据源 + 解锁检测（`kind=full`） | **~330 KB** | ~99 MB | ~330 MB |
+| 只跑解锁检测（`kind=checks`） | **~310 KB** | ~93 MB | ~310 MB |
+| 只探出口（`kind=egress`） | ~12 KB | ~3.6 MB | ~12 MB |
+
+**结论：默认配置（`intel_auto_checks=false` → `kind=intel`）一个 300 节点的订阅只花约 8 MB，
+不是问题。真正贵的是解锁检测——它占了 `kind=full` 的 92%。**
+
+### 8.3 三条真正省流量的做法
+
+1. **别开 `intel_auto_checks`，除非你确实要看解锁结果。** 默认 false 时订阅只入队 `kind=intel`
+   （数据源 + 评分），不跑第 5 步，省掉约 92% 的流量。
+2. **按需对子集跑解锁检测。** 用 `POST /api/v1/intel/jobs` 配 `{"kind":"checks","scope":{"filter":{…}}}`
+   只测你真正关心的节点，而不是整份订阅。
+3. **关掉你不需要的检测规则。** `PATCH /api/v1/intel/checks/{id}` 配 `{"enabled":false}`，
+   立即生效。8 条规则里最贵的是 `youtube_premium`（~201 KB）和 `gemini`（~35 KB），
+   其次是 `google_captcha`（~27 KB）；其余每条都在 12 KB 以内。
+
+### 8.4 已经做过的流量优化（2026-10-02）
+
+- `youtube_premium` 的地区判据原本是 `'"countryCode":"([A-Z]{2})"'`，而实测该字段首次出现在
+  **866312~878933 字节**处、正文总长约 882~895 KB，但规则只读 262144 字节——
+  **这个正则永远不可能命中，`region` 对该规则恒为空**。已改用 ytcfg 里同样由出口 IP 推导的
+  `"GL"` 字段（实测在 56145~56369 字节处，5 次与 `countryCode` 完全一致），
+  并把 `max_body_bytes` 从 262144 降到 131072（相对 GL 仍留约 74 KB 余量）。
+- `gemini` 与 `google_captcha` 的 outcomes **完全不读正文**（只看状态码和 Location 响应头），
+  但上限是 262144，实测分别读满 262145 和 94492 字节。两条都已降到 8192。
+- 三条规则合计，每个节点每次少读约 **460 KB**（相对原来的 262144 上限）。
+
+## 9. 已知限制与未确定的点
 
 - `dnsbl` 不查 IPv6（`SupportsIPv6: false`），IPv6 地址记为 unsupported。
 - `proxycheck` 与 `proxycheck_node` 一律逐个地址查询（`BatchSize = 1`）：v3 的批量能力未经厂商确认。
 - `gemini` 规则**只判可达性、不判地区**，因为实测响应里没有任何地区判据；`smtp25` 同理只判 25 端口连通性。
   这两条规则的"地区"字段为空是当前事实，不是待办。
+- `tiktok` 的 `region` 取自正文 `"region":"XX"`，但 2026-09-25 的校准注释只记录了挑战页标记，没有说明该页是否含 `region` 字段；2026-10-02 复核时实测该 200 挑战页（1462 字节）**不含 `region`**，所以该规则的 `region` 目前恒为空。这条没有改，因为挑战页形态可能随时变化，保留 matcher 比删掉更安全；只是不要把它的地区当作可用信息。
 - `region.step` 留空时取地区的结果不确定（任选一个步骤），见 §4.3。
 - 评分的覆盖度分母取自**主机侧** `proxycheck` 数据源的启用状态（`cmd/prism/intel_runtime.go`
   `intelEnabledSources` 用 `assess.ScoringSources()`，里面只有 `proxycheck`，不含别名 `proxycheck_node`）。

@@ -1,9 +1,15 @@
-# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）。
+# 校准状态：2026-09-25 用真实响应校准（本机经日本数据中心代理采集）；
+# 2026-10-02 复核并下调 max_body_bytes（流量成本）。
 #
 # 实测 https://gemini.google.com/ 返回 200，正文 848704 字节，既不含 "countryCode"，
 # 也不含 "not available in your country/region" 之类的地区提示：
 # 本轮响应里找不到可用的地区判据，因此这里只做可达性判定（403/451 => blocked，
 # 429 => captcha，200 => available），没有地区标记时不要臆造地区信号。
+#
+# 流量成本（2026-10-02 实测，同一出口）：本规则的 outcomes 只读状态码，没有任何
+# body_contains / body_regex，正文一个字节都不用。而实测正文约 848~895 KB，
+# max_body_bytes: 262144 会稳定读满 262145 字节。下调到 8192 后实测只读 8193 字节，
+# 判定结果不变（状态码与 Location 都在响应头里，不受该上限影响），每个节点每次省约 248 KiB。
 id: gemini
 version: 1
 name: Gemini
@@ -11,7 +17,7 @@ category: ai
 enabled: true
 ttl: 24h
 timeout: 12s
-calibrated: 'calibrated 2026-09-25 reachability only (no region marker in the real 200 response)'
+calibrated: 'calibrated 2026-09-25 reachability only (no region marker in the real 200 response); max_body_bytes trimmed to 8192 on 2026-10-02 (body is unused by the outcomes)'
 steps:
   - id: home
     request:
@@ -21,7 +27,7 @@ steps:
       headers:
         Accept-Language: "en-US,en;q=0.9"
         User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
-      max_body_bytes: 262144
+      max_body_bytes: 8192
 outcomes:
   - when: {step: home, status_in: [403, 451]}
     outcome: blocked
