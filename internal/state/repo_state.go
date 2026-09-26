@@ -967,6 +967,12 @@ func (r *StateRepo) ListAudit(beforeID int64, limit int) ([]model.AuditEntry, er
 
 // PruneAudit drops entries older than olderThanNs and keeps at most keepMax
 // newest entries. Zero disables the corresponding rule.
+//
+// The keepMax budget is split: management entries keep the full keepMax, while
+// public subscription accesses (model.AuditActorExportPrefix, written by
+// /sub/{token}) are capped at keepMax/2 in a bucket of their own. Without the
+// split a caller holding nothing but a subscription URL could write one entry
+// per request and push every earlier management entry out of the trail.
 func (r *StateRepo) PruneAudit(olderThanNs int64, keepMax int) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -983,14 +989,29 @@ func (r *StateRepo) PruneAudit(olderThanNs int64, keepMax int) (int64, error) {
 	}
 
 	if keepMax > 0 {
+		exportKeepMax := keepMax / 2
+		// Subscription accesses are capped in their own bucket first, so they can
+		// never consume the management budget below.
 		result, err := r.db.Exec(
-			"DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)",
-			keepMax,
+			"DELETE FROM audit_log WHERE actor LIKE ? || '%' AND id NOT IN "+
+				"(SELECT id FROM audit_log WHERE actor LIKE ? || '%' ORDER BY id DESC LIMIT ?)",
+			model.AuditActorExportPrefix, model.AuditActorExportPrefix, exportKeepMax,
 		)
 		if err != nil {
 			return removed, err
 		}
 		n, _ := result.RowsAffected()
+		removed += n
+
+		result, err = r.db.Exec(
+			"DELETE FROM audit_log WHERE actor NOT LIKE ? || '%' AND id NOT IN "+
+				"(SELECT id FROM audit_log WHERE actor NOT LIKE ? || '%' ORDER BY id DESC LIMIT ?)",
+			model.AuditActorExportPrefix, model.AuditActorExportPrefix, keepMax,
+		)
+		if err != nil {
+			return removed, err
+		}
+		n, _ = result.RowsAffected()
 		removed += n
 	}
 

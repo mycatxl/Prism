@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +32,25 @@ const (
 	serveHealthPath = "/healthz"
 	serveStatusPath = "/status"
 )
+
+// redactSourceURL strips the parts of a source URL that can carry a secret.
+//
+// A source may legitimately be a private subscription such as
+// https://user:pass@feed.example/sub?token=... — the config only checks for an
+// http(s) scheme. /status is unauthenticated and the refresh log line is written
+// for every attempt, so echoing the raw URL would publish those credentials and
+// the operator's whole source list. Scheme, host and path are kept: they are what
+// makes a line useful for telling sources apart.
+func redactSourceURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Host == "" {
+		return "(unparsable source)"
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
 
 func newSnapshotServer(collector *publicsource.Collector, path string) *snapshotServer {
 	path = strings.TrimSpace(path)
@@ -99,7 +119,7 @@ func (s *snapshotServer) serveStatus(w http.ResponseWriter, r *http.Request) {
 	sources := make([]sourceStatus, 0, len(attempt.Results))
 	for _, result := range attempt.Results {
 		sources = append(sources, sourceStatus{
-			URL:        result.URL,
+			URL:        redactSourceURL(result.URL),
 			Candidates: result.CandidateCount,
 			Accepted:   result.AcceptedCount,
 			Cached:     result.UsedCache,

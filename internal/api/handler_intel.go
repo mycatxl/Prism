@@ -186,6 +186,15 @@ func HandleIntelJobEvents(adminToken string, limiter *AuthFailureLimiter, cp *se
 				Status:  detail.Progress.Status,
 			}
 			writeSSEProgress(w, flusher, &frame)
+			// A job that already finished before the subscriber arrived will never
+			// push another frame: the hub only broadcasts transitions. Closing the
+			// stream here is what terminates it. Without this the connection stays
+			// open forever, kept alive by the keep-alive ticker, and the client
+			// never learns that the job is done.
+			if sseTerminalStatus(frame.Status) {
+				writeSSEEvent(w, flusher, "end", nil)
+				return
+			}
 		}
 
 		keepAlive := time.NewTicker(sseKeepAlive)
@@ -203,13 +212,26 @@ func HandleIntelJobEvents(adminToken string, limiter *AuthFailureLimiter, cp *se
 					return
 				}
 				writeSSEProgress(w, flusher, &frame)
-				if frame.Status == "succeeded" || frame.Status == "partial" ||
-					frame.Status == "failed" || frame.Status == "canceled" {
+				if sseTerminalStatus(frame.Status) {
 					writeSSEEvent(w, flusher, "end", nil)
 					return
 				}
 			}
 		}
+	}
+}
+
+// sseTerminalStatus reports whether a job status ends the SSE stream. It is the
+// single definition of "finished" for the endpoint: the status replayed on
+// subscribe and the status carried by a pushed frame must agree, or a subscriber
+// that arrives after the job finished would wait forever for a frame the hub
+// never broadcasts again.
+func sseTerminalStatus(status string) bool {
+	switch status {
+	case "succeeded", "partial", "failed", "canceled":
+		return true
+	default:
+		return false
 	}
 }
 

@@ -36,7 +36,10 @@ func ParseKind(raw string) (Kind, error) {
 	case KindFull:
 		return KindFull, nil
 	default:
-		return "", fmt.Errorf("unknown job kind %q", raw)
+		// Wrap the sentinel so an unknown kind is an invalid argument (400), not
+		// an internal error (500): every other shape failure in Request.Validate
+		// already wraps it.
+		return "", fmt.Errorf("%w: unknown job kind %q", ErrInvalidJob, raw)
 	}
 }
 

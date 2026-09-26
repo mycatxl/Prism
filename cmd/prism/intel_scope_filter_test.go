@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/netip"
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -459,5 +461,113 @@ func TestResolveIntelScope_ExpandsWp10FilterKeys(t *testing.T) {
 				t.Errorf("resolveIntelScope() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestResolveIntelScopeRejectsUnknownFilterKeys pins the fail-closed rule. The
+// node list understands more filters than a job scope does (egress_ip,
+// tag_keyword, quality_state, purity_min, ...). Ignoring an unknown key turned a
+// narrowing request into "every node in the pool", so the scope rejects it and
+// names the offending key instead.
+func TestResolveIntelScopeRejectsUnknownFilterKeys(t *testing.T) {
+	app := &prismApp{}
+	for _, tc := range []struct {
+		name   string
+		filter map[string]string
+		bad    string
+	}{
+		{"node-list-only key", map[string]string{"egress_ip": "203.0.113.9"}, "egress_ip"},
+		{"quality key", map[string]string{"quality_state": "valid"}, "quality_state"},
+		{"mixed known and unknown", map[string]string{"region": "us", "tag_keyword": "Alpha"}, "tag_keyword"},
+		{"several unknown keys are all named", map[string]string{"zzz": "1", "aaa": "2"}, "aaa"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := app.resolveIntelScope(context.Background(), jobs.Scope{Filter: tc.filter})
+			if err == nil {
+				t.Fatalf("resolveIntelScope(%v) = nil error; an unknown key must be rejected", tc.filter)
+			}
+			if !errors.Is(err, jobs.ErrInvalidJob) {
+				t.Fatalf("error = %v, want it to wrap jobs.ErrInvalidJob so the API answers 400", err)
+			}
+			if !strings.Contains(err.Error(), tc.bad) {
+				t.Fatalf("error %q must name the offending key %q", err, tc.bad)
+			}
+		})
+	}
+
+	// A recognised key is still accepted.
+	if _, err := app.resolveIntelScope(context.Background(), jobs.Scope{
+		Filter: map[string]string{"region": "us", "healthy": "true"},
+	}); err != nil {
+		t.Fatalf("resolveIntelScope with recognised keys = %v, want nil", err)
+	}
+}
+
+// TestNodeFilterConstrainedIgnoresEmptyValues pins the second half of the same
+// rule: a filter map whose only value is empty constrains nothing, so it must not
+// widen the expansion to the whole pool. Reading len(scope.Filter) treated
+// {"region": ""} as a narrowing request that then matched every node.
+func TestNodeFilterConstrainedIgnoresEmptyValues(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		raw       map[string]string
+		wantMatch bool
+	}{
+		{"empty value constrains nothing", map[string]string{"region": ""}, false},
+		{"whitespace value constrains nothing", map[string]string{"protocol": "   "}, false},
+		{"healthy false constrains nothing", map[string]string{"healthy": "false"}, false},
+		{"real value constrains", map[string]string{"region": "us"}, true},
+		{"healthy true constrains", map[string]string{"healthy": "true"}, true},
+		{"verdict list constrains", map[string]string{"verdict": "review"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filter := newNodeFilter(tc.raw, nil, nil)
+			if got := filter.constrained(); got != tc.wantMatch {
+				t.Fatalf("constrained() = %v, want %v for %v", got, tc.wantMatch, tc.raw)
+			}
+		})
+	}
+}
+
+// TestResolveIntelScopeRejectsMalformedNodeHashes pins the second validation the
+// scope performs before any item is persisted. node_hashes bypasses the filter
+// (a node named by hash is taken as given), so without a shape check any string
+// becomes a job item: it can never resolve, and it burns its whole attempt budget
+// (jobs.maxItemAttempts) before being abandoned.
+func TestResolveIntelScopeRejectsMalformedNodeHashes(t *testing.T) {
+	app := &prismApp{}
+	good := strings.Repeat("ab", 16)
+
+	for _, tc := range []struct {
+		name   string
+		hashes []string
+	}{
+		{"not hex", []string{"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"}},
+		{"too short", []string{"abcd"}},
+		{"too long", []string{good + "ab"}},
+		{"an arbitrary string", []string{"not-a-hash"}},
+		{"a good hash next to a bad one", []string{good, "also-not-a-hash"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := app.resolveIntelScope(context.Background(), jobs.Scope{NodeHashes: tc.hashes})
+			if err == nil {
+				t.Fatalf("resolveIntelScope(%v) = nil error; a malformed hash must be rejected", tc.hashes)
+			}
+			if !errors.Is(err, jobs.ErrInvalidJob) {
+				t.Fatalf("error = %v, want it to wrap jobs.ErrInvalidJob so the API answers 400", err)
+			}
+		})
+	}
+
+	// A well-formed hash (and the whitespace/empty tolerance around it) is still
+	// accepted, and the empty entries are simply skipped.
+	got, err := app.resolveIntelScope(context.Background(), jobs.Scope{
+		NodeHashes: []string{" " + good + " ", "", "   "},
+	})
+	if err != nil {
+		t.Fatalf("resolveIntelScope with a well-formed hash = %v, want nil", err)
+	}
+	if len(got) != 1 || got[0] != good {
+		t.Fatalf("resolved scope = %v, want exactly [%s]", got, good)
 	}
 }

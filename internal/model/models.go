@@ -303,6 +303,12 @@ type ExportProfile struct {
 	UpdatedAtNs    int64  `json:"updated_at_ns"`
 }
 
+// AuditActorExportPrefix marks the actor of a public subscription access
+// (WP11 §4.3.4). Those entries are written for callers that hold nothing but a
+// subscription URL, so they are retained in a bucket of their own and can never
+// displace a management entry out of the audit trail.
+const AuditActorExportPrefix = "export:"
+
 // AuditEntry is one recorded administrative mutation. Detail holds JSON text.
 type AuditEntry struct {
 	ID         int64  `json:"id"`
