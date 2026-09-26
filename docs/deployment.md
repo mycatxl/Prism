@@ -680,15 +680,21 @@ place; remove it with `sudo userdel prism` if it is no longer needed.
 
 ## Not implemented in this version
 
-- TLS listener and HSTS — terminate TLS in a reverse proxy.
-- Container manifests — `Dockerfile`, `docker/entrypoint.sh`,
+- **TLS listener and HSTS.** Deliberate: terminate TLS in a reverse proxy, as the
+  [Reverse proxy and TLS](#reverse-proxy-and-tls) section shows for both nginx and
+  Caddy. Prism speaks plain HTTP so certificate rotation and HSTS policy stay with
+  the operator instead of a second certificate store inside the app.
+- **Container manifests** — `Dockerfile`, `docker/entrypoint.sh`,
   `docker-compose.yml.example` and `.github/Dockerfile.release` ship with the
   repository and **have been built and started against a live daemon**
   (see [Docker](#docker)); CI still has no Docker step, so re-verify after
   changing them.
-- Prometheus exporter (`/metrics`) — scrape the JSON API instead.
-- OpenAPI document and the `/ui/docs` page; the route table is
-  `internal/api/server.go` and the main endpoints are listed in `README.md`.
+- **Prometheus exporter (`/metrics`).** Metrics are exposed as JSON under
+  `/api/v1/metrics/*` (realtime, history and snapshots); convert them exporter-side
+  if you scrape with Prometheus.
+- **OpenAPI document and the `/ui/docs` page.** The plan allows either
+  `docs/API.md` or `docs/openapi.yaml`; this version ships the former, and
+  `docs/API.md` covers every endpoint registered in `internal/api/server.go`.
 
 `prism import-resin` is **not** on this list: it is implemented and imports an
 upstream Resin `state.db`/`cache.db` (plus the optional request-log databases)
