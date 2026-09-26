@@ -140,16 +140,131 @@ measures the pool's bookkeeping, not real sing-box construction).
 `TestPoolCapacity_ConcurrentAccess` — iterating 50,000 nodes: 809 µs →
 **61,768,430 nodes/sec**.
 
-## 5. What is still not measured
+## 6. End-to-end proxy throughput (Docker, measured)
 
-- **End-to-end proxy throughput and concurrent connection capacity.** Needs real
-  sing-box outbounds, real upstream nodes and a load generator. Not covered here.
-- **Steady-state memory under a live workload.** These cases measure the
+Section 4 measures in-process data structures. This section measures the **whole
+request path** with a real sing-box outbound, which section 4 deliberately does
+not touch.
+
+### 6.1 Topology
+
+Everything runs in Docker containers on one bridge network, so no request leaves
+the host and the numbers are not bounded by an external network:
+
+```
+load container --HTTP proxy--> Prism container :2260
+                                   |
+                                   | sing-box "http" outbound (real runtime)
+                                   v
+                              node container :18081  (HTTP forward proxy)
+                                   |
+                                   v
+                              target container :18080 (HTTP server)
+```
+
+Prism's egress probe points at a local Cloudflare-trace-shaped endpoint
+(`PRISM_EGRESS_TRACE_URL`), so the node passes its probe and becomes routable
+without outbound internet -- the same technique `scripts/smoke.sh` uses.
+
+### 6.2 Setup
+
+```sh
+# 1. Build the image from the current HEAD.
+docker build -t prism:verify .
+
+# 2. A helper container provides the target (18080), the egress trace (19080)
+#    and the node proxy (18081). See "Harness" below.
+
+# 3. Prism, with the probe pointed at the local trace endpoint.
+docker run -d --name prism-compose --network bridge \
+  -e PRISM_ADMIN_TOKEN=<token> -e PRISM_PROXY_TOKEN=<token> \
+  -e PRISM_LISTEN_ADDRESS=0.0.0.0 -e PRISM_PORT=2260 \
+  -e PRISM_EGRESS_TRACE_URL=http://<helper-ip>:19080/cdn-cgi/trace \
+  -p 2260:2260 \
+  -v prism_cache:/var/cache/prism -v prism_state:/var/lib/prism -v prism_log:/var/log/prism \
+  prism:verify
+
+# 4. Register the node (the parser requires a literal IP for the bare host:port form).
+curl -X POST .../api/v1/subscriptions \
+  -d '{"name":"docker-e2e","source_type":"local","content":"<helper-ip>:18081"}'
+curl -X POST .../api/v1/subscriptions/<id>/actions/refresh
+
+# 5. Load, from a container on the same network (the WSL2 host cannot reach
+#    container IPs directly, so the generator must run inside the network).
+docker exec prism-load /loadgen -url http://<helper-ip>:18080/ \
+  -proxy http://Default:<proxy-token>@<prism-ip>:2260 -c 32 -n 4000
+```
+
+### 6.3 Results (2026-09-27)
+
+4,000 requests per run, 32 concurrent workers, one node. Every run below is
+**0 failed requests**.
+
+| Path | Throughput | p50 | p90 | p99 |
+|---|---|---|---|---|
+| A. Baseline: direct to target (no proxy) | 103,230 req/sec | 180 us | 684 us | 1.47 ms |
+| B. Baseline: direct to the node proxy (no Prism) | 58,204 req/sec | 406 us | 1.19 ms | 2.11 ms |
+| C. **Through Prism, HTTP forward proxy** | **39,010 req/sec** | 736 us | 1.31 ms | 2.10 ms |
+| D. **Through Prism, SOCKS5** | **26,196 req/sec** | 593 us | 1.00 ms | 25.66 ms |
+| E. **Through Prism, reverse-proxy path** | **30,987 req/sec** | 937 us | 1.63 ms | 2.70 ms |
+
+**Reproducibility** (three consecutive runs of the same configuration):
+
+| Round | A (direct) | B (node) | C (through Prism) |
+|---|---|---|---|
+| 1 | 106,365 | 55,266 | 35,666 |
+| 2 | 120,766 | 60,484 | 35,381 |
+| 3 | 100,772 | 59,503 | 36,654 |
+
+Baselines move +-10% between rounds while path C stays within +-2%, so the Prism
+figure is the stable one.
+
+**Reading these numbers.** Path B is the ceiling: Prism cannot be faster than
+talking to the node directly, because every request still traverses it. Prism
+costs about **33% of that ceiling** at 32 workers (39.0k vs 58.2k); the remaining
+budget goes to lease allocation, the sing-box outbound hop and the extra proxy
+leg.
+
+At 128 concurrent workers the same path reports 18,010 req/sec (p99 41 ms) against
+a node-direct baseline of 41,344 req/sec, still with 0 failures -- so throughput
+degrades under contention rather than dropping requests.
+
+### 6.4 Harness
+
+The load generator and the three helper endpoints are **not part of the
+repository**; they are throwaway harnesses. Reproducing this section means
+rebuilding them:
+
+- **`loadgen`** -- a dependency-free Go HTTP load generator (concurrency, warmup,
+  p50/p90/p99, status-code histogram), standard library only.
+- **`helpers`** -- one Go binary serving three listeners: the HTTP target, the
+  Cloudflare-trace-shaped egress endpoint, and an HTTP forward proxy playing the
+  node role (absolute-form forwarding plus CONNECT).
+
+Two harness gotchas that cost real time and are worth recording:
+
+1. **A single-threaded target server becomes the bottleneck.** The first attempt
+   used Python's `HTTPServer` (single-threaded); it serialised requests and
+   reported a fake 788 req/sec with a 62 ms p50. Use a threading/async server, and
+   always measure the direct baseline first: if the baseline is not fast, the
+   measurement is about the target, not about Prism.
+2. **The WSL2 host cannot reach container IPs.** The host is on `172.31.x` and the
+   Docker bridge on `172.17.x`; a TCP connection to a container IP completes but no
+   reply arrives (100% packet loss on ICMP). The load generator must therefore run
+   *inside* the bridge network, not on the host.
+
+## 7. What is still not measured
+
+- **Steady-state memory under a live workload.** Section 4 measures the
   structures; a running Prism also holds intel.db (SQLite page cache), request
   logs, and one sing-box outbound per healthy node.
+- **Multi-node routing behaviour under load.** Section 6 uses a single node, so it
+  does not exercise P2C selection across a large routable set.
+- **TLS-terminating and QUIC node hops.** Section 6 uses a plain HTTP node; a
+  TLS/QUIC node adds handshake cost that is not represented here.
 - **Behaviour past 100k nodes.** 100k is the largest case in the tree. The plan's
   target is 100k, so this is sufficient for the stated goal, but the linear
   extrapolation above 100k is not measured.
-- **Import throughput from a real subscription file.** §4.3 registers
+- **Import throughput from a real subscription file.** Section 4.3 registers
   pre-constructed entries; parsing a real subscription is measured separately in
   `internal/subscription` tests, not here.

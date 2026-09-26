@@ -79,8 +79,8 @@
 - [x] `make verify` 通过；CI 为绿色；上游 Resin 的 **105** 个测试文件全部移植并通过（偏差处有注释）。
 - [x] 按 README 从零部署（Docker 或二进制）可以成功启动；UI 能登录；HTTP 代理、SOCKS5、反代三种方式都能访问目标。
   - **二进制路径：已验证。** `scripts/smoke.sh` 从零建 `.env`、起服务、建订阅、并真实走过 HTTP 正向代理、SOCKS5 与反代三条路径（23 passed）。
-  - **Docker 路径：已验证。** 在 Docker daemon 可用的环境实测通过：`docker build -t prism:verify .` 成功（镜像 99.3 MB）、容器启动后 `/healthz` 2 秒内可达、`PRISM_STATE_DIR=/var/lib/prism` 生效且容器内不存在 `/.local`（修复前数据会写到卷外的 `/.local/*`）、三个具名卷（`prism_state` 7 文件含 state.db/intel.db + WAL/SHM、`prism_cache` 3 文件、`prism_log` 6 文件）确实持有数据、`/api/v1/system/info` 无令牌 401 / 带令牌 200、`/ui/` 200、compose 路径健康检查为 `healthy`。
-  - 注：Docker daemon 是外部依赖，不在每次 CI 里跑；镜像的构建与运行需要人工在有 daemon 的环境复验。
+  - **Docker 路径：已验证（2026-09-27，Docker 28.5.1 / Compose v2.40.3，从当时 HEAD 重建）。** `docker build -t prism:verify .` 成功（镜像 **99.3 MB**）、容器启动后 `/healthz` **2 秒内 200**、`/api/v1/system/info` 无令牌 **401** / 带令牌 **200**、`/ui/` **200**、容器内**不存在 `/.local`**（数据确实落在声明卷内）、三个具名卷分别持有 **7 / 6 / 6** 个文件（state.db + intel.db + WAL/SHM、geo 库 + cache.db、metrics.db + request_logs）。**三条代理路径在容器里实测读回目标正文**：HTTP 正向代理、SOCKS5、反代路径 `/<token>/./http/<host:port>/`；缺凭据 **407**、错凭据 **403**。compose 路径的 healthcheck **9 秒**到达 `(healthy)`；重启容器后平台、订阅、代理全部存活。
+  - 注：Docker daemon 是外部依赖，**不在每次 CI 里跑**（`ci.yml` 没有 docker 步骤），所以这是人工复验的记录而非每提交门禁；改过 `Dockerfile` 或 entrypoint 后需要重跑。另：镜像自身**不带 `HEALTHCHECK`**，上面那个健康检查来自 `docker-compose.yml.example`。
 - [x] 用 Resin 的数据目录执行 `prism import-resin` 后，平台、订阅、租约齐全，旧客户端使用 `X-Resin-Account` 时粘性会话依然生效。
   - `cmd/prism/import_resin_test.go`（7 个用例）覆盖导入；`internal/proxy/proxy_test.go` 的 `TestReverseProxy_ResolveReverseProxyAccount_XResinAccountHeaderCompat` 钉住旧头名兼容；`./bin/prism import-resin` 实测打印真实参数用法。
 - [x] WireGuard、OpenVPN、ShadowTLS 串接、Snell v4、TUIC、Hysteria、AnyTLS、SSH 节点都能导入，并在离线端到端测试中连通。

@@ -330,14 +330,33 @@ read-only and import them in a one-off container —
 /var/lib/resin --from-cache /var/cache/resin`
 ([MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md) has the complete example).
 
-### Not built or verified in this environment
+### Verified in a real Docker daemon (2026-09-27)
 
 `Dockerfile`, `.github/Dockerfile.release`, `docker/entrypoint.sh` and
-`docker-compose.yml.example` are part of the repository, but the environment this
-guide was written in has no Docker daemon: **no image was built and no container
-was started or tested.** Build it once yourself before relying on it
-(`docker compose build`, or `docker build -t prism .`) and confirm that the
-container reaches `(healthy)`.
+`docker-compose.yml.example` have been built and started against a live daemon
+(Docker 28.5.1 / Compose v2.40.3), from the repository HEAD at that date:
+
+- `docker build` succeeds; the resulting image is **99.3 MB**.
+- `/healthz` answers **200 within 2 seconds** of `docker run`.
+- `/api/v1/system/info` is **401 without a token** and **200 with one**; `/ui/` is **200**.
+- The container has **no `/.local` directory**, so the resolved `PRISM_*_DIR` values
+  really do point inside the declared volumes.
+- The three named volumes hold the expected files: `state.db` + `intel.db` (+ WAL/SHM),
+  the geo databases + `cache.db`, and `metrics.db` + `request_logs-*.db`.
+- **All three proxy paths work through the container**: HTTP forward proxy, SOCKS5, and
+  the reverse-proxy path `/<token>/./http/<host:port>/`. A missing credential is **407**,
+  a wrong one is **403**.
+- The compose path (`docker-compose.yml.example`) reaches **`(healthy)` in 9 seconds**,
+  and platforms, subscriptions and proxying all survive a container restart.
+
+Two things this does **not** claim. The image itself declares **no `HEALTHCHECK`** — the
+healthcheck in the results above comes from `docker-compose.yml.example`. And CI still has
+no Docker step (`ci.yml` needs no daemon), so this is a recorded manual verification, not a
+per-commit gate; re-run it after changing the `Dockerfile` or the entrypoint.
+
+**Requires `PRISM_ADMIN_TOKEN` and `PRISM_PROXY_TOKEN`.** A container started without them
+exits immediately with `config validation failed`, which is the intended fail-closed
+behaviour rather than a packaging bug.
 
 ## Configuration
 
@@ -664,9 +683,9 @@ place; remove it with `sudo userdel prism` if it is no longer needed.
 - TLS listener and HSTS — terminate TLS in a reverse proxy.
 - Container manifests — `Dockerfile`, `docker/entrypoint.sh`,
   `docker-compose.yml.example` and `.github/Dockerfile.release` ship with the
-  repository, but they were never built or run, because the environment this
-  guide was written in has no Docker daemon. See [Docker](#docker) for the caveats
-  and build the image once yourself before using it.
+  repository and **have been built and started against a live daemon**
+  (see [Docker](#docker)); CI still has no Docker step, so re-verify after
+  changing them.
 - Prometheus exporter (`/metrics`) — scrape the JSON API instead.
 - OpenAPI document and the `/ui/docs` page; the route table is
   `internal/api/server.go` and the main endpoints are listed in `README.md`.
