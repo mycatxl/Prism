@@ -321,6 +321,14 @@ Per-node skips carry `NOT_REPRESENTABLE:<format>`, `NOT_REPRESENTABLE:mihomo(cha
 `exported` / `skipped` / `truncated` (one request is bounded to `export.MaxItems = 5000`).
 `GET /api/v1/nodes/export` is admin-authenticated.
 
+**Client version requirement for `mihomo`.** The output was validated with the real mihomo
+binary (`mihomo -t -d <dir> -f <config>`) against two live subscriptions (280 / 235 nodes,
+0 skipped): **v1.19.31 accepts both exports**. `anytls` needs a recent mihomo — **v1.19.2
+rejects it with `unsupport proxy type: anytls`** because that type did not exist yet, so use
+a current mihomo release when the subscription contains anytls nodes. `mihomo -t` validates
+the configuration structure and field types only; it does not dial the nodes. Full evidence
+and the `up`/`down` findings are in `docs/ENGINE_DECISIONS.md` D-4.
+
 Export profiles (`/api/v1/export-profiles`, `POST …/{id}/actions/rotate-token`) store format,
 name template, platform and a node filter with the same vocabulary as `GET /api/v1/nodes`
 (`ip_type`, `purity_band`, `purity_min`, `purity_max`, `verdict`, `asn`, `country`, `checks`, …;
