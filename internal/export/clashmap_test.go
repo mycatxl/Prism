@@ -776,14 +776,15 @@ func TestClashTLSMapping(t *testing.T) {
 			proxyWith(nil),
 		},
 		{
-			// The sni fields are not gated on enabled: a Clash client would see
-			// a server name without `tls: true`.
+			// The sni fields are gated on `enabled`, like the rest of the TLS
+			// block: a Clash client must never see a server name without
+			// `tls: true`.
 			"server name while tls is disabled", map[string]any{"enabled": false, "server_name": "sni.example.com"}, true,
-			proxyWith(map[string]any{"sni": "sni.example.com", "servername": "sni.example.com"}),
+			proxyWith(nil),
 		},
 		{
 			"enabled as a string is ignored", map[string]any{"enabled": "true", "server_name": "sni.example.com"}, true,
-			proxyWith(map[string]any{"sni": "sni.example.com", "servername": "sni.example.com"}),
+			proxyWith(nil),
 		},
 		{"tls as a string", "tls", false, proxyWith(nil)},
 		{"tls as a number", float64(1), false, proxyWith(nil)},
@@ -928,10 +929,10 @@ func TestClashV2RayTransportMapping(t *testing.T) {
 		},
 		{"http transport without options", `{"type":"http"}`, proxyWith(map[string]any{"network": "h2"})},
 		{
-			"httpupgrade becomes http", `{"type":"httpupgrade","path":"/up","host":"up.example.com"}`,
-			proxyWith(map[string]any{"network": "http", "http-opts": map[string]any{"path": "/up", "host": []string{"up.example.com"}}}),
+			"httpupgrade keeps its own network type", `{"type":"httpupgrade","path":"/up","host":"up.example.com"}`,
+			proxyWith(map[string]any{"network": "httpupgrade", "http-upgrade-opts": map[string]any{"path": "/up", "host": "up.example.com"}}),
 		},
-		{"httpupgrade without options", `{"type":"httpupgrade"}`, proxyWith(map[string]any{"network": "http"})},
+		{"httpupgrade without options", `{"type":"httpupgrade"}`, proxyWith(map[string]any{"network": "httpupgrade"})},
 		{"quic", `{"type":"quic"}`, proxyWith(map[string]any{"network": "quic"})},
 		{"unknown transport is ignored", `{"type":"xhttp","path":"/x"}`, proxyWith(nil)},
 		{"empty transport type is ignored", `{"type":""}`, proxyWith(nil)},
@@ -1040,6 +1041,55 @@ func TestClashWireGuardPeerFields(t *testing.T) {
 		{
 			name: "reserved with a non number entry is dropped",
 			raw:  `{` + base + `,"reserved":[1,"2",3]}]}`,
+			want: map[string]any{
+				"type": "wireguard", "server": "203.0.113.9", "port": 51820,
+				"private-key": "PRIV", "public-key": "PUB",
+			},
+		},
+		{
+			// The canonical form: node.WireGuardPeer.Reserved is a []uint8, which
+			// Go's JSON codec renders as a base64 string.
+			name: "reserved as the canonical base64 string",
+			raw:  `{` + base + `,"reserved":"AQID"}]}`,
+			want: map[string]any{
+				"type": "wireguard", "server": "203.0.113.9", "port": 51820,
+				"private-key": "PRIV", "public-key": "PUB",
+				"reserved": []int{1, 2, 3},
+			},
+		},
+		{
+			// The number-array spelling still works, for hand-written documents.
+			name: "reserved as a number array",
+			raw:  `{` + base + `,"reserved":[1,2,3]}]}`,
+			want: map[string]any{
+				"type": "wireguard", "server": "203.0.113.9", "port": 51820,
+				"private-key": "PRIV", "public-key": "PUB",
+				"reserved": []int{1, 2, 3},
+			},
+		},
+		{
+			// A base64 string that does not decode to three bytes is dropped,
+			// like the wrong-length array above.
+			name: "reserved base64 of the wrong length",
+			raw:  `{` + base + `,"reserved":"AQI="}]}`,
+			want: map[string]any{
+				"type": "wireguard", "server": "203.0.113.9", "port": 51820,
+				"private-key": "PRIV", "public-key": "PUB",
+			},
+		},
+		{
+			// A string that is not base64 at all is dropped rather than guessed.
+			name: "reserved that is not base64",
+			raw:  `{` + base + `,"reserved":"not base64!!"}]}`,
+			want: map[string]any{
+				"type": "wireguard", "server": "203.0.113.9", "port": 51820,
+				"private-key": "PRIV", "public-key": "PUB",
+			},
+		},
+		{
+			// A wrong JSON type is dropped.
+			name: "reserved as a number",
+			raw:  `{` + base + `,"reserved":5}]}`,
 			want: map[string]any{
 				"type": "wireguard", "server": "203.0.113.9", "port": 51820,
 				"private-key": "PRIV", "public-key": "PUB",
@@ -1600,14 +1650,15 @@ func TestClashRoundTripObfsPluginDropsItsOptions(t *testing.T) {
 	}
 }
 
-// TestClashRoundTripShadowTLSChainLosesTheFrontSNI pins a known gap.
+// TestClashRoundTripShadowTLSKeepsTheFrontSNI pins the camouflage host across a
+// Clash -> sing-box -> Clash round trip.
 //
-// Known gap: the Clash importer stores `plugin-opts.host` (the front/SNI host)
-// in the shadowtls dependency's `tls.server_name`, while clashChainProxy emits
-// the dependency's `server` (the address the node connects to) as
-// `plugin-opts.host`. The camouflage host is therefore replaced by the server
-// address on every Clash -> sing-box -> Clash trip.
-func TestClashRoundTripShadowTLSChainLosesTheFrontSNI(t *testing.T) {
+// The Clash importer stores `plugin-opts.host` (the front/SNI host) in the
+// shadowtls dependency's `tls.server_name`. clashChainProxy used to emit the
+// dependency's `server` (the address the node connects to) as `plugin-opts.host`
+// instead, so the camouflage host was replaced by the server address and the
+// server saw the wrong SNI.
+func TestClashRoundTripShadowTLSKeepsTheFrontSNI(t *testing.T) {
 	clash := map[string]any{
 		"name": "ss-shadowtls", "type": "ss", "server": "198.51.100.20", "port": 443,
 		"cipher": "aes-256-gcm", "password": "chain-pw",
@@ -1645,9 +1696,8 @@ func TestClashRoundTripShadowTLSChainLosesTheFrontSNI(t *testing.T) {
 	assertField(t, "clash chain", proxy, "plugin", "shadow-tls")
 	opts := mapObject(proxy, "plugin-opts")
 	assertField(t, "clash chain options", opts, "password", "stls-pw")
-	assertField(t, "clash chain options", opts, "version", 3)
-	// The front SNI is gone: the server address is emitted instead.
-	assertField(t, "clash chain options", opts, "host", "198.51.100.20")
+	// The front SNI survives: the camouflage host, not the server address.
+	assertField(t, "clash chain options", opts, "host", "front.example.com")
 }
 
 // TestClashRoundTripHysteria2PortsAndRatesDrift pins two known drifts.
@@ -1676,14 +1726,13 @@ func TestClashRoundTripHysteria2PortsAndRatesDrift(t *testing.T) {
 	assertField(t, "clash hy2", proxy, "down", 200)
 }
 
-// TestClashRoundTripWireGuardReservedIsDropped pins a known gap.
+// TestClashRoundTripWireGuardReservedSurvives pins the reserved byte triple.
 //
-// Known gap: clashWireGuard reads `reserved` as a JSON number array
-// (mapUintSlice), but the canonical sing-box endpoint form carries it as the
-// base64 string internal/node serializes []uint8 into. The byte triple is
-// therefore dropped from a Clash export, which breaks the WARP style peers
-// that need it.
-func TestClashRoundTripWireGuardReservedIsDropped(t *testing.T) {
+// The canonical sing-box endpoint form carries `reserved` as the base64 string
+// internal/node serializes []uint8 into, while clashWireGuard used to read it as a
+// JSON number array only. The byte triple was therefore dropped from a Clash
+// export, which breaks the WARP style peers that need it.
+func TestClashRoundTripWireGuardReservedSurvives(t *testing.T) {
 	clash := map[string]any{
 		"name": "wg", "type": "wireguard", "server": "203.0.113.9", "port": 51820,
 		"private-key": "WG-PRIVATE", "public-key": "WG-PUBLIC",
@@ -1716,9 +1765,7 @@ func TestClashRoundTripWireGuardReservedIsDropped(t *testing.T) {
 		t.Fatalf("wireguard is not representable in mihomo: %+v", report.Skipped)
 	}
 	assertField(t, "clash wireguard", proxy, "public-key", "WG-PUBLIC")
-	if reserved, ok := proxy["reserved"]; ok {
-		t.Fatalf("reserved survived (%v); the known gap is fixed, flip this test", reserved)
-	}
+	assertField(t, "clash wireguard", proxy, "reserved", []any{1, 2, 3})
 }
 
 // mustClashObject decodes a raw JSON object and fails on error.

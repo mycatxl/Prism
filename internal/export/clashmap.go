@@ -1,6 +1,7 @@
 package export
 
 import (
+	"encoding/base64"
 	"strconv"
 	"strings"
 )
@@ -381,7 +382,11 @@ func clashWireGuard(object map[string]any) (map[string]any, bool) {
 	if preSharedKey := mapString(peer, "pre_shared_key"); preSharedKey != "" {
 		proxy["pre-shared-key"] = preSharedKey
 	}
-	if reserved := mapUintSlice(peer, "reserved"); len(reserved) == 3 {
+	// The canonical form stores `reserved` as a []uint8, which Go's JSON codec
+	// renders as a base64 string ("AQID"), so the number-array reader never
+	// matched and every WARP-style node lost its reserved bytes and failed the
+	// handshake on the client. Both spellings are accepted.
+	if reserved := wireGuardReserved(peer); len(reserved) == 3 {
 		proxy["reserved"] = reserved
 	}
 	if allowedIPs := mapStringSlice(peer, "allowed_ips"); len(allowedIPs) > 0 {
@@ -523,7 +528,19 @@ func clashChainProxy(item preparedItem) (map[string]any, bool) {
 		return nil, false
 	}
 	pluginOpts := map[string]any{}
-	if host := mapString(dep, "server"); host != "" {
+	// The Clash shadow-tls plugin's `host` is the *disguise* SNI the client
+	// presents, not the server it connects to (that is the proxy's own server).
+	// The importer stores it in the dep's tls.server_name (chains.go), so
+	// reading dep.server here replaced the front domain with the real address and
+	// broke the handshake: the server saw the wrong SNI. Fall back to dep.server
+	// only for a document that carries no TLS block at all.
+	host := mapString(dep, "server")
+	if tls := mapObject(dep, "tls"); tls != nil {
+		if serverName := mapString(tls, "server_name"); serverName != "" {
+			host = serverName
+		}
+	}
+	if host != "" {
 		pluginOpts["host"] = host
 	}
 	if password := mapString(dep, "password"); password != "" {
@@ -606,7 +623,11 @@ func applyClashTLS(proxy map[string]any, object map[string]any) {
 	if tls.Enabled {
 		proxy["tls"] = true
 	}
-	if tls.ServerName != "" {
+	// The SNI fields belong to the TLS block, so they are gated on the same flag
+	// the rest of it is. Emitting `sni` without `tls: true` produced a proxy that
+	// claims a server name while running in plaintext, which is not a shape any
+	// node can produce — and reality was already gated while these were not.
+	if tls.Enabled && tls.ServerName != "" {
 		proxy["sni"] = tls.ServerName
 		proxy["servername"] = tls.ServerName
 	}
@@ -673,16 +694,23 @@ func applyClashV2RayTransport(proxy map[string]any, object map[string]any) {
 			proxy["h2-opts"] = httpOpts
 		}
 	case "httpupgrade":
-		proxy["network"] = "http"
+		// httpupgrade is its own Clash network type. Writing `network: http` here
+		// made the round trip lossy: the importer reads `http` as the sing-box
+		// `http` transport (the h2 family) and only `httpupgrade` as this one, so
+		// an exported node came back as a different transport and stopped working.
+		proxy["network"] = "httpupgrade"
 		httpOpts := map[string]any{}
 		if path := mapString(transport, "path"); path != "" {
 			httpOpts["path"] = path
 		}
 		if host := mapString(transport, "host"); host != "" {
-			httpOpts["host"] = []string{host}
+			httpOpts["host"] = host
+		}
+		if headers := mapObject(transport, "headers"); len(headers) > 0 {
+			httpOpts["headers"] = headers
 		}
 		if len(httpOpts) > 0 {
-			proxy["http-opts"] = httpOpts
+			proxy["http-upgrade-opts"] = httpOpts
 		}
 	case "quic":
 		proxy["network"] = "quic"
@@ -752,6 +780,43 @@ func mapUintSlice(object map[string]any, key string) []int {
 		out = append(out, int(number))
 	}
 	return out
+}
+
+// wireGuardReserved reads a wireguard peer's `reserved` field in either spelling.
+//
+// The canonical node form (node.WireGuardPeer.Reserved) is a []uint8, which Go's
+// JSON codec encodes as a base64 string, so the value that reaches the exporter is
+// "AQID" and not [1,2,3]. The number-array form is accepted too, because a
+// hand-written or legacy document may use it.
+func wireGuardReserved(peer map[string]any) []int {
+	value, ok := peer["reserved"]
+	if !ok {
+		return nil
+	}
+	switch typed := value.(type) {
+	case string:
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(typed))
+		if err != nil {
+			return nil
+		}
+		out := make([]int, 0, len(decoded))
+		for _, b := range decoded {
+			out = append(out, int(b))
+		}
+		return out
+	case []any:
+		out := make([]int, 0, len(typed))
+		for _, item := range typed {
+			number, ok := item.(float64)
+			if !ok {
+				return nil
+			}
+			out = append(out, int(number))
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 func mapStringSlice(object map[string]any, key string) []string {
