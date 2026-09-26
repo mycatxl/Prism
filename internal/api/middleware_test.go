@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"prism/internal/service"
 )
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
@@ -127,4 +129,28 @@ func assertBodyContains(t *testing.T, rec *httptest.ResponseRecorder, substr str
 // token check, so an effectively unbounded limiter keeps their intent.
 func prismAuthLimiter() *AuthFailureLimiter {
 	return NewAuthFailureLimiter(1000, time.Minute, time.Minute, nil)
+}
+
+// TestServerConnectionBounds pins the listener-level connection hygiene.
+//
+// Without a read-header deadline a client can hold a connection open with a
+// half-sent request header (slowloris). WriteTimeout must stay unset: the SSE
+// endpoint is a long-lived stream and a write deadline would cut every progress
+// stream short.
+func TestServerConnectionBounds(t *testing.T) {
+	srv := NewServer(0, "token", service.SystemInfo{}, nil, nil, nil, 1<<20, nil, nil)
+	httpSrv := srv.httpServer
+
+	if httpSrv.ReadHeaderTimeout != apiReadHeaderTimeout {
+		t.Errorf("ReadHeaderTimeout = %v, want %v", httpSrv.ReadHeaderTimeout, apiReadHeaderTimeout)
+	}
+	if httpSrv.IdleTimeout != apiIdleTimeout {
+		t.Errorf("IdleTimeout = %v, want %v", httpSrv.IdleTimeout, apiIdleTimeout)
+	}
+	if httpSrv.MaxHeaderBytes != apiMaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want %d", httpSrv.MaxHeaderBytes, apiMaxHeaderBytes)
+	}
+	if httpSrv.WriteTimeout != 0 {
+		t.Errorf("WriteTimeout = %v, want 0 (a deadline would cut the SSE stream)", httpSrv.WriteTimeout)
+	}
 }

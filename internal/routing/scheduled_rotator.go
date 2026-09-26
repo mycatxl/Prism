@@ -166,9 +166,11 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 		}
 
 		// Delete the lease to trigger re-routing on next request and remember
-		// its egress IP so the next lease avoids it (WP10 §3).
-		if lease, deleted := r.router.DeleteLeaseIfOlderThan(platID, account, floorNs); deleted {
-			r.router.recordRotationTombstone(platID, account, lease.EgressIP, nowNs, tombstoneTTL)
-		}
+		// its egress IP so the next lease avoids it (WP10 §3). The tombstone is
+		// written inside the deletion's critical section, so a request arriving
+		// in between cannot be handed the IP that was just rotated away.
+		_, _ = r.router.DeleteLeaseIfOlderThan(platID, account, floorNs, func(removed Lease) {
+			r.router.recordRotationTombstone(platID, account, removed.EgressIP, nowNs, tombstoneTTL)
+		})
 	}
 }

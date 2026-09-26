@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"prism/internal/node"
 	"prism/internal/platform"
 )
 
@@ -245,5 +246,68 @@ func TestRouterRotateLease_RemovesLeaseAndRecordsTombstone(t *testing.T) {
 	}
 	if !next.LeaseCreated {
 		t.Fatal("expected a fresh lease after manual rotation")
+	}
+}
+
+// TestDeleteLease_OnDeleteRunsInsideTheCriticalSection pins the atomicity
+// contract the rotation path depends on.
+//
+// The tombstone that tells the next lease which egress IP to avoid must be
+// visible before the account can draw a new lease. The allocation path reads it
+// under the same per-account key that DeleteLease takes, so writing the
+// tombstone in the onDelete callback closes the window that existed while the
+// callback ran after Compute had already returned.
+func TestDeleteLease_OnDeleteRunsInsideTheCriticalSection(t *testing.T) {
+	table := NewLeaseTable(NewIPLoadStats())
+	ip := netip.MustParseAddr("203.0.113.44")
+	table.CreateLease("acct", Lease{
+		NodeHash:    node.HashFromRawOptions([]byte(`{"type":"ss","server":"203.0.113.44","port":443}`)),
+		EgressIP:    ip,
+		CreatedAtNs: 1,
+		ExpiryNs:    2,
+	})
+
+	// The callback observes the lease that is being removed.
+	var seen []Lease
+	lease, deleted := table.DeleteLease("acct", func(removed Lease) {
+		seen = append(seen, removed)
+	})
+	if !deleted {
+		t.Fatal("DeleteLease = false, want true")
+	}
+	if len(seen) != 1 || seen[0].EgressIP != ip {
+		t.Fatalf("onDelete saw %+v, want one lease for %s", seen, ip)
+	}
+	if lease.EgressIP != ip {
+		t.Fatalf("deleted lease = %v, want %v", lease.EgressIP, ip)
+	}
+	// The load counter is decremented exactly once, by the table itself.
+	if got := table.stats.Get(ip); got != 0 {
+		t.Fatalf("IP load after delete = %d, want 0", got)
+	}
+
+	// A missing lease never runs the callback.
+	calls := 0
+	if _, deleted := table.DeleteLease("acct", func(Lease) { calls++ }); deleted {
+		t.Fatal("DeleteLease on a missing account reported a deletion")
+	}
+	if calls != 0 {
+		t.Fatalf("onDelete ran %d times for a missing lease, want 0", calls)
+	}
+
+	// DeleteLeaseIfOlderThan honours the age gate before running the callback.
+	table.CreateLease("acct2", Lease{EgressIP: ip, CreatedAtNs: 100})
+	ageCalls := 0
+	if _, deleted := table.DeleteLeaseIfOlderThan("acct2", 50, func(Lease) { ageCalls++ }); deleted {
+		t.Fatal("a lease newer than the cutoff must not be deleted")
+	}
+	if ageCalls != 0 {
+		t.Fatalf("onDelete ran %d times for a lease that was kept, want 0", ageCalls)
+	}
+	if _, deleted := table.DeleteLeaseIfOlderThan("acct2", 100, func(Lease) { ageCalls++ }); !deleted {
+		t.Fatal("a lease at the cutoff must be deleted")
+	}
+	if ageCalls != 1 {
+		t.Fatalf("onDelete ran %d times for the removed lease, want 1", ageCalls)
 	}
 }

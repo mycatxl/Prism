@@ -6,11 +6,30 @@ import (
 	"net/http"
 	"strconv"
 	"sync/atomic"
+	"time"
 
 	"prism/internal/config"
 	"prism/internal/metrics"
 	"prism/internal/requestlog"
 	"prism/internal/service"
+)
+
+// Connection-level bounds of the management/proxy listener (WP04 §4.6).
+//
+// apiReadHeaderTimeout bounds how long a client may take to send its request
+// headers, which is what stops a slowloris-style hold on a connection.
+// apiIdleTimeout bounds an idle keep-alive connection between requests.
+// apiMaxHeaderBytes caps the header block; 1 MiB is the net/http default, stated
+// here so the bound is visible next to the request-body limit.
+//
+// WriteTimeout is deliberately not set: GET /api/v1/intel/jobs/{id}/events is a
+// long-lived SSE stream that writes keep-alive frames every sseKeepAlive and is
+// meant to stay open for the whole life of a job. A write deadline would cut
+// every progress stream short.
+const (
+	apiReadHeaderTimeout = 10 * time.Second
+	apiIdleTimeout       = 120 * time.Second
+	apiMaxHeaderBytes    = 1 << 20
 )
 
 // Server wraps the HTTP server and mux for the Prism API.
@@ -233,9 +252,21 @@ func NewServerWithAddress(
 	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(adminToken, authLimiter, cp))
 	mux.Handle("/api/", AuthMiddleware(adminToken, authLimiter, authedHandler))
 
+	// Connection hygiene. Without these a client can hold a connection open
+	// indefinitely with a half-sent request header (slowloris), and a "half-dead"
+	// SSE subscriber that never sends FIN keeps its slot out of the 64 the hub
+	// allows. ReadHeaderTimeout bounds the header phase; IdleTimeout bounds an
+	// idle keep-alive connection. WriteTimeout is deliberately left unset: the
+	// SSE endpoint writes keep-alive frames every sseKeepAlive and is expected to
+	// stay open for the whole life of a job, so a write deadline would cut it.
+	// MaxHeaderBytes matches the default (1 MiB) but is stated explicitly so the
+	// bound is visible next to the request-body limit.
 	srv := &http.Server{
-		Addr:    net.JoinHostPort(listenAddress, strconv.Itoa(port)),
-		Handler: mux,
+		Addr:              net.JoinHostPort(listenAddress, strconv.Itoa(port)),
+		Handler:           mux,
+		ReadHeaderTimeout: apiReadHeaderTimeout,
+		IdleTimeout:       apiIdleTimeout,
+		MaxHeaderBytes:    apiMaxHeaderBytes,
 	}
 
 	return &Server{

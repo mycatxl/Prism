@@ -70,7 +70,14 @@ func (t *LeaseTable) CreateLease(account string, lease Lease) {
 
 // DeleteLease atomically removes a lease and decrements IP load stats.
 // Returns the deleted lease and true when a lease was actually deleted.
-func (t *LeaseTable) DeleteLease(account string) (Lease, bool) {
+//
+// onDelete (optional) runs inside the same per-account critical section that
+// removes the lease. Rotation needs that: the tombstone that tells the next
+// lease which egress IP to avoid must exist before the account can draw a new
+// lease, and the allocation path reads it under this same key. Writing the
+// tombstone after Compute returned left a window where a concurrent request
+// could be handed the IP that had just been rotated away.
+func (t *LeaseTable) DeleteLease(account string, onDelete func(Lease)) (Lease, bool) {
 	var deleted Lease
 	ok := false
 	t.leases.Compute(account, func(oldVal Lease, loaded bool) (Lease, xsync.ComputeOp) {
@@ -78,6 +85,9 @@ func (t *LeaseTable) DeleteLease(account string) (Lease, bool) {
 			t.stats.Dec(oldVal.EgressIP)
 			deleted = oldVal
 			ok = true
+			if onDelete != nil {
+				onDelete(oldVal)
+			}
 			return oldVal, xsync.DeleteOp
 		}
 		return oldVal, xsync.CancelOp
@@ -90,7 +100,10 @@ func (t *LeaseTable) DeleteLease(account string) (Lease, bool) {
 // inside the map lock, so a lease that was concurrently created or renewed
 // after the caller collected candidates is never removed.
 // Returns the deleted lease and true when a lease was actually deleted.
-func (t *LeaseTable) DeleteLeaseIfOlderThan(account string, createdBeforeOrAtNs int64) (Lease, bool) {
+//
+// onDelete (optional) runs inside the same critical section; see DeleteLease for
+// why the rotation tombstone has to be written there.
+func (t *LeaseTable) DeleteLeaseIfOlderThan(account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
 	var deleted Lease
 	ok := false
 	t.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
@@ -100,6 +113,9 @@ func (t *LeaseTable) DeleteLeaseIfOlderThan(account string, createdBeforeOrAtNs 
 		t.stats.Dec(current.EgressIP)
 		deleted = current
 		ok = true
+		if onDelete != nil {
+			onDelete(current)
+		}
 		return current, xsync.DeleteOp
 	})
 	return deleted, ok
