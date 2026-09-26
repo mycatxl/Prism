@@ -59,8 +59,7 @@ func TestRouterCapacity_ConcurrentRouteRequests(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			var m0, m1 runtime.MemStats
-			runtime.GC()
-			runtime.ReadMemStats(&m0)
+			testutil.ReadMemStatsStable(&m0)
 
 			var wg sync.WaitGroup
 			errCh := make(chan error, tc.requests)
@@ -86,8 +85,7 @@ func TestRouterCapacity_ConcurrentRouteRequests(t *testing.T) {
 			close(errCh)
 			elapsed := time.Since(start)
 
-			runtime.GC()
-			runtime.ReadMemStats(&m1)
+			testutil.ReadMemStatsStable(&m1)
 
 			var firstErr error
 			for err := range errCh {
@@ -100,14 +98,15 @@ func TestRouterCapacity_ConcurrentRouteRequests(t *testing.T) {
 				t.Fatalf("routing error: %v", firstErr)
 			}
 
-			allocMB := float64(m1.Alloc-m0.Alloc) / 1024 / 1024
+			allocMB := testutil.AllocDeltaMB(m0, m1)
+			totalMB := testutil.TotalAllocDeltaMB(m0, m1)
 			throughput := float64(tc.requests) / elapsed.Seconds()
 			avgLatency := elapsed / time.Duration(tc.requests)
 
 			t.Logf("Processed %d requests with %d concurrent workers in %v", tc.requests, tc.concurrency, elapsed)
 			t.Logf("Throughput: %.0f req/sec", throughput)
 			t.Logf("Average latency: %v per request", avgLatency)
-			t.Logf("Memory: Alloc=%.2fMB", allocMB)
+			t.Logf("Memory: Live=%.2fMB TotalAlloc=%.2fMB", allocMB, totalMB)
 
 			state, ok := router.states.Load(plat.ID)
 			if !ok {

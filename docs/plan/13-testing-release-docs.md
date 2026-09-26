@@ -86,7 +86,8 @@
 - [x] WireGuard、OpenVPN、ShadowTLS 串接、Snell v4、TUIC、Hysteria、AnyTLS、SSH 节点都能导入，并在离线端到端测试中连通。
   - **导入与构建：已验证。** `TestProtocolMatrix` 覆盖全部这些协议（含 `ovpn-*` 8 例、`wireguard-*` 5 例、`snell-*`、`chain-clash-shadow-tls-plugin` 等），且它是**真实拨号**。
   - **离线端到端：已补齐（TCP 系）。** `internal/e2e/protocols_test.go`（构建标签与完整版一致）在进程内用 `box.New` 起真实 sing-box 服务端 inbound，监听 127.0.0.1 随机端口，再用 Prism 的 builder 建出站去拨它，并通过隧道读回一个 loopback HTTP 目标服务的正文——全程不出网。覆盖 shadowsocks（aes-256-gcm、2022-blake3-aes-256-gcm）、vmess(ws)、vless(ws/tls)、trojan(明文/tls)、socks5、http、anytls 共 10 例；另有 3 例反向验证（错误凭据**必须**拿不到目标正文），防止"出站绕过节点直连目标"这种假绿。
-  - **未进离线覆盖的协议（如实记录）**：hysteria2/tuic（QUIC 数据面）、wireguard（endpoint）、openvpn（endpoint，需 CA 与证书链）、shadowtls 串接（需 handshake 目标 TLS 服务）。它们的**导入与构建**由 `TestProtocolMatrix` 覆盖，但"离线连通"这半条对它们尚未满足——各自需要 UDP／证书／握手目标夹具。TCP 系协议已闭环。
+  - **离线端到端：已全部补齐（含 QUIC 与证书系）。** 15 个用例：shadowsocks（aes-256-gcm、2022-blake3-aes-256-gcm）、vmess(ws)、vless(ws/tls)、trojan(明文/tls)、socks5、http、anytls、hysteria2（QUIC）、tuic（QUIC）、shadowtls 串接（handshake 指向本地 TLS 服务）、wireguard（endpoint）、openvpn（openvpn-server endpoint，自签 CA + 服务端/客户端证书链）。另有 3 例反向验证（错误凭据**必须**拿不到目标正文），防止"出站绕过节点直连目标"这种假绿。
+  - **仍未进离线覆盖的协议（如实记录）**：SSR、Mieru、TUIC v4、Snell、kcptun —— sing-box 无法表示这些服务端，只做导入与构建断言（`ENGINE_NOT_BUILT`）。
 - [ ] SSR、Mieru、VLESS-XHTTP、VLESS 加密、Snell v3 节点在完整版中由 mihomo 构建成功；在精简版中出现在解析报告里，原因为 `ENGINE_NOT_BUILT`。
   - **本条已被决策 D-1 取代。** mihomo 不作为运行时内核被否决（`docs/ENGINE_DECISIONS.md`），因此不存在"由 mihomo 构建成功"的完整版。**后半条仍然成立且已验证**：这些类型在解析报告里以 `ENGINE_NOT_BUILT` 出现（`internal/subscription/report.go`，由 `report_test.go` 钉住）。
 - [x] 导入订阅后自动生成 intel 任务；每个节点的出口 v4/v6、ASN、城市、IP 类型、纯净度、判定都写入 intel.db，重启后不丢；任务中途重启后能续跑。
@@ -98,7 +99,7 @@
   - `TestPlatform_FullRebuild_QualityPolicyWithoutSnapshotFailsClosed`、`TestExplainQuality`、`TestExplainQuality_UnknownAndEmpty` 覆盖；路由 `GET /api/v1/platforms/{id}/nodes/{hash}/explain` 已注册。
 - [x] 能导出 sing-box、mihomo、v2rayN 格式，并被对应客户端识别；订阅链接可用、可停用、可轮换令牌。
   - 格式与命名由 `internal/export/` 的 8 个测试文件覆盖，令牌生命周期由 `internal/api/handler_export_test.go` 覆盖。
-  - **"被对应客户端识别"未在外部客户端上实测过**（需人工导入验证），仅覆盖了格式契约本身。
+  - **"被对应客户端识别"：mihomo 已在真实客户端实测。** 两份真实订阅（802,810 B / 776,662 B）经真实导出路径生成配置（280 / 235 节点、0 跳过），用 **mihomo v1.19.31** 的 `mihomo -t -d <dir> -f <config>` 校验，两份都 `test is successful`。注意 `anytls` 需要较新的 mihomo（v1.19.2 会报 `unsupport proxy type: anytls`），且 `mihomo -t` 只校验配置结构与字段类型、不拨号验证连通性。sing-box 与 v2rayN 格式仍只覆盖格式契约本身（未在外部客户端上人工导入）。证据见 `docs/ENGINE_DECISIONS.md` D-4。
 - [x] 文档与实际行为一致，不包含未实现的声明。
   - 本轮修掉三处不实声明：`docs/DESIGN.md` 的 `prism standalone` 与双端口描述（实际是单端口 2260）、`docs/deployment.md` 称 `import-resin` 未实现、`docs/PROTOCOLS.md` 仍写 sing-box 1.14.1。计划要求而缺失的文档已补齐：`docs/INTEL.md`、`docs/API.md`、`docs/release-notes/v3.0.0.md`，以及 README/deployment 的 Docker 章节。
-  - 仍需注意：`POST /quality/ip/{ip}/actions/probe` 在生产装配下恒返回 409（`inspection.Store` 无实现者、`ControlPlaneService.Inspection` 从未赋值）—— 这已如实写进 `docs/API.md` §21 与发布说明的已知限制，不属"未实现的声明"。
+  - 仍需注意：`POST /quality/ip/{ip}/actions/probe` 的旧"恒 409"问题**已解决**（WP08 §8/§9 重写为 intel 别名：私网稳定 400、无可用数据源才 409、正常入队返回 202）。逐分支见 `docs/API.md` §21 第 4 条。
