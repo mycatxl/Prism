@@ -383,6 +383,18 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 10. **指标端点对 `platform_id` 的支持不一致**：`realtime/throughput`、`realtime/connections`、`history/traffic`、
     `history/probes`、`history/node-pool`、`snapshots/node-pool` 传 `platform_id` 会 400；
     `history/lease-lifetime` 与 `snapshots/platform-node-pool` 反过来**必填**。
+11. **新导入的节点不会立刻可路由，中间有一段探测窗口。** `AddNodeFromSub` 把新节点创建为
+    **circuit-open**（`entry.CircuitOpenSince` = 创建时刻），因为订阅内容不代表节点真的能通；
+    只有出口探测成功（`RecordOutcome(hash, true, …)`）才会清掉熔断并触发
+    `notifyAllPlatformsDirty`，节点这时才进入平台的 routable view。在此之前代理请求会得到
+    **503 `NO_AVAILABLE_NODES`**，而 `GET /nodes` 已经能看到该节点（`has_outbound=true`）。
+    这个先后顺序是**有意设计**：宁可短暂 503，也不把流量送进未验证的节点。
+
+    实测窗口（Docker 容器内、本地 trace 端点、单节点，3 轮）：节点出站就绪约 **8 ms**，
+    平台视图包含它需要 **1.1–3.4 s**。窗口长度取决于探测队列深度与探测本身的耗时，节点多时会更长。
+    运维含义：**导入订阅后不要立即断言代理可用**，应轮询到第一次成功（或看
+    `routable_node_count` 从 0 变正）再开始压测或切流量。脚本里判断"节点已导入"时请用
+    `routable_node_count`，不要用 `GET /nodes` 的 `total`。
 
 ## 22. 相关文档
 
