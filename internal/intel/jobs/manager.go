@@ -516,7 +516,7 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 			return
 		}
 		if result.DeferUntilNs > 0 {
-			m.deferItem(parent, item, lastCompleted, result.DeferUntilNs, "", summary)
+			m.deferItem(parent, item, lastCompleted, deferDeadline(m.nowNs(), item, result.DeferUntilNs), "", summary)
 			return
 		}
 
@@ -557,6 +557,51 @@ func (m *Manager) deferItem(ctx context.Context, item store.JobItem, stepIndex i
 		m.logf("[intel] defer job item: %v", err)
 	}
 	m.publish(ctx, item.JobID, false)
+}
+
+// deferDeadline applies a retry floor to an item that a provider gate parked.
+//
+// Step 4 of the pipeline hands back the provider's own next-allowed time, which
+// for a provider-wide QPS valve is about a second. Parking every item for
+// exactly that long turns one closed gate into a thundering herd: measured on
+// 2026-10-02 with 311 items against a QPS of 1, a single kind=intel job produced
+// ~1.96M claims in 69 minutes, with individual items past 11000 attempts, and it
+// held one of the two max_running_jobs slots the whole time - which stopped every
+// later job from starting at all. Nothing else bounded that loop: maxItemAttempts
+// only guards the error path, and the context-timeout path already backs off.
+//
+// The requested deadline is therefore raised to the exponential backoff and
+// spread by a stable per-node jitter, so the inventory stops waking in the same
+// instant and successive retries space out instead of spinning.
+func deferDeadline(nowNs int64, item store.JobItem, requested int64) int64 {
+	delay := backoff(item.Attempts - 1)
+	if jitter := stableJitter(item.NodeHash, delay); jitter > 0 {
+		delay += jitter
+	}
+	if floor := nowNs + int64(delay); requested < floor {
+		return floor
+	}
+	return requested
+}
+
+// stableJitter returns a deterministic slice of window derived from nodeHash:
+// two items never share a retry instant, and one item keeps the same offset
+// across retries so the schedule stays reproducible. FNV-1a is inlined to keep
+// this file's imports unchanged.
+func stableJitter(nodeHash string, window time.Duration) time.Duration {
+	if window <= 0 || nodeHash == "" {
+		return 0
+	}
+	const (
+		offset32 uint32 = 2166136261
+		prime32  uint32 = 16777619
+	)
+	hash := offset32
+	for i := 0; i < len(nodeHash); i++ {
+		hash ^= uint32(nodeHash[i])
+		hash *= prime32
+	}
+	return time.Duration(int64(hash) % int64(window))
 }
 
 // publish recomputes the job counters and pushes one SSE frame.
