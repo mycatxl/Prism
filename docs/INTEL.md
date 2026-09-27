@@ -453,6 +453,33 @@ region:                    # 可选
 三个开关的关系：`intel_enabled=false` 一票否决；`auto_intel=false` 让该订阅出局；两者都为真时，
 任务种类由 `intel_auto_checks` 决定。
 
+**第二个自动生产者：定时刷新。** 与订阅无关，按 `intel_refresh_schedule`（cron，默认 `0 4 * * *`）
+在到点时创建**一个** `created_by="system:refresh"`、优先级 10 的任务，范围是满足任一条件的节点
+（`internal/intel/refresh_schedule.go`）：
+
+| 条件 | 判据 |
+|---|---|
+| 存在已过期证据 | 节点当前出口地址上有 `valid_until_ns` 已过的 `evidence` 行 |
+| 存在已过期检测 | 该节点有 `valid_until_ns` 已过的 `node_checks` 行 |
+| 出口观测超过 48 小时 | `node_egress.v4_observed_ns` 早于 48 小时前 |
+
+任务种类与订阅路径用**同一个** `intel_auto_checks` 开关。`kind=intel` 时还会**丢掉**「已过期检测」
+这一条：那条流水线没有第 5 步，把只为刷检测的节点排进去只会白跑整条证据链。
+
+几个需要知道的行为细节：
+
+- 调度器随 `Service.Start()` 启动，**启动时不立即执行**，只等下一个 cron 时刻；启动日志会打印
+  `[intel] scheduled refresh: next pass in …`。一次「没有任何东西过期」是正常结果，只写一行日志、
+  不建任务、不报错。
+- `intel_refresh_schedule` **在每次醒来时重新读取**，所以 `PATCH /api/v1/system/config` 改 cron
+  无需重启即对下一次生效；非法表达式被配置校验挡下（400，消息形如
+  `intel_refresh_schedule: expected exactly 5 fields`）。
+- 范围先剔除**节点池已不认识**的哈希——`jobs.Scope.NodeHashes` 是按给定值取的，没有这一步
+  已删除的节点会被排进任务——再按「每个查询源 50,000 条」与 `MaxNodesPerJob` 两级上限截断。
+  被截断的节点下一轮仍然过期，所以不会丢，只是分摊到后续几轮；截断会写日志。
+- 计数器在内存里，`Service.RefreshScheduleStats()` 返回（创建数、上次运行时刻、上次范围大小、上次错误）；
+  重启后从零开始，任务本身持久在 intel.db。
+
 用 curl 打开（`PATCH /api/v1/system/config`，允许字段见 `internal/service/control_plane_system.go`
 的 `runtimeConfigAllowedFields`，intel 相关的是 `intel_enabled`、`intel_node_workers`、
 `intel_check_concurrency_per_check`、`intel_max_running_jobs`、`intel_auto_checks`、`intel_refresh_schedule`）：
@@ -469,6 +496,12 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
   -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"intel_enabled": false}'
+
+# 把定时刷新改成每 15 分钟一次（下一次触发即生效，无需重启）
+curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
+  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"intel_refresh_schedule": "*/15 * * * *"}'
 ```
 
 这个 PATCH **不是 RFC 7396 的 JSON Merge Patch**：请求体必须是非空对象，`null` 值被拒绝，

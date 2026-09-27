@@ -130,6 +130,46 @@ func (s *Store) ListExpiredEvidence(ctx context.Context, expiredBeforeNs int64, 
 	return collectEvidence(rows)
 }
 
+// ListNodeHashesWithExpiredEvidence returns the hashes of the nodes whose
+// current egress address carries at least one expired evidence row. It answers
+// the "存在已过期证据" condition of the §3.6 scheduled refresh in one statement;
+// the alternative is a ListNodesByIP round trip per distinct expired address.
+//
+// The two UNION halves exist so both node_egress address indexes can be used:
+// a single "ipv4 = ? OR ipv6 = ?" join would not necessarily do that. Empty
+// address columns never match, because an evidence row always has a non-empty
+// ip.
+func (s *Store) ListNodeHashesWithExpiredEvidence(ctx context.Context, expiredBeforeNs int64, limit int) ([]string, error) {
+	db, err := s.conn()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT node_hash FROM node_egress
+		 WHERE ipv4 IN (SELECT ip FROM evidence WHERE valid_until_ns <= ?)
+		UNION
+		SELECT node_hash FROM node_egress
+		 WHERE ipv6 IN (SELECT ip FROM evidence WHERE valid_until_ns <= ?)
+		LIMIT ?`, expiredBeforeNs, expiredBeforeNs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		out = append(out, hash)
+	}
+	return out, rows.Err()
+}
+
 // DeleteEvidence removes one (ip, provider) row.
 func (s *Store) DeleteEvidence(ctx context.Context, ip, provider string) error {
 	db, err := s.conn()

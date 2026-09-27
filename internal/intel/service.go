@@ -83,6 +83,11 @@ type pipelineRunner struct {
 	onChange func(ips []netip.Addr)
 }
 
+// checksEgressReuse is the §3.2 reuse window of the checks pipeline. Only that
+// pipeline may reuse an observation: the intel and full pipelines re-probe
+// unconditionally because there the egress address is a product of the run.
+const checksEgressReuse = 15 * time.Minute
+
 // RunStep executes one pipeline step for one node.
 func (r pipelineRunner) RunStep(ctx context.Context, kind jobs.Kind, step jobs.Step, jobID, nodeHash string) jobs.StepResult {
 	if handler := r.handlers.handler(step); handler != nil {
@@ -95,6 +100,9 @@ func (r pipelineRunner) RunStep(ctx context.Context, kind jobs.Kind, step jobs.S
 	}
 	if r.prober == nil {
 		return jobs.StepResult{Summary: map[string]any{"skipped": "egress probe unavailable"}}
+	}
+	if reused, ok := r.reuseFreshEgress(ctx, kind, nodeHash); ok {
+		return reused
 	}
 
 	hash, err := parseNodeHash(nodeHash)
@@ -126,6 +134,41 @@ func (r pipelineRunner) RunStep(ctx context.Context, kind jobs.Kind, step jobs.S
 		}
 	}
 	return jobs.StepResult{Summary: summary}
+}
+
+// reuseFreshEgress implements the §3.2 rule of the checks pipeline: its step 1
+// is documented as "出口探测（15 分钟内已探测则跳过）" because step 5 only reads
+// the node's egress address, so a recent observation is enough and a fresh probe
+// would spend the node's traffic for nothing. It reports false whenever the row
+// is missing, unreadable or too old, so the caller falls through to a real probe:
+// a reused observation must never be invented from a failed read.
+func (r pipelineRunner) reuseFreshEgress(ctx context.Context, kind jobs.Kind, nodeHash string) (jobs.StepResult, bool) {
+	if kind != jobs.KindChecks || r.prober == nil || r.prober.Store == nil {
+		return jobs.StepResult{}, false
+	}
+	row, ok, err := r.prober.Store.GetNodeEgress(ctx, nodeHash)
+	if err != nil || !ok || row.V4ObservedNs <= 0 {
+		return jobs.StepResult{}, false
+	}
+	now := time.Now().UTC()
+	if r.prober.Now != nil {
+		now = r.prober.Now().UTC()
+	}
+	age := now.Sub(time.Unix(0, row.V4ObservedNs).UTC())
+	if age < 0 || age >= checksEgressReuse {
+		return jobs.StepResult{}, false
+	}
+	return jobs.StepResult{Summary: map[string]any{
+		"ipv4":        row.IPv4,
+		"ipv6":        row.IPv6,
+		"colo":        row.Colo,
+		"loc":         row.Loc,
+		"changed":     false,
+		"v6_checked":  row.V6CheckedNs > 0,
+		"reused":      true,
+		"age_seconds": int(age.Seconds()),
+		"skipped":     "egress observation is younger than " + checksEgressReuse.String() + " (checks pipeline)",
+	}}, true
 }
 
 // Options configures the intel service.
@@ -184,7 +227,10 @@ type Service struct {
 	checkEngine *checks.Engine
 	// auto is the §3.6 subscription auto-enqueue coalescer; nil when the caller
 	// did not enable it.
-	auto     *autoEnqueueQueue
+	auto *autoEnqueueQueue
+	// refresh is the §3.6 scheduled refresh; nil when the caller did not enable
+	// it.
+	refresh  *refreshScheduler
 	handlers StepHandlers
 	clock    jobs.Clock
 
@@ -480,6 +526,11 @@ func (s *Service) Start() error {
 	if s.auto != nil {
 		s.auto.start()
 	}
+	// §3.6: the scheduled refresh is the second automatic producer, next to the
+	// subscription coalescer above.
+	if s.refresh != nil {
+		s.refresh.start()
+	}
 	s.startSweeper()
 	return nil
 }
@@ -521,6 +572,11 @@ func (s *Service) Stop() {
 		}
 	})
 	s.sweepWG.Wait()
+	// §3.6: the scheduled refresh only creates jobs, so it holds no buffered work
+	// and stops before the coalescer.
+	if s.refresh != nil {
+		s.refresh.stop()
+	}
 	// The coalescer flushes its buffered nodes before the pool stops: a flushed
 	// job stays queued in intel.db and resumes on the next start.
 	if s.auto != nil {
