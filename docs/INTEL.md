@@ -587,6 +587,31 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 `POST /api/v1/intel/jobs/{id}/actions/cancel` 取消、`POST /api/v1/intel/jobs/{id}/actions/retry-failed` 重试失败项，
 `GET /api/v1/intel/jobs/{id}/events` 是 SSE 实时进度（每秒最多一帧）。
 
+
+### 7.3 配额门打开时任务会变慢，这是设计
+
+`kind=intel` 与 `kind=full` 的第 4 步（经节点数据源）受**provider 级 QPS 门**约束，默认 QPS 是 1
+（`DefaultQPS: 1`）。配额拿不到时 item **不会被阻塞**，而是被"停放"（§3.2 step 4 的
+never block the worker, park the item instead），停放到下次可用时间。
+
+2026-10-02 修掉了一个由此产生的恶性循环：停放时间原本就是 provider 给的"下次可用"，对 QPS 门
+来说约 **1 秒**，于是 311 个 item 每一秒一起醒来抢 1 个配额。实测一个 job 在 69 分钟里产生
+**约 196 万次 claim**——单个 item 的 `attempts` 涨到 **11180**（而 `maxItemAttempts` 只有 5，
+那个上限只管错误路径，管不到这条 defer 路径）——却只完成 18 个 item，并且一直占着
+`max_running_jobs=2` 的槽位，**导致之后所有任务排队不启动**（实测：新任务排队 25 分钟仍未开始）。
+
+现在停放时间有**退避下限 + 按节点哈希的稳定抖动**：第一次至少 30 秒，之后 60s、120s、……、
+6 小时封顶；抖动让整批 item 不在同一瞬间醒来。修复后同一条流水线（30 个节点）的 attempts 合计
+**119 次**（约每节点 4 次，修复前是数千次），完成数在 10 分钟里稳定推进 6 → 13 → 20，
+重试间隔按设计递增（+21s → +424s）。
+
+**所以"intel 任务慢慢推进"是正常的**——配额是真瓶颈，不是卡死；但**不会**再出现"任务停住不动、
+后续任务永远排队"。想更快就调高该数据源的 QPS（`PATCH /api/v1/intel/providers/{id}`）。
+
+**还有一处已知的次要不经济**：step 4 内部的部分成功**不保存** `step_index`，所以重试会从这一步
+开头重跑，重新消耗已经成功过的源（这是每节点 `used` 能涨到 31~70 的原因）。它浪费配额、
+不影响正确性，本轮没有改。
+
 ## 8. 每个节点的流量成本（2026-10-02 实测）
 
 一个节点跑完 `kind=full`（出口探测 → 离线 → 在线入队 → 经节点数据源 → 解锁检测 → 评分）
