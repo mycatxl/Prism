@@ -424,8 +424,8 @@ region:                    # 可选
 
 | id | `calibrated` 字段 | 校准依据与当前判定 |
 |---|---|---|
-| `netflix` | `calibrated 2026-09-25 (real 301 with an empty body; region read from the Location "/jp-en/" prefix)` | 两个 title（自制剧 80100172、非自制剧 70143836）**都返回 301 + Location `/jp-en/`，响应体 0 字节**。先按 `original` 排除 403/451 与非 200/301/302/307，再看 `licensed`：200/301/302/307 → available，403/404 → region_limited。地区走 `header_regex`。 |
-| `tiktok` | `calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page)` | `https://www.tiktok.com/` 返回 **200 但正文只有 1462 字节的 WAF 挑战页**（`SlardarWAF`、`_wafchallengeid`、"Please wait..."）。两条挑战标记**必须排在 `status_in: [200]` 之前**，否则可用节点会被误判成 available。地区取自正文 `"region":"XX"`（校准注释只记录了挑战页标记，没有说明该页是否含 `region` 字段，所以这条取地区的能力未被本轮实测证实）。 |
+| `netflix` | `calibrated 2026-09-25 (real 301 with an empty body; region read from the Location "/jp-en/" prefix); max_body_bytes trimmed to 8192 on 2026-10-02 (no matcher reads the body)` | 两个 title（自制剧 80100172、非自制剧 70143836）**在本机出口都返回 301 + Location `/jp-en/`，响应体 0 字节**。先按 `original` 排除 403/451 与非 200/301/302/307，再看 `licensed`：200/301/302/307 → available，403/404 → region_limited。地区走 `header_regex`，outcomes 只读状态码——**正文一个字节都不读**。2026-10-02 用 208 个真实节点复核：多数节点上这两个 title 返回的是 **200 的完整页面**、把 262144 上限读满（116 个请求的响应体中位数 262144，折合约 137 KB/节点），于是两个 step 的上限都降到 8192（详见 §8.5）。真实节点上 183/208 判 available、**109/208 取到地区**（NL 45 / DE 12 / FR 10 / RO 9 / JP 4 …）、1 个 region_limited。 |
+| `tiktok` | `calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page); region re-measured 2026-10-02 across 311 real nodes: 177 of 180 available nodes carried a region at 92-106 KB; max_body_bytes trimmed to 163840` | `https://www.tiktok.com/` 在**过不了风控的节点**上返回 **200 但正文只有 1462 字节的 WAF 挑战页**（`SlardarWAF`、`_wafchallengeid`、"Please wait..."）。两条挑战标记**必须排在 `status_in: [200]` 之前**，否则可用节点会被误判成 available。地区取自正文 `"region":"XX"`：**2026-10-02 用 311 个真实节点复核确认这条判据有效**——230 个跑完的节点里 180 个 available，其中 **177 个带地区**（US 56 / NL 40 / DE 14 / RO 11 / FR 10 / GB 9 / SE 6 / PL 4 / ES 4 / IE 4 / IT 3 / JP 3 …），16 个 captcha、25 个 503（落 `default: unknown`）、9 个 error。能过风控的节点返回完整页面 369~381 KB，`"region"` 出现在 92~106 KB 处（15 个样本 min 92927 / max 105215），因此 `max_body_bytes` 从 262144 降到 163840（留 58625 字节余量，每节点每次省 96 KB）。 |
 | `chatgpt` | `calibrated 2026-09-25 (real 403 with "type":"dc" on ios.chat.openai.com; trace 200 with loc=US)` | `trace` 步骤请求 `chatgpt.com/cdn-cgi/trace` 取 `loc=`；`probe` 步骤请求 `ios.chat.openai.com/`，实测 403 且正文含 **`"type":"dc"`（数据中心 IP 被拒）**，该条排在裸 `status_in: [403]` 之前。`unsupported_country` → blocked；`"VPN"` → captcha（**本轮未观测到，保留为兜底**）。地区用 `body_regex: '(?m)^loc=([A-Z]{2})$'`。 |
 | `claude` | `calibrated 2026-09-25 (real 403 with a 5656-byte challenge-platform body on claude.ai)` | `https://claude.ai/` 实测返回 403、正文 5656 字节，含 Cloudflare 挑战脚本 URL 片段 `challenge-platform`；所以 `status_in: [403,503]` + `body_contains: "challenge-platform"` → captcha 成立（不跟随重定向）。`Location: app-unavailable-in-region` 分支**本轮未观测到，保留为兜底**。地区走 `body_regex` 的 `'"countryCode":"([A-Z]{2})"'`，但 2026-10-02 复核实测该 403 挑战页（5613 字节）**不含该字段**，所以**挑战页上地区恒为空**（详见 §9）。 |
 | `youtube_premium` | `calibrated 2026-09-25 region re-measured 2026-10-02 (real 200: ytcfg "GL" inside 64 KiB, "countryCode" only at ~866 KB); max_body_bytes trimmed to 131072 on 2026-10-02` | `https://www.youtube.com/premium`（`Accept-Language: en`）实测 200。**2026-10-02 复核修正了地区判据**：正文里的 `"countryCode":"XX"` 首次出现在约 866312~878933 字节处，而正文总长约 882~895 KB，旧的 `body_regex` 在 262144 上限下**永远不可能命中**（详见 §8.4）；改用 ytcfg 的 `"GL"` 字段（约 56145~56369 字节处，5 次实测与 `countryCode` 一致），并保留下限兜底。`"Premium is not available in your country"` 分支**本轮未观测到，保留为兜底**；403/429 → blocked，200 → available。 |
@@ -595,6 +595,11 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 
 采集方式：本机经一个逐字节计数的 CONNECT 代理请求各目标，同一出口重复测量。
 
+本表的数字**只代表本机这一个出口**。2026-10-02 用真实节点池复测（§8.5）发现同一目标在不同出口上
+的响应形态可以完全不同，成本随之相差一个数量级——Netflix 在本机是 301 + 0 字节正文，在真实节点上
+是 200 的完整页面并把上限读满。所以 §8.1 读作"一条链路的隧道字节"，§8.5 读作"一批真实节点跑一轮的
+实际成本"，**两者不要混用**。
+
 ### 8.1 逐步成本
 
 | 步骤 | 目标 | 隧道字节 | 备注 |
@@ -641,15 +646,21 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 **结论：默认配置（`intel_auto_checks=false` → `kind=intel`）一个 300 节点的订阅只花约 8 MB，
 不是问题。真正贵的是解锁检测——它占了 `kind=full` 的 92%。**
 
+> **口径提醒**：8.2 这几行是 §8.1 的**本机单出口隧道字节**累加。真实节点池上的成本见 §8.5——
+> 那里（下调前）是响应体 484.6 KB/节点、隧道字节约 515 KB/节点，因为 Netflix 与 TikTok 在真实
+> 节点上返回的是完整页面，而不是本机看到的 301 / 挑战页。2026-10-02 的两处 cap 下调把 §8.5 的
+> 口径压到约 317 KB/节点。本表的数字没有跟着改：它们是"一条链路"的测量记录，改了就不再是实测。
+
 ### 8.3 三条真正省流量的做法
 
 1. **别开 `intel_auto_checks`，除非你确实要看解锁结果。** 默认 false 时订阅只入队 `kind=intel`
    （数据源 + 评分），不跑第 5 步，省掉约 92% 的流量。
 2. **按需对子集跑解锁检测。** 用 `POST /api/v1/intel/jobs` 配 `{"kind":"checks","scope":{"filter":{…}}}`
    只测你真正关心的节点，而不是整份订阅。
-3. **关掉你不需要的检测规则。** `PATCH /api/v1/intel/checks/{id}` 配 `{"enabled":false}`，
-   立即生效。8 条规则里最贵的是 `youtube_premium`（~201 KB）和 `gemini`（~35 KB），
-   其次是 `google_captcha`（~27 KB）；其余每条都在 12 KB 以内。
+3. **关掉你不需要的检测规则。** `PATCH /api/v1/intel/checks/{id}` 配 `{"enabled":false}`，立即生效。
+   按**真实节点口径**（§8.5）在 2026-10-02 下调后的排名是 `tiktok`（约 146 KB/节点）和
+   `youtube_premium`（约 118 KB/节点），其余每条都在 8 KB 以内——要省流量就关前两条
+   （`netflix` 下调后只剩约 4 KB，不必为省流量关它）。
 
 ### 8.4 已经做过的流量优化（2026-10-02）
 
@@ -661,6 +672,41 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 - `gemini` 与 `google_captcha` 的 outcomes **完全不读正文**（只看状态码和 Location 响应头），
   但上限是 262144，实测分别读满 262145 和 94492 字节。两条都已降到 8192。
 - 三条规则合计，每个节点每次少读约 **460 KB**（相对原来的 262144 上限）。
+- `netflix`（262144 → 8192）与 `tiktok`（262144 → 163840）这两处是**在真实节点池上测出来才发现的**，
+  本机口径的 §8.1 完全看不出来——本机拿到的是 301 和挑战页，真实节点拿到的是完整页面。详见 §8.5。
+
+### 8.5 真实节点池上的实际成本（208 个节点，2026-10-02 实测）
+
+8.1~8.4 的口径是**本机一个出口的隧道字节**。为了拿到"真实节点池跑一轮到底花多少"，用 311 个节点
+（208 个跑完）跑了一次全量 `kind=checks`，再从 `node_checks.detail_json` 里逐请求读回 `body_bytes`
+累加。这里统计的是**响应体字节**（不含 TLS 握手与请求头），因此是**下限**——按 §8.1 的单请求
+TLS 开销（每个 HTTPS 请求约 4~6 KB）再加 6.13 个请求/节点，隧道字节约为下表加 30 KB。
+
+| 规则 | 请求数/节点 | 响应体均值 | 中位 | 最大 | 每节点 |
+|---|---|---|---|---|---|
+| `chatgpt` | 1.75 | 201 | 153 | 337 | 0.3 KB |
+| `claude` | 0.86 | 5,514 | 5,634 | 5,655 | 4.6 KB |
+| `gemini` | 0.85 | 8,117 | 8,192 | 8,192 | 6.7 KB |
+| `google_captcha` | 0.92 | 7,908 | 8,192 | 8,192 | 7.1 KB |
+| `netflix` | 0.56 | **251,523** | **262,144** | **262,144** | **137.0 KB** |
+| `tiktok` | 0.89 | **243,455** | **262,144** | **262,144** | **211.2 KB** |
+| `youtube_premium` | 0.92 | 131,072 | 131,072 | 131,072 | 117.5 KB |
+| `smtp25` | — | — | — | — | 0（裸 TCP） |
+| **合计** | 6.13 | | | | **484.6 KB / 节点** |
+
+**与 §8.1 的差别全部来自响应形态，不是测量误差**：本机出口访问 Netflix 拿到 301 + 0 字节正文，
+真实节点多数拿到 200 的完整页面、把上限读满；TikTok 同理（本机是 1462 字节挑战页，真实节点是
+370~381 KB 的完整页面）。所以 §8.1 的"netflix ~7.9 KB"和这里的"137 KB"说的是两件事，
+不是谁测错了。
+
+**据此做的两处下调（2026-10-02）**：
+
+- `netflix`：outcomes 只读状态码、`region` 只读 `Location` 头，**正文一个字节都不用**，
+  两个 step 的上限都从 262144 降到 8192 → 每节点约 **4 KB**。
+- `tiktok`：地区最晚出现在 105215 字节处，上限从 262144 降到 163840（留 58625 字节余量）
+  → 每节点约 **146 KB**。
+
+下调后响应体合计约 **287 KB/节点**、隧道字节约 **317 KB/节点**（原来约 515 KB），**降约 38%**。
 
 ## 9. 已知限制与未确定的点
 
@@ -668,13 +714,17 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 - `proxycheck` 与 `proxycheck_node` 一律逐个地址查询（`BatchSize = 1`）：v3 的批量能力未经厂商确认。
 - `gemini` 规则**只判可达性、不判地区**，因为实测响应里没有任何地区判据；`smtp25` 同理只判 25 端口连通性。
   这两条规则的"地区"字段为空是当前事实，不是待办。
-- `tiktok` 的 `region` 取自正文 `"region":"XX"`，但 2026-09-25 的校准注释只记录了挑战页标记，没有说明该页是否含 `region` 字段；2026-10-02 复核时实测该 200 挑战页（1462 字节）**不含 `region`**，所以该规则的 `region` 目前恒为空。这条没有改，因为挑战页形态可能随时变化，保留 matcher 比删掉更安全；只是不要把它的地区当作可用信息。
-- `claude` 的 `region` 取自正文 `'"countryCode":"([A-Z]{2})"'`，但 2026-10-02 复核实测
-  `https://claude.ai/` 的 403 挑战页（5613 字节，`challenge-platform` 在）**根本不含该字段**。
-  地区和 `youtube_premium` 的情况**不是同一类问题**：那里字段确实在正文里、是被自己的 `max_body_bytes`
-  截掉的（已修）；这里这个响应里就没有这个字段，所以**在 403 挑战页上该规则的 `region` 恒为空**。
-  只有当节点能让 claude.ai 返回 200 完整页面时才可能取到，而本机出口拿不到 200，
-  因此"200 页面上能否取到"**未实测证实**。matcher 保留（挑战页形态会变），只是不要把它的地区当可用信息。
+- **`tiktok` 的 `region`"恒为空"是 2026-10-02 的一次误判，已用真实节点池推翻。** 当时只从本机一个机房出口观测
+  （那里确实只拿到 1462 字节挑战页、页内无 `region`），就把"这个出口取不到"写成了"该规则恒为空"。
+  用 311 个真实节点、230 个跑完后复测：180 个 available 里 **177 个带地区**（US/NL/DE/RO/FR/GB/SE/PL/ES/IE/IT/JP…），
+  只有 captcha（16）、503（25）、error（9）三类为空——那些节点本来就没拿到可读页面，地区为空是正确的。
+  教训：**规则的地区能力必须在真实节点池上验，不能用单一出口的观测外推。**
+- `claude` 的 `region` 取自正文 `'"countryCode":"([A-Z]{2})"'`，2026-10-02 用**真实节点池**复核（208 个跑完）
+  **确实全部为空**：captcha 181（403 + 5634 字节挑战页）、blocked 5、请求失败 21、error 1，
+  **没有一个节点拿到 200**。本机直连的独立复核一致（403、5613 字节、页内无该字段）。
+  这和 `youtube_premium` 不是同一类问题：那里字段在正文里、只是被自己的 `max_body_bytes` 截掉（已修）；
+  这里是 claude.ai 对这批节点一律回 Cloudflare 挑战，页面里根本没有这个字段。
+  所以"200 的完整页面上能否取到"仍未验证，但在这批节点上地区恒为空是**实测事实，不是推断**。
 - `region.step` 留空时取地区的结果不确定（任选一个步骤），见 §4.3。
 - 评分的覆盖度分母取自**主机侧** `proxycheck` 数据源的启用状态（`cmd/prism/intel_runtime.go`
   `intelEnabledSources` 用 `assess.ScoringSources()`，里面只有 `proxycheck`，不含别名 `proxycheck_node`）。
