@@ -427,7 +427,7 @@ region:                    # 可选
 | `netflix` | `calibrated 2026-09-25 (real 301 with an empty body; region read from the Location "/jp-en/" prefix)` | 两个 title（自制剧 80100172、非自制剧 70143836）**都返回 301 + Location `/jp-en/`，响应体 0 字节**。先按 `original` 排除 403/451 与非 200/301/302/307，再看 `licensed`：200/301/302/307 → available，403/404 → region_limited。地区走 `header_regex`。 |
 | `tiktok` | `calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page)` | `https://www.tiktok.com/` 返回 **200 但正文只有 1462 字节的 WAF 挑战页**（`SlardarWAF`、`_wafchallengeid`、"Please wait..."）。两条挑战标记**必须排在 `status_in: [200]` 之前**，否则可用节点会被误判成 available。地区取自正文 `"region":"XX"`（校准注释只记录了挑战页标记，没有说明该页是否含 `region` 字段，所以这条取地区的能力未被本轮实测证实）。 |
 | `chatgpt` | `calibrated 2026-09-25 (real 403 with "type":"dc" on ios.chat.openai.com; trace 200 with loc=US)` | `trace` 步骤请求 `chatgpt.com/cdn-cgi/trace` 取 `loc=`；`probe` 步骤请求 `ios.chat.openai.com/`，实测 403 且正文含 **`"type":"dc"`（数据中心 IP 被拒）**，该条排在裸 `status_in: [403]` 之前。`unsupported_country` → blocked；`"VPN"` → captcha（**本轮未观测到，保留为兜底**）。地区用 `body_regex: '(?m)^loc=([A-Z]{2})$'`。 |
-| `claude` | `calibrated 2026-09-25 (real 403 with a 5656-byte challenge-platform body on claude.ai)` | `https://claude.ai/` 实测返回 403、正文 5656 字节，含 Cloudflare 挑战脚本 URL 片段 `challenge-platform`；所以 `status_in: [403,503]` + `body_contains: "challenge-platform"` → captcha 成立（不跟随重定向）。`Location: app-unavailable-in-region` 分支**本轮未观测到，保留为兜底**。 |
+| `claude` | `calibrated 2026-09-25 (real 403 with a 5656-byte challenge-platform body on claude.ai)` | `https://claude.ai/` 实测返回 403、正文 5656 字节，含 Cloudflare 挑战脚本 URL 片段 `challenge-platform`；所以 `status_in: [403,503]` + `body_contains: "challenge-platform"` → captcha 成立（不跟随重定向）。`Location: app-unavailable-in-region` 分支**本轮未观测到，保留为兜底**。地区走 `body_regex` 的 `'"countryCode":"([A-Z]{2})"'`，但 2026-10-02 复核实测该 403 挑战页（5613 字节）**不含该字段**，所以**挑战页上地区恒为空**（详见 §9）。 |
 | `youtube_premium` | `calibrated 2026-09-25 region re-measured 2026-10-02 (real 200: ytcfg "GL" inside 64 KiB, "countryCode" only at ~866 KB); max_body_bytes trimmed to 131072 on 2026-10-02` | `https://www.youtube.com/premium`（`Accept-Language: en`）实测 200。**2026-10-02 复核修正了地区判据**：正文里的 `"countryCode":"XX"` 首次出现在约 866312~878933 字节处，而正文总长约 882~895 KB，旧的 `body_regex` 在 262144 上限下**永远不可能命中**（详见 §8.4）；改用 ytcfg 的 `"GL"` 字段（约 56145~56369 字节处，5 次实测与 `countryCode` 一致），并保留下限兜底。`"Premium is not available in your country"` 分支**本轮未观测到，保留为兜底**；403/429 → blocked，200 → available。 |
 | `google_captcha` | `calibrated 2026-09-25 (real 200 without a /sorry/ redirect on google.com/search); max_body_bytes trimmed to 8192 on 2026-10-02 (body is unused by the outcomes)` | `google.com/search?q=prism&hl=en` **不跟随重定向**，实测 200 且 `Location` 里没有 `/sorry/`。429 → captcha；`header_regex: {Location: "/sorry/"}` → captcha；200 → available（**本轮未观测到 429/挑战页**）。**正文完全不被 outcomes 读取**（只看状态码和 Location 响应头），所以上限从 262144 降到 8192（每个节点每次省约 84 KiB）。 |
 | `gemini` | `calibrated 2026-09-25 reachability only (no region marker in the real 200 response); max_body_bytes trimmed to 8192 on 2026-10-02 (body is unused by the outcomes)` | `https://gemini.google.com/` 实测 200、正文 848704 字节，**既没有 `countryCode` 也没有任何地区提示**，因此**只做可达性判定**：403/451 → blocked，429 → captcha，200 → available。**该规则没有 `region` 块，也不判地区**——这是核过的事实，不是遗漏。**正文完全不被 outcomes 读取**，所以上限从 262144 降到 8192（每个节点每次省约 248 KiB）。 |
@@ -669,6 +669,12 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 - `gemini` 规则**只判可达性、不判地区**，因为实测响应里没有任何地区判据；`smtp25` 同理只判 25 端口连通性。
   这两条规则的"地区"字段为空是当前事实，不是待办。
 - `tiktok` 的 `region` 取自正文 `"region":"XX"`，但 2026-09-25 的校准注释只记录了挑战页标记，没有说明该页是否含 `region` 字段；2026-10-02 复核时实测该 200 挑战页（1462 字节）**不含 `region`**，所以该规则的 `region` 目前恒为空。这条没有改，因为挑战页形态可能随时变化，保留 matcher 比删掉更安全；只是不要把它的地区当作可用信息。
+- `claude` 的 `region` 取自正文 `'"countryCode":"([A-Z]{2})"'`，但 2026-10-02 复核实测
+  `https://claude.ai/` 的 403 挑战页（5613 字节，`challenge-platform` 在）**根本不含该字段**。
+  地区和 `youtube_premium` 的情况**不是同一类问题**：那里字段确实在正文里、是被自己的 `max_body_bytes`
+  截掉的（已修）；这里这个响应里就没有这个字段，所以**在 403 挑战页上该规则的 `region` 恒为空**。
+  只有当节点能让 claude.ai 返回 200 完整页面时才可能取到，而本机出口拿不到 200，
+  因此"200 页面上能否取到"**未实测证实**。matcher 保留（挑战页形态会变），只是不要把它的地区当可用信息。
 - `region.step` 留空时取地区的结果不确定（任选一个步骤），见 §4.3。
 - 评分的覆盖度分母取自**主机侧** `proxycheck` 数据源的启用状态（`cmd/prism/intel_runtime.go`
   `intelEnabledSources` 用 `assess.ScoringSources()`，里面只有 `proxycheck`，不含别名 `proxycheck_node`）。
