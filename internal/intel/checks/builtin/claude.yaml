@@ -4,6 +4,12 @@
 # /cdn-cgi/challenge-platform/h/b/orchestrate/chl_page/v1?ray=...（即 "challenge-platform"）。
 # 因此 status_in: [403, 503] + body_contains: "challenge-platform" => captcha 的判定成立，逻辑不动。
 # 本轮未观测到 Location: app-unavailable-in-region 的拦截跳转，保留该分支作为兜底。
+#
+# 地区：region 走正文 '"countryCode":"([A-Z]{2})"'。2026-10-02 复核实测（同一出口）：
+# 该 403 挑战页（5613 字节，challenge-platform 在）**不含 countryCode**，所以挑战页上 region 恒为空。
+# 注意这不是 max_body_bytes 截断造成的（对比 youtube_premium 那个真缺陷——那里字段在正文里、
+# 只是超出了读取上限）；这里响应里就没有这个字段。
+# 只有 200 的完整页面才可能带它，本机出口拿不到 200，未实测证实。
 id: claude
 version: 1
 name: Claude
