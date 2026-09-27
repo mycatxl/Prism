@@ -266,6 +266,64 @@ func TestManager_CreateRejectsWhenDisabledAndOverLimit(t *testing.T) {
 	}
 }
 
+// TestManager_ShortGateDeferIsRaisedToTheBackoffFloor runs the real runItem path
+// with a gate that reports a one-second wait, which is what a provider-wide QPS
+// valve produces. The stored deadline must not be that second: it has to be
+// raised to the backoff floor, or a whole inventory of items wakes in the same
+// instant and spins on the valve (measured 2026-10-02: about 1.96M claims in 69
+// minutes, and a job that held one of the two max_running_jobs slots forever).
+//
+// This is the test the deferDeadline unit tests cannot replace: reverting the
+// call site in runItem to `result.DeferUntilNs` leaves those five green, because
+// they call the function directly.
+func TestManager_ShortGateDeferIsRaisedToTheBackoffFloor(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	start := time.Date(2026, 9, 24, 8, 0, 0, 0, time.UTC)
+	clock := newFakeClock(start)
+
+	runner := &scriptedRunner{handlers: map[Step]StepResult{
+		StepViaNode: {DeferUntilNs: start.Add(time.Second).UnixNano()},
+	}}
+	scope := ScopeResolverFunc(func(context.Context, Scope) ([]string, error) { return []string{"node-1"}, nil })
+	m := newTestManager(t, st, clock, runner, scope, nil)
+
+	job, err := m.Create(ctx, Request{Kind: KindFull}, CreatedByAdmin(), PriorityManual)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m.refreshActiveJobs(m.Config())
+	item, ok, err := m.claimOne(ctx)
+	if err != nil || !ok {
+		t.Fatalf("claimOne = %v (err %v)", ok, err)
+	}
+	m.runItem(ctx, item)
+
+	stored, ok, err := st.GetJobItem(ctx, job.ID, "node-1")
+	if err != nil || !ok {
+		t.Fatalf("GetJobItem: ok=%v err=%v", ok, err)
+	}
+	if stored.Status != store.ItemQueued || stored.StepIndex != 3 {
+		t.Fatalf("item = %+v, want queued with step_index=3", stored)
+	}
+	if stored.NextRunAtNs < start.Add(backoffBase).UnixNano() {
+		t.Fatalf("next_run_at is %s after start, want at least %s: the gate's own one-second wait "+
+			"must be raised to the backoff floor",
+			time.Duration(stored.NextRunAtNs-start.UnixNano()), backoffBase)
+	}
+	if upper := start.Add(2 * backoffBase).UnixNano(); stored.NextRunAtNs > upper {
+		t.Fatalf("next_run_at is %s after start, want at most %s",
+			time.Duration(stored.NextRunAtNs-start.UnixNano()), 2*backoffBase)
+	}
+
+	// The gate's own deadline must not be claimable: this is the spin.
+	clock.advance(time.Second)
+	m.refreshActiveJobs(m.Config())
+	if _, ok, err := m.claimOne(ctx); err != nil || ok {
+		t.Fatalf("claim one second later = %v (err %v), want nothing", ok, err)
+	}
+}
+
 func TestManager_PipelineBreakpointResumesAfterRestart(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()

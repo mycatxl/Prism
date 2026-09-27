@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -65,6 +66,39 @@ func (f nodeFetcher) FetchWithOptions(ctx context.Context, _ node.Hash, url stri
 // pipeline calls and the unlock check target.
 func fakeProviderServer(t *testing.T) *httptest.Server {
 	t.Helper()
+	return httptest.NewServer(fakeProviderHandler())
+}
+
+// countingProviderServer is fakeProviderServer plus a per-path request counter, so
+// a test can assert that a source was *not* asked. The returned hits function sums
+// the requests whose path starts with the given prefix.
+func countingProviderServer(t *testing.T) (*httptest.Server, func(string) int) {
+	t.Helper()
+	var mu sync.Mutex
+	counts := make(map[string]int)
+	inner := fakeProviderHandler()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		counts[r.URL.Path]++
+		mu.Unlock()
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	return server, func(prefix string) int {
+		mu.Lock()
+		defer mu.Unlock()
+		total := 0
+		for path, n := range counts {
+			if strings.HasPrefix(path, prefix) {
+				total += n
+			}
+		}
+		return total
+	}
+}
+
+// fakeProviderHandler is the responder both servers share.
+func fakeProviderHandler() http.Handler {
 	const proxyCheck = `{"status":"ok","8.8.8.8":{"risk":12,` +
 		`"network":{"asn":"AS15169","organisation":"Google LLC","provider":"Google","type":"business"},` +
 		`"location":{"country_code":"US","city":"Mountain View","region":"California"},` +
@@ -79,7 +113,7 @@ func fakeProviderServer(t *testing.T) *httptest.Server {
 	const ipPure = `{"ip":"` + e2eEgressIP + `","asn":15169,"asOrganization":"Google LLC",` +
 		`"countryCode":"US","fraudScore":10,"isResidential":false,"isBroadcast":false}`
 
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/trace/v4"):
@@ -99,7 +133,7 @@ func fakeProviderServer(t *testing.T) *httptest.Server {
 		default:
 			http.NotFound(w, r)
 		}
-	}))
+	})
 }
 
 // e2eRegistry builds the real provider registry against the test server: the
@@ -535,4 +569,92 @@ func waitForTerminalJob(t *testing.T, st *store.Store, jobID string) store.Job {
 	}
 	t.Fatalf("job %s did not reach a terminal state", jobID)
 	return store.Job{}
+}
+
+// TestViaNodeStepSkipsAnAnsweredSource pins the branch the parser test cannot
+// reach: given a stored via_node_answered set, the step must not ask those sources
+// again, while still asking the ones that are not in it.
+//
+// The failure this guards against is subtle. The first version of the guard
+// recorded every source it had *asked*, failures included, so a source that came
+// back with a 429 was skipped for the rest of that item's life - the exact
+// opposite of what its own comment claimed. The assertion is therefore on what the
+// fake provider server actually observed, not merely on the summary.
+func TestViaNodeStepSkipsAnAnsweredSource(t *testing.T) {
+	st := openIntelStore(t)
+	ctx := context.Background()
+
+	server, hits := countingProviderServer(t)
+	serverAddr := strings.TrimPrefix(server.URL, "http://")
+	nodeOutbound := &loopbackOutbound{target: serverAddr}
+	registry := e2eRegistry(t, server.URL)
+
+	hash := node.HashFromRawOptions([]byte(`{"type":"direct","tag":"prism-vianode-guard"}`))
+	nodeHash := hash.String()
+
+	// Step 4 reads the node's addresses from node_egress.
+	if err := st.UpsertNodeEgress(ctx, store.NodeEgress{
+		NodeHash:     nodeHash,
+		IPv4:         e2eEgressIP,
+		V4ObservedNs: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("UpsertNodeEgress: %v", err)
+	}
+
+	// One item, parked at step 4, with ippure already answered by a previous try.
+	const jobID = "job-vianode-guard"
+	requestJSON := `{"kind":"intel","scope":{"node_hashes":["` + nodeHash + `"]}}`
+	if err := st.CreateJob(ctx, store.Job{
+		ID: jobID, Kind: string(jobs.KindIntel), Status: store.JobRunning,
+		RequestJSON: requestJSON, Total: 1, CreatedBy: jobs.CreatedByAdmin(),
+	}, []store.JobItem{{
+		JobID: jobID, NodeHash: nodeHash, Status: store.ItemQueued, StepIndex: 3,
+		ResultJSON: `{"via_node_answered":["ippure"]}`,
+	}}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	handlers := NewStepHandlers(StepOptions{
+		Store:    st,
+		Registry: registry,
+		Outbound: func(string) (adapter.Outbound, bool) { return nodeOutbound, true },
+		Config:   func() jobs.Config { return jobs.Config{Enabled: true}.Normalize() },
+		Clock:    jobs.SystemClock{},
+		Logf:     t.Logf,
+	})
+	if handlers.ViaNode == nil {
+		t.Fatal("NewStepHandlers did not wire ViaNode")
+	}
+
+	beforeIPPure := hits("/ippure")
+	result := handlers.ViaNode(ctx, jobID, nodeHash)
+	if result.ErrorCode != "" {
+		t.Fatalf("ViaNode error = %s (%v)", result.ErrorCode, result.Summary)
+	}
+	if asked := hits("/ippure") - beforeIPPure; asked != 0 {
+		t.Fatalf("ippure was asked %d more times, want 0: it is listed in via_node_answered", asked)
+	}
+	// At least one source must still be asked, or the guard would be swallowing
+	// every source instead of just the answered one. Which one depends on the
+	// provider-wide QPS valve, so accept any of them.
+	if hits("/ip-api")+hits("/proxycheck/") == 0 {
+		t.Fatal("no source was asked at all: the guard must only skip the answered one")
+	}
+
+	hasString := func(list []string, want string) bool {
+		for _, item := range list {
+			if item == want {
+				return true
+			}
+		}
+		return false
+	}
+	sources, _ := result.Summary["via_node_sources"].([]string)
+	if !hasString(sources, "ippure") {
+		t.Fatalf("via_node_sources = %v, want it to still list ippure", sources)
+	}
+	answered, _ := result.Summary["via_node_answered"].([]string)
+	if !hasString(answered, "ippure") {
+		t.Fatalf("via_node_answered = %v, want it to keep ippure", answered)
+	}
 }

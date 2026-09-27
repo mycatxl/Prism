@@ -609,14 +609,18 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 	looked := 0
 	failed := 0
 	ran := make([]string, 0, len(specs))
+	succeeded := make([]string, 0, len(specs))
 	skippedSources := make([]string, 0, len(specs))
 	var deferUntil time.Time
 	answered := e.answeredViaNodeSources(ctx, jobID, nodeHash)
 	for _, spec := range specs {
 		if answered[spec.ID] {
-			// Already answered by an earlier attempt of this step; asking again
-			// would spend this node's quota twice for the same address.
+			// Already answered successfully by an earlier attempt of this step;
+			// asking again would spend this node's quota twice for the same
+			// address. A source that failed is not in this set, so it is asked
+			// again on the next attempt.
 			ran = append(ran, spec.ID)
+			succeeded = append(succeeded, spec.ID)
 			continue
 		}
 		setting, ok := e.registry.Setting(spec.ID)
@@ -642,20 +646,29 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 			continue
 		}
 		ran = append(ran, spec.ID)
+		sourceFailed := false
 		for _, ip := range ips {
 			result := provider.Lookup(ctx, ob, ip)
 			e.persistResult(ctx, spec, ip, result, nodeHash)
 			looked++
 			if result.Failed() {
 				failed++
+				sourceFailed = true
 			}
+		}
+		// Only a source that came back clean counts as answered: a 429 or a vendor
+		// error must be retried on the next attempt, and the guard above reads
+		// exactly this set.
+		if !sourceFailed {
+			succeeded = append(succeeded, spec.ID)
 		}
 	}
 
 	summary := map[string]any{
-		"via_node_sources": ran,
-		"via_node_lookups": looked,
-		"via_node_failed":  failed,
+		"via_node_sources":  ran,
+		"via_node_answered": succeeded,
+		"via_node_lookups":  looked,
+		"via_node_failed":   failed,
 	}
 	if len(skippedSources) > 0 {
 		summary["via_node_skipped"] = skippedSources
@@ -673,7 +686,7 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 // in an earlier attempt of step 4.
 //
 // Parking an item rewrites its result_json with the running summary, so the
-// previous attempt's via_node_sources names them. Without this guard a parked
+// previous attempt's via_node_answered names them. Without this guard a parked
 // retry restarts step 4 from the top and re-spends the node's quota on the
 // sources that had already answered - measured on 2026-10-02, per-node
 // provider_node_state.used reached 31-70 for a step that needs one call per
@@ -690,12 +703,15 @@ func (e *stepExecutor) answeredViaNodeSources(ctx context.Context, jobID, nodeHa
 	return parseAnsweredViaNodeSources(item.ResultJSON)
 }
 
-// parseAnsweredViaNodeSources reads the via_node_sources list out of a stored
-// step summary. Split from the store read so the parsing has a test that needs
-// no database.
+// parseAnsweredViaNodeSources reads the set of via-node sources that answered
+// successfully out of a stored step summary. It reads via_node_answered rather
+// than via_node_sources: the latter lists every source that was asked, including
+// the ones that came back with a 429 or a vendor error, and those must be asked
+// again on the next attempt. Split from the store read so the parsing has a test
+// that needs no database.
 func parseAnsweredViaNodeSources(resultJSON string) map[string]bool {
 	var saved struct {
-		Sources []string `json:"via_node_sources"`
+		Sources []string `json:"via_node_answered"`
 	}
 	if err := json.Unmarshal([]byte(resultJSON), &saved); err != nil {
 		return nil

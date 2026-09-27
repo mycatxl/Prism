@@ -55,18 +55,25 @@ func TestDeferDeadlineGrowsWithAttempts(t *testing.T) {
 	}
 }
 
-// TestDeferDeadlineSaturatesAtTheBackoffMaximum documents the ceiling: once the
-// exponential step reaches backoffMax the park time stops growing, so a gate that
-// stays closed for days costs one retry every six hours rather than a spin.
-func TestDeferDeadlineSaturatesAtTheBackoffMaximum(t *testing.T) {
+// TestDeferDeadlineSaturatesAtTheStepDeferralBound documents the ceiling: the
+// floor stops growing at deferFloorMax, not at the 6h backoff ceiling. Step 4
+// only parks an item when the gate reopens inside its own 30-minute bound, so a
+// longer floor would hold the item past what the step agreed to wait - and while
+// it is parked its job keeps one of the max_running_jobs slots.
+func TestDeferDeadlineSaturatesAtTheStepDeferralBound(t *testing.T) {
 	const now = int64(1_700_000_000_000_000_000)
 	item := store.JobItem{NodeHash: strings.Repeat("d", 32), Attempts: 40}
 	got := deferDeadline(now, item, now+int64(time.Second))
-	if got < now+int64(backoffMax) {
-		t.Fatalf("deadline = +%s, want at least +%s", time.Duration(got-now), backoffMax)
+	if got < now+int64(deferFloorMax) {
+		t.Fatalf("deadline = +%s, want at least +%s", time.Duration(got-now), deferFloorMax)
 	}
-	if upper := now + int64(2*backoffMax); got > upper {
-		t.Fatalf("deadline = +%s, want at most +%s", time.Duration(got-now), 2*backoffMax)
+	// The floor plus at most one full jitter window.
+	if upper := now + int64(2*deferFloorMax); got > upper {
+		t.Fatalf("deadline = +%s, want at most +%s", time.Duration(got-now), 2*deferFloorMax)
+	}
+	// It must no longer run away to the backoff ceiling.
+	if got >= now+int64(backoffMax) {
+		t.Fatalf("deadline = +%s, want below the %s backoff ceiling", time.Duration(got-now), backoffMax)
 	}
 }
 
@@ -96,5 +103,42 @@ func TestStableJitterIsDeterministicAndSpread(t *testing.T) {
 	}
 	if got := stableJitter("", window); got != 0 {
 		t.Fatalf("stableJitter with an empty hash = %s, want 0", got)
+	}
+}
+
+// TestStableJitterSpreadsAcrossTheWholeWindow is the test the first version of
+// stableJitter would have failed. It derived the offset with `hash % window`,
+// but the hash is 32 bits (max 2^32-1 ns, about 4.29 s) while every window used
+// here is larger, so the modulo was the identity and every node landed inside the
+// first 4.29 seconds of the window. That left the inventory waking in one burst -
+// exactly what the jitter exists to prevent - so the assertion is about spread,
+// not merely about offsets being distinct.
+func TestStableJitterSpreadsAcrossTheWholeWindow(t *testing.T) {
+	for _, window := range []time.Duration{time.Minute, 30 * time.Minute} {
+		minSeen, maxSeen := window, time.Duration(0)
+		distinct := make(map[time.Duration]struct{})
+		for i := 0; i < 5000; i++ {
+			// A distinct hash per iteration without another import: the pair
+			// (i%32, i/32) is unique over this range.
+			hash := strings.Repeat("a", i%32+1) + strings.Repeat("b", i/32+1)
+			offset := stableJitter(hash, window)
+			if offset < 0 || offset >= window {
+				t.Fatalf("stableJitter(%q, %s) = %s, want [0, %s)", hash, window, offset, window)
+			}
+			if offset < minSeen {
+				minSeen = offset
+			}
+			if offset > maxSeen {
+				maxSeen = offset
+			}
+			distinct[offset] = struct{}{}
+		}
+		if maxSeen < window/2 {
+			t.Fatalf("window %s: offsets only span [%s, %s]; a 32-bit hash taken modulo the window "+
+				"cannot reach past ~4.29s", window, minSeen, maxSeen)
+		}
+		if len(distinct) < 1000 {
+			t.Fatalf("window %s: 5000 hashes produced only %d distinct offsets", window, len(distinct))
+		}
 	}
 }
