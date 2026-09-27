@@ -171,6 +171,40 @@ func (s *Store) ListNodeEgress(ctx context.Context) ([]NodeEgress, error) {
 	return out, rows.Err()
 }
 
+// ListStaleNodeEgress returns the hashes of nodes whose IPv4 observation is
+// older than observedBeforeNs, oldest first. It feeds the §3.6 scheduled
+// refresh: "存在已过期证据、已过期检测，或出口观测超过 48 小时" is one of the
+// three conditions that put a node back into a refresh scope. The limit is
+// applied in SQL, so a large inventory never loads the whole table into memory;
+// nodes past the limit stay stale and are picked up by the next run.
+func (s *Store) ListStaleNodeEgress(ctx context.Context, observedBeforeNs int64, limit int) ([]string, error) {
+	db, err := s.conn()
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT node_hash FROM node_egress
+		 WHERE v4_observed_ns > 0 AND v4_observed_ns < ?
+		 ORDER BY v4_observed_ns LIMIT ?`, observedBeforeNs, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return nil, err
+		}
+		out = append(out, hash)
+	}
+	return out, rows.Err()
+}
+
 // MaxEgressLookupHashes bounds one batch egress lookup. The node list looks up
 // the hashes of one page, so the cap only bites on an unusually large page: the
 // hashes past it are skipped and their egress facts stay empty rather than

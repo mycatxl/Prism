@@ -160,6 +160,16 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 		AutoChecks: func() bool { return runtimeConfigSnapshot(a.runtimeCfg).IntelAutoChecks },
 		Logf:       log.Printf,
 	})
+	// §3.6 定时刷新: the scheduled pass. It re-reads intel_refresh_schedule on
+	// every wake-up, so a PATCH applies without a restart, and it picks its job
+	// kind from the same switch as the subscription path above so the two never
+	// disagree about unlock checks.
+	svc.EnableRefreshSchedule(intel.RefreshScheduleOptions{
+		Schedule:   func() string { return runtimeConfigSnapshot(a.runtimeCfg).IntelRefreshSchedule },
+		AutoChecks: func() bool { return runtimeConfigSnapshot(a.runtimeCfg).IntelAutoChecks },
+		Census:     a,
+		Logf:       log.Printf,
+	})
 	a.intelSvc = svc
 	a.wireIntelSubscriptionAutoEnqueue()
 
