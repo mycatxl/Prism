@@ -154,3 +154,52 @@ outbound / endpoint 注册表并回归协议矩阵。补丁位升级（1.14.0 �
 值不会被 `-t` 拦住——Prism 只在输入确实是数字时生成 `up`/`down`，所以不会产生这种值。
 
 **何时重新评估**：mihomo 更改 proxy 类型名或字段名时；或 Prism 新增需要导出的协议时，重跑同一套校验。
+
+## D-5 sing 上游数据竞争（`common/bufio/cache.go` 的 `CachedConn`）：上游尚未修复
+
+**状态**：**记录中，未关闭**。竞争发生在依赖库，不是本仓库的代码；**没有 fork、没有本地补丁、没有 `replace`**
+（延续 D-1/D-2 的依赖策略）。CI 的 `make test-race` 会**概率性**红灯，识别方法见下。
+
+**记录期间**：2026-09-27。**首次观测**：commit `b506888` 的 CI run `36326553534`。
+
+**现象**：`make verify` 的 `test-race` 阶段在 `internal/e2e` 的
+`TestOfflineProtocolRoundTrip/shadowtls-v3-shadowsocks-chain` 上报 `WARNING: DATA RACE`，
+测试随之失败（`race detected during execution of test`）。同一提交的 `make test`（不带 `-race`）通过。
+
+**竞争点**：`github.com/sagernet/sing/common/bufio.CachedConn` 的 `c.buffer` 字段。
+
+- 读方（`Close` 路径）：`(*CachedConn).Close()` `common/bufio/cache.go:85` 读 `c.buffer`，
+  随后置 nil 并 `DecRef` + `Release`；
+- 写方（`Read` 路径）：`(*CachedConn).Read()` `common/bufio/cache.go:47` 读 `c.buffer`，
+  在 `err != nil` 分支里置 nil 并 `DecRef` + `Release`。
+
+`taken` 字段用了 `atomic.Bool`（`CompareAndSwap`），但 `c.buffer` **没有任何同步**：两个方法都直接读写它。
+因此"一个 goroutine 正在读、另一个同时在关"就构成 Go 内存模型下的数据竞争。完整竞争栈里
+**没有一行 Prism 的代码**：从 `sing/common/bufio` 经 `sing-shadowsocks` 一直到
+`sing-box/route.(*ConnectionManager).connectionCopy`。
+
+**上游状态（2026-09-27 实查）**：`sagernet/sing` 的 `dev`、`main`、`master` 三个分支上
+`CachedConn.Close()` 仍是同一写法（`cache.go:83-92`），未修复。Prism 钉的是
+`sing v0.9.6-0.20260922013354-87c33f17688f`，由 `sing-box v1.14.2` 的 require 决定。
+
+**触发概率**：概率性，不是必现。本地在 `-race` 下把 shadowtls 用例连跑 **40 次**、整包连跑 **10 次**，
+一次都没复现；CI 侧连续 6 次推送里命中 1 次（相邻提交 `8fce32a` 是 success）。
+两个 goroutine 的窗口很窄，核数与负载不同，命中率就不同。
+
+**影响面（如实记录，不粉饰）**：`c.buffer` 的引用计数可能错乱（重复 `DecRef`/`Release`，或漏 `Release`），
+窗口是"读与关闭并发"。真实流量下客户端**在读未结束时断开连接**正好落在该窗口内，
+所以这**不是只在测试里才存在的形态**。目前尚未观察到真实故障（panic 或内存异常增长），
+也没有把它当作"仅测试问题"掩盖。
+
+**怎么办**：不 fork、不 `replace`、不 `t.Skip`、不进 CI 白名单——`-race` 门禁保持原样，
+以本条作为识别依据，避免下次红灯被误判成新缺陷：
+
+- 症状：`make verify` 的 `test-race` 阶段失败，日志含 `WARNING: DATA RACE`，且栈里只出现
+  `github.com/sagernet/...`；
+- 判定：即本条。**不要**据此重启一轮排查，也**不要**据此判断该次改动有问题；
+- 若复现成功，记录机器与负载情况，而不是改测试回避（改测试会掩盖真实流量下的同一窗口）。
+
+**何时重新评估**：① `sagernet/sing` 修好 `CachedConn` 的 `c.buffer` 同步后升级；
+② 真实流量下出现与该字段相关的 panic 或内存异常；③ `-race` 命中频率明显上升。
+
+**相关记录**：`docs/PROTOCOLS.md` §10。

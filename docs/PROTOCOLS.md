@@ -466,15 +466,47 @@ strings.
   (`docs/MIGRATION_FROM_RESIN.md`).
 - The WireGuard test cases of the upstream protocol table were deliberately replaced by the
   endpoint forms of §5 (sing-box 1.14 removed the WireGuard outbound).
-- The `internal/inspection` test files (`ippure`, `manager`, `provider`, `tor_registry`) and the
-  `internal/api` `handler_ippure` / `handler_quality` tests listed as withheld in
-  `docs/MIGRATION_FROM_RESIN.md` are still not in the tree, and the reason that document gives
-  still holds: `ClaimInspection` / `LoadQualityRecords` exist only as methods of the
-  `inspection.Store` interface (`internal/inspection/manager.go`) and are called from the code
-  paths of `NewManager`, but **no type in this tree implements that interface** and nothing
-  constructs a manager (`grep -rn 'ClaimInspection' --include='*.go' .` returns the interface
-  declarations and their call sites only). A previous revision of this section claimed the
-  methods were implemented; that was wrong.
+- The `internal/inspection` test files (`ippure`, `manager`, `provider`, `tor_registry`) and
+  `internal/api`'s `handler_ippure_test` are not in the tree and never will be: WP08 §8 deleted the
+  whole `internal/inspection` package (manager, providers, `tor_registry`) and moved its two
+  responsibilities onto intel.db and the control plane
+  (`internal/service/control_plane_quality.go`, `internal/api/handler_quality.go`). Those tests
+  exercised an implementation that no longer exists. Their behaviour is covered against the new
+  implementation by `internal/service/control_plane_quality_test.go` and
+  `internal/api/quality_status_test.go`.
+  An earlier revision explained the gap with "no type in this tree implements `inspection.Store`";
+  that described a tree that still contained the package and is now obsolete.
+  `docs/MIGRATION_FROM_RESIN.md` carried the same stale paragraph and is corrected too.
+
+### 10.11 Upstream sing data race: `CachedConn` (NOT fixed upstream)
+
+`github.com/sagernet/sing/common/bufio.CachedConn` guards its `taken` field with an `atomic.Bool`
+but reads and writes `c.buffer` with **no synchronisation at all**: `Close()`
+(`common/bufio/cache.go:85`) reads it, nils it and calls `DecRef`/`Release`, while `Read()`
+(`common/bufio/cache.go:47`) does the same on its error path. A reader and a closer running
+concurrently is therefore a data race under the Go memory model — upstream code, not Prism.
+
+Where it shows up: `make verify`'s `test-race` stage, on `internal/e2e`'s
+`TestOfflineProtocolRoundTrip/shadowtls-v3-shadowsocks-chain`, as `WARNING: DATA RACE` followed by
+`race detected during execution of test`. It is **probabilistic**: the shadowtls case passed 40
+consecutive `-race` runs locally and the whole `internal/e2e` package passed 10, while CI hit it
+once in six consecutive pushes. The same commit's `make test` (no `-race`) passes.
+
+Read the stack carefully: it *does* name `sing-box/route.(*ConnectionManager).connectionCopy`, but
+only as the caller that closes the connection. **The racing field is `CachedConn.c.buffer` in
+`sing/common/bufio`**, so this is not a §10.5 regression — §10.5 is about `NetworkManager.started`
+in `sing-box/route/network.go`, which v1.14.2 fixed.
+
+Upstream status checked 2026-09-27: `dev`, `main` and `master` all still carry the unsynchronised
+`Close()` (`cache.go:83-92`). Prism pins `sing v0.9.6-0.20260922013354-87c33f17688f`, chosen by
+`sing-box v1.14.2`'s require.
+
+The window is real, not test-only: a client that disconnects while its read is still in flight lands
+in it, and a corrupted `c.buffer` reference count means a double `DecRef`/`Release` or a missed
+`Release`. No production failure (panic, memory growth) has been observed. Nothing was skipped and
+no CI allow-list was added; the `-race` gate stays as it is. Decision D-5 in
+`docs/ENGINE_DECISIONS.md` records it. Re-evaluate when upstream fixes the field, when the race
+surfaces in real traffic, or when its hit rate rises.
 
 ## 11. Which test pins which claim
 

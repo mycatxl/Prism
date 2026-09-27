@@ -139,7 +139,7 @@ internal/outbound/         # sing-box 适配和资源生命周期
 internal/node/             # 节点状态
 internal/topology/         # 订阅、节点、平台关系
 internal/probe/            # 健康与出口探测
-internal/inspection/       # 质量任务、provider 适配
+internal/inspection/       # 质量任务、provider 适配（WP08 §8 已取消：职责迁到 intel.db 与控制面）
 internal/quality/          # 证据、评级与有效性
 internal/platform/         # 可路由视图
 internal/policy/           # 质量规则编译
