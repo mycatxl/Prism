@@ -213,9 +213,50 @@ Close" —— 它让 `ReadCached()` 用 `taken.CompareAndSwap` 与 `Close()` 互
 - 症状：`make verify` 的 `test-race` 阶段失败，日志含 `WARNING: DATA RACE`，且栈里只出现
   `github.com/sagernet/...`；
 - 判定：即本条。**不要**据此重启一轮排查，也**不要**据此判断该次改动有问题；
-- 若复现成功，记录机器与负载情况，而不是改测试回避（改测试会掩盖真实流量下的同一窗口）。
+- 若复现成功，记录机器与负载情况，而不是改测试回避：这条竞争在**测试脚手架起的那个 sing-box 实例内部**，
+  换掉真实实例会削弱 e2e 本来要证明的东西（"Prism 的 outbound 能与真实 sing-box 服务端完成一次往返"）。
 
 **何时重新评估**：① `sagernet/sing` 修好 `CachedConn` 的 `c.buffer` 同步后升级；
 ② 真实流量下出现与该字段相关的 panic 或内存异常；③ `-race` 命中频率明显上升。
 
 **相关记录**：`docs/PROTOCOLS.md` §10。
+
+**上游补丁方案（备好，供提 PR 或对照上游修复时用）**：根因是 `CachedConn.buffer` 没有任何同步，
+而上游 2026-01-17 的 `b8eed517` 只让 `ReadCached()` 与 `Close()` 通过 `taken` 互斥，**`Read()` 没被覆盖**。
+最小修法是让三个碰 `c.buffer` 的方法（`ReadCached`、`Read`、`Close`）共用一把锁：
+
+```go
+type CachedConn struct {
+	net.Conn
+	taken  atomic.Bool
+	mu     sync.Mutex // guards buffer
+	buffer *buf.Buffer
+}
+
+func (c *CachedConn) Read(p []byte) (n int, err error) {
+	c.mu.Lock()
+	buffer := c.buffer
+	c.mu.Unlock()
+	if buffer != nil {
+		n, err = buffer.Read(p)
+		if err == nil {
+			return
+		}
+		c.mu.Lock()
+		if c.buffer == buffer {
+			c.buffer = nil
+			buffer.DecRef()
+			buffer.Release()
+		}
+		c.mu.Unlock()
+	}
+	return c.Conn.Read(p)
+}
+```
+
+`ReadCached` 与 `Close` 同样改成先抢 `mu` 再动 `c.buffer`（`taken` 保留，它保证只有一个消费者取走缓存）。
+需要给该文件加 `sync` import。`Read` 是热路径，但只在 `buffer != nil` 的首包阶段有争用，之后 `buffer`
+恒为 nil，锁只在开头落到。`CachedReader` 与 `CachedPacketConn` 是同一写法的复制品，要一起改。
+
+**为什么不在我们这边 `replace`**：那是 D-1/D-2 的依赖策略（不 fork、不本地补丁），而且这个字段的同步
+属于上游的设计范畴。我方边界内能做的"修"就是把定性、影响面与识别方法记准（本条），必要时向上游提 PR。
