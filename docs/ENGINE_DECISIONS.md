@@ -178,18 +178,34 @@ outbound / endpoint 注册表并回归协议矩阵。补丁位升级（1.14.0 �
 **没有一行 Prism 的代码**：从 `sing/common/bufio` 经 `sing-shadowsocks` 一直到
 `sing-box/route.(*ConnectionManager).connectionCopy`。
 
-**上游状态（2026-09-27 实查）**：`sagernet/sing` 的 `dev`、`main`、`master` 三个分支上
+**上游状态（2026-10-02 再查）**：`sagernet/sing` 的 `dev`、`main`、`master` 三个分支上
 `CachedConn.Close()` 仍是同一写法（`cache.go:83-92`），未修复。Prism 钉的是
 `sing v0.9.6-0.20260922013354-87c33f17688f`，由 `sing-box v1.14.2` 的 require 决定。
-
+`common/bufio/cache.go` 最近一次改动是 2026-09-10（`9822d61a`），已包含在我们的 pin 里。
+**别把历史修复当成已修**：`b8eed517`（2026-01-17）的标题是 "Fix race between **ReadCached** and
+Close" —— 它让 `ReadCached()` 用 `taken.CompareAndSwap` 与 `Close()` 互斥；而踩到我们的是
+**`Read()` vs `Close()`**，`Read()` 完全不碰 `taken`，所以那次修复管不到。
 **触发概率**：概率性，不是必现。本地在 `-race` 下把 shadowtls 用例连跑 **40 次**、整包连跑 **10 次**，
 一次都没复现；CI 侧连续 6 次推送里命中 1 次（相邻提交 `8fce32a` 是 success）。
 两个 goroutine 的窗口很窄，核数与负载不同，命中率就不同。
 
-**影响面（如实记录，不粉饰）**：`c.buffer` 的引用计数可能错乱（重复 `DecRef`/`Release`，或漏 `Release`），
-窗口是"读与关闭并发"。真实流量下客户端**在读未结束时断开连接**正好落在该窗口内，
-所以这**不是只在测试里才存在的形态**。目前尚未观察到真实故障（panic 或内存异常增长），
-也没有把它当作"仅测试问题"掩盖。
+**影响面（2026-10-02 复核后修正过；原文写的"真实流量下也存在"是错的）**：`c.buffer` 的引用计数
+可能错乱（重复 `DecRef`/`Release`，或漏 `Release`），窗口是"读与关闭并发"。但**Prism 的生产数据路径
+不会创建 `CachedConn`**，三条证据：
+
+1. `CachedConn` 只在**入站**侧创建：`sing-box/route/route.go:148/164`（`RoutedConnection`，且只在首包
+   `buffers` 非空时）、`sing/protocol/http`、`sing/protocol/socks`、
+   `sing-shadowsocks/shadowaead_2022/relay.go:193`，以及 `sing-box/transport/*` 的各服务端。
+2. 竞争栈里的 `sing-box/route.(*ConnectionManager).connectionCopy` 属于 `ConnectionManager.NewConnection`
+   （`route/conn.go:95`）——那是 **sing-box 入站**用来双向复制连接、两个方向互相 `common.Close` 的地方
+   （`conn.go:152/153`）。
+3. Prism 的入站是**自己实现的** HTTP/SOCKS5 正向代理（`internal/proxy`），出站只经 `adapter.Outbound`
+   （`internal/outbound/singbox_runtime.go`）。在 `internal/outbound` 里搜 sing-box 的 route 类型**一处
+   都搜不到**；那里出现的 `route.` 是 Prism 自己的 `prepare.route`（`NodeHash`/`PlatformID`）。
+
+所以它出现在 `internal/e2e`，是因为那些用例**在测试进程内**用 sing-box 库起了真实实例当对端
+（`protocols_test.go` 的 `startPeerFixture`：`box.New` + `instance.Start`），那个实例的入站会创建
+`CachedConn`，而 `-race` 只能看到同进程的竞争。**这是测试脚手架的属性，不是 Prism 数据路径的。**
 
 **怎么办**：不 fork、不 `replace`、不 `t.Skip`、不进 CI 白名单——`-race` 门禁保持原样，
 以本条作为识别依据，避免下次红灯被误判成新缺陷：

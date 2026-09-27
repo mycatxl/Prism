@@ -497,16 +497,32 @@ only as the caller that closes the connection. **The racing field is `CachedConn
 `sing/common/bufio`**, so this is not a §10.5 regression — §10.5 is about `NetworkManager.started`
 in `sing-box/route/network.go`, which v1.14.2 fixed.
 
-Upstream status checked 2026-09-27: `dev`, `main` and `master` all still carry the unsynchronised
+Upstream status rechecked 2026-10-02: `dev`, `main` and `master` all still carry the unsynchronised
 `Close()` (`cache.go:83-92`). Prism pins `sing v0.9.6-0.20260922013354-87c33f17688f`, chosen by
-`sing-box v1.14.2`'s require.
+`sing-box v1.14.2`'s require; the file's newest change is `9822d61a` (2026-09-10), which our pin
+already contains. Do not mistake the older fix for this one: `b8eed517` (2026-01-17) is titled "Fix
+race between **ReadCached** and Close" and only makes `ReadCached()` mutually exclusive with
+`Close()` through `taken.CompareAndSwap`; the race we hit is **`Read()` vs `Close()`**, and `Read()`
+never touches `taken`.
 
-The window is real, not test-only: a client that disconnects while its read is still in flight lands
-in it, and a corrupted `c.buffer` reference count means a double `DecRef`/`Release` or a missed
-`Release`. No production failure (panic, memory growth) has been observed. Nothing was skipped and
-no CI allow-list was added; the `-race` gate stays as it is. Decision D-5 in
-`docs/ENGINE_DECISIONS.md` records it. Re-evaluate when upstream fixes the field, when the race
-surfaces in real traffic, or when its hit rate rises.
+Where it can and cannot happen (corrected 2026-10-02; the first version of this section claimed the
+window was reachable in production, which is wrong). `CachedConn` is created on the **inbound** side
+only: `sing-box/route/route.go:148/164` (and only when the first-packet `buffers` are non-empty),
+`sing/protocol/http`, `sing/protocol/socks`, `sing-shadowsocks/shadowaead_2022/relay.go:193`, and the
+`sing-box/transport/*` servers. `ConnectionManager.NewConnection` (`route/conn.go:95`) is the sing-box
+**inbound** connection copier and its two goroutines close each other (`conn.go:152/153`). Prism's
+inbound is its own HTTP/SOCKS5 forward proxy (`internal/proxy`), and its outbound goes through
+`adapter.Outbound` alone (`internal/outbound/singbox_runtime.go`) - searching that package for
+sing-box's route types finds nothing; the `route.` identifiers there are Prism's own `prepare.route`
+(`NodeHash`, `PlatformID`).
+
+So the race shows up in `internal/e2e` because those cases stand up a real sing-box instance **inside
+the test process** (`protocols_test.go`'s `startPeerFixture` calls `box.New` + `instance.Start`) to
+act as the peer. That instance's inbound creates the `CachedConn`, and `-race` can only report races
+within a single process. It is a property of the test harness, not of Prism's data path - and being
+upstream code, it still cannot be fixed here without forking (no fork, no `replace`, nothing skipped,
+no allow-list). Decision D-5 in `docs/ENGINE_DECISIONS.md` records it; re-evaluate when upstream fixes
+the field or when the hit rate rises.
 
 ## 11. Which test pins which claim
 
