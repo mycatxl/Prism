@@ -344,8 +344,10 @@ read-only and import them in a one-off container —
 - The three named volumes hold the expected files: `state.db` + `intel.db` (+ WAL/SHM),
   the geo databases + `cache.db`, and `metrics.db` + `request_logs-*.db`.
 - **All three proxy paths work through the container**: HTTP forward proxy, SOCKS5, and
-  the reverse-proxy path `/<token>/./http/<host:port>/`. A missing credential is **407**,
-  a wrong one is **403**.
+  the reverse-proxy path `/<token>/./http/<host:port>/` (addressed directly, with no
+  intermediary in front). A missing credential is **407**, a wrong one is **403**.
+  That last form needs the client to send the raw target — see
+  [Two limits of an HTTP-level reverse proxy](#two-limits-of-an-http-level-reverse-proxy-measured-2026-09-27).
 - The compose path (`docker-compose.yml.example`) reaches **`(healthy)` in 9 seconds**,
   and platforms, subscriptions and proxying all survive a container restart.
 
@@ -560,6 +562,62 @@ prism.example.com {
 If the proxy is on another host and you want the API to honour
 `X-Forwarded-For`, add its address to `PRISM_TRUSTED_PROXIES`; otherwise the
 client IP of the authentication failure limiter is the proxy address.
+
+### Two limits of an HTTP-level reverse proxy (measured 2026-09-27)
+
+Both were reproduced against a stock `nginx:alpine` (1.31.6) terminating TLS in
+front of a Prism container; the same container answered `200` on every check when
+addressed directly, so neither is a Prism defect.
+
+**1. The `/<token>/./http/<host:port>/` form does not survive an HTTP-level
+proxy.** The `.` identity segment means the built-in `Default` platform, and it is
+an RFC 3986 *dot-segment*: any intermediary that normalises the request target
+removes it. The edge forwards `/<token>/http/<host:port>/`, which is one segment
+short, and Prism answers **400** (`Protocol must be http or https`); nginx's own
+access log shows the rewritten URI. Use the explicit platform name instead:
+
+```bash
+# behind an HTTP-level proxy: 400
+curl "https://prism.example.com/<token>/./http/example.com:80/"
+# behind the same proxy: 200
+curl "https://prism.example.com/<token>/Default/http/example.com:80/"
+```
+
+Query the platform list (`GET /api/v1/platforms`) for the name to use; `Default`
+is the built-in one. Clients normalise the path too — plain `curl` strips the dot
+segment before the request leaves the machine, so the Resin-compatible form only
+reaches Prism verbatim when the client sends the raw target
+(`curl --path-as-is`). `scripts/smoke.sh` does exactly that, with a comment
+recording why.
+
+**2. An HTTP-level `proxy_pass` cannot carry the forward proxy.** A `CONNECT` is
+answered `405 Not Allowed`, because the stock nginx image has no
+`--with-http_proxy_connect_module`. To expose HTTP/SOCKS5 forwarding over TLS,
+terminate TLS in the `stream` block instead, which forwards raw bytes and is
+therefore protocol-agnostic:
+
+```nginx
+stream {
+    server {
+        listen 8443 ssl;
+        ssl_certificate     /etc/ssl/certs/prism.crt;
+        ssl_certificate_key /etc/ssl/private/prism.key;
+        proxy_pass 127.0.0.1:2260;
+    }
+}
+```
+
+Verified end to end: with that block in front of the same instance,
+`curl --proxy-insecure -x https://Default:<token>@host:8443 https://1.1.1.1/cdn-cgi/trace`
+returns **200** and the exit node's own address, and the dot-segment form works
+again because a stream proxy never parses the path at all. The admin API, the UI
+and `/sub/{token}` behave identically through either block (the exported
+subscription is byte-identical to the plain-HTTP export).
+
+The trade-off is visibility: a `stream` block cannot set `X-Forwarded-For`, so the
+authentication-failure limiter keys on the proxy's address. Keep the HTTP-level
+block for the management surface and add a second port on the `stream` block only
+if you need forwarding over TLS.
 
 Firewall example:
 

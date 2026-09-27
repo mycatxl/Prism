@@ -253,6 +253,42 @@ Two harness gotchas that cost real time and are worth recording:
    reply arrives (100% packet loss on ICMP). The load generator must therefore run
    *inside* the bridge network, not on the host.
 
+### 6.5 TLS front-end overhead (2026-09-27)
+
+Sections 6.1-6.3 measure the proxy data path with no TLS in front of it. This
+subsection measures what TLS termination costs on the **control plane**, so the
+numbers isolate the front end rather than node latency. Same Prism container (271
+nodes), two nginx blocks in front of it, one Python HTTP/1.1 keep-alive client.
+
+The body is `GET /api/v1/nodes?limit=1000`: **295,157 bytes**, chunked, over 300
+keep-alive requests per entry point. Handshakes are measured separately, with a
+fresh connection each time (median of 20).
+
+| entry point | req/sec | MB/s | vs plain | handshake |
+|---|---|---|---|---|
+| plain HTTP, direct `127.0.0.1:9226` | 437 | 128.9 | -- | 0.02 ms |
+| TLS, HTTP-level `proxy_pass` (nginx) | 344 | 101.6 | 78.9% | 1.25 ms |
+| TLS, `stream` termination (nginx) | 363 | 107.3 | 83.2% | 1.18 ms |
+
+Reading these honestly:
+
+- The 17-21% gap is **TLS record processing over a large response**, not handshake
+  cost. A fresh TLS connection costs **~1.2 ms** (median; observed range
+  1.07-2.48 ms), which is small next to the node latency of a real proxied request.
+- The `stream` block is slightly faster than the HTTP-level block because it does no
+  HTTP parsing at all.
+- Client, Prism and nginx all ran on the **same host**, so they competed for CPU.
+  Treat the ratios as indicative, not as a capacity plan.
+- The payload is unchanged by the front end: the exported `/sub/{token}` body is
+  byte-identical between plain HTTP and the TLS edge (`cmp` clean), and the
+  application surface answers the same status codes through both blocks.
+
+One harness gotcha, recorded because it produced a wrong answer first: **Prism
+answers with `Transfer-Encoding: chunked`, and this endpoint sends no
+`Content-Length`.** A client that keys on `Content-Length` reads 0 bytes per
+response; the first version of this benchmark did exactly that and reported a
+plausible-looking table that was pure noise. Parse chunk sizes.
+
 ## 7. What is still not measured
 
 - **Steady-state memory under a live workload.** Section 4 measures the
@@ -261,7 +297,9 @@ Two harness gotchas that cost real time and are worth recording:
 - **Multi-node routing behaviour under load.** Section 6 uses a single node, so it
   does not exercise P2C selection across a large routable set.
 - **TLS-terminating and QUIC node hops.** Section 6 uses a plain HTTP node; a
-  TLS/QUIC node adds handshake cost that is not represented here.
+  TLS/QUIC node adds handshake cost to the dial that is not represented here.
+  Section 6.5 measures TLS in front of Prism, which is a different cost and does
+  not cover this one.
 - **Behaviour past 100k nodes.** 100k is the largest case in the tree. The plan's
   target is 100k, so this is sufficient for the stated goal, but the linear
   extrapolation above 100k is not measured.
