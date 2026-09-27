@@ -5,11 +5,12 @@
 # 因此 status_in: [403, 503] + body_contains: "challenge-platform" => captcha 的判定成立，逻辑不动。
 # 本轮未观测到 Location: app-unavailable-in-region 的拦截跳转，保留该分支作为兜底。
 #
-# 地区：region 走正文 '"countryCode":"([A-Z]{2})"'。2026-10-02 复核实测（同一出口）：
-# 该 403 挑战页（5613 字节，challenge-platform 在）**不含 countryCode**，所以挑战页上 region 恒为空。
-# 注意这不是 max_body_bytes 截断造成的（对比 youtube_premium 那个真缺陷——那里字段在正文里、
-# 只是超出了读取上限）；这里响应里就没有这个字段。
-# 只有 200 的完整页面才可能带它，本机出口拿不到 200，未实测证实。
+# 地区：region 走正文 '"countryCode":"([A-Z]{2})"'。2026-10-02 用真实节点池复核（208 个节点跑完）：
+#   captcha 181（403 + 5634 字节挑战页）、blocked 5、请求失败 21、error 1 —— 没有一个节点拿到 200，
+#   地区 208/208 全为空。本机直连的独立复核一致（403、5613 字节，页面里没有 countryCode）。
+# 这不是 max_body_bytes 截断造成的（那是 youtube_premium 的真缺陷——字段在正文里、只是超出读取上限）；
+# 这里是 claude.ai 对这批节点一律回 Cloudflare 挑战页，页面里根本没有这个字段。
+# 结论：在这批节点上这条规则的 region 恒为空是事实；"200 的完整页面上能否取到"仍未验证。
 id: claude
 version: 1
 name: Claude

@@ -7,6 +7,13 @@
 # 403/451 或既不是 200 也不是重定向 => blocked。
 # 301 没有正文，地区只能从 Location 的 /xx-en/ 前缀取，所以 region 用 header_regex 而不是 body_regex。
 #
+# 流量上限（2026-10-02 用 208 个真实节点复核后下调）：本机出口观测到的是 301 + 0 字节响应体，
+# 但真实节点上不少响应是 200 的完整页面，于是两个 step 各自把 262144 的上限读满——实测 116 个
+# 请求的响应体均值 251523、中位数 262144、最大 262144，折合每节点约 137 KB。
+# 而这条规则的 outcomes **只读状态码**（status_in / status_not_in）、region **只读 Location 头**，
+# 正文一个字节都不用。所以两个 step 的上限都从 262144 降到 8192（与 gemini / google_captcha 同口径），
+# 每个节点每次省约 133 KB。
+#
 # 注意：一个 when 只能引用一个 step（matcher 是 AND 语义但共享同一个 step 字段），
 # 所以先按 original 排除彻底不可用，再按 licensed 区分 available 与 region_limited。
 id: netflix
@@ -16,7 +23,7 @@ category: video
 enabled: true
 ttl: 12h
 timeout: 15s
-calibrated: 'calibrated 2026-09-25 (real 301 with an empty body; region read from the Location "/jp-en/" prefix)'
+calibrated: 'calibrated 2026-09-25 (real 301 with an empty body; region read from the Location "/jp-en/" prefix); max_body_bytes trimmed to 8192 on 2026-10-02 (no matcher reads the body)'
 steps:
   - id: original
     request:
@@ -26,7 +33,7 @@ steps:
       headers:
         Accept-Language: "en-US,en;q=0.9"
         User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
-      max_body_bytes: 262144
+      max_body_bytes: 8192
   - id: licensed
     request:
       method: GET
@@ -35,7 +42,7 @@ steps:
       headers:
         Accept-Language: "en-US,en;q=0.9"
         User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
-      max_body_bytes: 262144
+      max_body_bytes: 8192
 outcomes:
   - when: {step: original, status_in: [403, 451]}
     outcome: blocked

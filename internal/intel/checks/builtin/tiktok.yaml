@@ -4,6 +4,16 @@
 # 含 "slardarClient": "SlardarWAF"、<p id="wci" class="_wafchallengeid"> 和 "Please wait..."。
 # 挑战页同样是 200，所以两条挑战标记必须在 status_in: [200] 之前判成 captcha，
 # 否则可用节点会被挑战页误判成 available。
+#
+# 两态响应（2026-10-02 用 311 个真实节点复核，推翻"region 恒为空"的旧结论）：
+#   ① 能过风控的节点 -> 200 + 完整页面 369~381 KB，'"region":"XX"' 出现在 92~106 KB 处
+#      （15 个样本 min 92927 / max 105215 / 均值约 97860，每个页面只匹配一次，值与出口国家一致）。
+#   ② 过不了风控的节点 -> 同样 200，但正文是同一张 1462 字节挑战页，里面没有任何地区字段。
+# 230 个跑完的节点：180 个 ①（其中 177 个取到地区 US/NL/DE/RO/FR/GB/SE/PL/ES/IE/IT/JP…）、
+# 16 个 ② 判 captcha、25 个 503（落入 default: unknown）、9 个 error。
+# 所以 region 是有效判据，"取不到"只发生在本来就没拿到可读页面的节点上。
+# max_body_bytes 从 262144 降到 163840：正常页面 370 KB+ 会把旧上限读满，而地区最晚出现在
+# 105215 字节处，新上限留 58625 字节（56%）余量，每个节点每次少读 96 KB。
 id: tiktok
 version: 1
 name: TikTok
@@ -11,7 +21,7 @@ category: social
 enabled: true
 ttl: 12h
 timeout: 12s
-calibrated: 'calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page)'
+calibrated: 'calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page); region re-measured 2026-10-02 across 311 real nodes: 177 of 180 available nodes carried a region at 92-106 KB; max_body_bytes trimmed to 163840'
 steps:
   - id: home
     request:
@@ -21,7 +31,7 @@ steps:
       headers:
         Accept-Language: "en-US,en;q=0.9"
         User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
-      max_body_bytes: 262144
+      max_body_bytes: 163840
 outcomes:
   - when: {step: home, body_contains: "Your account is currently unavailable"}
     outcome: blocked

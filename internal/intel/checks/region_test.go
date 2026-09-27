@@ -272,6 +272,104 @@ func TestYoutubeRegionMarkerIsInsideTheBodyCap(t *testing.T) {
 	}
 }
 
+// TestTiktokRegionMarkerIsInsideTheBodyCap pins the 2026-10-02 recalibration.
+// On nodes that pass TikTok's WAF the response is a full page of 369-381 KB and
+// "region":"XX" first appears at byte 92927-105215 (15 samples); the old cap of
+// 262144 was therefore read to the end on every one of them for no benefit. The
+// cap is 163840 now, which still leaves ~58 KB of headroom. This test fails if a
+// future edit drops the cap below the measured offset.
+func TestTiktokRegionMarkerIsInsideTheBodyCap(t *testing.T) {
+	rule := builtinRuleForTest(t, "tiktok")
+	if rule.Steps[0].Request == nil {
+		t.Fatal("tiktok has no request step")
+	}
+	cap := rule.Steps[0].Request.MaxBodyBytes
+	if cap <= 0 {
+		t.Fatalf("tiktok max_body_bytes = %d, want a positive cap", cap)
+	}
+
+	// The latest offset observed across 15 real pages (min 92927, max 105215).
+	const regionOffset = 105215
+	if cap <= regionOffset {
+		t.Fatalf("max_body_bytes = %d does not cover the measured region offset %d", cap, regionOffset)
+	}
+
+	// A page shaped like the measured ones: the marker sits at the measured
+	// offset and ~270 KB of page follows, so the page is longer than the cap
+	// while the marker stays inside it.
+	body := strings.Repeat("x", regionOffset) +
+		`,"region":"NL",` + strings.Repeat("y", 270000)
+	truncated := body
+	if len(truncated) > cap {
+		truncated = truncated[:cap]
+	}
+	if !strings.Contains(truncated, `"region"`) {
+		t.Fatal("fixture is wrong: the region marker must fall inside the cap")
+	}
+
+	steps := map[string]stepResult{"home": {
+		ID: "home", Status: http.StatusOK, Connected: true, Body: truncated,
+	}}
+	if region := extractRegion(rule.Region, steps); region != "NL" {
+		t.Fatalf("region = %q, want %q: the matcher must read the marker inside the cap", region, "NL")
+	}
+	if outcome := classify(rule, steps); outcome != OutcomeAvailable {
+		t.Fatalf("outcome = %q, want %q", outcome, OutcomeAvailable)
+	}
+
+	// The other measured shape: the 1462-byte challenge page carries no region,
+	// so the outcome is captcha and the region stays empty.
+	challenge := map[string]stepResult{"home": {
+		ID: "home", Status: http.StatusOK, Connected: true,
+		Body: `<p id="wci" class="_wafchallengeid"></p><script>{"slardarClient": "SlardarWAF"}</script>`,
+	}}
+	if outcome := classify(rule, challenge); outcome != OutcomeCaptcha {
+		t.Fatalf("outcome = %q, want %q", outcome, OutcomeCaptcha)
+	}
+	if region := extractRegion(rule.Region, challenge); region != "" {
+		t.Fatalf("region = %q, want empty on a challenge page", region)
+	}
+}
+
+// TestNetflixBodyIsNotReadByAnyMatcher pins the 2026-10-02 trim. Measured across
+// 208 real nodes, most Netflix answers carry a full page and the old 262144 cap
+// was read to the end on both steps (116 requests: mean 251523, median 262144),
+// about 137 KB per node -- yet the outcomes match on status codes only and the
+// region comes from the Location header. A cap above a few KiB can only buy
+// bytes that nothing reads, so this test fails if it grows back.
+func TestNetflixBodyIsNotReadByAnyMatcher(t *testing.T) {
+	rule := builtinRuleForTest(t, "netflix")
+	const maxUseful = 8192
+	for _, step := range rule.Steps {
+		if step.Request == nil {
+			continue
+		}
+		if step.Request.MaxBodyBytes > maxUseful {
+			t.Fatalf("step %s max_body_bytes = %d, want <= %d: no matcher reads the body",
+				step.ID, step.Request.MaxBodyBytes, maxUseful)
+		}
+	}
+
+	// A full page with no region prefix in Location: still classified as
+	// available (status code only) and the region stays empty.
+	full := map[string]stepResult{
+		"original": {ID: "original", Status: http.StatusOK, Connected: true, Body: strings.Repeat("x", maxUseful)},
+		"licensed": {ID: "licensed", Status: http.StatusOK, Connected: true, Body: strings.Repeat("x", maxUseful)},
+	}
+	if outcome := classify(rule, full); outcome != OutcomeAvailable {
+		t.Fatalf("outcome = %q, want %q", outcome, OutcomeAvailable)
+	}
+	if region := extractRegion(rule.Region, full); region != "" {
+		t.Fatalf("region = %q, want empty without a region-prefixed Location", region)
+	}
+
+	// The measured 301 shape still yields its region from the header alone.
+	withLocation := map[string]stepResult{"original": netflixRedirect("80100172")}
+	if region := extractRegion(rule.Region, withLocation); region != "JP" {
+		t.Fatalf("region = %q, want %q", region, "JP")
+	}
+}
+
 // netflixRedirect builds the measured 301 answer of one Netflix title page: no
 // body, the region only in the Location header.
 func netflixRedirect(titleID string) stepResult {
