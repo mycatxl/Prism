@@ -140,13 +140,13 @@ measures the pool's bookkeeping, not real sing-box construction).
 `TestPoolCapacity_ConcurrentAccess` — iterating 50,000 nodes: 809 µs →
 **61,768,430 nodes/sec**.
 
-## 6. End-to-end proxy throughput (Docker, measured)
+## 5. End-to-end proxy throughput (Docker, measured)
 
 Section 4 measures in-process data structures. This section measures the **whole
 request path** with a real sing-box outbound, which section 4 deliberately does
 not touch.
 
-### 6.1 Topology
+### 5.1 Topology
 
 Everything runs in Docker containers on one bridge network, so no request leaves
 the host and the numbers are not bounded by an external network:
@@ -166,7 +166,7 @@ Prism's egress probe points at a local Cloudflare-trace-shaped endpoint
 (`PRISM_EGRESS_TRACE_URL`), so the node passes its probe and becomes routable
 without outbound internet -- the same technique `scripts/smoke.sh` uses.
 
-### 6.2 Setup
+### 5.2 Setup
 
 ```sh
 # 1. Build the image from the current HEAD.
@@ -195,7 +195,7 @@ docker exec prism-load /loadgen -url http://<helper-ip>:18080/ \
   -proxy http://Default:<proxy-token>@<prism-ip>:2260 -c 32 -n 4000
 ```
 
-### 6.3 Results (2026-09-27)
+### 5.3 Results (2026-09-27)
 
 4,000 requests per run, 32 concurrent workers, one node. Every run below is
 **0 failed requests**.
@@ -229,7 +229,7 @@ At 128 concurrent workers the same path reports 18,010 req/sec (p99 41 ms) again
 a node-direct baseline of 41,344 req/sec, still with 0 failures -- so throughput
 degrades under contention rather than dropping requests.
 
-### 6.4 Harness
+### 5.4 Harness
 
 The load generator and the three helper endpoints are **not part of the
 repository**; they are throwaway harnesses. Reproducing this section means
@@ -253,9 +253,9 @@ Two harness gotchas that cost real time and are worth recording:
    reply arrives (100% packet loss on ICMP). The load generator must therefore run
    *inside* the bridge network, not on the host.
 
-### 6.5 TLS front-end overhead (2026-09-27)
+### 5.5 TLS front-end overhead (2026-09-27)
 
-Sections 6.1-6.3 measure the proxy data path with no TLS in front of it. This
+Sections 5.1-5.3 measure the proxy data path with no TLS in front of it. This
 subsection measures what TLS termination costs on the **control plane**, so the
 numbers isolate the front end rather than node latency. Same Prism container (271
 nodes), two nginx blocks in front of it, one Python HTTP/1.1 keep-alive client.
@@ -289,9 +289,9 @@ answers with `Transfer-Encoding: chunked`, and this endpoint sends no
 response; the first version of this benchmark did exactly that and reported a
 plausible-looking table that was pure noise. Parse chunk sizes.
 
-### 6.6 Multi-node load: P2C spread, per-protocol cost, steady-state memory (2026-09-27)
+### 5.6 Multi-node load: P2C spread, per-protocol cost, steady-state memory (2026-09-27)
 
-Sections 6.1-6.3 use a single loopback node. This subsection uses the **real
+Sections 5.1-5.3 use a single loopback node. This subsection uses the **real
 subscription**: 271 parsed nodes, **172 routable**, 155 with an observed egress
 address. Traffic goes through the reverse-proxy path to `https://1.1.1.1/cdn-cgi/trace`
 so every request leaves through a real exit node.
@@ -365,17 +365,17 @@ TLS certificate 14, `TIMEOUT` 2, HTTP 4xx 5. The latency probe resolves hostname
 **through the node**, so local DNS does not normally interfere; that is why 175
 nodes probed successfully under a fake-IP resolver.
 
-## 7. What is still not measured
+## 6. What is still not measured
 
-Sections 6.5 and 6.6 close the three items that used to head this list (TLS in
+Sections 5.5 and 5.6 close the three items that used to head this list (TLS in
 front of Prism, P2C across a large routable set, steady-state memory under load).
 What remains:
 
-- **A pure node-side handshake cost.** Section 6.6 compares first-byte times by
+- **A pure node-side handshake cost.** Section 5.6 compares first-byte times by
   protocol across a live, uncontrolled inventory; it does not isolate the dial
   and handshake from the target and the node's distance. Separating them needs a
   controlled target per protocol.
-- **Long-run stability.** Section 6.6 shows the heap is flat over 91 s of load,
+- **Long-run stability.** Section 5.6 shows the heap is flat over 91 s of load,
   which rules out a fast leak but says nothing about behaviour over days. The
   scheduled cleanups (intel.db retention, request-log rotation, `VACUUM`) are
   exercised by unit tests, not by a long soak.
