@@ -575,6 +575,14 @@ func (m *Manager) deferItem(ctx context.Context, item store.JobItem, stepIndex i
 // instant and successive retries space out instead of spinning.
 func deferDeadline(nowNs int64, item store.JobItem, requested int64) int64 {
 	delay := backoff(item.Attempts - 1)
+	if delay > deferFloorMax {
+		// Step 4 only parks an item when the gate reopens inside its own
+		// deferral bound, so a longer floor would hold the item past what the
+		// step agreed to wait - and a parked item keeps its job holding one of
+		// the max_running_jobs slots. Capping here, with the jitter below, keeps
+		// a single park within twice that bound.
+		delay = deferFloorMax
+	}
 	if jitter := stableJitter(item.NodeHash, delay); jitter > 0 {
 		delay += jitter
 	}
@@ -584,24 +592,32 @@ func deferDeadline(nowNs int64, item store.JobItem, requested int64) int64 {
 	return requested
 }
 
-// stableJitter returns a deterministic slice of window derived from nodeHash:
-// two items never share a retry instant, and one item keeps the same offset
-// across retries so the schedule stays reproducible. FNV-1a is inlined to keep
-// this file's imports unchanged.
+// stableJitter returns a deterministic offset within window derived from
+// nodeHash: two items are very unlikely to land on the same retry instant, and
+// one item keeps the same offset across retries so the schedule stays
+// reproducible.
+//
+// The hash is 64 bits because the offset is that hash modulo the window. A 32-bit
+// hash read as nanoseconds tops out at about 4.29 s, so against the windows used
+// here (30 s up to 30 minutes) the modulo would be the identity and every node
+// would land inside the first 4.29 s - exactly the burst this function exists to
+// prevent. Scaling the 32-bit value into the window instead does not work either:
+// hash * window overflows uint64 for these windows. FNV-1a is inlined to keep this
+// file's imports unchanged.
 func stableJitter(nodeHash string, window time.Duration) time.Duration {
 	if window <= 0 || nodeHash == "" {
 		return 0
 	}
 	const (
-		offset32 uint32 = 2166136261
-		prime32  uint32 = 16777619
+		offset64 uint64 = 14695981039346656037
+		prime64  uint64 = 1099511628211
 	)
-	hash := offset32
+	hash := offset64
 	for i := 0; i < len(nodeHash); i++ {
-		hash ^= uint32(nodeHash[i])
-		hash *= prime32
+		hash ^= uint64(nodeHash[i])
+		hash *= prime64
 	}
-	return time.Duration(int64(hash) % int64(window))
+	return time.Duration(hash % uint64(window))
 }
 
 // publish recomputes the job counters and pushes one SSE frame.

@@ -113,7 +113,7 @@ Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与
 | `targetpolicy` | 规范化目标、解析与连接地址检查 | 受控解析器、只读规则 |
 | `node`, `topology` | 节点状态、订阅引用、出口映射 | 事件回调、质量快照读取接口 |
 | `probe` | 网络健康、出口观测 | 节点拨号接口、健康更新接口 |
-| `inspection` | 质量任务、限流、预算、数据源调用 | quality、Provider、持久化任务接口 |
+| `intel` | 质量任务、限流、预算、数据源调用（WP08 §8：原 `inspection` 的职责已迁到这里） | quality、Provider、持久化任务接口 |
 | `quality` | 证据归并、评级、有效性判断 | 标准数据类型、只读版本化规则 |
 | `platform`, `policy` | 编译规则、构建候选视图和解释结果 | 节点与质量快照 |
 | `routing` | P2C、租约、同 IP 轮换 | 授权后的平台 ID、候选视图、运行态 |

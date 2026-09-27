@@ -190,6 +190,13 @@ runtime settings (`intel_enabled=true`, `intel_auto_checks=false`) the job runs
 (`internal/intel/jobs/jobs.go`), writes into `intel.db`, and resumes at the next step after a
 restart. Turning `intel_auto_checks` on adds the unlock checks to the same job.
 
+The `via-node` lookups are bound by each data source's own quota (a provider-wide QPS valve that
+defaults to 1), so a job over a large inventory advances gradually instead of finishing in one burst:
+the pipeline parks an item instead of blocking a worker, and a parked item now backs off
+exponentially (30s doubling to a 6h ceiling, spread by a per-node jitter) rather than retrying at the
+gate's own one-second pace. That matters operationally - a stalled job used to hold one of the two
+`max_running_jobs` slots forever and block every later job. `docs/INTEL.md` §7.3 has the numbers.
+
 ```bash
 curl -X POST http://127.0.0.1:2260/api/v1/subscriptions \
   -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" -H "Content-Type: application/json" \

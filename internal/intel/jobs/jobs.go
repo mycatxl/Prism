@@ -93,13 +93,20 @@ const MaxNodesPerJob = 200_000
 
 // Timing constants of §3.4 and §3.5.
 const (
-	itemTimeout          = 90 * time.Second
-	itemLease            = 3 * time.Minute
-	providerLease        = 2 * time.Minute
-	maxItemAttempts      = 5
-	maxProviderAttempts  = 5
-	backoffBase          = 30 * time.Second
-	backoffMax           = 6 * time.Hour
+	itemTimeout         = 90 * time.Second
+	itemLease           = 3 * time.Minute
+	providerLease       = 2 * time.Minute
+	maxItemAttempts     = 5
+	maxProviderAttempts = 5
+	backoffBase         = 30 * time.Second
+	backoffMax          = 6 * time.Hour
+	// deferFloorMax caps the retry floor a parked item gets in deferDeadline. It
+	// has to mirror the pipeline's own deferral bound (internal/intel's
+	// DefaultViaNodeDeferral, 30 minutes): step 4 only parks an item when the gate
+	// reopens inside that bound, so a floor beyond it would hold the item longer
+	// than the step ever agreed to wait, with its job still holding a
+	// max_running_jobs slot.
+	deferFloorMax        = 30 * time.Minute
 	defaultTick          = time.Second
 	idlePollInterval     = 250 * time.Millisecond
 	maxActiveJobsFetched = 64

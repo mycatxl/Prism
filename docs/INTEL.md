@@ -609,9 +609,11 @@ never block the worker, park the item instead），停放到下次可用时间�
 后续任务永远排队"。想更快就调高该数据源的 QPS（`PATCH /api/v1/intel/providers/{id}`）。
 
 **这一处已经在 2026-10-02 修掉**：step 4 内部的部分成功原本不落 `step_index`，重试会从这一步开头重跑、
-重新消耗已经成功过的源（实测每节点 `used` 涨到 31~70）。现在 `viaNodeStep` 会从 item 上次停放时写入的
-`result_json` 里读出 `via_node_sources`，**跳过已经答过的源**，只重新询问被限流的那些（这正是停放的意义）；
-被跳过的源同样记进 summary，所以 `via_node_sources` 是累计的，下一次重试能看到完整集合。
+`result_json` 里读出上一轮的结果，**跳过已经成功答过的源**，只重新询问被限流的（或失败过的）那些——
+这正是停放的意义。判断依据是 **`via_node_answered`** 这个键（只收干净返回的源），不是 `via_node_sources`：
+后者列的是"问过的"源、含 429 与厂商报错的，如果拿它当"答过了"，一个失败过的源会在该 item 的余生里
+再也不被询问（第一版守卫就是这个错，注释还写着相反的语义）。被跳过的源同样记进 `via_node_sources`，
+所以那个列表仍是累计的；`via_node_lookups` / `via_node_failed` 则是本次的量。下一次重试能看到完整集合。
 实测效果：30 个节点、配额计数器从 0 起跑，跑完 90 行（30×3 源）**没有任何节点的增量超过 +1**
 ——每个源恰好消耗一次，而修复前是 31~70。
 
@@ -642,16 +644,16 @@ never block the worker, park the item instead），停放到下次可用时间�
 | 5 解锁 | `claude.ai/` | ~7.3 KB | 403，5634 B |
 | 5 解锁 | `gemini.google.com/` | **~35 KB** | 已把上限下调到 8192（原 ~275 KB） |
 | 5 解锁 | `www.google.com/search?q=prism&hl=en` | **~27 KB** | 已把上限下调到 8192（原 ~103 KB） |
-| 5 解锁 | `www.netflix.com/title/80100172` | ~7.9 KB | 301，0 B 正文 |
-| 5 解锁 | `www.netflix.com/title/70143836` | ~7.9 KB | 301，0 B 正文 |
-| 5 解锁 | `www.tiktok.com/` | ~11 KB | 200，挑战页 |
+| 5 解锁 | `www.netflix.com/title/80100172` | ~7.9 KB | 301，0 B 正文（**本机口径**）；真实节点上返回 200 完整页面，上限已下调到 8192（见 §8.5） |
+| 5 解锁 | `www.netflix.com/title/70143836` | ~7.9 KB | 同上 |
+| 5 解锁 | `www.tiktok.com/` | ~11 KB | 200，挑战页（**本机口径**）；能过风控的节点上是 370~381 KB 完整页面，上限已下调到 163840（见 §8.5） |
 | 5 解锁 | `www.youtube.com/premium` | **~201 KB** | 已把上限下调到 131072（原 ~340 KB） |
 | 5 解锁 | `smtp.gmail.com:25` | **~0.1 KB** | 裸 TCP 连接后关闭 |
 
 另外，**周期探测**（不属于 intel 流水线，但同样经节点）每次约 **6.6 KB**
 （`www.gstatic.com/generate_204`，204 无正文，成本全是 TLS）。
 
-### 8.2 一个订阅跑一轮要多少
+### 8.2 一个订阅跑一轮要多少（**本机单出口口径**；真实节点口径见 §8.5）
 
 按上面的实测值累加，**一个节点跑一次 `kind=full`**：
 
