@@ -204,8 +204,11 @@ func TestSocks5EntryMetersWrongCredentialsAndBlocks(t *testing.T) {
 		}
 	}
 
+	// The rejection is metered after the reply reached the client, so wait for
+	// the limiter instead of asserting on it directly: reading the reply is not
+	// a synchronisation point with the observer.
 	clientIP := "127.0.0.1"
-	if blocked, _ := limiter.Blocked(clientIP); !blocked {
+	if !waitForBlocked(limiter, clientIP) {
 		t.Fatal("the SOCKS5 authentication failures were not counted by the limiter")
 	}
 
@@ -270,6 +273,25 @@ func socks5WrongCredentialAttempt(t *testing.T, listener net.Listener) *bufio.Re
 		t.Fatalf("credentials: %v", err)
 	}
 	return reader
+}
+
+// waitForBlocked polls the limiter until the client is blocked, within a bounded
+// budget. The SOCKS5 observer records a failure only after it forwarded the
+// rejection reply it counted, so "the client read the last reply" and "the
+// limiter holds three failures" have no happens-before edge between them: a
+// plain assertion races the server goroutine. Polling removes the race without
+// weakening what the test proves.
+func waitForBlocked(limiter *api.AuthFailureLimiter, clientIP string) bool {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if blocked, _ := limiter.Blocked(clientIP); blocked {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
 }
 
 // noopConn is a net.Conn that discards writes, for the observer unit test.
