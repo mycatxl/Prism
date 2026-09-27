@@ -289,17 +289,96 @@ answers with `Transfer-Encoding: chunked`, and this endpoint sends no
 response; the first version of this benchmark did exactly that and reported a
 plausible-looking table that was pure noise. Parse chunk sizes.
 
+### 6.6 Multi-node load: P2C spread, per-protocol cost, steady-state memory (2026-09-27)
+
+Sections 6.1-6.3 use a single loopback node. This subsection uses the **real
+subscription**: 271 parsed nodes, **172 routable**, 155 with an observed egress
+address. Traffic goes through the reverse-proxy path to `https://1.1.1.1/cdn-cgi/trace`
+so every request leaves through a real exit node.
+
+**P2C spread.** The request log records `node_hash` and `egress_ip` per request,
+so the spread is read back from it rather than inferred. Over 5,000 logged
+requests:
+
+| metric | value |
+|---|---|
+| distinct nodes used | **162** (of 172 routable, 94%) |
+| distinct egress IPs used | **158** |
+| busiest node's share | **1.5%** |
+| top-5 share | 7.0% |
+| top-20 share | 24.8% |
+
+No node carries a hotspot, and the selection reaches almost the whole routable
+set — consistent with P2C picking between two candidates per request rather than
+latching onto one fast node.
+
+**Steady-state memory under load.** Two runs against the same instance, sampling
+the container's cgroup v2 counters every 3-10 s. Peak load: 32 concurrent,
+7,146 requests in 61.8 s (**116 req/sec**), of which 7,118 were `200` (99.6%);
+22 `502` and 6 `504` were real upstream failures on a live node inventory.
+Latency p50 213 ms / p90 306 ms / p99 1371 ms.
+
+| measure | value |
+|---|---|
+| total cgroup memory, steady | **236-270 MB** |
+| of which file-backed (SQLite page cache) | 92-155 MB |
+| anonymous heap | **84-170 MB**, moving with the GC cycle |
+
+The second run (16 concurrent, 180 s, 12,923 requests) is the one that answers
+"does it converge": **anonymous memory did not move for 91 seconds** — 162.1 MB
+flat — then stepped up by 7.7 MB in one sample and stayed flat again for the
+remaining 50 s. That is Go's heap growth stepping to a new GC target, not a leak:
+a leak grows monotonically, this is flat-then-step.
+
+**Per-protocol first-byte cost.** Same target for every protocol
+(`1.1.1.1:443`), grouped by the node's protocol, using
+`first_byte_duration_ms` from the request log:
+
+| protocol | n | median ms | p90 ms |
+|---|---|---|---|
+| trojan | 115 | 105 | 207 |
+| vmess | 79 | 110 | 336 |
+| hysteria2 | 873 | 196 | 269 |
+| http | 3063 | 210 | 295 |
+| socks | 93 | 212 | 721 |
+| anytls | 29 | 215 | 226 |
+| tuic | 39 | 229 | 237 |
+| shadowsocks | 117 | 240 | 277 |
+| vless | 501 | 244 | 338 |
+| hysteria | 91 | 247 | 274 |
+
+Plaintext protocols (`http`/`socks`) median **210 ms** against TLS-based
+protocols median **230 ms** — a **+9.5%** difference, and the fastest entries are
+TLS-based (trojan, vmess). Read this with its limits in mind: it is *not* a pure
+handshake measurement (the target's own latency and each node's distance are
+uncontrolled and vary by protocol), and QUIC is represented by few nodes
+(hysteria2 873 requests, tuic 39, hysteria 91). The honest conclusion is narrow:
+**a TLS or QUIC node hop is not categorically slower to first byte than a
+plaintext one on this inventory.**
+
+One environment note worth recording, because it looked alarming and was not:
+96 of 271 nodes carried a `last_probe_error`, but only **one** was caused by the
+host's fake-IP DNS (the container resolves public names into `198.18.0.0/15`,
+which exists only inside a transparent-proxy TUN). The other 95 are the node
+inventory failing on its own terms — `AUTH` 31, reality verification 22, `EOF` 18,
+TLS certificate 14, `TIMEOUT` 2, HTTP 4xx 5. The latency probe resolves hostnames
+**through the node**, so local DNS does not normally interfere; that is why 175
+nodes probed successfully under a fake-IP resolver.
+
 ## 7. What is still not measured
 
-- **Steady-state memory under a live workload.** Section 4 measures the
-  structures; a running Prism also holds intel.db (SQLite page cache), request
-  logs, and one sing-box outbound per healthy node.
-- **Multi-node routing behaviour under load.** Section 6 uses a single node, so it
-  does not exercise P2C selection across a large routable set.
-- **TLS-terminating and QUIC node hops.** Section 6 uses a plain HTTP node; a
-  TLS/QUIC node adds handshake cost to the dial that is not represented here.
-  Section 6.5 measures TLS in front of Prism, which is a different cost and does
-  not cover this one.
+Sections 6.5 and 6.6 close the three items that used to head this list (TLS in
+front of Prism, P2C across a large routable set, steady-state memory under load).
+What remains:
+
+- **A pure node-side handshake cost.** Section 6.6 compares first-byte times by
+  protocol across a live, uncontrolled inventory; it does not isolate the dial
+  and handshake from the target and the node's distance. Separating them needs a
+  controlled target per protocol.
+- **Long-run stability.** Section 6.6 shows the heap is flat over 91 s of load,
+  which rules out a fast leak but says nothing about behaviour over days. The
+  scheduled cleanups (intel.db retention, request-log rotation, `VACUUM`) are
+  exercised by unit tests, not by a long soak.
 - **Behaviour past 100k nodes.** 100k is the largest case in the tree. The plan's
   target is 100k, so this is sufficient for the stated goal, but the linear
   extrapolation above 100k is not measured.
