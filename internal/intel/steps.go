@@ -611,7 +611,14 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 	ran := make([]string, 0, len(specs))
 	skippedSources := make([]string, 0, len(specs))
 	var deferUntil time.Time
+	answered := e.answeredViaNodeSources(ctx, jobID, nodeHash)
 	for _, spec := range specs {
+		if answered[spec.ID] {
+			// Already answered by an earlier attempt of this step; asking again
+			// would spend this node's quota twice for the same address.
+			ran = append(ran, spec.ID)
+			continue
+		}
 		setting, ok := e.registry.Setting(spec.ID)
 		if !ok {
 			continue
@@ -660,6 +667,47 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 		summary["skipped"] = "every via-node data source is rate limited right now"
 	}
 	return jobs.StepResult{Summary: summary}
+}
+
+// answeredViaNodeSources reports the via-node data sources that already replied
+// in an earlier attempt of step 4.
+//
+// Parking an item rewrites its result_json with the running summary, so the
+// previous attempt's via_node_sources names them. Without this guard a parked
+// retry restarts step 4 from the top and re-spends the node's quota on the
+// sources that had already answered - measured on 2026-10-02, per-node
+// provider_node_state.used reached 31-70 for a step that needs one call per
+// source. Only sources that succeeded are skipped; one that was rate limited is
+// asked again on the next attempt, which is the point of parking.
+func (e *stepExecutor) answeredViaNodeSources(ctx context.Context, jobID, nodeHash string) map[string]bool {
+	if e.store == nil {
+		return nil
+	}
+	item, ok, err := e.store.GetJobItem(ctx, jobID, nodeHash)
+	if err != nil || !ok || item.ResultJSON == "" {
+		return nil
+	}
+	return parseAnsweredViaNodeSources(item.ResultJSON)
+}
+
+// parseAnsweredViaNodeSources reads the via_node_sources list out of a stored
+// step summary. Split from the store read so the parsing has a test that needs
+// no database.
+func parseAnsweredViaNodeSources(resultJSON string) map[string]bool {
+	var saved struct {
+		Sources []string `json:"via_node_sources"`
+	}
+	if err := json.Unmarshal([]byte(resultJSON), &saved); err != nil {
+		return nil
+	}
+	if len(saved.Sources) == 0 {
+		return nil
+	}
+	answered := make(map[string]bool, len(saved.Sources))
+	for _, id := range saved.Sources {
+		answered[id] = true
+	}
+	return answered
 }
 
 // consumeViaNodeBudget applies the per-node daily budget and the provider-wide
