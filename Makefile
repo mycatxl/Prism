@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend test test-race capacity lint protocol-matrix verify test-ui init start clean
+.PHONY: build web backend test test-race test-web capacity lint protocol-matrix verify test-ui init start clean
 
 build: web backend
 
@@ -56,10 +56,19 @@ capacity:
 	# the normal verify target stays fast. Recorded results: docs/PERFORMANCE.md.
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
-verify: lint test test-race protocol-matrix
+verify: lint test test-race protocol-matrix test-web
 
-test-ui:
+# Frontend tests that need no browser: they exercise server/config.mjs,
+# server/http.mjs and the intel-scope mapping directly. Part of `verify`, so a
+# regression in the panel server fails CI like any Go test would.
+test-web:
 	$(NPM) --prefix $(WEB_DIR) run test:config
+
+# The browser-driven checks. They need Playwright's browser binaries, which no
+# workflow installs (CI has no browser step), so this is a local/on-demand target
+# rather than part of `verify`. Install them once with:
+#   npx --prefix internal/api/web playwright install chromium
+test-ui:
 	$(NPM) --prefix $(WEB_DIR) run test:e2e
 
 init:

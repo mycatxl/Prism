@@ -1,0 +1,7 @@
+# Keeps this directory in git even though everything in it is generated.
+#
+# `internal/api/webui.go` embeds `all:web/dist`, and go:embed fails to compile
+# when the pattern matches nothing -- so without a tracked file here, a fresh
+# clone cannot run `make backend` at all. The embed is deliberately tolerant of
+# an empty directory: the handler then answers /ui/ with 503 and
+# "WebUI not built. Run: make web", which is the intended backend-only build.
