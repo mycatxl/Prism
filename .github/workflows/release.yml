@@ -195,7 +195,16 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish Release Assets
+      # Upload the archives while the release is still a draft.
+      #
+      # This repository has immutable releases enabled, and GitHub only accepts
+      # asset uploads before a release is published. For a normal release the
+      # action uploads first and publishes after, but a prerelease is published
+      # immediately -- which produced a release with zero assets on the first
+      # tagged run. A draft is writable, so the assets go up first and the next
+      # step publishes the finished release in one move.
+      - name: Create Draft Release and Upload Assets
+        id: draft_release
         uses: softprops/action-gh-release@v3
         with:
           files: build/*
@@ -203,7 +212,36 @@ jobs:
           overwrite_files: true
           body_path: ${{ steps.release_note.outputs.path }}
           generate_release_notes: true
+          draft: true
           prerelease: ${{ steps.check_prerelease.outputs.is_prerelease == 'true' }}
+
+      - name: Publish the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_PRERELEASE: ${{ steps.check_prerelease.outputs.is_prerelease }}
+        run: |
+          set -euo pipefail
+
+          # --draft=false flips the release to published. --prerelease is passed
+          # explicitly because gh does not preserve it on its own here, and the
+          # whole point of a -rc tag is that GitHub labels it Pre-release.
+          ARGS=(--draft=false)
+          if [ "$IS_PRERELEASE" = "true" ]; then
+            ARGS+=(--prerelease)
+          else
+            ARGS+=(--prerelease=false)
+          fi
+
+          gh release edit "$GITHUB_REF_NAME" "${ARGS[@]}"
+
+          # Fail loudly rather than leave a release with no downloads, which is
+          # exactly the state this step exists to prevent.
+          count=$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets | length')
+          echo "assets attached: ${count}"
+          if [ "$count" -eq 0 ]; then
+            echo "::error::release $GITHUB_REF_NAME published with no assets"
+            exit 1
+          fi
 
   docker:
     name: Build & Push Docker Image
