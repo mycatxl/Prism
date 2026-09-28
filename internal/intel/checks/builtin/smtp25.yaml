@@ -1,4 +1,4 @@
-# 校准状态：信号取自 docs/plan/09-intel-providers-checks.md §5.4。
+# 校准状态：只按 TCP 连通性判定，信号来自实测（见 docs/INTEL.md §5）。
 # 这条规则只看 TCP 连通性，不涉及 HTTP，因此不需要响应体校准。
 id: smtp25
 version: 1

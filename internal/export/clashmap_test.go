@@ -1242,8 +1242,8 @@ func TestClashOpenVPNClientStaticKeySpelling(t *testing.T) {
 
 // TestClashOpenConnectIsRefused pins that openconnect is not exported at all.
 //
-// openconnect is not a mihomo proxy type (docs/plan/PRISM_PLAN_FULL.md F12,
-// verified against mihomo v1.19.31 adapter/parser.go) and mihomo refuses a
+// openconnect is not a mihomo proxy type (verified against mihomo v1.19.31
+// adapter/parser.go) and mihomo refuses a
 // whole config that contains an unknown type, so emitting one would break every
 // other node in the same document. The mapper reports it as not representable.
 func TestClashOpenConnectIsRefused(t *testing.T) {
@@ -1781,8 +1781,8 @@ func mustClashObject(t *testing.T, raw json.RawMessage) map[string]any {
 // --- 4. contract notes -----------------------------------------------------
 
 // TestClashProxyTypeNamesAreMihomoTypes guards the emitted `type` values
-// against the mihomo proxy list recorded in docs/plan/PRISM_PLAN_FULL.md (F12,
-// verified against mihomo v1.19.31 adapter/parser.go). A mihomo config with an
+// against the mihomo proxy list in mihomo v1.19.31 adapter/parser.go. A mihomo
+// config with an
 // openconnect used to be emitted as a proxy whose type mihomo does not know,
 // which makes mihomo refuse the whole document. clashProxyFromSingbox now
 // refuses it outright, so it is asserted in TestClashOpenConnectIsRefused.
@@ -1830,7 +1830,7 @@ func TestClashProxyTypeNamesAreMihomoTypes(t *testing.T) {
 			}
 			known := mihomoTypes[clashType]
 			if known != tc.mihomoType {
-				t.Fatalf("%s maps to type %q: mihomo type = %v, want %v (docs/plan/PRISM_PLAN_FULL.md F12)",
+				t.Fatalf("%s maps to type %q: mihomo type = %v, want %v (mihomo v1.19.31 adapter/parser.go)",
 					tc.outbound, clashType, known, tc.mihomoType)
 			}
 		})

@@ -351,8 +351,8 @@ func TestTiktokRegionMarkerIsInsideTheBodyCap(t *testing.T) {
 //
 // "Your account is currently unavailable" does not exist anywhere else in the
 // repository and did not come from a capture: it entered this rule in 0d0553b,
-// which built the built-in rules from docs/plan/09-intel-providers-checks.md §5.4
-// -- and that section only says "a blocked page is judged blocked" without naming
+// which built the built-in rules from a plan document that has since been removed
+// -- and that document only said "a blocked page is judged blocked" without naming
 // a marker. Measured 2026-09-28 over 480 requests (43 challenge pages, 388 full
 // pages): zero hits. TikTok's actual region notice is a different string, "This
 // account isn't available in your country or region.", and it sits in the page's

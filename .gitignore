@@ -2,6 +2,10 @@
 /bin/
 /prism
 /prism.exe
+/public-source-sync
+/public-source-sync.exe
+/subprobe
+/subprobe.exe
 *.test
 *.out
 coverage.*
