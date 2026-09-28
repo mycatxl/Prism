@@ -4,9 +4,8 @@ This file records **measured** capacity figures for the in-process data structur
 that bound Prism's node-pool scale. Everything here is reproducible with the
 commands in §1; nothing is estimated or extrapolated from another deployment.
 
-The plan (`docs/plan/13-testing-release-docs.md`) asked for a "100k node capacity
-smoke". The measurement functions already existed in the tree; this file records
-their results and the caveats that make them readable.
+The measurement functions live in the tree next to the data structures they
+measure; this file records their results and the caveats that make them readable.
 
 ## 1. How to reproduce
 

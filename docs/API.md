@@ -5,8 +5,8 @@
 与未鉴权的 `mux.Handle(...)`），每条语义都回到对应 handler 与 service 实现核对，凡是代码没写死的都不写。
 
 This document is the endpoint reference of the current tree, derived from `internal/api/server.go` and the
-handlers under `internal/api/handler_*.go`. It is not generated from the plan documents (`docs/plan/`), whose
-route tables are older than the implementation. Where the two disagree, this file follows the code and says so.
+handlers under `internal/api/handler_*.go`. It is not generated from any other document: where a description
+elsewhere disagrees with the route table, this file follows the code and says so.
 
 复现方式：
 

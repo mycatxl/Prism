@@ -31,7 +31,7 @@ import (
 	"prism/internal/outbound"
 )
 
-// Offline protocol end-to-end coverage (docs/plan/13 §1).
+// Offline protocol end-to-end coverage.
 //
 // The acceptance item this file satisfies is "each protocol can be imported and
 // is reachable in an offline end-to-end test". The protocol matrix in

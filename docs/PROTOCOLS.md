@@ -1,7 +1,6 @@
 # Prism Protocol Support Matrix
 
-**中文摘要**：本文件是从代码与测试反推出来的协议支持矩阵，取代 `docs/plan/06-singbox-engine-protocols.md`
-中的计划表格。运行时内核只有 sing-box `1.14.2`；mihomo 按 `docs/ENGINE_DECISIONS.md` 的 D-1 被否决，
+**中文摘要**：本文件是从代码与测试反推出来的协议支持矩阵。运行时内核只有 sing-box `1.14.2`；mihomo 按 `docs/ENGINE_DECISIONS.md` 的 D-1 被否决，
 `with_mihomo` 只保留构建标签接缝。第 2–6 节列出实际可导入并构建的 outbound / endpoint 类型、
 可识别的分享链接 scheme 与订阅文件格式，第 7 节列出**不支持**的 Clash/Surge 类型及其原因码，
 第 8 节说明解析报告与 `auto_intel` 如何到达 API 与 UI，第 10 节列出仍然存在的限制
@@ -44,14 +43,12 @@ consequences a user notices:
 
 - The parser keeps recognising the mihomo-only input types and reports them instead of
   dropping them silently (§7), but no input can produce a working mihomo node.
-- `Makefile` defines `TAGS_FULL := $(TAGS_BASE)` — the lite and full variants compile with
-  the same tag set today (`with_quic with_grpc with_utls with_wireguard with_gvisor
-  with_openvpn with_openconnect http2legacy`).
-- The tag set is identical in all four build paths: the `Makefile` (`TAGS_FULL := $(TAGS_BASE)`),
-  `.github/workflows/release.yml` (`TAGS_FULL` = `TAGS_BASE`), the root `Dockerfile`
-  (`ARG TAGS`, same list) and `.github/release/Dockerfile` — the published image is built from
-  (`ARG TAGS`, same list) and `.github/Dockerfile.release` — the published image is built from
-  that tag set. `with_mihomo` is passed by none of them.
+- Every build path compiles with one tag set (`with_quic with_grpc with_utls with_wireguard
+  with_gvisor with_openvpn with_openconnect http2legacy`): the `Makefile` (`TAGS`), the
+  root `Dockerfile` (`ARG TAGS`), `.github/workflows/release.yml` (`TAGS`) and
+  `.github/Dockerfile.release` (which copies the binary `release.yml` produced, so it inherits
+  the same set). `with_mihomo` is passed by none of them, and there is a single release
+  variant — no reduced tag set is shipped.
 - The capability flag cannot lie even if the tag is reintroduced:
   `internal/node/capabilities.go` reports mihomo as built only when the engine runtime layer
   registered itself (`node.RegisterEngineRuntime`), and only `internal/outbound/singbox_runtime.go`
@@ -356,8 +353,8 @@ The user-visible text is the sing-box stub message:
 `naive outbound is not included in this build, rebuild with -tags with_naive_outbound`
 (`internal/node/naive_outbound_stub.go` in sing-box 1.14.2; matrix case `naive-not-built`
 asserts the `not included in this build` substring).
-Note: `docs/plan/06-singbox-engine-protocols.md` expected a parse-report
-`ENGINE_NOT_BUILT:naive`; the code does not do that.
+Note: the parse report does not carry an `ENGINE_NOT_BUILT:naive` entry — a `naive` node is
+only refused when its outbound is actually built, which is what the message above reports.
 
 ### 10.2 `tor`: no claim
 
@@ -419,11 +416,13 @@ exposed. Both are now reachable: `parse_report` on every subscription response,
 `reason=count` log line and the WebUI subscription view (§8). There is no known gap left here;
 the bounded behaviour (500 records, 16 buckets, 5 samples, 64 KiB) is part of §8.
 
-### 10.7 No offline protocol end-to-end suite
+### 10.7 Offline protocol end-to-end suite
 
-`docs/plan/13-testing-release-docs.md` §1 asks for `internal/e2e/protocols_test.go`, which
-starts sing-box in-process as a server and proxies real traffic through Prism. That package
-does not exist. What exists instead:
+`internal/e2e/protocols_test.go` stands up a real sing-box instance serving each protocol's
+inbound on a loopback port, points a Prism-built outbound at it, and reads a body back from a
+loopback HTTP server through the tunnel. Nothing outside the process is contacted, so this
+proves "traffic flows through this node to a target" per protocol rather than only
+"the node can be constructed". Its companion:
 
 - `TestProtocolMatrix` — parses and *builds* every protocol, dials an unreachable target for
   chain cases (`internal/outbound/protocol_matrix_test.go`);
@@ -432,13 +431,15 @@ does not exist. What exists instead:
   `internal/proxy/e2e_test.go`, `internal/proxy/e2e_subscription_test.go`);
 - the offline intel pipeline test (`internal/intel/pipeline_e2e_test.go`).
 
-So "the node can be constructed" is proven; "traffic flows through this node to a target" is
-only proven for the entry points, not per protocol.
+Protocols whose inbound needs a peer this suite cannot synthesise (a real WireGuard peer, an
+OpenVPN/OpenConnect server) are covered by the matrix only, and §10.1/§10.2 still apply to the
+protocols that are not built at all.
 
 ### 10.8 Release-path caveats
 
-- `docs/release-notes/<tag>.md` does not exist (no `docs/release-notes/` directory). The
-  release workflow tolerates that and falls back to generated notes.
+- `docs/release-notes/<tag>.md` is used as the release body when the file exists
+  (`release.yml` looks for one named after the tag); when it does not, the workflow falls
+  back to generated notes.
 - Released binaries and the container image print the same `BuildTags` as `make backend`:
   `release.yml` converts its tag list to the comma-separated `-X prism/internal/buildinfo.Tags`
   value and the root `Dockerfile` does the same (`tr ' ' ','`). Verified locally by building with

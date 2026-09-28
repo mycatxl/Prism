@@ -90,8 +90,8 @@ export function NodeIntelCell({ intel }: { intel?: NodeIntel | null }) {
 /**
  * Full assessment block of the node detail drawer.
  *
- * Besides the intel values it owns the one per-node action the plan requires
- * (docs/plan/12-frontend.md:57): "重新检测" creates a single-node `full` job.
+ * Besides the intel values it owns the one per-node action: "重新检测" creates a
+ * single-node `full` job.
  * `ready` is the node's outbound state and gates that button.
  *
  * The IPPure review is deliberately not reachable from here: QualityDetails

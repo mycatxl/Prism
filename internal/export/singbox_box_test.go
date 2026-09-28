@@ -19,8 +19,8 @@ import (
 //
 // The build tag mirrors the feature requirements of the fixtures: the vless
 // node uses reality (with_utls), the hysteria2 node uses QUIC (with_quic) and
-// the wireguard endpoint needs with_wireguard. The lite build skips this file
-// exactly like it skips the protocol matrix.
+// the wireguard endpoint needs with_wireguard. A build without one of those tags
+// skips this file rather than failing on a protocol it cannot construct.
 func TestExportSingboxIsAcceptedByBoxNew(t *testing.T) {
 	items := append(fixtureNodes(t), fixtureEndpointNode(t), fixtureChainNode(t))
 	body, _, report, err := Export(items, FormatSingbox, Options{})

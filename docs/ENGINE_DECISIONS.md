@@ -8,9 +8,9 @@
 
 **日期**：2026-09-24。
 
-**背景**：`docs/plan/07-mihomo-fallback.md` 原本计划用 `github.com/metacubex/mihomo@v1.19.31`
-兜底 sing-box 无法表示的 Clash 系协议（SSR、Mieru、VLESS XHTTP/encryption、
-Snell v1–v3、AmneziaWG、kcptun/restls/gost-plugin 等），代码放在 `with_mihomo` 构建标签下。
+**背景**：原方案曾计划用 `github.com/metacubex/mihomo@v1.19.31` 兜底 sing-box 无法表示的
+Clash 系协议（SSR、Mieru、VLESS XHTTP/encryption、Snell v1–v3、AmneziaWG、
+kcptun/restls/gost-plugin 等），代码放在 `with_mihomo` 构建标签下。
 
 **实测依据**（2026-09-24，在本仓库的 `go.mod` 基础上单独引入 mihomo 测量）：
 
@@ -47,9 +47,9 @@ OpenVPN（endpoint）、OpenConnect（endpoint）。
 **落地状态**：
 
 - `go.mod` 不包含 mihomo。
-- `Makefile` 的 `TAGS_FULL` 不再包含 `with_mihomo`；`.github/workflows/release.yml` 的
-  `TAGS_FULL`、根目录 `Dockerfile` 的 `ARG TAGS` 也已与它对齐（发布镜像由
-  `.github/Dockerfile.release` 复制 `release.yml` 产出的二进制，因此继承同一套标签）。
+- 构建标签只有一套 `TAGS`，且不含 `with_mihomo`：`Makefile`、`.github/workflows/release.yml` 的
+  `TAGS`、根目录 `Dockerfile` 的 `ARG TAGS` 三处一致（发布镜像由 `.github/Dockerfile.release`
+  复制 `release.yml` 产出的二进制，因此继承同一套标签）。发布产物只有一个变体。
 - `internal/node/mihomo_built.go` / `mihomo_notbuilt.go` 与 `ENGINE_NOT_BUILT` 报告路径保留，
   因此遇到这类节点时会得到明确原因，而不是静默丢弃。
 - `internal/node/capabilities.go` 的 `MihomoFallbackTypes()` 继续声明这些类型，但 mihomo 的

@@ -77,7 +77,7 @@ export type IntelJobItemPage = PageEnvelope<IntelJobItem>;
 // fixed server side (control_plane_intel.go:113 uses PriorityManual = 100).
 //
 // jobs.Scope unions its entries (internal/intel/jobs/jobs.go:132) and `filter`
-// carries the same keys as the GET /api/v1/nodes query (docs/plan/08-intel-store-jobs.md:181).
+// carries the same keys as the GET /api/v1/nodes query (docs/API.md, "Intel jobs").
 // Values are strings by contract — "true"/"false" for the switches.
 export type IntelJobScopeFilter = {
   protocol?: string;

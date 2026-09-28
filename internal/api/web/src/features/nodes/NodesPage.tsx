@@ -262,7 +262,7 @@ export function NodesPage() {
     onError: error => showToast("error", formatApiErrorMessage(error, t)),
   });
 
-  // Bulk intel entry point of the node pool (docs/plan/12-frontend.md:38): the
+  // Bulk intel entry point of the node pool: the
   // current URL filters become the job scope (intelScope.ts) and every run is
   // limited to healthy nodes. `total` counts the filtered list, so the button
   // shows an upper bound of the nodes the job will cover.

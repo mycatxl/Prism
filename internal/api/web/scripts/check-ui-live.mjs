@@ -14,13 +14,10 @@ import { auditPanelSpacing, verifyQualityViews, verifySettingsCategories } from 
 const binary = process.env.PRISM_TEST_BACKEND || process.env.PRISMX_TEST_BACKEND || fileURLToPath(new URL("../../../../bin/prism", import.meta.url));
 if (!existsSync(binary))
   throw new Error("Build bin/prism first, or set PRISM_TEST_BACKEND to a backend binary.");
-const executablePath =
-  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ||
-  (existsSync(
-    "/home/ermit/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome",
-  )
-    ? "/home/ermit/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome"
-    : undefined);
+// Playwright resolves its own bundled browser; the escape hatch is for a machine
+// whose browser lives somewhere else. No machine-specific path is hard-coded, so
+// this file carries nothing about the developer's home directory.
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 const root = await mkdtemp(join(tmpdir(), "prism-live-test-"));
 const adminToken = randomBytes(32).toString("hex");
 const proxyToken = randomBytes(32).toString("hex");

@@ -10,10 +10,9 @@
 - mihomo：`v1.19.31`（模块 `github.com/metacubex/mihomo`，GPL-3.0）。**不引入**：见
   `docs/ENGINE_DECISIONS.md` 的 D-1，`go.mod` 不含该模块，只有 `internal/node/mihomo_built.go` /
   `mihomo_notbuilt.go` 保留构建标签接缝。
-- 构建标签：
-  - 基础集 `TAGS_BASE`：`with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy`。
-  - 完整集 `TAGS_FULL`：当前与 `TAGS_BASE` 相同（`Makefile`、`.github/workflows/release.yml`、
-    `Dockerfile` 三处一致），也是默认构建标签；`with_mihomo` 不在其中。
+- 构建标签（所有构建路径共用同一套，也是默认构建标签）：
+  `with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy`
+  —— `Makefile`、`.github/workflows/release.yml`、根 `Dockerfile` 三处一致；`with_mihomo` 不在其中。
   - 默认不启用 `with_embedded_tor`、`with_naive_outbound`、`with_tailscale`。
 - 应用模块：`prism`，入口 `cmd/prism`。
 - 前端：`internal/api/web/`，由 `internal/api` 通过 `//go:embed all:web/dist` 嵌入生产构建；开发时仍可使用独立 Vite 服务。

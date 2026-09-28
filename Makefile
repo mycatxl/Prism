@@ -1,13 +1,13 @@
 GO ?= go
 NPM ?= npm
 WEB_DIR := internal/api/web
-TAGS_BASE := with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
-# The mihomo fallback kernel was evaluated and rejected; see
-# docs/ENGINE_DECISIONS.md. The with_mihomo build tag and its code seam remain
-# in the tree so the decision can be revisited, but the tag is deliberately not
-# part of any default build. sing-box is the only engine.
-TAGS_FULL := $(TAGS_BASE)
-BUILD_TAGS ?= $(TAGS_FULL)
+# One tag set for every build path (this file, the root Dockerfile and
+# .github/workflows/release.yml). The mihomo fallback kernel was evaluated and
+# rejected; see docs/ENGINE_DECISIONS.md. The with_mihomo build tag and its code
+# seam remain in the tree so the decision can be revisited, but the tag is
+# deliberately not part of any build. sing-box is the only engine.
+TAGS := with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
+BUILD_TAGS ?= $(TAGS)
 VERSION ?= dev
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend backend-lite test test-race capacity lint protocol-matrix verify test-ui init start clean
+.PHONY: build web backend test test-race capacity lint protocol-matrix verify test-ui init start clean
 
 build: web backend
 
@@ -35,11 +35,8 @@ backend:
 	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/prism ./cmd/prism
 	# Companion tool: collects nodes from public sources and either serves them as
 	# a remote subscription or pushes them in as a local one. Built here so CI
-	# catches breakage in both tag sets.
+	# catches breakage in it too.
 	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/public-source-sync ./cmd/public-source-sync
-
-backend-lite:
-	$(MAKE) backend BUILD_TAGS='$(TAGS_BASE)'
 
 test:
 	$(GO) test -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
@@ -60,8 +57,6 @@ capacity:
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
 verify: lint test test-race protocol-matrix
-	$(GO) vet -tags '$(TAGS_BASE)' ./cmd/... ./internal/...
-	$(GO) test -tags '$(TAGS_BASE)' ./internal/...
 
 test-ui:
 	$(NPM) --prefix $(WEB_DIR) run test:config

@@ -18,7 +18,7 @@ RUN go mod download
 COPY . ./
 COPY --from=web-builder /src/internal/api/web/dist ./internal/api/web/dist
 
-# TAGS must stay identical to the Makefile's TAGS_FULL. with_mihomo is
+# TAGS must stay identical to the Makefile's TAGS. with_mihomo is
 # deliberately absent (docs/ENGINE_DECISIONS.md D-1): compiling it in would make
 # GET /api/v1/system/capabilities report mihomo as built while every mihomo node
 # still fails with ENGINE_NOT_BUILT.

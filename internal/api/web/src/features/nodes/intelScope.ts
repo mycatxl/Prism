@@ -2,8 +2,8 @@ import type { IntelJobScope, IntelJobScopeFilter } from "../jobs/types";
 
 // The node pool URL carries more filters than a job scope accepts, so this
 // module is the single place that maps one onto the other
-// (POST /api/v1/intel/jobs, internal/intel/jobs/jobs.go:132, and
-// docs/plan/08-intel-store-jobs.md:181 "filter 的键与 GET /api/v1/nodes 的查询参数一致").
+// (POST /api/v1/intel/jobs, internal/intel/jobs/jobs.go:132: "filter 的键与
+// GET /api/v1/nodes 的查询参数一致").
 //
 // Two rules shape the mapping:
 //   - scope entries are unioned by the server, so `all` is only sent when the

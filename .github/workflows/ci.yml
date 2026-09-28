@@ -36,8 +36,5 @@ jobs:
       - name: Verify (lint + tests + race + protocol matrix)
         run: make verify
 
-      - name: Build full backend
+      - name: Build backend
         run: make backend
-
-      - name: Build lite backend
-        run: make backend-lite

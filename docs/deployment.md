@@ -48,8 +48,8 @@ collector, so it needs no separate build).
 
 | Archive | Platform |
 |---|---|
-| `prism-linux-amd64.tar.gz` / `prism-linux-amd64-lite.tar.gz` | Linux x86-64 |
-| `prism-linux-arm64.tar.gz` / `prism-linux-arm64-lite.tar.gz` | Linux arm64 |
+| `prism-linux-amd64.tar.gz` | Linux x86-64 |
+| `prism-linux-arm64.tar.gz` | Linux arm64 |
 | `prism-darwin-amd64.tar.gz` / `prism-darwin-arm64.tar.gz` | macOS (Intel / Apple silicon) |
 | `prism-windows-amd64.zip` | Windows x86-64 |
 
@@ -59,14 +59,13 @@ tar -xzf prism-linux-amd64.tar.gz
 ./prism init           # writes ./.env with fresh tokens
 ```
 
-**About `-lite`:** today it is byte-for-byte the same binary as the full variant. The
-two tag sets are deliberately identical — mihomo was rejected as a kernel
-(`docs/ENGINE_DECISIONS.md` D-1), so no release artifact is ever compiled with
-`with_mihomo`; passing that tag would make `node.EngineCapabilities()` claim mihomo is
-built while every mihomo node still fails with `ENGINE_NOT_BUILT`. The variant name is
-kept so the matrix does not have to change if a genuine reduced build is ever needed,
-and `prism version` prints the real tag set so a deployment can always verify what it
-got. There is no macOS lite build and no Windows arm64 build.
+Every archive is built from the same tag set (`release.yml`'s `TAGS`), because mihomo
+was rejected as a kernel (`docs/ENGINE_DECISIONS.md` D-1): no release artifact is ever
+compiled with `with_mihomo`, since that tag would make `node.EngineCapabilities()` claim
+mihomo is built while every mihomo node still fails with `ENGINE_NOT_BUILT`. There is no
+macOS amd64-only build and no Windows arm64 build. `prism version` prints the exact tag
+set of the binary you are holding, so a deployment can always verify what it got.
+
 ## deploy.sh
 
 ```
