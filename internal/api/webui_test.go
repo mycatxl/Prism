@@ -28,6 +28,36 @@ func TestWebDistCarriesATrackedPlaceholder(t *testing.T) {
 	}
 }
 
+// TestWebDistPlaceholderSurvivesABuild pins how the placeholder above stays alive.
+//
+// vite empties dist/ on every build, so a .gitkeep tracked directly under dist/ is
+// deleted by `npm run build` -- putting the tree straight back into the state that
+// breaks a fresh clone. The tracked copy therefore lives in public/ (vite's
+// publicDir, copied into dist/ on every build) and dist/ carries a mirror. If the
+// two ever drift, every build leaves the tree dirty and the mirror is the stale
+// one, so they are compared here.
+func TestWebDistPlaceholderSurvivesABuild(t *testing.T) {
+	const source = "web/public/.gitkeep"
+
+	fromPublic, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read %s: %v -- this is the file vite copies into dist/ on every build", source, err)
+	}
+	if len(fromPublic) == 0 {
+		t.Fatalf("%s is empty", source)
+	}
+
+	mirror, err := os.ReadFile(webDistDir + "/.gitkeep")
+	if err != nil {
+		t.Fatalf("read %s/.gitkeep: %v -- without it go:embed all:%s fails in a fresh clone", webDistDir, err, webDistDir)
+	}
+
+	if string(fromPublic) != string(mirror) {
+		t.Fatalf("%s and %s/.gitkeep differ (%d vs %d bytes); a build would leave the tree dirty",
+			source, webDistDir, len(fromPublic), len(mirror))
+	}
+}
+
 // TestWebUINotBuiltHandlerAnswers503 pins the documented backend-only behaviour:
 // with no compiled UI the panel answers 503 and names the make target that fixes
 // it, rather than 404 or a blank page.
