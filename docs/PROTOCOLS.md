@@ -478,7 +478,8 @@ strings.
   that described a tree that still contained the package and is now obsolete.
   `docs/MIGRATION_FROM_RESIN.md` carried the same stale paragraph and is corrected too.
 
-### 10.11 Upstream sing data race: `CachedConn` (NOT fixed upstream)
+### 10.11 Upstream sing data race: `CachedConn` (NOT fixed upstream, and reachable from our
+outbound)
 
 `github.com/sagernet/sing/common/bufio.CachedConn` guards its `taken` field with an `atomic.Bool`
 but reads and writes `c.buffer` with **no synchronisation at all**: `Close()`
@@ -497,32 +498,91 @@ only as the caller that closes the connection. **The racing field is `CachedConn
 `sing/common/bufio`**, so this is not a §10.5 regression — §10.5 is about `NetworkManager.started`
 in `sing-box/route/network.go`, which v1.14.2 fixed.
 
-Upstream status rechecked 2026-10-02: `dev`, `main` and `master` all still carry the unsynchronised
-`Close()` (`cache.go:83-92`). Prism pins `sing v0.9.6-0.20260922013354-87c33f17688f`, chosen by
-`sing-box v1.14.2`'s require; the file's newest change is `9822d61a` (2026-09-10), which our pin
-already contains. Do not mistake the older fix for this one: `b8eed517` (2026-01-17) is titled "Fix
-race between **ReadCached** and Close" and only makes `ReadCached()` mutually exclusive with
-`Close()` through `taken.CompareAndSwap`; the race we hit is **`Read()` vs `Close()`**, and `Read()`
-never touches `taken`.
+Upstream status rechecked 2026-09-28: `dev` (the default branch) and `main` both still carry the
+unsynchronised `Close()`/`Read()`. There is no `master` branch - the earlier note saying "dev, main
+and master were all checked" was wrong; the branches are `dev`, `main`, `stable` and some
+`renovate/*`. Prism pins `sing v0.9.6-0.20260922013354-87c33f17688f`, chosen by `sing-box v1.14.2`'s
+require. `main`'s `common/bufio/cache.go` is **byte-identical** to our pin (blob `94423887b2`); `dev`
+differs only in the UDP `CachedPacketConn` refactor from `9822d61a` (author 2026-09-10, committer
+2026-09-27 - upstream rebased it), and `CachedConn`/`CachedReader` are identical on both. Do not
+mistake the older fix for this one: `b8eed517` (2026-01-17) is titled "Fix race between
+**ReadCached** and Close" and only makes `ReadCached()` mutually exclusive with `Close()` through
+`taken.CompareAndSwap`; the race we hit is **`Read()` vs `Close()`**, and `Read()` never touches
+`taken`.
 
-Where it can and cannot happen (corrected 2026-10-02; the first version of this section claimed the
-window was reachable in production, which is wrong). `CachedConn` is created on the **inbound** side
-only: `sing-box/route/route.go:148/164` (and only when the first-packet `buffers` are non-empty),
-`sing/protocol/http`, `sing/protocol/socks`, `sing-shadowsocks/shadowaead_2022/relay.go:193`, and the
-`sing-box/transport/*` servers. `ConnectionManager.NewConnection` (`route/conn.go:95`) is the sing-box
-**inbound** connection copier and its two goroutines close each other (`conn.go:152/153`). Prism's
-inbound is its own HTTP/SOCKS5 forward proxy (`internal/proxy`), and its outbound goes through
-`adapter.Outbound` alone (`internal/outbound/singbox_runtime.go`) - searching that package for
-sing-box's route types finds nothing; the `route.` identifiers there are Prism's own `prepare.route`
-(`NodeHash`, `PlatformID`).
+Where it can happen (rewritten 2026-09-28; both earlier versions of this paragraph were wrong - the
+first said the window was reachable in production, the second said Prism's data path never creates a
+`CachedConn`; the truth is that it does).
 
-So the race shows up in `internal/e2e` because those cases stand up a real sing-box instance **inside
-the test process** (`protocols_test.go`'s `startPeerFixture` calls `box.New` + `instance.Start`) to
-act as the peer. That instance's inbound creates the `CachedConn`, and `-race` can only report races
-within a single process. It is a property of the test harness, not of Prism's data path - and being
-upstream code, it still cannot be fixed here without forking (no fork, no `replace`, nothing skipped,
-no allow-list). Decision D-5 in `docs/ENGINE_DECISIONS.md` records it; re-evaluate when upstream fixes
-the field or when the hit rate rises.
+*Inbound side* (Prism never creates one here): `sing-box/route/route.go:148/164` (only when the
+first-packet `buffers` are non-empty), `sing/protocol/http`, `sing/protocol/socks`,
+`sing-shadowsocks/shadowaead_2022/relay.go:193`, and the `sing-box/transport/*` servers.
+
+*Outbound side* (**Prism's `adapter.Outbound` does create one**):
+
+- `sing/protocol/http/client.go:138` - `(*http.Client).DialContext` wraps the connection in a
+  `CachedConn` when the response left buffered bytes. That client is what sing-box's `http` outbound
+  builds (`sing-box/protocol/http/outbound.go:44`), and Prism accepts `http`/`https` nodes
+  (`internal/subscription/parser.go:608/980/1530/2321`; protocol matrix cases `http-uri`,
+  `https-uri`).
+- `sing-box/transport/v2raywebsocket/client.go:117` - same wrap after a ws upgrade
+  (`sing-box/transport/v2ray/transport.go:57`). That is the `transport: ws` path of vmess/vless, and
+  Prism keeps `net=ws` from subscriptions (`internal/subscription/parser.go:950/1129/3151`).
+- `sing-box/transport/v2rayhttpupgrade/client.go:113` - the same for httpupgrade
+  (`transport/v2ray/transport.go:64`; `internal/subscription/parser.go:1161`).
+
+(Two further creation points are server-side and not reachable from Prism:
+`sing-box/transport/trojan/mux.go:67` and `transport/trojan/service.go:121`.)
+
+Reproduced in production code on 2026-09-28 (WSL, `-race`): a stub proxy answers CONNECT with
+`200 Connection Established` **plus** server-first bytes in one write (what a proxy in front of a
+server-first protocol does), and a node built by **Prism's own**
+`outbound.NewSingboxBuilderWithConfig` + `Build()` - `{"type":"http",...}` - dials it. The dial result
+is a `*bufio.CachedConn`; reading and closing it concurrently (the shape of Prism's tunnel pump,
+`internal/proxy/tunnel.go:220` and `:214`) makes `-race` report `(*CachedConn).Read` at
+`cache.go:40` against `(*CachedConn).Close` at `cache.go:86` - the same field and method pair CI caught
+in `internal/e2e`.
+
+CI caught it on the shadowtls case first because those cases stand up a real sing-box instance
+**inside the test process** (`protocols_test.go`'s `startPeerFixture` calls `box.New` +
+`instance.Start`) to act as the peer, and that instance's *inbound* creates the `CachedConn`
+(`sing-shadowtls/service.go:285`, the v3 branch). `-race` only reports races inside one process, so
+the first sighting was there - but the first sighting is not the only reachable site.
+
+The complete CI stack (run `36326553534`, job `108640324612`, commit `b506888`) is:
+write side `(*CachedConn).Read` `cache.go:47` <- `shadowaead.(*Reader).Read` `shadowaead/aead.go:142`
+<- `shadowaead.(*serverConn).Read` `shadowaead/service.go:150` <- `bufio.copyExtendedWithPool` <-
+`route.(*ConnectionManager).connectionCopy` `route/conn.go:274`; read side `(*CachedConn).Close`
+`cache.go:85` <- `shadowaead.(*serverConn).Close` <- `bufio/deadline.(*Conn).Close` <-
+`connectionCopy` `route/conn.go:286`. Both goroutines come from `ConnectionManager.NewConnection`
+(`route/conn.go:152/153`), reached via `sing-shadowtls/service.go:285` ->
+`sing-box/protocol/shadowtls/inbound.go:140` -> `route.RouteConnectionEx` ->
+`protocol/shadowsocks/inbound.go:111` -> `shadowaead.Service.newConnection` ->
+`adapter.legacyUpstreamHandlerWrapper.NewConnection` -> `shadowsocks.(*Inbound).newConnection`
+`inbound.go:134` -> `route.RouteConnection` `route.go:45`.
+
+**Method A - run the peer sing-box out of process - was prototyped and rejected.** A helper
+(`internal/e2e/peerserver`) that runs one instance from a JSON config, exec'd by the fixture and
+awaited on a `READY` line, works: all 15 round-trip cases passed under `-race`, six rounds of
+`-count=5` were clean, each round ~8s. But it does not fix the race, for two reasons:
+
+1. The outbound-side `CachedConn` is created by **Prism's own outbound**, inside the test process, so
+   `-race` still sees it. Moving the peer only moves the inbound half.
+2. The inbound half cannot be moved either. `include.Context` is imported by
+   `internal/outbound/singbox_runtime.go:16`, which is production code (`box.New` registers every
+   protocol), and the fixture's `newBuilder` uses it. Measured: with the fixture exec'ing the helper,
+   the test binary's dependency set did not shrink at all (917 -> 917 packages;
+   `sing-box/protocol/{shadowsocks,shadowtls,socks,http,trojan}`, `sing-box/route`, `sing-shadowtls`,
+   `sing-shadowsocks/shadowaead` and `sing/common/bufio` all still linked). Moving that too would mean
+   not exercising Prism's outbound at all, which is the coverage the suite exists for.
+
+Config-level workarounds (different cipher, different protocol, dropping ss-2022 or shadowtls) all
+change what the suite proves and are therefore rejected outright.
+
+So: the `-race` gate stays as it is, nothing is skipped and no allow-list is added. This is upstream
+code; the fix belongs upstream, and the prepared patch (plus a deterministic reproducer) is recorded
+in D-5 of `docs/ENGINE_DECISIONS.md`. Re-evaluate when upstream fixes the field, or when the hit rate
+rises.
 
 ## 11. Which test pins which claim
 

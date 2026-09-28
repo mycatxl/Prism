@@ -322,9 +322,18 @@ func (e *stepExecutor) viaNodeSpecs(selection []string) []providers.Spec {
 // persistResult writes one provider conclusion into intel.db. Failures are
 // stored too (status=error/unsupported) so the assessment can tell "the source
 // said nothing" from "the source was never asked" (WP10 §1.3).
-func (e *stepExecutor) persistResult(ctx context.Context, spec providers.Spec, ip netip.Addr, result providers.Result, viaNode string) {
+//
+// It reports whether the row is really in the database. A caller that records
+// "this source has been asked" has to gate on that answer: step 4 skips the
+// sources listed in via_node_answered (answeredViaNodeSources), so counting a
+// source whose write failed as answered drops this evidence for the rest of the
+// item's life - the assessment then scores an address with a hole in its
+// evidence table while the summary claims the source replied.
+func (e *stepExecutor) persistResult(ctx context.Context, spec providers.Spec, ip netip.Addr, result providers.Result, viaNode string) bool {
 	if e.store == nil {
-		return
+		// No store means no evidence, which is exactly what the caller must
+		// not treat as a successful answer.
+		return false
 	}
 	now := e.now()
 	row := store.Evidence{
@@ -370,7 +379,9 @@ func (e *stepExecutor) persistResult(ctx context.Context, spec providers.Spec, i
 	}
 	if err := e.store.UpsertEvidence(ctx, row); err != nil {
 		e.logf("[intel] store %s evidence for %s: %v", spec.ID, row.IP, err)
+		return false
 	}
+	return true
 }
 
 func specTTL(spec providers.Spec) time.Duration {
@@ -608,6 +619,9 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 	now := e.now()
 	looked := 0
 	failed := 0
+	// evidenceFailed counts the lookups whose evidence row did not reach
+	// intel.db; such a source is not "answered" (see the loop below).
+	evidenceFailed := 0
 	ran := make([]string, 0, len(specs))
 	succeeded := make([]string, 0, len(specs))
 	skippedSources := make([]string, 0, len(specs))
@@ -617,8 +631,9 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 		if answered[spec.ID] {
 			// Already answered successfully by an earlier attempt of this step;
 			// asking again would spend this node's quota twice for the same
-			// address. A source that failed is not in this set, so it is asked
-			// again on the next attempt.
+			// address. A source that failed - with an error from the data source
+			// or with an evidence row that never reached intel.db - is not in
+			// this set, so it is asked again on the next attempt.
 			ran = append(ran, spec.ID)
 			succeeded = append(succeeded, spec.ID)
 			continue
@@ -647,19 +662,28 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 		}
 		ran = append(ran, spec.ID)
 		sourceFailed := false
+		sourceStored := true
 		for _, ip := range ips {
 			result := provider.Lookup(ctx, ob, ip)
-			e.persistResult(ctx, spec, ip, result, nodeHash)
+			if !e.persistResult(ctx, spec, ip, result, nodeHash) {
+				// The conclusion never reached intel.db, so this source must
+				// stay retryable: the guard above skips exactly what this
+				// summary lists as answered, and a source recorded there is
+				// never asked again for this item.
+				sourceStored = false
+				evidenceFailed++
+			}
 			looked++
 			if result.Failed() {
 				failed++
 				sourceFailed = true
 			}
 		}
-		// Only a source that came back clean counts as answered: a 429 or a vendor
-		// error must be retried on the next attempt, and the guard above reads
-		// exactly this set.
-		if !sourceFailed {
+		// Only a source that came back clean *and* whose evidence is in intel.db
+		// counts as answered: a 429 or a vendor error must be retried on the next
+		// attempt, and so must a source whose row could not be written. The guard
+		// above reads exactly this set.
+		if !sourceFailed && sourceStored {
 			succeeded = append(succeeded, spec.ID)
 		}
 	}
@@ -669,6 +693,12 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 		"via_node_answered": succeeded,
 		"via_node_lookups":  looked,
 		"via_node_failed":   failed,
+		// via_node_evidence_failed counts the lookups whose evidence could not
+		// be written to intel.db. It is why a source can be missing from
+		// via_node_answered although its lookup came back clean: the row is not
+		// in the store, so the next attempt asks the source again instead of
+		// skipping it and leaving the item's evidence table incomplete.
+		"via_node_evidence_failed": evidenceFailed,
 	}
 	if len(skippedSources) > 0 {
 		summary["via_node_skipped"] = skippedSources
@@ -704,11 +734,12 @@ func (e *stepExecutor) answeredViaNodeSources(ctx context.Context, jobID, nodeHa
 }
 
 // parseAnsweredViaNodeSources reads the set of via-node sources that answered
-// successfully out of a stored step summary. It reads via_node_answered rather
-// than via_node_sources: the latter lists every source that was asked, including
-// the ones that came back with a 429 or a vendor error, and those must be asked
-// again on the next attempt. Split from the store read so the parsing has a test
-// that needs no database.
+// successfully - a clean lookup whose evidence is in intel.db - out of a stored
+// step summary. It reads via_node_answered rather than via_node_sources: the
+// latter lists every source that was asked, including the ones that came back
+// with a 429 or a vendor error, and those must be asked again on the next
+// attempt. Split from the store read so the parsing has a test that needs no
+// database.
 func parseAnsweredViaNodeSources(resultJSON string) map[string]bool {
 	var saved struct {
 		Sources []string `json:"via_node_answered"`

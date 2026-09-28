@@ -425,7 +425,7 @@ region:                    # 可选
 | id | `calibrated` 字段 | 校准依据与当前判定 |
 |---|---|---|
 | `netflix` | `calibrated 2026-09-25 (real 301 with an empty body; region read from the Location "/jp-en/" prefix); max_body_bytes trimmed to 8192 on 2026-10-02 (no matcher reads the body)` | 两个 title（自制剧 80100172、非自制剧 70143836）**在本机出口都返回 301 + Location `/jp-en/`，响应体 0 字节**。先按 `original` 排除 403/451 与非 200/301/302/307，再看 `licensed`：200/301/302/307 → available，403/404 → region_limited。地区走 `header_regex`，outcomes 只读状态码——**正文一个字节都不读**。2026-10-02 用 208 个真实节点复核：多数节点上这两个 title 返回的是 **200 的完整页面**、把 262144 上限读满（116 个请求的响应体中位数 262144，折合约 137 KB/节点），于是两个 step 的上限都降到 8192（详见 §8.5）。真实节点上 183/208 判 available、**109/208 取到地区**（NL 45 / DE 12 / FR 10 / RO 9 / JP 4 …）、1 个 region_limited。 |
-| `tiktok` | `calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page); region re-measured 2026-10-02 across 311 real nodes: 177 of 180 available nodes carried a region at 92-106 KB; max_body_bytes trimmed to 163840` | `https://www.tiktok.com/` 在**过不了风控的节点**上返回 **200 但正文只有 1462 字节的 WAF 挑战页**（`SlardarWAF`、`_wafchallengeid`、"Please wait..."）。两条挑战标记**必须排在 `status_in: [200]` 之前**，否则可用节点会被误判成 available。地区取自正文 `"region":"XX"`：**2026-10-02 用 311 个真实节点复核确认这条判据有效**——230 个跑完的节点里 180 个 available，其中 **177 个带地区**（US 56 / NL 40 / DE 14 / RO 11 / FR 10 / GB 9 / SE 6 / PL 4 / ES 4 / IE 4 / IT 3 / JP 3 …），16 个 captcha、25 个 503（落 `default: unknown`）、9 个 error。能过风控的节点返回完整页面 369~381 KB，`"region"` 出现在 92~106 KB 处（15 个样本 min 92927 / max 105215），因此 `max_body_bytes` 从 262144 降到 163840（留 58625 字节余量，每节点每次省 96 KB）。 |
+| `tiktok` | `calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page); region re-measured 2026-09-28 across 480 real-node requests: 387 of 388 full pages carried a region at 53856-134607 bytes; max_body_bytes kept at 163840 (29233 bytes of headroom); the blocked marker was never observed in 480 requests` | `https://www.tiktok.com/` 在**过不了风控的节点**上返回 **200 但正文只有 1462 字节的 WAF 挑战页**（`SlardarWAF`、`_wafchallengeid`、"Please wait..."）。两条挑战标记**必须排在 `status_in: [200]` 之前**，否则可用节点会被误判成 available（2026-09-28 复测：43 个挑战页里 `SlardarWAF` 恒在 179 字节、`_wafchallengeid` 恒在 823 字节）。地区取自正文 `"region":"XX"`：**判据有效**，能过风控的节点返回 366~411 KB 完整页，`"region"` 出现在 **53856~134607** 字节处（387 个样本；两次独立测量：480 次请求最坏 134607，45 次请求最坏 126325、p50 101133）。**注意**：2026-10-02 记的"最晚 105215"只来自 15 个样本、偏低。`max_body_bytes` 仍为 163840，相对最坏值留 29233 字节（18%）；完整页 366~411 KB，更大的上限只会白读。**blocked 判据的真相**：`"Your account is currently unavailable"` 在仓库别处不存在、也非任何抓包——它由 `0d0553b` 按计划文档 §5.4 补出（该节只写"被屏蔽页判为 blocked"，未给标记）；480 次请求 **0 次命中**，TikTok 真实的地区封锁文案是 `"This account isn't available in your country or region."`，位于正文 i18n 字典 **199026 字节处（在窗口之外）**、且 386/391 个页面都含它（含全部 US 页），所以它不是信号。该 matcher 保留为**未观测到的兜底**并保证排在 available 之前（`TestTiktokBlockedMarkerPrecedesAvailable` 钉住顺序），但真实封锁若出现在窗口之外会漏判——这是有界读取的已知代价。 |
 | `chatgpt` | `calibrated 2026-09-25 (real 403 with "type":"dc" on ios.chat.openai.com; trace 200 with loc=US)` | `trace` 步骤请求 `chatgpt.com/cdn-cgi/trace` 取 `loc=`；`probe` 步骤请求 `ios.chat.openai.com/`，实测 403 且正文含 **`"type":"dc"`（数据中心 IP 被拒）**，该条排在裸 `status_in: [403]` 之前。`unsupported_country` → blocked；`"VPN"` → captcha（**本轮未观测到，保留为兜底**）。地区用 `body_regex: '(?m)^loc=([A-Z]{2})$'`。 |
 | `claude` | `calibrated 2026-09-25 (real 403 with a 5656-byte challenge-platform body on claude.ai)` | `https://claude.ai/` 实测返回 403、正文 5656 字节，含 Cloudflare 挑战脚本 URL 片段 `challenge-platform`；所以 `status_in: [403,503]` + `body_contains: "challenge-platform"` → captcha 成立（不跟随重定向）。`Location: app-unavailable-in-region` 分支**本轮未观测到，保留为兜底**。地区走 `body_regex` 的 `'"countryCode":"([A-Z]{2})"'`，但 2026-10-02 复核实测该 403 挑战页（5613 字节）**不含该字段**，所以**挑战页上地区恒为空**（详见 §9）。 |
 | `youtube_premium` | `calibrated 2026-09-25 region re-measured 2026-10-02 (real 200: ytcfg "GL" inside 64 KiB, "countryCode" only at ~866 KB); max_body_bytes trimmed to 131072 on 2026-10-02` | `https://www.youtube.com/premium`（`Accept-Language: en`）实测 200。**2026-10-02 复核修正了地区判据**：正文里的 `"countryCode":"XX"` 首次出现在约 866312~878933 字节处，而正文总长约 882~895 KB，旧的 `body_regex` 在 262144 上限下**永远不可能命中**（详见 §8.4）；改用 ytcfg 的 `"GL"` 字段（约 56145~56369 字节处，5 次实测与 `countryCode` 一致），并保留下限兜底。`"Premium is not available in your country"` 分支**本轮未观测到，保留为兜底**；403/429 → blocked，200 → available。 |
@@ -646,7 +646,7 @@ never block the worker, park the item instead），停放到下次可用时间�
 | 5 解锁 | `www.google.com/search?q=prism&hl=en` | **~27 KB** | 已把上限下调到 8192（原 ~103 KB） |
 | 5 解锁 | `www.netflix.com/title/80100172` | ~7.9 KB | 301，0 B 正文（**本机口径**）；真实节点上返回 200 完整页面，上限已下调到 8192（见 §8.5） |
 | 5 解锁 | `www.netflix.com/title/70143836` | ~7.9 KB | 同上 |
-| 5 解锁 | `www.tiktok.com/` | ~11 KB | 200，挑战页（**本机口径**）；能过风控的节点上是 370~381 KB 完整页面，上限已下调到 163840（见 §8.5） |
+| 5 解锁 | `www.tiktok.com/` | ~11 KB | 200，挑战页（**本机口径**）；能过风控的节点上是 366~411 KB 完整页面，上限保持 163840（见 §8.5） |
 | 5 解锁 | `www.youtube.com/premium` | **~201 KB** | 已把上限下调到 131072（原 ~340 KB） |
 | 5 解锁 | `smtp.gmail.com:25` | **~0.1 KB** | 裸 TCP 连接后关闭 |
 
@@ -733,8 +733,8 @@ TLS 开销（每个 HTTPS 请求约 4~6 KB）再加 6.13 个请求/节点，隧�
 
 - `netflix`：outcomes 只读状态码、`region` 只读 `Location` 头，**正文一个字节都不用**，
   两个 step 的上限都从 262144 降到 8192 → 每节点约 **4 KB**。
-- `tiktok`：地区最晚出现在 105215 字节处，上限从 262144 降到 163840（留 58625 字节余量）
-  → 每节点约 **146 KB**。
+- `tiktok`：地区最晚出现在 **134607** 字节处（480 次请求复测；2026-10-02 记的 105215 是 15 样本的偏低值），
+  上限从 262144 降到 163840（留 29233 字节余量）→ 每节点约 **146 KB**。
 
 下调后响应体合计约 **287 KB/节点**、隧道字节约 **317 KB/节点**（原来约 515 KB），**降约 38%**。
 

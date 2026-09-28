@@ -5,15 +5,33 @@
 # 挑战页同样是 200，所以两条挑战标记必须在 status_in: [200] 之前判成 captcha，
 # 否则可用节点会被挑战页误判成 available。
 #
-# 两态响应（2026-10-02 用 311 个真实节点复核，推翻"region 恒为空"的旧结论）：
-#   ① 能过风控的节点 -> 200 + 完整页面 369~381 KB，'"region":"XX"' 出现在 92~106 KB 处
-#      （15 个样本 min 92927 / max 105215 / 均值约 97860，每个页面只匹配一次，值与出口国家一致）。
-#   ② 过不了风控的节点 -> 同样 200，但正文是同一张 1462 字节挑战页，里面没有任何地区字段。
-# 230 个跑完的节点：180 个 ①（其中 177 个取到地区 US/NL/DE/RO/FR/GB/SE/PL/ES/IE/IT/JP…）、
-# 16 个 ② 判 captcha、25 个 503（落入 default: unknown）、9 个 error。
+# 两态响应（2026-09-28 用 480 次真实节点请求复测，每次请求由 P2C 另选节点）：
+#   ① 能过风控的节点 -> 200 + 完整页面 366~411 KB（388 个，其中 386 个落在 360~420 KB）；
+#      '"region":"XX"' 出现在 53856~134607 字节处（387 个样本 min 53856 / p50 96933 /
+#      p95 132412 / max 134607 / 均值约 101914，每个页面最多匹配一次，值与出口国家一致）。
+#      2026-10-02 那次只采到 15 个样本，max 105215 是**样本量不足的偏低值**；本次 387 个样本
+#      把最坏偏移推高到 134607，仍是同一段页面结构（region 恒在页面的 19%~33% 处）。
+#   ② 过不了风控的节点 -> 同样 200，但正文是同一张 1462 字节挑战页（43 个，每次都一模一样）：
+#      SlardarWAF 恒在 179 字节、_wafchallengeid 恒在 823 字节，页内没有任何地区字段。
+#   ③ 其余：6 个 302（Redirecting to /explore）、43 个连接/TLS 失败（不产生正文）。
 # 所以 region 是有效判据，"取不到"只发生在本来就没拿到可读页面的节点上。
-# max_body_bytes 从 262144 降到 163840：正常页面 370 KB+ 会把旧上限读满，而地区最晚出现在
-# 105215 字节处，新上限留 58625 字节（56%）余量，每个节点每次少读 96 KB。
+#
+# max_body_bytes 保持 163840（2026-10-02 的下调结论经本次复测成立）：
+#   被依赖的三个标记全部实测落在窗口内 —— SlardarWAF 179、_wafchallengeid 823、region 最晚 134607，
+#   相对最坏偏移仍留 29233 字节（18%）余量；而完整页面 366~411 KB，更大的上限只会白读。
+#   **但这是有界读取**：窗口外的正文不参与匹配，所以下面每一条 body_contains 都只覆盖前 163840 字节。
+#
+# blocked 判据（"Your account is currently unavailable"）的来源与风险，必须写清楚：
+#   480 次请求（43 个挑战页 + 388 个完整页）里**一次都没有观测到**该字符串。它也不是 TikTok 真实的
+#   地区封锁文案——实测文案是 "This account isn't available in your country or region."，位于正文
+#   i18n 字典的 199026~242669 字节处，**在 163840 窗口之外**；而且 386/391 个页面（含 130/130 个 US
+#   可用页）都带这段字典文本，所以它本身不是信号，不能直接拿来当判据。
+#   该 matcher 的来源已核实：这个字符串在 docs/ 与任何 .go 里都不存在，只出现在本文件，由 0d0553b
+#   （按 docs/plan/09-intel-providers-checks.md §5.4 落地内置规则那次）引入，而计划文档 §5.4 只写了
+#   "被屏蔽页判为 blocked"、没有给出任何具体标记。**即它是按计划占位补出来的字符串，不是任何一次抓包。**
+#   按仓库既有惯例（chatgpt 的 "VPN"、youtube_premium 的 "Premium is not available in your country"）
+#   保留为**未观测到的兜底**，并保证它排在 status_in: [200] 之前；但必须承认：真实封锁文案若出现在
+#   163840 之后（i18n 字典就在 199 KB+，很可能），这条会漏，受限节点会被判成 available。
 id: tiktok
 version: 1
 name: TikTok
@@ -21,7 +39,7 @@ category: social
 enabled: true
 ttl: 12h
 timeout: 12s
-calibrated: 'calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page); region re-measured 2026-10-02 across 311 real nodes: 177 of 180 available nodes carried a region at 92-106 KB; max_body_bytes trimmed to 163840'
+calibrated: 'calibrated 2026-09-25 (real 200 with a 1462-byte SlardarWAF challenge page); region re-measured 2026-09-28 across 480 real-node requests: 387 of 388 full pages carried a region at 53856-134607 bytes (max was 105215 in the earlier 15-sample 2026-10-02 run); max_body_bytes kept at 163840 with 29233 bytes of headroom; the blocked marker "Your account is currently unavailable" was never observed in 480 requests and stays a bounded-read fallback'
 steps:
   - id: home
     request:
@@ -33,9 +51,13 @@ steps:
         User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Prism/1.0"
       max_body_bytes: 163840
 outcomes:
+  # 未观测到的兜底（2026-09-28：480 次请求 0 次命中）。必须排在 status_in: [200] 之前，
+  # 否则它一旦出现，后面的 available 会先命中。窗口只有 163840 字节，见文件头说明。
   - when: {step: home, body_contains: "Your account is currently unavailable"}
     outcome: blocked
   # WAF 挑战页标记（2026-09-25 实测正文：SlardarWAF 与 _wafchallengeid）。
+  # 2026-09-28 复测：43 个挑战页里 SlardarWAF 恒在 179 字节、_wafchallengeid 恒在 823 字节，
+  # 两个都远在窗口内；388 个完整页里一个都没有，所以这两条不会误伤可用节点。
   - when: {step: home, body_contains: "_wafchallengeid"}
     outcome: captcha
   - when: {step: home, body_contains: "SlardarWAF"}

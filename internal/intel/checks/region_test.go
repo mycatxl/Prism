@@ -272,12 +272,23 @@ func TestYoutubeRegionMarkerIsInsideTheBodyCap(t *testing.T) {
 	}
 }
 
-// TestTiktokRegionMarkerIsInsideTheBodyCap pins the 2026-10-02 recalibration.
-// On nodes that pass TikTok's WAF the response is a full page of 369-381 KB and
-// "region":"XX" first appears at byte 92927-105215 (15 samples); the old cap of
-// 262144 was therefore read to the end on every one of them for no benefit. The
-// cap is 163840 now, which still leaves ~58 KB of headroom. This test fails if a
-// future edit drops the cap below the measured offset.
+// TestTiktokRegionMarkerIsInsideTheBodyCap pins the recalibrated cap against the
+// worst offset measured on real nodes, so an edit that lowers the cap below it
+// fails here instead of silently emptying the region field.
+//
+// Measured through the pool on 2026-09-28, across two independent runs:
+//   - 480 requests (the first run): 388 full pages of 366-411 KB, region at
+//     53856-134607 (387 samples);
+//   - 45 requests (the verification run): 40 full pages of 368-402 KB, region at
+//     92867-126325 (40 samples, p50 101133).
+//
+// The earlier 2026-10-02 note claimed the worst offset was 105215, but that came
+// from only 15 samples and was too low. Both runs agree the marker sits between
+// ~19% and ~33% into the page, and 134607 is the worst case seen so far.
+//
+// The cap stays 163840, which leaves 29233 bytes (18%) over that worst case. The
+// page itself is 366-411 KB, so anything larger would only read bytes no matcher
+// looks at - and this is a bounded read: markers past the cap never match.
 func TestTiktokRegionMarkerIsInsideTheBodyCap(t *testing.T) {
 	rule := builtinRuleForTest(t, "tiktok")
 	if rule.Steps[0].Request == nil {
@@ -288,10 +299,14 @@ func TestTiktokRegionMarkerIsInsideTheBodyCap(t *testing.T) {
 		t.Fatalf("tiktok max_body_bytes = %d, want a positive cap", cap)
 	}
 
-	// The latest offset observed across 15 real pages (min 92927, max 105215).
-	const regionOffset = 105215
+	// Worst region offset measured across 427 full pages in two runs.
+	const regionOffset = 134607
 	if cap <= regionOffset {
 		t.Fatalf("max_body_bytes = %d does not cover the measured region offset %d", cap, regionOffset)
+	}
+	if headroom := cap - regionOffset; headroom < 16384 {
+		t.Fatalf("max_body_bytes = %d leaves only %d bytes over the worst measured offset %d, want at least 16384",
+			cap, headroom, regionOffset)
 	}
 
 	// A page shaped like the measured ones: the marker sits at the measured
@@ -328,6 +343,62 @@ func TestTiktokRegionMarkerIsInsideTheBodyCap(t *testing.T) {
 	}
 	if region := extractRegion(rule.Region, challenge); region != "" {
 		t.Fatalf("region = %q, want empty on a challenge page", region)
+	}
+}
+
+// TestTiktokBlockedMarkerPrecedesAvailable pins the ordering of the one tiktok
+// matcher that has never been observed in a real response.
+//
+// "Your account is currently unavailable" does not exist anywhere else in the
+// repository and did not come from a capture: it entered this rule in 0d0553b,
+// which built the built-in rules from docs/plan/09-intel-providers-checks.md §5.4
+// -- and that section only says "a blocked page is judged blocked" without naming
+// a marker. Measured 2026-09-28 over 480 requests (43 challenge pages, 388 full
+// pages): zero hits. TikTok's actual region notice is a different string, "This
+// account isn't available in your country or region.", and it sits in the page's
+// i18n dictionary at byte ~199026 -- past the 163840 cap -- and appears on 386 of
+// 391 pages including every US page, so it is not a signal either.
+//
+// The matcher therefore stays as an unobserved fallback, and what this test can
+// still guarantee is that it is evaluated before the bare status_in: [200] rule.
+// If the order were reversed, a blocked page answering 200 would be reported as
+// available, which is the failure mode youtube_premium had on 2026-10-02.
+func TestTiktokBlockedMarkerPrecedesAvailable(t *testing.T) {
+	rule := builtinRuleForTest(t, "tiktok")
+
+	blockedIndex, availableIndex := -1, -1
+	for i, outcome := range rule.Outcomes {
+		switch outcome.Outcome {
+		case OutcomeBlocked:
+			if blockedIndex < 0 {
+				blockedIndex = i
+			}
+		case OutcomeAvailable:
+			if availableIndex < 0 {
+				availableIndex = i
+			}
+		}
+	}
+	if blockedIndex < 0 || availableIndex < 0 {
+		t.Fatalf("tiktok outcomes = %+v, want both a blocked and an available rule", rule.Outcomes)
+	}
+	if blockedIndex > availableIndex {
+		t.Fatalf("the first blocked rule is at %d but available is at %d: a 200 blocked page would be reported as available",
+			blockedIndex, availableIndex)
+	}
+
+	// A 200 whose body carries the marker must classify as blocked, not available.
+	blocked := map[string]stepResult{"home": {
+		ID: "home", Status: http.StatusOK, Connected: true,
+		Body: `<html>Your account is currently unavailable</html>`,
+	}}
+	if outcome := classify(rule, blocked); outcome != OutcomeBlocked {
+		t.Fatalf("outcome = %q, want %q for a 200 carrying the blocked marker", outcome, OutcomeBlocked)
+	}
+
+	// And the marker is inside the window, so the bounded read does not hide it.
+	if cap := rule.Steps[0].Request.MaxBodyBytes; cap < 1024 {
+		t.Fatalf("max_body_bytes = %d is too small for the marker to be readable at all", cap)
 	}
 }
 
