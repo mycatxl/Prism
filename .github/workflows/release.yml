@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to stamp into the binaries (e.g. v3.0.0-rc1). Empty = the ref name.'
+        description: 'Version to stamp into the binaries (e.g. v0.1.0-rc1). Empty = the ref name.'
         required: false
         default: ''
         type: string

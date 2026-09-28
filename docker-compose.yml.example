@@ -1,8 +1,20 @@
+# Two ways to run the container. Pick one.
+#
+#   docker compose up -d          builds the image from this checkout (needs Go and
+#                                 Node in the build, several minutes)
+#   docker compose pull && up -d  uses the published image instead (no toolchain,
+#                                 seconds) -- uncomment `image:` and remove `build:`
+#
+# Do not leave both enabled and then call `docker compose pull`: with `build:` set,
+# compose builds and tags the result locally, so the image name below is only used
+# as a tag -- but a plain `pull` fetches it from the registry instead.
 services:
   prism:
     build:
       context: .
       dockerfile: Dockerfile
+    # Published by the release workflow on a v* tag. Comment out `build:` above to
+    # use it, and pin a version rather than moving `latest` for a real deployment.
     image: ghcr.io/mycatxl/prism:latest
     container_name: prism
     restart: unless-stopped
