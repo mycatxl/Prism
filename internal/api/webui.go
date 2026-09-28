@@ -63,6 +63,16 @@ func newWebUIHandlerFromFS(distFS fs.FS) http.Handler {
 			return
 		}
 
+		// No index.html means the UI was never compiled (`make web`), so every
+		// /ui/ path reports how to build it. This comes before the file-like 404
+		// below: "/ui/" resolves to "index.html", which has an extension, so the
+		// not-built message would otherwise be unreachable for exactly the URL a
+		// user opens first.
+		if _, err := fs.Stat(distFS, "index.html"); err != nil {
+			newWebUINotBuiltHandler().ServeHTTP(w, r)
+			return
+		}
+
 		// Missing requests with file-like paths should remain 404.
 		if path.Ext(assetPath) != "" {
 			http.NotFound(w, r)
@@ -70,10 +80,6 @@ func newWebUIHandlerFromFS(distFS fs.FS) http.Handler {
 		}
 
 		// SPA fallback: any extension-less path is served index.html.
-		if _, err := fs.Stat(distFS, "index.html"); err != nil {
-			newWebUINotBuiltHandler().ServeHTTP(w, r)
-			return
-		}
 		http.ServeFileFS(w, r, distFS, "index.html")
 	})
 }
