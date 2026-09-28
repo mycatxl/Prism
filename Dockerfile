@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-alpine AS web-builder
+FROM node:24-alpine AS web-builder
 WORKDIR /src/internal/api/web
 
 COPY internal/api/web/package.json internal/api/web/package-lock.json ./
@@ -9,7 +9,7 @@ RUN npm ci
 COPY internal/api/web/ ./
 RUN npm run build
 
-FROM golang:1.26-alpine AS go-builder
+FROM golang:1.27-alpine AS go-builder
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -36,7 +36,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
   -X prism/internal/buildinfo.Tags=$(printf '%s' "${TAGS}" | tr ' ' ',')" \
   -o /out/prism ./cmd/prism
 
-FROM alpine:3.21
+FROM alpine:3.24
 # NOTE: Keep this runtime stage in sync with .github/Dockerfile.release.
 # GHCR release images are built from .github/Dockerfile.release, not this file.
 RUN apk add --no-cache ca-certificates tzdata su-exec \

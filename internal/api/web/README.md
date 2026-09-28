@@ -8,7 +8,7 @@
 
 ## 启动
 
-要求 Node.js 22.12+。在 `web/` 中执行：
+要求 Node.js 24+。在 `web/` 中执行：
 
 ```sh
 npm ci

@@ -207,7 +207,7 @@ deployment small:
 
 | File | Purpose |
 |------|---------|
-| `Dockerfile` | Full multi-stage build: `node:22-alpine` builds the web UI, `golang:1.26-alpine` compiles `cmd/prism` with the full tag set, and the runtime stage (`alpine:3.21`) installs `ca-certificates`, `tzdata` and `su-exec` and places the binary at `/usr/local/bin/prism`. |
+| `Dockerfile` | Full multi-stage build: `node:24-alpine` builds the web UI, `golang:1.27-alpine` compiles `cmd/prism` with the full tag set, and the runtime stage (`alpine:3.24`) installs `ca-certificates`, `tzdata` and `su-exec` and places the binary at `/usr/local/bin/prism`. |
 | `.github/Dockerfile.release` | Runtime-only image used by the release workflow: it copies the pre-built `linux/amd64` and `linux/arm64` binaries, which already embed the web UI, onto the same runtime stage. |
 | `docker/entrypoint.sh` | Container entrypoint: prepares and chowns the data directories, then drops privileges to the `prism` user. |
 | `docker-compose.yml.example` | Example service: `ghcr.io/mycatxl/prism:latest`, port `2260:2260`, three named volumes and a `/healthz` healthcheck. |
