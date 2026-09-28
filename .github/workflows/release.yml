@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*'
+  # A release can also be exercised without publishing one. This runs every build
+  # and upload step, and builds the container image, but the two irreversible
+  # steps are gated on a tag: `publish-release` is skipped entirely and the image
+  # is not pushed. Without this the release path could only be tested by making a
+  # public release, which is the wrong order.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp into the binaries (e.g. v3.0.0-rc1). Empty = the ref name.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -64,10 +76,15 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          # Empty on a tag push, so the tag name is used; set by a manual run,
+          # which has no tag to read. Passed through the environment rather than
+          # interpolated into the script, so the value cannot inject shell.
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
-          VERSION=${GITHUB_REF_NAME}
+          VERSION="${INPUT_VERSION:-$GITHUB_REF_NAME}"
+          echo "building as version: ${VERSION}"
           GIT_COMMIT=${GITHUB_SHA::8}
           BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
@@ -142,6 +159,9 @@ jobs:
 
   publish-release:
     name: Publish Release
+    # Only a tag creates a release. A manual run stops once the artifacts are
+    # built, so the path can be rehearsed without publishing anything.
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: build-binaries
     permissions:
@@ -218,6 +238,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GitHub Container Registry
+        if: github.event_name == 'push'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -248,7 +269,9 @@ jobs:
         with:
           context: .
           file: ./.github/Dockerfile.release
-          push: true
+          # A manual run still builds the image -- that is what validates
+          # .github/Dockerfile.release -- it just does not push it.
+          push: ${{ github.event_name == 'push' }}
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
