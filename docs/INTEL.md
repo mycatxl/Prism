@@ -609,11 +609,25 @@ never block the worker, park the item instead），停放到下次可用时间�
 后续任务永远排队"。想更快就调高该数据源的 QPS（`PATCH /api/v1/intel/providers/{id}`）。
 
 **这一处已经在 2026-10-02 修掉**：step 4 内部的部分成功原本不落 `step_index`，重试会从这一步开头重跑、
+重新消耗已经成功过的源（实测每节点 `used` 涨到 31~70）。现在 `viaNodeStep` 会从 item 上次停放时写入的
 `result_json` 里读出上一轮的结果，**跳过已经成功答过的源**，只重新询问被限流的（或失败过的）那些——
-这正是停放的意义。判断依据是 **`via_node_answered`** 这个键（只收干净返回的源），不是 `via_node_sources`：
-后者列的是"问过的"源、含 429 与厂商报错的，如果拿它当"答过了"，一个失败过的源会在该 item 的余生里
-再也不被询问（第一版守卫就是这个错，注释还写着相反的语义）。被跳过的源同样记进 `via_node_sources`，
-所以那个列表仍是累计的；`via_node_lookups` / `via_node_failed` 则是本次的量。下一次重试能看到完整集合。
+这正是停放的意义。判断依据是 **`via_node_answered`** 这个键，它只收**同时满足两件事**的源：
+lookup 干净返回，**且**证据行确实写进了 `intel.db`（写失败会记进 `via_node_evidence_failed`）。
+不能用 `via_node_sources` 代替它——后者列的是"问过的"源、含 429 与厂商报错的，拿它当"答过了"
+会让一个失败过的源在该 item 的余生里再也不被询问（第一版守卫就是这个错，注释还写着相反的语义）。
+被跳过的源同样记进 `via_node_sources`，所以那个列表仍是累计的；`via_node_lookups` / `via_node_failed`
+则是本次的量。下一次重试能看到完整集合。
+
+summary 里与 step 4 有关的键一共 6 个，含义各不相同，排查时不要混用：
+
+| 键 | 含义 |
+|---|---|
+| `via_node_sources` | 本次**问过或已答过**的源（累计，含被守卫跳过的） |
+| `via_node_answered` | **可作为"已答"跳过**的源：lookup 干净且证据已落库 |
+| `via_node_skipped` | 本次**因配额门没问**的源（`<id>: <原因>`），下次会再试 |
+| `via_node_lookups` | 本次实际发出的 lookup 次数（多地址时按地址累加） |
+| `via_node_failed` | 本次 lookup 里失败的次数（429、厂商错误） |
+| `via_node_evidence_failed` | 本次**证据写不进 `intel.db`** 的次数 |
 实测效果：30 个节点、配额计数器从 0 起跑，跑完 90 行（30×3 源）**没有任何节点的增量超过 +1**
 ——每个源恰好消耗一次，而修复前是 31~70。
 
