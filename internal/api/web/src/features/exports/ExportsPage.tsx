@@ -1,20 +1,19 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createColumnHelper } from "@tanstack/react-table";
-import { AlertTriangle, Copy, Download, Info, KeyRound, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Download, Info, KeyRound, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
+import { cn } from "../../lib/cn";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { DataTable } from "../../components/ui/DataTable";
-import { DialogSurface } from "../../components/ui/DialogSurface";
-import { Input } from "../../components/ui/Input";
-import { OffsetPagination } from "../../components/ui/OffsetPagination";
-import { QueryState } from "../../components/ui/QueryState";
-import { Select } from "../../components/ui/Select";
+import { Fieldset, Input } from "../../components/ui/Input";
+import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout } from "../../components/ui/Readout";
+import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
+import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
@@ -578,18 +577,16 @@ function ExportSkipList({ report, note }: { report: ExportReport | null; note?: 
     return null;
   }
   if (report.skipped.length === 0) {
-    return <p className="platform-op-hint">{t("没有节点被跳过")}</p>;
+    return <p className="text-xs text-ink-soft">{t("没有节点被跳过")}</p>;
   }
   return (
     <>
-      {note ? <p className="platform-op-hint">{note}</p> : null}
-      <ul className="platform-ops-list">
+      {note ? <p className="mb-2 text-xs text-ink-soft">{note}</p> : null}
+      <ul className="divide-y divide-rule border-t border-rule">
         {report.skipped.map((entry, index) => (
-          <li key={`${entry.reason}|${entry.name}|${index}`} className="platform-op-item">
-            <div className="platform-op-copy">
-              <h5>{entry.name || t("未命名")}</h5>
-              <p className="platform-op-hint">{entry.reason}</p>
-            </div>
+          <li key={`${entry.reason}|${entry.name}|${index}`} className="py-1.5">
+            <h5 className="text-xs font-medium text-ink">{entry.name || t("未命名")}</h5>
+            <p className="mt-0.5 text-xs text-ink-soft">{entry.reason}</p>
           </li>
         ))}
       </ul>
@@ -613,151 +610,171 @@ function ExportProfileFields({
 }) {
   const { t } = useI18n();
   const { register, formState } = form;
+  const enabled = form.watch("enabled");
 
   const renderFilterField = (field: FilterFieldDescriptor) => {
     const inputId = `${idPrefix}-filter-${field.key}`;
     const error = formState.errors.filter?.[field.key]?.message;
     const path = `filter.${field.key}` as const;
+    const invalidClass = cn(error && "border-alert");
     return (
-      <div className="field-group" key={field.key}>
-        <label className="field-label" htmlFor={inputId}>
-          {t(field.label)}
-        </label>
+      <Fieldset key={field.key} label={t(field.label)} htmlFor={inputId}>
         {field.kind === "select" ? (
-          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
+          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
             <option value="">{t("不限")}</option>
             {(field.options ?? []).map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
             ))}
-          </Select>
+          </select>
         ) : field.kind === "boolean" ? (
-          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
+          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
             <option value="">{t("不限")}</option>
             <option value="true">{t("是")}</option>
             <option value="false">{t("否")}</option>
-          </Select>
+          </select>
         ) : field.kind === "platform" ? (
-          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
+          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
             <option value="">{t("不限")}</option>
             {platforms.map((platform) => (
               <option key={platform.id} value={platform.id}>
                 {platform.name}
               </option>
             ))}
-          </Select>
+          </select>
         ) : field.kind === "subscription" ? (
-          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
+          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
             <option value="">{t("不限")}</option>
             {subscriptions.map((subscription) => (
               <option key={subscription.id} value={subscription.id}>
                 {subscription.name}
               </option>
             ))}
-          </Select>
+          </select>
         ) : (
           <Input
             id={inputId}
             type={field.kind === "number" ? "number" : "text"}
             inputMode={field.kind === "number" ? "numeric" : undefined}
             placeholder={field.placeholder ? t(field.placeholder) : undefined}
-            invalid={Boolean(error)}
+            aria-invalid={Boolean(error) || undefined}
+            className={invalidClass}
             {...register(path)}
           />
         )}
-        {error ? <p className="field-error">{t(error)}</p> : null}
-      </div>
+        {error ? <p className="text-xs text-alert">{t(error)}</p> : null}
+      </Fieldset>
     );
   };
 
   return (
-    <form className="form-grid" onSubmit={(event) => event.preventDefault()}>
-      <div className="field-group field-span-2">
-        <label className="field-label" htmlFor={`${idPrefix}-name`}>
-          {t("配置名称")}
-        </label>
+    <form className="space-y-4" onSubmit={(event) => event.preventDefault()}>
+      <Fieldset
+        label={t("配置名称")}
+        htmlFor={`${idPrefix}-name`}
+        hint={formState.errors.name?.message ? t(formState.errors.name.message) : undefined}
+      >
         <Input
           id={`${idPrefix}-name`}
-          invalid={Boolean(formState.errors.name)}
+          aria-invalid={Boolean(formState.errors.name) || undefined}
+          className={cn(formState.errors.name && "border-alert")}
           {...register("name")}
         />
         {formState.errors.name?.message ? (
-          <p className="field-error">{t(formState.errors.name.message)}</p>
+          <p className="text-xs text-alert">{t(formState.errors.name.message)}</p>
         ) : null}
+      </Fieldset>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Fieldset label={t("导出格式")} htmlFor={`${idPrefix}-format`}>
+          <select id={`${idPrefix}-format`} className={selectClass} {...register("format")}>
+            {EXPORT_FORMATS.map((format) => (
+              <option key={format} value={format}>
+                {t(FORMAT_LABELS[format])}
+              </option>
+            ))}
+          </select>
+        </Fieldset>
+
+        <Fieldset
+          label={t("关联平台")}
+          htmlFor={`${idPrefix}-platform`}
+          hint={
+            formState.errors.platform_id?.message
+              ? t(formState.errors.platform_id.message)
+              : undefined
+          }
+        >
+          <select
+            id={`${idPrefix}-platform`}
+            className={cn(selectClass, formState.errors.platform_id && "border-alert")}
+            {...register("platform_id")}
+          >
+            <option value="">{t("不限制")}</option>
+            {platforms.map((platform) => (
+              <option key={platform.id} value={platform.id}>
+                {platform.name}
+              </option>
+            ))}
+          </select>
+          {formState.errors.platform_id?.message ? (
+            <p className="text-xs text-alert">{t(formState.errors.platform_id.message)}</p>
+          ) : null}
+        </Fieldset>
       </div>
 
-      <div className="field-group">
-        <label className="field-label" htmlFor={`${idPrefix}-format`}>
-          {t("导出格式")}
-        </label>
-        <Select id={`${idPrefix}-format`} {...register("format")}>
-          {EXPORT_FORMATS.map((format) => (
-            <option key={format} value={format}>
-              {t(FORMAT_LABELS[format])}
-            </option>
-          ))}
-        </Select>
-      </div>
-
-      <div className="field-group">
-        <label className="field-label" htmlFor={`${idPrefix}-platform`}>
-          {t("关联平台")}
-        </label>
-        <Select id={`${idPrefix}-platform`} invalid={Boolean(formState.errors.platform_id)} {...register("platform_id")}>
-          <option value="">{t("不限制")}</option>
-          {platforms.map((platform) => (
-            <option key={platform.id} value={platform.id}>
-              {platform.name}
-            </option>
-          ))}
-        </Select>
-        {formState.errors.platform_id?.message ? (
-          <p className="field-error">{t(formState.errors.platform_id.message)}</p>
-        ) : null}
-      </div>
-
-      <div className="field-group field-span-2">
-        <label className="field-label" htmlFor={`${idPrefix}-template`}>
-          {t("命名模板")}
-        </label>
+      <Fieldset
+        label={t("命名模板")}
+        htmlFor={`${idPrefix}-template`}
+        hint={t("命名模板支持：{{variables}}。未知占位符渲染为空字符串，名称超过 64 字节会被截断，重名会追加 \" #2\"、\" #3\"。", {
+          variables: TEMPLATE_VARIABLE_HINT,
+        })}
+      >
         <Input
           id={`${idPrefix}-template`}
+          className={cn("font-mono", formState.errors.name_template && "border-alert")}
           placeholder="{flag} {country} {city} #{index}"
-          invalid={Boolean(formState.errors.name_template)}
+          aria-invalid={Boolean(formState.errors.name_template) || undefined}
           {...register("name_template")}
         />
         {formState.errors.name_template?.message ? (
-          <p className="field-error">{t(formState.errors.name_template.message)}</p>
+          <p className="text-xs text-alert">{t(formState.errors.name_template.message)}</p>
         ) : null}
-        <p className="platform-op-hint">
-          {t("命名模板支持：{{variables}}。未知占位符渲染为空字符串，名称超过 64 字节会被截断，重名会追加 \" #2\"、\" #3\"。", {
-            variables: TEMPLATE_VARIABLE_HINT,
-          })}
-        </p>
-      </div>
+      </Fieldset>
 
-      <div className="field-group subscription-switch-item field-span-2">
-        <label className="subscription-switch-label" htmlFor={`${idPrefix}-enabled`}>
-          <span>{t("启用")}</span>
+      <div className="flex items-start justify-between gap-4 border-t border-rule pt-3">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <label htmlFor={`${idPrefix}-enabled`} className="text-xs font-medium text-ink-soft">
+            {t("启用")}
+          </label>
           <span
-            className="subscription-info-icon"
-            title={t("禁用后订阅地址会立即失效，导出配置本身会保留。")}
+            role="img"
             aria-label={t("禁用后订阅地址会立即失效，导出配置本身会保留。")}
+            title={t("禁用后订阅地址会立即失效，导出配置本身会保留。")}
             tabIndex={0}
+            className="grid size-5 place-items-center rounded-control text-ink-faint"
           >
             <Info size={13} />
           </span>
-        </label>
-        <Switch id={`${idPrefix}-enabled`} {...register("enabled")} />
+        </div>
+        <Switch
+          id={`${idPrefix}-enabled`}
+          checked={Boolean(enabled)}
+          onCheckedChange={(next) => form.setValue("enabled", next, { shouldDirty: true })}
+        />
       </div>
 
-      <section className="platform-drawer-section field-span-2">
-        <div className="platform-drawer-section-head">
-          <h4>{t("过滤条件（可选）")}</h4>
-          <p>{t("过滤条件与节点列表共用同一套查询词汇；留空表示不过滤。")}</p>
+      <section className="border-t border-rule pt-4">
+        <div>
+          <h3 className="text-xs font-medium text-ink-soft">{t("过滤条件（可选）")}</h3>
+          <p className="mt-0.5 text-xs text-ink-faint">
+            {t("过滤条件与节点列表共用同一套查询词汇；留空表示不过滤。")}
+          </p>
         </div>
-        <div className="exports-filter-grid">{FILTER_FIELDS.map(renderFilterField)}</div>
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {FILTER_FIELDS.map(renderFilterField)}
+        </div>
       </section>
     </form>
   );
@@ -855,176 +872,177 @@ function ExportDialog({
   const skipReport = outcome?.report ?? detailReport;
 
   return (
-    <DialogSurface title={title} variant="modal" onClose={onClose}>
-      <Card className="modal-card exports-dialog-card">
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <Button aria-label={t("关闭")} variant="ghost" size="sm" onClick={onClose}>
-            <X size={16} />
-          </Button>
+    <Sheet open onOpenChange={(open) => { if (!open) onClose(); }} title={title} width="lg">
+      {profile ? (
+        <p className="text-xs text-ink-soft">
+          {chips.length > 0 ? t("将沿用该配置的过滤条件。") : t("本次导出不带过滤条件。")}
+        </p>
+      ) : null}
+
+      {chips.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {chips.map((field) => (
+            <Badge key={field.key} tone="neutral">
+              {`${t(field.label)}: ${filterValueText(field, filter ?? {})}`}
+            </Badge>
+          ))}
         </div>
+      ) : null}
 
-        {profile ? (
-          <p className="platform-op-hint">
-            {chips.length > 0
-              ? t("将沿用该配置的过滤条件。")
-              : t("本次导出不带过滤条件。")}
-          </p>
-        ) : null}
-
-        {chips.length > 0 ? (
-          <div className="exports-chip-row">
-            {chips.map((field) => (
-              <Badge key={field.key} variant="muted">
-                {`${t(field.label)}: ${filterValueText(field, filter ?? {})}`}
-              </Badge>
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <Fieldset label={t("导出格式")} htmlFor="export-dialog-format">
+          <select
+            id="export-dialog-format"
+            className={selectClass}
+            value={format}
+            onChange={(event) => setFormat(event.target.value as ExportFormat)}
+          >
+            {EXPORT_FORMATS.map((option) => (
+              <option key={option} value={option}>
+                {t(FORMAT_LABELS[option])}
+              </option>
             ))}
-          </div>
-        ) : null}
+          </select>
+        </Fieldset>
 
-        <div className="form-grid">
-          <div className="field-group">
-            <label className="field-label" htmlFor="export-dialog-format">
-              {t("导出格式")}
-            </label>
-            <Select
-              id="export-dialog-format"
-              value={format}
-              onChange={(event) => setFormat(event.target.value as ExportFormat)}
-            >
-              {EXPORT_FORMATS.map((option) => (
-                <option key={option} value={option}>
-                  {t(FORMAT_LABELS[option])}
-                </option>
-              ))}
-            </Select>
-          </div>
+        <Fieldset label={t("导出上限")} htmlFor="export-dialog-limit">
+          <select
+            id="export-dialog-limit"
+            className={selectClass}
+            value={String(limit)}
+            onChange={(event) => setLimit(Number(event.target.value))}
+          >
+            {EXPORT_LIMIT_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </Fieldset>
+      </div>
 
-          <div className="field-group">
-            <label className="field-label" htmlFor="export-dialog-limit">
-              {t("导出上限")}
-            </label>
-            <Select
-              id="export-dialog-limit"
-              value={String(limit)}
-              onChange={(event) => setLimit(Number(event.target.value))}
-            >
-              {EXPORT_LIMIT_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </Select>
-          </div>
+      <Fieldset
+        className="mt-4"
+        label={t("命名模板")}
+        htmlFor="export-dialog-template"
+        hint={t("命名模板支持：{{variables}}。未知占位符渲染为空字符串，名称超过 64 字节会被截断，重名会追加 \" #2\"、\" #3\"。", {
+          variables: TEMPLATE_VARIABLE_HINT,
+        })}
+      >
+        <Input
+          id="export-dialog-template"
+          className="font-mono"
+          value={nameTemplate}
+          placeholder="{flag} {country} {city} #{index}"
+          onChange={(event) => setNameTemplate(event.target.value)}
+        />
+      </Fieldset>
 
-          <div className="field-group field-span-2">
-            <label className="field-label" htmlFor="export-dialog-template">
-              {t("命名模板")}
-            </label>
-            <Input
-              id="export-dialog-template"
-              value={nameTemplate}
-              placeholder="{flag} {country} {city} #{index}"
-              onChange={(event) => setNameTemplate(event.target.value)}
-            />
-            <p className="platform-op-hint">
-              {t("命名模板支持：{{variables}}。未知占位符渲染为空字符串，名称超过 64 字节会被截断，重名会追加 \" #2\"、\" #3\"。", {
-                variables: TEMPLATE_VARIABLE_HINT,
-              })}
-            </p>
-          </div>
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-rule pt-3">
+        <label htmlFor="export-dialog-healthy" className="text-xs font-medium text-ink-soft">
+          {t("仅健康节点")}
+        </label>
+        <Switch
+          id="export-dialog-healthy"
+          checked={healthyOnly}
+          onCheckedChange={(next) => setHealthyOnly(next)}
+        />
+      </div>
 
-          <div className="field-group subscription-switch-item field-span-2">
-            <label className="subscription-switch-label" htmlFor="export-dialog-healthy">
-              <span>{t("仅健康节点")}</span>
-            </label>
-            <Switch
-              id="export-dialog-healthy"
-              checked={healthyOnly}
-              onChange={(event) => setHealthyOnly(event.target.checked)}
-            />
-          </div>
+      <section className="mt-5 border-t border-rule pt-4">
+        <h2 className="text-sm font-semibold">{t("命名预览")}</h2>
+        <div className="mt-3 border-y border-rule py-3">
+          <Readout
+            label={t("节点数")}
+            value={previewQuery.data?.items.length ?? 0}
+            size="sm"
+            hint={t("以下名称基于节点池前 {{count}} 个节点实时渲染。", {
+              count: previewQuery.data?.items.length ?? 0,
+            })}
+          />
         </div>
+        {previewQuery.isPending ? (
+          <LoadingState />
+        ) : previewQuery.error ? (
+          <ErrorState
+            className="mt-3"
+            message={formatApiErrorMessage(previewQuery.error, t)}
+            onRetry={() => void previewQuery.refetch()}
+          />
+        ) : samples.length === 0 ? (
+          <EmptyState title={t("无节点可预览")} />
+        ) : (
+          <ul className="mt-3 divide-y divide-rule border-y border-rule">
+            {samples.map((sample, index) => (
+              <li
+                key={`${sample.source}-${index}`}
+                className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2"
+              >
+                <code className="font-mono text-xs text-ink">{previewNames[index] || "—"}</code>
+                <span className="font-mono text-2xs text-ink-faint">{sample.source}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="mt-2 text-xs text-ink-faint">
+          {t("{engine} 由后端按节点文档解析，本地预览留空。")}
+        </p>
+      </section>
 
-        <section className="platform-drawer-section">
-          <div className="platform-drawer-section-head">
-            <h4>{t("命名预览")}</h4>
-            <p>
-              {t("以下名称基于节点池前 {{count}} 个节点实时渲染。", {
-                count: previewQuery.data?.items.length ?? 0,
-              })}
-            </p>
-          </div>
-          {previewQuery.isPending ? (
-            <QueryState loading />
-          ) : previewQuery.error ? (
-            <QueryState error={previewQuery.error} onRetry={() => void previewQuery.refetch()} />
-          ) : samples.length === 0 ? (
-            <QueryState empty emptyText={t("无节点可预览")} />
-          ) : (
-            <ul className="exports-preview-list">
-              {samples.map((sample, index) => (
-                <li key={`${sample.source}-${index}`} className="exports-preview-item">
-                  <code className="exports-preview-name">{previewNames[index] || "—"}</code>
-                  <span className="exports-preview-source">{sample.source}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="platform-op-hint">
-            {t("{engine} 由后端按节点文档解析，本地预览留空。")}
-          </p>
-        </section>
-
-        <div className="exports-dialog-actions">
-          <Button onClick={() => void runExport()} disabled={running}>
-            {running ? t("导出中...") : outcome ? t("重新运行") : t("运行导出")}
-          </Button>
-          {outcome ? (
-            <Button
-              variant="secondary"
-              onClick={() => triggerDownload(outcome.blob, outcome.fileName)}
-              title={t("下载 {{name}}", { name: outcome.fileName })}
-            >
-              <Download size={16} />
-              {t("下载文件")}
-            </Button>
-          ) : null}
-        </div>
-
+      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-rule pt-3">
+        <Button onClick={() => void runExport()} disabled={running}>
+          {running ? t("导出中...") : outcome ? t("重新运行") : t("运行导出")}
+        </Button>
         {outcome ? (
-          <section className="platform-drawer-section">
-            <div className="platform-drawer-section-head">
-              <h4>{t("节点导出")}</h4>
-            </div>
-            <div className="exports-result-summary">
-              <Badge variant="success">{t("导出 {{count}} 个节点", { count: outcome.exported })}</Badge>
-              {outcome.skipped > 0 ? (
-                <Badge variant="warning">{t("跳过 {{count}} 个节点", { count: outcome.skipped })}</Badge>
-              ) : null}
-              {outcome.truncated > 0 ? (
-                <Badge variant="muted">
-                  {t("因导出上限截断 {{count}} 个节点", { count: outcome.truncated })}
-                </Badge>
-              ) : null}
-            </div>
-
-            {outcome.skipped === 0 ? (
-              <p className="platform-op-hint">{t("没有节点被跳过")}</p>
-            ) : detailLoading ? (
-              <p className="platform-op-hint">{t("正在读取跳过明细...")}</p>
-            ) : detailFailed ? (
-              <p className="platform-op-hint">{t("跳过原因无法读取")}</p>
-            ) : (
-              <ExportSkipList
-                report={skipReport}
-                note={format === "json" ? undefined : t("跳过明细只有 JSON 格式会写进响应体；下面是同条件 JSON 导出的跳过原因。")}
-              />
-            )}
-          </section>
+          <Button
+            variant="secondary"
+            onClick={() => triggerDownload(outcome.blob, outcome.fileName)}
+            title={t("下载 {{name}}", { name: outcome.fileName })}
+          >
+            <Download size={15} />
+            {t("下载文件")}
+          </Button>
         ) : null}
-      </Card>
-    </DialogSurface>
+      </div>
+
+      {outcome ? (
+        <section className="mt-5 border-t border-rule pt-4">
+          <h2 className="text-sm font-semibold">{t("节点导出")}</h2>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Badge tone="signal" dot>
+              {t("导出 {{count}} 个节点", { count: outcome.exported })}
+            </Badge>
+            {outcome.skipped > 0 ? (
+              <Badge tone="warn" dot>
+                {t("跳过 {{count}} 个节点", { count: outcome.skipped })}
+              </Badge>
+            ) : null}
+            {outcome.truncated > 0 ? (
+              <Badge tone="neutral">
+                {t("因导出上限截断 {{count}} 个节点", { count: outcome.truncated })}
+              </Badge>
+            ) : null}
+          </div>
+
+          {outcome.skipped === 0 ? (
+            <p className="mt-3 text-xs text-ink-faint">{t("没有节点被跳过")}</p>
+          ) : detailLoading ? (
+            <LoadingState label={t("正在读取跳过明细...")} />
+          ) : detailFailed ? (
+            <p className="mt-3 text-xs text-ink-faint">{t("跳过原因无法读取")}</p>
+          ) : (
+            <ExportSkipList
+              report={skipReport}
+              note={
+                format === "json"
+                  ? undefined
+                  : t("跳过明细只有 JSON 格式会写进响应体；下面是同条件 JSON 导出的跳过原因。")
+              }
+            />
+          )}
+        </section>
+      ) : null}
+    </Sheet>
   );
 }
 
@@ -1055,36 +1073,138 @@ function SubscriptionUrlDialog({
   };
 
   return (
-    <DialogSurface title={t("订阅地址只显示这一次")} variant="modal" onClose={onClose}>
-      <Card className="modal-card exports-token-card">
-        <div className="modal-header">
-          <h3>{t("订阅地址只显示这一次")}</h3>
-          <Button aria-label={t("关闭")} variant="ghost" size="sm" onClick={onClose}>
-            <X size={16} />
-          </Button>
-        </div>
-        <div className="callout callout-error">
-          <AlertTriangle size={14} />
-          <span>
-            {t("服务端只保存令牌的 SHA-256 摘要；关闭本窗口后无法再次查看明文地址。请立即复制并保存到安全的位置。")}
-          </span>
-        </div>
-        <p className="muted">{t("订阅地址只在创建或轮换令牌时返回一次；这里不保存也不缓存令牌。")}</p>
-        <p className="exports-token-owner">{profileName}</p>
-        <div className="exports-token-row">
-          <code className="exports-token-value" title={url}>
-            {url}
-          </code>
-          <Button variant="secondary" onClick={() => void handleCopy()}>
-            <Copy size={14} />
-            {copied ? t("已复制") : t("复制订阅地址")}
-          </Button>
-        </div>
-        <div className="detail-actions">
-          <Button onClick={onClose}>{t("我已保存，关闭")}</Button>
-        </div>
-      </Card>
-    </DialogSurface>
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={t("订阅地址只显示这一次")}
+      width="md"
+    >
+      <div className="border border-alert/30 bg-alert-wash px-3 py-2 text-xs text-alert">
+        {t("服务端只保存令牌的 SHA-256 摘要；关闭本窗口后无法再次查看明文地址。请立即复制并保存到安全的位置。")}
+      </div>
+      <p className="mt-3 text-xs text-ink-soft">
+        {t("订阅地址只在创建或轮换令牌时返回一次；这里不保存也不缓存令牌。")}
+      </p>
+      <p className="mt-1 font-mono text-xs text-ink">{profileName}</p>
+      <div className="mt-3 flex items-start gap-2">
+        <code
+          className="min-w-0 flex-1 rounded-control border border-rule bg-paper-sunk px-2 py-1.5 font-mono text-xs break-all text-ink"
+          title={url}
+        >
+          {url}
+        </code>
+        <Button variant="secondary" onClick={() => void handleCopy()}>
+          <Copy size={14} />
+          {copied ? t("已复制") : t("复制订阅地址")}
+        </Button>
+      </div>
+      <div className="mt-4 flex items-center justify-end gap-2 border-t border-rule pt-3">
+        <Button onClick={onClose}>{t("我已保存，关闭")}</Button>
+      </div>
+    </Sheet>
+  );
+}
+
+const selectClass =
+  "h-7 w-auto rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink";
+
+/** Offset pagination for this page's table footer. */
+function PageNavigator({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  pageSizeOptions,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  pageSizeOptions: readonly number[];
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
+  const { t } = useI18n();
+  const pages = Math.max(1, totalPages);
+  const current = Math.min(Math.max(0, page), pages - 1);
+  const jump = (raw: string) => {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0) {
+      onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule px-3 py-2">
+      <p className="text-xs text-ink-soft">
+        {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+          page: current + 1,
+          pages,
+          start: totalItems ? current * pageSize + 1 : 0,
+          end: Math.min((current + 1) * pageSize, totalItems),
+          total: totalItems,
+        })}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("每页")}</span>
+          <select
+            className={selectClass}
+            value={pageSize}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {pageSizeOptions.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("跳至")}</span>
+          <Input
+            key={current}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={pages}
+            defaultValue={current + 1}
+            aria-label={t("选择页码")}
+            className="h-7 w-14 px-1.5 text-xs"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") jump(event.currentTarget.value);
+            }}
+            onBlur={(event) => {
+              jump(event.currentTarget.value);
+            }}
+          />
+        </label>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("上一页")}
+          title={t("上一页")}
+          disabled={current === 0}
+          onClick={() => onPageChange(current - 1)}
+        >
+          <ChevronLeft size={16} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("下一页")}
+          title={t("下一页")}
+          disabled={current >= pages - 1}
+          onClick={() => onPageChange(current + 1)}
+        >
+          <ChevronRight size={16} />
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -1325,148 +1445,6 @@ export function ExportsPage() {
     updateMutation.mutate(values);
   });
 
-  const col = useMemo(() => createColumnHelper<ExportProfile>(), []);
-
-  const columns = useMemo(
-    () => [
-      col.accessor("name", {
-        header: t("名称"),
-        cell: (info) => (
-          <div className="exports-name-cell">
-            <p>{info.getValue()}</p>
-            <span className="exports-name-meta">
-              {info.row.original.platform_id
-                ? t("关联平台：{{name}}", {
-                    name:
-                      platformOptions.find((platform) => platform.id === info.row.original.platform_id)?.name ??
-                      info.row.original.platform_id,
-                  })
-                : t("未关联平台")}
-            </span>
-          </div>
-        ),
-      }),
-      col.accessor("format", {
-        header: t("格式"),
-        cell: (info) => <Badge variant="accent">{t(FORMAT_LABELS[info.getValue()])}</Badge>,
-      }),
-      col.display({
-        id: "filter",
-        header: t("过滤条件"),
-        cell: (info) => {
-          const filter = info.row.original.filter;
-          const chips = activeFilterChips(filter);
-          if (chips.length === 0) {
-            return <span className="exports-filter-empty">{t("全部节点（未设置过滤条件）")}</span>;
-          }
-          return (
-            <div className="exports-chip-row">
-              {chips.map((field) => (
-                <Badge key={field.key} variant="muted">
-                  {`${t(field.label)}: ${filterValueText(field, filter)}`}
-                </Badge>
-              ))}
-            </div>
-          );
-        },
-      }),
-      col.accessor("name_template", {
-        header: t("命名模板"),
-        cell: (info) => <code className="exports-template-cell">{info.getValue() || "{name}"}</code>,
-      }),
-      col.display({
-        id: "enabled",
-        header: t("状态"),
-        cell: (info) => {
-          const profile = info.row.original;
-          const enabled = profile.enabled;
-          const toggleLabel = enabled
-            ? t("停用导出配置 {{name}}", { name: profile.name })
-            : t("启用导出配置 {{name}}", { name: profile.name });
-          return (
-            <div className="exports-status-cell" onClick={(event) => event.stopPropagation()}>
-              <Switch
-                checked={enabled}
-                disabled={pendingEnabledIds.has(profile.id)}
-                onChange={(event) => void handleToggleEnabled(profile, event.target.checked)}
-                aria-label={toggleLabel}
-              />
-              <span className="exports-status-text">{enabled ? t("已启用") : t("已禁用")}</span>
-            </div>
-          );
-        },
-      }),
-      col.display({
-        id: "access",
-        header: t("订阅访问"),
-        cell: (info) => {
-          const profile = info.row.original;
-          const lastAccess = nsToIso(profile.last_access_at_ns);
-          return (
-            <div className="exports-access-cell">
-              <span>{t("{{count}} 次访问", { count: profile.access_count })}</span>
-              <span className="exports-name-meta">
-                {lastAccess ? t("最近访问 {{time}}", { time: formatRelativeTime(lastAccess) }) : t("从未访问")}
-              </span>
-            </div>
-          );
-        },
-      }),
-      col.display({
-        id: "actions",
-        header: t("操作"),
-        cell: (info) => {
-          const profile = info.row.original;
-          return (
-            <div className="exports-row-actions" onClick={(event) => event.stopPropagation()}>
-              <Button
-                size="sm"
-                variant="ghost"
-                title={t("立即导出")}
-                onClick={() => setExportTarget({ profile })}
-              >
-                <Download size={14} />
-              </Button>
-              <Button size="sm" variant="ghost" title={t("编辑")} onClick={() => openEdit(profile)}>
-                <Pencil size={14} />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                title={t("轮换令牌")}
-                onClick={() => void handleRotate(profile)}
-                disabled={rotateMutation.isPending}
-              >
-                <KeyRound size={14} />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                title={t("删除")}
-                onClick={() => void handleDelete(profile)}
-                disabled={deleteMutation.isPending}
-                style={{ color: "var(--delete-btn-color, #c27070)" }}
-              >
-                <Trash2 size={14} />
-              </Button>
-            </div>
-          );
-        },
-      }),
-    ],
-    [
-      col,
-      deleteMutation.isPending,
-      handleDelete,
-      handleRotate,
-      handleToggleEnabled,
-      openEdit,
-      pendingEnabledIds,
-      platformOptions,
-      rotateMutation.isPending,
-      t,
-    ],
-  );
 
   const changePageSize = (next: number) => {
     setPageSize(next);
@@ -1474,70 +1452,216 @@ export function ExportsPage() {
   };
 
   return (
-    <section className="platform-page exports-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("导出与订阅")}</h2>
-          <p className="module-description">{t("把节点池导出成客户端配置，或用一次性令牌把配置发布成订阅。")}</p>
+    <section className="mx-auto w-full max-w-[1320px] px-4 py-5 sm:px-6">
+      <header className="flex flex-wrap items-end justify-between gap-3 pb-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold">{t("导出与订阅")}</h1>
+          <p className="mt-1 text-xs text-ink-soft">
+            {t("把节点池导出成客户端配置，或用一次性令牌把配置发布成订阅。")}
+          </p>
         </div>
-        <div className="exports-header-actions">
-          <Button variant="secondary" onClick={() => setExportTarget({ profile: null })}>
-            <Download size={16} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setExportTarget({ profile: null })}>
+            <Download size={15} />
             {t("立即导出节点")}
           </Button>
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus size={16} />
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus size={15} />
             {t("新建导出配置")}
           </Button>
           <Button
             variant="ghost"
-            size="sm"
+            size="icon"
             onClick={() => void profilesQuery.refetch()}
             disabled={profilesQuery.isFetching}
             title={t("刷新")}
             aria-label={t("刷新")}
           >
-            <RefreshCw size={16} className={profilesQuery.isFetching ? "spin" : undefined} />
+            <RefreshCw size={15} className={cn(profilesQuery.isFetching && "animate-spin")} />
           </Button>
         </div>
       </header>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="exports-notice-card">
-        <div className="callout callout-warning">
-          <Info size={14} />
-          <span>
-            {t("订阅令牌只在创建或轮换时显示一次：服务端只保存它的 SHA-256 摘要，离开后就无法再次查看。")}
-          </span>
-        </div>
-      </Card>
+      <div className="mb-4 flex items-start gap-2 border border-warn/30 bg-warn-wash px-3 py-2 text-xs text-warn">
+        <Info size={14} aria-hidden className="mt-0.5 shrink-0" />
+        <span>
+          {t("订阅令牌只在创建或轮换时显示一次：服务端只保存它的 SHA-256 摘要，离开后就无法再次查看。")}
+        </span>
+      </div>
 
-      <Card className="platform-cards-container exports-table-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("导出配置列表")}</h3>
-            <p>{t("共 {{count}} 个导出配置", { count: totalProfiles })}</p>
-          </div>
-        </div>
+      <Panel>
+        <PanelHeader
+          title={t("导出配置列表")}
+          description={t("共 {{count}} 个导出配置", { count: totalProfiles })}
+        />
 
         {profilesQuery.isPending ? (
-          <QueryState loading />
+          <LoadingState />
         ) : profilesQuery.error ? (
-          <QueryState error={profilesQuery.error} onRetry={() => void profilesQuery.refetch()} />
-        ) : profiles.length === 0 ? (
-          <QueryState empty emptyText={t("还没有导出配置。创建一个配置即可获得订阅地址，或直接导出当前节点池。")} />
-        ) : (
-          <DataTable
-            data={profiles}
-            columns={columns}
-            onRowClick={openEdit}
-            getRowId={(profile) => profile.id}
-            className="data-table-exports"
+          <ErrorState
+            className="m-3"
+            message={formatApiErrorMessage(profilesQuery.error, t)}
+            onRetry={() => void profilesQuery.refetch()}
           />
+        ) : profiles.length === 0 ? (
+          <EmptyState
+            title={t("还没有导出配置。创建一个配置即可获得订阅地址，或直接导出当前节点池。")}
+            action={
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus size={14} />
+                {t("新建导出配置")}
+              </Button>
+            }
+          />
+        ) : (
+          <TableWrap>
+            <Table className="min-w-[880px]">
+              <caption className="sr-only">{t("导出配置列表")}</caption>
+              <THead>
+                <TR className="hover:bg-transparent">
+                  <TH>{t("名称")}</TH>
+                  <TH>{t("格式")}</TH>
+                  <TH>{t("过滤条件")}</TH>
+                  <TH>{t("命名模板")}</TH>
+                  <TH>{t("状态")}</TH>
+                  <TH className="text-right">{t("订阅访问")}</TH>
+                  <TH className="text-right">{t("操作")}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {profiles.map((profile) => {
+                  const enabled = profile.enabled;
+                  const toggleLabel = enabled
+                    ? t("停用导出配置 {{name}}", { name: profile.name })
+                    : t("启用导出配置 {{name}}", { name: profile.name });
+                  const chips = activeFilterChips(profile.filter);
+                  const lastAccess = nsToIso(profile.last_access_at_ns);
+                  return (
+                    <TR
+                      key={profile.id}
+                      tabIndex={0}
+                      className="cursor-pointer"
+                      onClick={() => openEdit(profile)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          openEdit(profile);
+                        }
+                      }}
+                    >
+                      <TD>
+                        <div className="font-medium text-ink">{profile.name}</div>
+                        <div className="text-xs text-ink-faint">
+                          {profile.platform_id
+                            ? t("关联平台：{{name}}", {
+                                name:
+                                  platformOptions.find(
+                                    (platform) => platform.id === profile.platform_id,
+                                  )?.name ?? profile.platform_id,
+                              })
+                            : t("未关联平台")}
+                        </div>
+                      </TD>
+                      <TD>
+                        <Badge tone="outline">{t(FORMAT_LABELS[profile.format])}</Badge>
+                      </TD>
+                      <TD>
+                        {chips.length === 0 ? (
+                          <span className="text-xs text-ink-faint">
+                            {t("全部节点（未设置过滤条件）")}
+                          </span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {chips.map((field) => (
+                              <Badge key={field.key} tone="neutral">
+                                {`${t(field.label)}: ${filterValueText(field, profile.filter)}`}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                      </TD>
+                      <TD>
+                        <code className="font-mono text-xs">{profile.name_template || "{name}"}</code>
+                      </TD>
+                      <TD>
+                        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                          <Switch
+                            checked={enabled}
+                            disabled={pendingEnabledIds.has(profile.id)}
+                            onCheckedChange={(next) => void handleToggleEnabled(profile, next)}
+                            aria-label={toggleLabel}
+                          />
+                          <span className="text-xs text-ink-soft">
+                            {enabled ? t("已启用") : t("已禁用")}
+                          </span>
+                        </div>
+                      </TD>
+                      <TDNum className="text-xs text-ink-soft">
+                        {t("{{count}} 次访问", { count: profile.access_count })}
+                        <div className="text-ink-faint">
+                          {lastAccess
+                            ? t("最近访问 {{time}}", { time: formatRelativeTime(lastAccess) })
+                            : t("从未访问")}
+                        </div>
+                      </TDNum>
+                      <TD className="text-right">
+                        <div
+                          className="flex items-center justify-end gap-1"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title={t("立即导出")}
+                            aria-label={t("立即导出")}
+                            onClick={() => setExportTarget({ profile })}
+                          >
+                            <Download size={14} />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title={t("编辑")}
+                            aria-label={t("编辑")}
+                            onClick={() => openEdit(profile)}
+                          >
+                            <Pencil size={14} />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title={t("轮换令牌")}
+                            aria-label={t("轮换令牌")}
+                            onClick={() => void handleRotate(profile)}
+                            disabled={rotateMutation.isPending}
+                          >
+                            <KeyRound size={14} />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                            title={t("删除")}
+                            aria-label={t("删除")}
+                            onClick={() => void handleDelete(profile)}
+                            disabled={deleteMutation.isPending}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </TD>
+                    </TR>
+                  );
+                })}
+              </TBody>
+            </Table>
+          </TableWrap>
         )}
 
-        <OffsetPagination
+        <PageNavigator
           page={currentPage}
           totalPages={totalPages}
           totalItems={totalProfiles}
@@ -1546,154 +1670,139 @@ export function ExportsPage() {
           onPageChange={setPage}
           onPageSizeChange={changePageSize}
         />
-      </Card>
+      </Panel>
 
       {createOpen ? (
-        <DialogSurface title={t("新建导出配置")} variant="modal" onClose={() => setCreateOpen(false)}>
-          <Card className="modal-card exports-form-card">
-            <div className="modal-header">
-              <h3>{t("新建导出配置")}</h3>
-              <Button aria-label={t("关闭")} variant="ghost" size="sm" onClick={() => setCreateOpen(false)}>
-                <X size={16} />
-              </Button>
-            </div>
-            <ExportProfileFields
-              form={createForm}
-              idPrefix="create-export"
-              platforms={platformOptions}
-              subscriptions={subscriptionOptions}
-            />
-            <div className="detail-actions">
-              <Button onClick={() => void onCreateSubmit()} disabled={createMutation.isPending}>
-                {createMutation.isPending ? t("创建中") : t("确认创建")}
-              </Button>
-              <Button variant="secondary" onClick={() => setCreateOpen(false)}>
-                {t("取消")}
-              </Button>
-            </div>
-            <p className="platform-op-hint">{t("创建后请立即复制订阅地址。")}</p>
-          </Card>
-        </DialogSurface>
+        <Sheet
+          open
+          onOpenChange={(open) => {
+            if (!open) setCreateOpen(false);
+          }}
+          title={t("新建导出配置")}
+          width="lg"
+        >
+          <ExportProfileFields
+            form={createForm}
+            idPrefix="create-export"
+            platforms={platformOptions}
+            subscriptions={subscriptionOptions}
+          />
+          <div className="mt-4 flex items-center gap-2 border-t border-rule pt-3">
+            <Button onClick={() => void onCreateSubmit()} disabled={createMutation.isPending}>
+              {createMutation.isPending ? t("创建中") : t("确认创建")}
+            </Button>
+            <Button variant="secondary" onClick={() => setCreateOpen(false)}>
+              {t("取消")}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-ink-faint">{t("创建后请立即复制订阅地址。")}</p>
+        </Sheet>
       ) : null}
 
       {selectedProfile ? (
-        <DialogSurface
+        <Sheet
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditingId("");
+          }}
           title={t("编辑导出配置 {{name}}", { name: selectedProfile.name })}
-          variant="drawer"
-          onClose={() => setEditingId("")}
+          description={<span className="font-mono">{selectedProfile.id}</span>}
+          width="lg"
         >
-          <Card className="drawer-panel">
-            <div className="drawer-header">
-              <div>
-                <h3>{selectedProfile.name}</h3>
-                <p>{selectedProfile.id}</p>
-              </div>
-              <div className="drawer-header-actions">
-                <Button
-                  variant="ghost"
+          <div className="space-y-6">
+            <section>
+              <h2 className="text-sm font-semibold">{t("配置信息")}</h2>
+              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 border-y border-rule py-3 sm:grid-cols-4">
+                <Readout
+                  label={t("创建时间")}
+                  value={formatDateTime(nsToIso(selectedProfile.created_at_ns))}
                   size="sm"
-                  aria-label={t("关闭")}
-                  onClick={() => setEditingId("")}
-                >
-                  <X size={16} />
+                />
+                <Readout
+                  label={t("更新时间")}
+                  value={formatDateTime(nsToIso(selectedProfile.updated_at_ns))}
+                  size="sm"
+                />
+                <Readout
+                  label={t("访问次数")}
+                  value={selectedProfile.access_count.toLocaleString()}
+                  size="sm"
+                />
+                <Readout
+                  label={t("最近访问")}
+                  value={formatDateTime(nsToIso(selectedProfile.last_access_at_ns))}
+                  size="sm"
+                />
+              </div>
+              {!selectedProfile.enabled ? (
+                <p className="mt-3 border border-alert/30 bg-alert-wash px-3 py-2 text-xs text-alert">
+                  {t("该配置已停用，订阅地址会返回错误。")}
+                </p>
+              ) : null}
+              <ExportProfileFields
+                form={editForm}
+                idPrefix={`edit-export-${selectedProfile.id}`}
+                platforms={platformOptions}
+                subscriptions={subscriptionOptions}
+              />
+              <div className="mt-4 flex items-center gap-2 border-t border-rule pt-3">
+                <Button onClick={() => void onEditSubmit()} disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? t("保存中") : t("保存配置")}
                 </Button>
               </div>
-            </div>
+            </section>
 
-            <div className="platform-drawer-layout">
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("配置信息")}</h4>
-                </div>
-                <div className="stats-grid">
-                  <div>
-                    <span>{t("创建时间")}</span>
-                    <p>{formatDateTime(nsToIso(selectedProfile.created_at_ns))}</p>
+            <section className="border-t border-rule pt-4">
+              <h2 className="text-sm font-semibold">{t("运维操作")}</h2>
+              <div className="mt-3 divide-y divide-rule border-y border-rule">
+                <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium">{t("立即导出")}</h3>
+                    <p className="mt-0.5 text-xs text-ink-soft">{t("将沿用该配置的过滤条件。")}</p>
                   </div>
-                  <div>
-                    <span>{t("更新时间")}</span>
-                    <p>{formatDateTime(nsToIso(selectedProfile.updated_at_ns))}</p>
-                  </div>
-                  <div>
-                    <span>{t("访问次数")}</span>
-                    <p>{selectedProfile.access_count}</p>
-                  </div>
-                  <div>
-                    <span>{t("最近访问")}</span>
-                    <p>{formatDateTime(nsToIso(selectedProfile.last_access_at_ns))}</p>
-                  </div>
-                </div>
-                {!selectedProfile.enabled ? (
-                  <div className="callout callout-error">
-                    <AlertTriangle size={14} />
-                    <span>{t("该配置已停用，订阅地址会返回错误。")}</span>
-                  </div>
-                ) : null}
-                <ExportProfileFields
-                  form={editForm}
-                  idPrefix={`edit-export-${selectedProfile.id}`}
-                  platforms={platformOptions}
-                  subscriptions={subscriptionOptions}
-                />
-                <div className="detail-actions">
-                  <Button onClick={() => void onEditSubmit()} disabled={updateMutation.isPending}>
-                    {updateMutation.isPending ? t("保存中") : t("保存配置")}
+                  <Button
+                    variant="secondary"
+                    onClick={() => setExportTarget({ profile: selectedProfile })}
+                  >
+                    {t("运行导出")}
                   </Button>
                 </div>
-              </section>
 
-              <section className="platform-drawer-section platform-ops-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("运维操作")}</h4>
+                <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium">{t("轮换令牌")}</h3>
+                    <p className="mt-0.5 text-xs text-ink-soft">
+                      {t("服务端只保存令牌的 SHA-256 摘要；关闭本窗口后无法再次查看明文地址。请立即复制并保存到安全的位置。")}
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={() => void handleRotate(selectedProfile)}
+                    disabled={rotateMutation.isPending}
+                  >
+                    {t("轮换令牌")}
+                  </Button>
                 </div>
-                <div className="platform-ops-list">
-                  <div className="platform-op-item">
-                    <div className="platform-op-copy">
-                      <h5>{t("立即导出")}</h5>
-                      <p className="platform-op-hint">{t("将沿用该配置的过滤条件。")}</p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={() => setExportTarget({ profile: selectedProfile })}
-                    >
-                      {t("运行导出")}
-                    </Button>
-                  </div>
 
-                  <div className="platform-op-item">
-                    <div className="platform-op-copy">
-                      <h5>{t("轮换令牌")}</h5>
-                      <p className="platform-op-hint">
-                        {t("服务端只保存令牌的 SHA-256 摘要；关闭本窗口后无法再次查看明文地址。请立即复制并保存到安全的位置。")}
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={() => void handleRotate(selectedProfile)}
-                      disabled={rotateMutation.isPending}
-                    >
-                      {t("轮换令牌")}
-                    </Button>
+                <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium">{t("删除")}</h3>
+                    <p className="mt-0.5 text-xs text-ink-soft">
+                      {t("删除后订阅地址会立即失效，且不可撤销。")}
+                    </p>
                   </div>
-
-                  <div className="platform-op-item">
-                    <div className="platform-op-copy">
-                      <h5>{t("删除")}</h5>
-                      <p className="platform-op-hint">{t("删除后订阅地址会立即失效，且不可撤销。")}</p>
-                    </div>
-                    <Button
-                      variant="danger"
-                      onClick={() => void handleDelete(selectedProfile)}
-                      disabled={deleteMutation.isPending}
-                    >
-                      {t("删除")}
-                    </Button>
-                  </div>
+                  <Button
+                    variant="danger"
+                    onClick={() => void handleDelete(selectedProfile)}
+                    disabled={deleteMutation.isPending}
+                  >
+                    {t("删除")}
+                  </Button>
                 </div>
-              </section>
-            </div>
-          </Card>
-        </DialogSurface>
+              </div>
+            </section>
+          </div>
+        </Sheet>
       ) : null}
 
       {exportTarget ? (

@@ -1,20 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createColumnHelper } from "@tanstack/react-table";
-import { AlertTriangle, Ban, LoaderCircle, Plus, RefreshCw, RotateCcw, Wifi, WifiOff, X } from "lucide-react";
+import { AlertTriangle, Ban, LoaderCircle, Plus, RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { DataTable } from "../../components/ui/DataTable";
-import { DialogSurface } from "../../components/ui/DialogSurface";
-import { OffsetPagination } from "../../components/ui/OffsetPagination";
-import { QueryState } from "../../components/ui/QueryState";
-import { Select } from "../../components/ui/Select";
+import { Fieldset, Input, Textarea } from "../../components/ui/Input";
+import { Panel, PanelHeader, SectionTitle } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
-import { Textarea } from "../../components/ui/Textarea";
+import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatDateTime } from "../../lib/time";
 import {
@@ -39,7 +38,7 @@ import type {
 // WP08 §3/§7 检测任务工作区：任务列表 + 新建对话框 + 详情抽屉（SSE 实时进度）。
 // 后端见 internal/api/handler_intel.go（CRUD 与 SSE）与 internal/intel/jobs。
 
-type BadgeVariant = "neutral" | "success" | "warning" | "danger" | "info" | "accent" | "muted";
+type BadgeTone = "neutral" | "signal" | "live" | "warn" | "alert" | "outline";
 type ShowToast = (tone: "success" | "error", text: string) => void;
 
 const JOB_STATUS_LABELS: Record<string, string> = {
@@ -51,13 +50,13 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   canceled: "已取消",
 };
 
-const JOB_STATUS_VARIANTS: Record<string, BadgeVariant> = {
+const JOB_STATUS_TONES: Record<string, BadgeTone> = {
   queued: "neutral",
-  running: "info",
-  succeeded: "success",
-  partial: "warning",
-  failed: "danger",
-  canceled: "muted",
+  running: "live",
+  succeeded: "signal",
+  partial: "warn",
+  failed: "alert",
+  canceled: "outline",
 };
 
 const JOB_KIND_LABELS: Record<string, string> = {
@@ -65,13 +64,6 @@ const JOB_KIND_LABELS: Record<string, string> = {
   full: "完整检测",
   egress: "出口探测",
   checks: "解锁检测",
-};
-
-const JOB_KIND_VARIANTS: Record<string, BadgeVariant> = {
-  intel: "accent",
-  full: "info",
-  egress: "neutral",
-  checks: "neutral",
 };
 
 const ITEM_STATUS_LABELS: Record<string, string> = {
@@ -83,13 +75,13 @@ const ITEM_STATUS_LABELS: Record<string, string> = {
   canceled: "已取消",
 };
 
-const ITEM_STATUS_VARIANTS: Record<string, BadgeVariant> = {
+const ITEM_STATUS_TONES: Record<string, BadgeTone> = {
   queued: "neutral",
-  running: "info",
-  done: "success",
-  failed: "danger",
-  skipped: "warning",
-  canceled: "muted",
+  running: "live",
+  done: "signal",
+  failed: "alert",
+  skipped: "warn",
+  canceled: "outline",
 };
 
 // internal/intel/jobs/jobs.go:46 — the numbered pipeline steps of one node.
@@ -112,18 +104,34 @@ const STREAM_LABELS: Record<JobStreamState, string> = {
   error: "实时连接中断",
 };
 
-const STREAM_VARIANTS: Record<JobStreamState, BadgeVariant> = {
-  idle: "muted",
-  connecting: "warning",
-  live: "success",
-  reconnecting: "warning",
-  ended: "muted",
-  error: "danger",
+const STREAM_TONES: Record<JobStreamState, BadgeTone> = {
+  idle: "outline",
+  connecting: "warn",
+  live: "live",
+  reconnecting: "warn",
+  ended: "outline",
+  error: "alert",
+};
+
+// The bar takes the colour of the outcome it is reporting, so a failed run is
+// recognisable from the row without reading the counter beside it.
+const PROGRESS_BAR_CLASS: Record<string, string> = {
+  queued: "bg-live",
+  running: "bg-live",
+  succeeded: "bg-signal",
+  partial: "bg-warn",
+  failed: "bg-alert",
+  canceled: "bg-ink-faint",
 };
 
 const JOB_STATUS_FILTERS = ["", "queued", "running", "succeeded", "partial", "failed", "canceled"];
 const ITEM_STATUS_FILTERS = ["", "queued", "running", "done", "failed", "skipped", "canceled"];
 const JOB_KIND_OPTIONS: JobKind[] = ["intel", "full"];
+
+const CONTROL_CLASS =
+  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
+const FORM_CONTROL_CLASS =
+  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60";
 
 function textOf(map: Record<string, string>, value: string): string {
   return map[value] ?? value;
@@ -169,7 +177,8 @@ function inlineValue(value: unknown): string {
 }
 
 // job_items.result_json is the bounded step summary written by the pipeline
-// (internal/intel/jobs/jobs.go:184, truncated to 4 KiB server side).
+// (internal/intel/jobs/jobs.go:184, truncated to 4 KiB server side). One step
+// result per line keeps the dump readable when it is long.
 function formatResultSummary(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed || trimmed === "{}") {
@@ -182,7 +191,7 @@ function formatResultSummary(raw: string): string {
     }
     return Object.entries(parsed as Record<string, unknown>)
       .map(([key, value]) => `${key}=${inlineValue(value)}`)
-      .join(" · ");
+      .join("\n");
   } catch {
     return trimmed;
   }
@@ -190,8 +199,9 @@ function formatResultSummary(raw: string): string {
 
 function JobStatusBadge({ status }: { status: string }) {
   const { t } = useI18n();
+  const tone = JOB_STATUS_TONES[status] ?? "neutral";
   return (
-    <Badge variant={JOB_STATUS_VARIANTS[status] ?? "neutral"} title={status}>
+    <Badge tone={tone} dot pulse={tone === "live"} title={status}>
       {t(textOf(JOB_STATUS_LABELS, status))}
     </Badge>
   );
@@ -200,7 +210,7 @@ function JobStatusBadge({ status }: { status: string }) {
 function ItemStatusBadge({ status }: { status: string }) {
   const { t } = useI18n();
   return (
-    <Badge variant={ITEM_STATUS_VARIANTS[status] ?? "neutral"} title={status}>
+    <Badge tone={ITEM_STATUS_TONES[status] ?? "neutral"} title={status}>
       {t(textOf(ITEM_STATUS_LABELS, status))}
     </Badge>
   );
@@ -209,34 +219,38 @@ function ItemStatusBadge({ status }: { status: string }) {
 function JobKindBadge({ kind }: { kind: string }) {
   const { t } = useI18n();
   return (
-    <Badge variant={JOB_KIND_VARIANTS[kind] ?? "neutral"} title={kind}>
+    <Badge tone="outline" title={kind}>
       {t(textOf(JOB_KIND_LABELS, kind))}
     </Badge>
   );
 }
 
-function ProgressTrack({ job }: { job: IntelJob }) {
+/** The progress meter: a counter, a hairline-thin bar, and the failure count when there is one. */
+function ProgressMeter({ job, size = "sm" }: { job: IntelJob; size?: "sm" | "lg" }) {
   const { t } = useI18n();
   const settled = settledCount(job);
   const max = Math.max(job.total, settled);
   const percent = max > 0 ? Math.min(100, Math.round((settled / max) * 100)) : 0;
   return (
-    <div style={{ display: "grid", gap: "5px", minWidth: "110px" }}>
-      <span style={{ fontSize: "12px" }}>
-        {job.done} / {job.total}
-      </span>
+    <div className="min-w-0">
       <div
         role="progressbar"
         aria-label={t("进度")}
         aria-valuemin={0}
         aria-valuemax={max}
         aria-valuenow={settled}
-        style={{ height: "5px", borderRadius: "999px", background: "var(--bg-soft)", overflow: "hidden" }}
+        className={cn(
+          "w-full overflow-hidden rounded-full bg-paper-sunk",
+          size === "lg" ? "mt-2 h-1" : "mt-1 h-1",
+        )}
       >
-        <span style={{ display: "block", height: "100%", width: `${percent}%`, background: "var(--primary)" }} />
+        <span
+          className={cn("block h-full", PROGRESS_BAR_CLASS[job.status] ?? "bg-ink-faint")}
+          style={{ width: `${percent}%` }}
+        />
       </div>
       {job.failed > 0 ? (
-        <span style={{ color: "var(--danger)", fontSize: "11px" }}>{t("失败 {{count}}", { count: job.failed })}</span>
+        <p className="mt-1 text-2xs text-alert">{t("失败 {{count}}", { count: job.failed })}</p>
       ) : null}
     </div>
   );
@@ -246,30 +260,13 @@ function JobItemRow({ item }: { item: IntelJobItem }) {
   const { t } = useI18n();
   const summary = formatResultSummary(item.result_json);
   return (
-    <article
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: "6px",
-        padding: "10px 12px",
-        display: "grid",
-        gap: "6px",
-        minWidth: 0,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", minWidth: 0 }}>
-        <span
-          style={{
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: "12px",
-            overflowWrap: "anywhere",
-            minWidth: 0,
-          }}
-          title={item.node_hash}
-        >
+    <li className="flex flex-col gap-1.5 py-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="readout truncate text-xs" title={item.node_hash}>
           {item.node_hash}
         </span>
         <ItemStatusBadge status={item.status} />
-        <span className="muted" style={{ fontSize: "11px" }}>
+        <span className="text-xs text-ink-soft">
           {t("第 {{step}} 步：{{name}}", {
             step: item.step_index,
             name: t(textOf(STEP_LABELS, String(item.step_index))),
@@ -277,34 +274,120 @@ function JobItemRow({ item }: { item: IntelJobItem }) {
         </span>
       </div>
 
-      <div className="muted" style={{ fontSize: "11px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
+      <div className="flex flex-wrap gap-x-4 text-2xs text-ink-faint">
         <span>{t("尝试 {{count}} 次", { count: item.attempts })}</span>
         <span>{t("更新时间 {{time}}", { time: formatNs(item.updated_at_ns) })}</span>
-        {item.error_code ? (
-          <span style={{ color: "var(--danger)" }}>{t("错误 {{code}}", { code: item.error_code })}</span>
-        ) : null}
+        {item.error_code ? <span className="text-alert">{t("错误 {{code}}", { code: item.error_code })}</span> : null}
       </div>
 
       {summary ? (
-        <div
-          style={{
-            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-            fontSize: "11px",
-            color: "var(--text-secondary)",
-            background: "var(--bg-soft)",
-            border: "1px solid var(--border)",
-            borderRadius: "6px",
-            padding: "6px 8px",
-            maxHeight: "120px",
-            overflow: "auto",
-            overflowWrap: "anywhere",
-            whiteSpace: "pre-wrap",
-          }}
-        >
+        <pre className="max-h-32 overflow-auto rounded-control border border-rule bg-paper-sunk px-2 py-1.5 text-2xs leading-relaxed break-words whitespace-pre-wrap">
           {summary}
-        </div>
+        </pre>
       ) : null}
-    </article>
+    </li>
+  );
+}
+
+/**
+ * Offset pagination. The list table and the per-node result list both page this
+ * way, so the readout, the page size and the jump box are built once.
+ */
+function JobsPagination({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  pageSizeOptions,
+  disabled,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  pageSizeOptions: readonly number[];
+  disabled?: boolean;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
+  const { t } = useI18n();
+  const pages = Math.max(1, totalPages);
+  const current = Math.min(Math.max(0, page), pages - 1);
+  const jump = (raw: string) => {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0) onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+      <p className="text-xs text-ink-soft">
+        {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+          page: current + 1,
+          pages,
+          start: totalItems ? current * pageSize + 1 : 0,
+          end: Math.min((current + 1) * pageSize, totalItems),
+          total: totalItems,
+        })}
+      </p>
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("每页")}</span>
+          <select
+            className={CONTROL_CLASS}
+            value={pageSize}
+            disabled={disabled}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {pageSizeOptions.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("跳至")}</span>
+          <Input
+            key={current}
+            className="readout h-7 w-14 px-1.5 text-xs"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={pages}
+            defaultValue={current + 1}
+            aria-label={t("选择页码")}
+            disabled={disabled}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") jump(event.currentTarget.value);
+            }}
+            onBlur={(event) => {
+              jump(event.currentTarget.value);
+            }}
+          />
+        </label>
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={t("上一页")}
+          title={t("上一页")}
+          disabled={disabled || current === 0}
+          onClick={() => onPageChange(current - 1)}
+        >
+          {t("上一页")}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={t("下一页")}
+          title={t("下一页")}
+          disabled={disabled || current >= pages - 1}
+          onClick={() => onPageChange(current + 1)}
+        >
+          {t("下一页")}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -426,150 +509,196 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
   };
 
   return (
-    <DialogSurface title={t("任务详情 {{id}}", { id: jobID })} variant="drawer" onClose={onClose}>
-      <Card className="drawer-panel">
-        <div className="drawer-header">
-          <div style={{ minWidth: 0 }}>
-            <h3>{t("任务详情")}</h3>
-            <p className="muted" style={{ overflowWrap: "anywhere" }}>
-              {jobID}
-            </p>
-          </div>
-          <div className="drawer-header-actions" style={{ flexWrap: "wrap", justifyContent: "flex-end" }}>
-            <Badge variant={STREAM_VARIANTS[streamState]}>
-              {streamState === "live" ? <Wifi size={11} /> : streamState === "error" ? <WifiOff size={11} /> : null}{" "}
-              {t(STREAM_LABELS[streamState])}
-            </Badge>
-            {streamState === "error" ? (
-              <Button size="sm" variant="secondary" onClick={stream.reconnect}>
-                <RefreshCw size={13} /> {t("重新连接")}
-              </Button>
-            ) : null}
-            <Button aria-label={t("关闭")} title={t("关闭")} variant="ghost" size="sm" onClick={onClose}>
-              <X size={16} />
-            </Button>
-          </div>
-        </div>
-
-        <QueryState
-          loading={detailQuery.isLoading && !detailQuery.data}
-          error={detailQuery.error}
-          onRetry={() => void detailQuery.refetch()}
-        />
-
-        {job ? (
-          <>
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center", marginTop: "12px" }}>
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+      title={t("任务详情")}
+      description={<span className="readout text-xs text-ink-faint">{jobID}</span>}
+      width="lg"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {job ? (
+            <>
               <JobStatusBadge status={job.status} />
               <JobKindBadge kind={job.kind} />
-              <span className="muted" style={{ fontSize: "11px" }}>
-                {t("优先级 {{priority}}", { priority: job.priority })}
-              </span>
-              <span className="muted" style={{ fontSize: "11px" }}>
-                {t("创建者 {{by}}", { by: job.created_by })}
-              </span>
-            </div>
+              <span className="text-xs text-ink-soft">{t("优先级 {{priority}}", { priority: job.priority })}</span>
+              <span className="text-xs text-ink-soft">{t("创建者 {{by}}", { by: job.created_by })}</span>
+            </>
+          ) : null}
+        </div>
 
-            <div className="form-grid" style={{ marginTop: "12px" }}>
-              <div className="field-group">
-                <span className="field-label">{t("进度")}</span>
-                <ProgressTrack job={job} />
-              </div>
-              <div className="field-group">
-                <span className="field-label">{t("时间")}</span>
-                <p className="muted" style={{ fontSize: "11px" }}>
-                  {t("创建时间")} {formatNs(job.created_at_ns)}
-                </p>
-                <p className="muted" style={{ fontSize: "11px" }}>
-                  {t("开始时间")} {formatNs(job.started_at_ns)} · {t("完成时间")} {formatNs(job.finished_at_ns)}
-                </p>
-              </div>
-            </div>
+        <div className="flex items-center gap-2">
+          <Badge tone={STREAM_TONES[streamState]} dot pulse={streamState === "live"}>
+            {streamState === "live" ? <Wifi size={11} /> : streamState === "error" ? <WifiOff size={11} /> : null}
+            {t(STREAM_LABELS[streamState])}
+          </Badge>
+          {streamState === "error" ? (
+            <Button size="sm" variant="secondary" onClick={stream.reconnect}>
+              <RefreshCw size={13} />
+              {t("重新连接")}
+            </Button>
+          ) : null}
+        </div>
+      </div>
 
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginTop: "8px", fontSize: "11px" }}>
-              <span className="muted">{t("已完成 {{count}}", { count: job.done })}</span>
-              {job.failed > 0 ? (
-                <span style={{ color: "var(--danger)" }}>{t("失败 {{count}}", { count: job.failed })}</span>
-              ) : null}
-              {job.skipped > 0 ? <span className="muted">{t("已跳过 {{count}}", { count: job.skipped })}</span> : null}
-              {detailQuery.data ? (
-                <span className="muted">{t("待处理 {{count}}", { count: detailQuery.data.progress.pending })}</span>
-              ) : null}
-              {detailQuery.data && detailQuery.data.progress.pending_online_lookups > 0 ? (
-                <span className="muted">
-                  {t("在线查询待完成 {{count}}", { count: detailQuery.data.progress.pending_online_lookups })}
-                </span>
-              ) : null}
-            </div>
+      {detailQuery.isLoading && !detailQuery.data ? <LoadingState /> : null}
 
-            {job.error ? (
-              <div className="callout callout-error" style={{ marginTop: "12px" }}>
-                <AlertTriangle size={14} />
-                <span style={{ overflowWrap: "anywhere" }}>{job.error}</span>
-              </div>
-            ) : null}
+      {detailQuery.error ? (
+        <div className="mt-3">
+          <ErrorState
+            message={formatApiErrorMessage(detailQuery.error, t)}
+            onRetry={() => void detailQuery.refetch()}
+          />
+        </div>
+      ) : null}
 
-            {streamState === "error" && running ? (
-              <div className="callout callout-warning" style={{ marginTop: "12px" }}>
-                <AlertTriangle size={14} />
-                <span>{t("实时推送不可用，已降级为每 10 秒轮询一次。")}</span>
-              </div>
-            ) : null}
-
-            <div className="detail-actions" style={{ marginTop: "14px" }}>
-              <Button variant="secondary" size="sm" onClick={() => void detailQuery.refetch()} disabled={detailQuery.isFetching}>
-                <RefreshCw size={13} className={detailQuery.isFetching ? "spin" : undefined} /> {t("刷新")}
-              </Button>
-              <Button variant="danger" size="sm" onClick={handleCancel} disabled={!running || busy}>
-                <Ban size={13} /> {cancelMutation.isPending ? t("取消中...") : t("取消任务")}
-              </Button>
-              <Button
-                variant="secondary"
+      {job ? (
+        <>
+          <ReadoutStrip className="mt-4 grid-cols-2 sm:grid-cols-4">
+            <ReadoutCell>
+              <Readout
+                label={t("进度")}
+                value={`${job.done} / ${job.total}`}
+                size="lg"
+                tone={job.status === "running" ? "live" : job.status === "failed" ? "alert" : "ink"}
+              />
+              <ProgressMeter job={job} size="lg" />
+            </ReadoutCell>
+            <ReadoutCell>
+              <Readout label={t("已完成")} value={job.done} size="sm" tone="signal" />
+            </ReadoutCell>
+            <ReadoutCell>
+              <Readout
+                label={t("失败")}
+                value={job.failed}
                 size="sm"
-                onClick={() => retryMutation.mutate()}
-                disabled={failedCount <= 0 || retryMutation.isPending}
-                title={failedCount <= 0 ? t("没有可重试的失败项") : t("重试失败项")}
-              >
-                <RotateCcw size={13} /> {retryMutation.isPending ? t("重试中...") : t("重试失败项")}
-              </Button>
+                tone={job.failed > 0 ? "alert" : "muted"}
+              />
+            </ReadoutCell>
+            <ReadoutCell>
+              <Readout label={t("已跳过")} value={job.skipped} size="sm" tone="muted" />
+            </ReadoutCell>
+          </ReadoutStrip>
+
+          {detailQuery.data ? (
+            <div className="mt-2 flex flex-wrap gap-x-4 text-xs text-ink-soft">
+              <span>{t("待处理 {{count}}", { count: detailQuery.data.progress.pending })}</span>
+              {detailQuery.data.progress.pending_online_lookups > 0 ? (
+                <span>{t("在线查询待完成 {{count}}", { count: detailQuery.data.progress.pending_online_lookups })}</span>
+              ) : null}
             </div>
+          ) : null}
 
-            <div className="list-card-header" style={{ marginTop: "20px", flexWrap: "wrap" }}>
-              <div>
-                <h3>{t("节点结果")}</h3>
-                <p>{t("共 {{count}} 个节点", { count: itemTotal })}</p>
-              </div>
-              <Select
-                value={itemStatus}
-                aria-label={t("按节点状态筛选")}
-                onChange={(event) => {
-                  setItemStatus(event.target.value);
-                  setItemPage(0);
-                }}
-              >
-                {ITEM_STATUS_FILTERS.map((value) => (
-                  <option key={value || "all"} value={value}>
-                    {value ? t(textOf(ITEM_STATUS_LABELS, value)) : t("全部结果")}
-                  </option>
-                ))}
-              </Select>
+          <div className="mt-4 grid gap-x-6 gap-y-2 border-t border-rule pt-3 text-xs sm:grid-cols-3">
+            <div className="min-w-0">
+              <div className="label">{t("创建时间")}</div>
+              <div className="readout mt-0.5">{formatNs(job.created_at_ns)}</div>
             </div>
+            <div className="min-w-0">
+              <div className="label">{t("开始时间")}</div>
+              <div className="readout mt-0.5">{formatNs(job.started_at_ns)}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="label">{t("完成时间")}</div>
+              <div className="readout mt-0.5">{formatNs(job.finished_at_ns)}</div>
+            </div>
+          </div>
 
-            <QueryState
-              loading={itemsQuery.isLoading && !itemsQuery.data}
-              error={itemsQuery.error}
-              onRetry={() => void itemsQuery.refetch()}
-            />
-            <QueryState empty={!itemsQuery.isLoading && !itemsQuery.error && items.length === 0} emptyText={t("暂无节点结果")} />
+          {job.error ? (
+            <p
+              className="mt-3 flex items-start gap-1.5 rounded-control border border-alert/30 bg-alert-wash px-3 py-2 text-xs leading-relaxed text-alert"
+              role="alert"
+            >
+              <AlertTriangle size={13} className="mt-px shrink-0" />
+              <span className="min-w-0 break-words">{job.error}</span>
+            </p>
+          ) : null}
 
-            <div style={{ display: "grid", gap: "8px", marginTop: "10px" }}>
+          {streamState === "error" && running ? (
+            <p className="mt-3 flex items-start gap-1.5 text-xs leading-relaxed text-warn">
+              <AlertTriangle size={13} className="mt-px shrink-0" />
+              <span>{t("实时推送不可用，已降级为每 10 秒轮询一次。")}</span>
+            </p>
+          ) : null}
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void detailQuery.refetch()}
+              disabled={detailQuery.isFetching}
+            >
+              <RefreshCw size={13} className={detailQuery.isFetching ? "animate-spin" : undefined} />
+              {t("刷新")}
+            </Button>
+            <Button variant="danger" size="sm" onClick={handleCancel} disabled={!running || busy}>
+              <Ban size={13} />
+              {cancelMutation.isPending ? t("取消中...") : t("取消任务")}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => retryMutation.mutate()}
+              disabled={failedCount <= 0 || retryMutation.isPending}
+              title={failedCount <= 0 ? t("没有可重试的失败项") : t("重试失败项")}
+            >
+              <RotateCcw size={13} />
+              {retryMutation.isPending ? t("重试中...") : t("重试失败项")}
+            </Button>
+          </div>
+
+          <div className="mt-6 flex flex-wrap items-end justify-between gap-2">
+            <SectionTitle className="pb-0" trailing={t("共 {{count}} 个节点", { count: itemTotal })}>
+              {t("节点结果")}
+            </SectionTitle>
+            <select
+              className={CONTROL_CLASS}
+              value={itemStatus}
+              aria-label={t("按节点状态筛选")}
+              onChange={(event) => {
+                setItemStatus(event.target.value);
+                setItemPage(0);
+              }}
+            >
+              {ITEM_STATUS_FILTERS.map((value) => (
+                <option key={value || "all"} value={value}>
+                  {value ? t(textOf(ITEM_STATUS_LABELS, value)) : t("全部结果")}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {itemsQuery.isLoading && !itemsQuery.data ? <LoadingState /> : null}
+
+          {itemsQuery.error ? (
+            <div className="mt-3">
+              <ErrorState
+                message={formatApiErrorMessage(itemsQuery.error, t)}
+                onRetry={() => void itemsQuery.refetch()}
+              />
+            </div>
+          ) : null}
+
+          {!itemsQuery.isLoading && !itemsQuery.error && !items.length ? (
+            <EmptyState title={t("暂无节点结果")} />
+          ) : null}
+
+          {items.length ? (
+            <ul className="mt-1 divide-y divide-rule border-b border-rule">
               {items.map((item) => (
                 <JobItemRow key={item.node_hash} item={item} />
               ))}
-            </div>
+            </ul>
+          ) : null}
 
-            {itemTotal > 0 ? (
-              <OffsetPagination
+          {itemTotal > 0 ? (
+            <div className="-mx-5">
+              <JobsPagination
                 page={itemPage}
                 totalPages={Math.max(1, Math.ceil(itemTotal / itemPageSize))}
                 totalItems={itemTotal}
@@ -582,11 +711,11 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
                   setItemPage(0);
                 }}
               />
-            ) : null}
-          </>
-        ) : null}
-      </Card>
-    </DialogSurface>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </Sheet>
   );
 }
 
@@ -635,115 +764,123 @@ function CreateJobDialog({
   };
 
   return (
-    <DialogSurface title={t("新建检测任务")} variant="modal" onClose={onClose}>
-      <Card className="modal-card">
-        <div className="modal-header">
-          <h3>{t("新建检测任务")}</h3>
-          <Button aria-label={t("关闭")} title={t("关闭")} variant="ghost" size="sm" onClick={onClose}>
-            <X size={16} />
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open && !createMutation.isPending) {
+          onClose();
+        }
+      }}
+      title={t("新建检测任务")}
+      width="sm"
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={createMutation.isPending}>
+            {t("取消")}
+          </Button>
+          <Button type="submit" form="create-job-form" disabled={createMutation.isPending}>
+            {createMutation.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}
+            {createMutation.isPending ? t("创建中...") : t("创建任务")}
           </Button>
         </div>
+      }
+    >
+      <form id="create-job-form" className="flex flex-col gap-4" onSubmit={submit}>
+        <Fieldset
+          label={t("检测种类")}
+          htmlFor="job-kind"
+          hint={t("情报检测覆盖出口与风险评估；完整检测会额外运行解锁检测规则。")}
+        >
+          <select
+            id="job-kind"
+            className={FORM_CONTROL_CLASS}
+            value={kind}
+            onChange={(event) => setKind(event.target.value as JobKind)}
+          >
+            {JOB_KIND_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {t(textOf(JOB_KIND_LABELS, option))} ({option})
+              </option>
+            ))}
+          </select>
+        </Fieldset>
 
-        <form className="form-grid single-column" onSubmit={submit}>
-          <div className="field-group">
-            <label className="field-label" htmlFor="job-kind">
-              {t("检测种类")}
+        <Fieldset
+          label={t("优先级")}
+          htmlFor="job-priority"
+          hint={t("新建任务固定使用手动优先级 100；订阅与定时刷新任务由系统排队。")}
+        >
+          {/* 优先级由服务端固定：POST /intel/jobs 的请求体不接受 priority
+              字段（internal/service/control_plane_intel.go:113 固定为手动 100），
+              解码器还启用了 DisallowUnknownFields。 */}
+          <select id="job-priority" className={FORM_CONTROL_CLASS} value="manual" disabled>
+            <option value="manual">{t("手动 (100)")}</option>
+            <option value="subscription">{t("订阅 (50)")}</option>
+            <option value="refresh">{t("定时刷新 (10)")}</option>
+          </select>
+        </Fieldset>
+
+        <fieldset className="min-w-0">
+          <legend className="label px-0">{t("作用范围")}</legend>
+          <div className="mt-1 flex items-center gap-3 border-y border-rule py-2">
+            <Switch
+              id="job-scope-all"
+              checked={allNodes}
+              onCheckedChange={(checked: boolean) => setAllNodes(checked)}
+              aria-label={t("全部节点")}
+            />
+            <label className="text-sm" htmlFor="job-scope-all">
+              {t("全部节点")}
             </label>
-            <Select id="job-kind" value={kind} onChange={(event) => setKind(event.target.value as JobKind)}>
-              {JOB_KIND_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {t(textOf(JOB_KIND_LABELS, option))} ({option})
-                </option>
-              ))}
-            </Select>
-            <p className="field-hint">
-              {t("情报检测覆盖出口与风险评估；完整检测会额外运行解锁检测规则。")}
-            </p>
+            <span className="text-xs text-ink-faint">
+              {allNodes ? t("对节点池中的所有节点执行。") : t("仅对下方列出的节点执行。")}
+            </span>
           </div>
+        </fieldset>
 
-          <div className="field-group">
-            <label className="field-label" htmlFor="job-priority">
-              {t("优先级")}
-            </label>
-            {/* 优先级由服务端固定：POST /intel/jobs 的请求体不接受 priority
-                字段（internal/service/control_plane_intel.go:113 固定为手动 100），
-                解码器还启用了 DisallowUnknownFields。 */}
-            <Select id="job-priority" value="manual" disabled>
-              <option value="manual">{t("手动 (100)")}</option>
-              <option value="subscription">{t("订阅 (50)")}</option>
-              <option value="refresh">{t("定时刷新 (10)")}</option>
-            </Select>
-            <p className="field-hint">{t("新建任务固定使用手动优先级 100；订阅与定时刷新任务由系统排队。")}</p>
-          </div>
+        {allNodes ? null : (
+          <Fieldset
+            label={t("节点哈希")}
+            htmlFor="job-hashes"
+            hint={`${t("每行一个节点哈希，也支持空格或逗号分隔；重复项会自动去除。")}${
+              hashes.length > 0 ? ` ${t("已识别 {{count}} 个节点", { count: hashes.length })}` : ""
+            }`}
+          >
+            <Textarea
+              id="job-hashes"
+              className="readout text-xs"
+              rows={5}
+              value={hashesText}
+              placeholder={"3f2a9c...\n8b71d0..."}
+              onChange={(event) => setHashesText(event.target.value)}
+            />
+          </Fieldset>
+        )}
 
-          <div className="field-group">
-            <label className="field-label" htmlFor="job-scope-all">
-              {t("作用范围")}
-            </label>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-              <Switch
-                id="job-scope-all"
-                checked={allNodes}
-                onChange={(event) => setAllNodes(event.target.checked)}
-                aria-label={t("全部节点")}
-              />
-              <span>{t("全部节点")}</span>
-              <span className="muted" style={{ fontSize: "11px" }}>
-                {allNodes ? t("对节点池中的所有节点执行。") : t("仅对下方列出的节点执行。")}
-              </span>
-            </div>
-          </div>
+        <div className="flex items-center gap-3">
+          <Switch
+            id="job-force"
+            checked={force}
+            onCheckedChange={(checked: boolean) => setForce(checked)}
+            aria-label={t("忽略缓存证据")}
+          />
+          <label className="text-sm" htmlFor="job-force">
+            {t("忽略缓存证据")}
+          </label>
+        </div>
+        <p className="-mt-2 text-xs text-ink-faint">{t("开启后会重新查询未过期的在线证据，而不是复用它们。")}</p>
 
-          {allNodes ? null : (
-            <div className="field-group">
-              <label className="field-label" htmlFor="job-hashes">
-                {t("节点哈希")}
-              </label>
-              <Textarea
-                id="job-hashes"
-                rows={5}
-                value={hashesText}
-                placeholder={"3f2a9c...\n8b71d0..."}
-                onChange={(event) => setHashesText(event.target.value)}
-              />
-              <p className="field-hint">
-                {t("每行一个节点哈希，也支持空格或逗号分隔；重复项会自动去除。")}
-                {hashes.length > 0 ? ` ${t("已识别 {{count}} 个节点", { count: hashes.length })}` : ""}
-              </p>
-            </div>
-          )}
-
-          <div className="field-group">
-            <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-              <Switch
-                checked={force}
-                onChange={(event) => setForce(event.target.checked)}
-                aria-label={t("忽略缓存证据")}
-              />
-              <span>{t("忽略缓存证据")}</span>
-            </div>
-            <p className="field-hint">{t("开启后会重新查询未过期的在线证据，而不是复用它们。")}</p>
-          </div>
-
-          {error ? (
-            <div className="callout callout-error">
-              <AlertTriangle size={14} />
-              <span style={{ overflowWrap: "anywhere" }}>{error}</span>
-            </div>
-          ) : null}
-
-          <div className="detail-actions">
-            <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? <LoaderCircle size={14} className="spin" /> : <Plus size={14} />}
-              {createMutation.isPending ? t("创建中...") : t("创建任务")}
-            </Button>
-            <Button type="button" variant="secondary" onClick={onClose} disabled={createMutation.isPending}>
-              {t("取消")}
-            </Button>
-          </div>
-        </form>
-      </Card>
-    </DialogSurface>
+        {error ? (
+          <p
+            className="flex items-start gap-1.5 rounded-control border border-alert/30 bg-alert-wash px-3 py-2 text-xs leading-relaxed text-alert"
+            role="alert"
+          >
+            <AlertTriangle size={13} className="mt-px shrink-0" />
+            <span className="min-w-0 break-words">{error}</span>
+          </p>
+        ) : null}
+      </form>
+    </Sheet>
   );
 }
 
@@ -766,118 +903,148 @@ export function JobsPage() {
 
   const jobs = jobsQuery.data?.items ?? [];
   const total = jobsQuery.data?.total ?? 0;
-  const columnHelper = useMemo(() => createColumnHelper<IntelJob>(), []);
-  const columns = useMemo(
-    () => [
-      columnHelper.accessor("id", {
-        header: t("任务"),
-        cell: (info) => (
-          <span
-            style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "12px" }}
-            title={info.getValue()}
-          >
-            {info.getValue().slice(0, 8)}
-          </span>
-        ),
-      }),
-      columnHelper.accessor("status", {
-        header: t("状态"),
-        cell: (info) => <JobStatusBadge status={info.getValue()} />,
-      }),
-      columnHelper.accessor("kind", {
-        header: t("种类"),
-        cell: (info) => <JobKindBadge kind={info.getValue()} />,
-      }),
-      columnHelper.accessor("created_by", {
-        header: t("创建者"),
-        cell: (info) => <span style={{ overflowWrap: "anywhere" }}>{info.getValue()}</span>,
-      }),
-      columnHelper.display({
-        id: "progress",
-        header: t("进度"),
-        cell: (info) => <ProgressTrack job={info.row.original} />,
-      }),
-      columnHelper.accessor("created_at_ns", {
-        header: t("创建时间"),
-        cell: (info) => <span className="muted">{formatNs(info.getValue())}</span>,
-      }),
-      columnHelper.display({
-        id: "finished",
-        header: t("完成时间"),
-        cell: (info) => <span className="muted">{formatNs(info.row.original.finished_at_ns)}</span>,
-      }),
-    ],
-    [columnHelper, t],
-  );
+  const showList = !jobsQuery.isLoading && !jobsQuery.isError;
+
+  const openJob = (job: IntelJob) => setSelectedJobID(job.id);
 
   return (
-    <section className="jobs-page">
+    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <header className="module-header">
-        <div>
-          <h2>{t("检测任务")}</h2>
-          <p className="page-context">{t("批量检测任务的排队、进度与逐节点结果。")}</p>
-        </div>
+      <header className="min-w-0">
+        <h1 className="text-2xl">{t("检测任务")}</h1>
+        <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
+          {t("批量检测任务的排队、进度与逐节点结果。")}
+        </p>
       </header>
 
-      <Card className="platform-list-card platform-directory-card">
-        <div className="list-card-header" style={{ flexWrap: "wrap" }}>
-          <div>
-            <h3>{t("任务列表")}</h3>
-            <p>{t("共 {{count}} 个任务", { count: total })}</p>
-          </div>
-          <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-            <Select
-              value={statusFilter}
-              aria-label={t("按状态筛选")}
-              onChange={(event) => {
-                setStatusFilter(event.target.value);
-                setPage(0);
-              }}
-            >
-              {JOB_STATUS_FILTERS.map((value) => (
-                <option key={value || "all"} value={value}>
-                  {value ? t(textOf(JOB_STATUS_LABELS, value)) : t("全部状态")}
-                </option>
-              ))}
-            </Select>
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus size={16} /> {t("新建任务")}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => void jobsQuery.refetch()}
-              disabled={jobsQuery.isFetching}
-            >
-              <RefreshCw size={16} className={jobsQuery.isFetching ? "spin" : undefined} /> {t("刷新")}
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      <Card className="platform-cards-container jobs-table-card">
-        <QueryState
-          loading={jobsQuery.isLoading}
-          error={jobsQuery.error}
-          empty={!jobsQuery.isLoading && !jobsQuery.isError && jobs.length === 0}
-          emptyText={t("暂无检测任务，点击“新建任务”开始一次批量检测。")}
-          onRetry={() => void jobsQuery.refetch()}
+      <Panel>
+        <PanelHeader
+          title={t("任务列表")}
+          description={t("共 {{count}} 个任务", { count: total })}
+          actions={
+            <>
+              <select
+                className={CONTROL_CLASS}
+                value={statusFilter}
+                aria-label={t("按状态筛选")}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value);
+                  setPage(0);
+                }}
+              >
+                {JOB_STATUS_FILTERS.map((value) => (
+                  <option key={value || "all"} value={value}>
+                    {value ? t(textOf(JOB_STATUS_LABELS, value)) : t("全部状态")}
+                  </option>
+                ))}
+              </select>
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus size={15} />
+                {t("新建任务")}
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void jobsQuery.refetch()}
+                disabled={jobsQuery.isFetching}
+              >
+                <RefreshCw size={15} className={jobsQuery.isFetching ? "animate-spin" : undefined} />
+                {t("刷新")}
+              </Button>
+            </>
+          }
         />
 
-        {jobs.length > 0 ? (
-          <DataTable
-            data={jobs}
-            columns={columns}
-            getRowId={(job) => job.id}
-            selectedRowId={selectedJobID || undefined}
-            onRowClick={(job) => setSelectedJobID(job.id)}
+        {jobsQuery.isLoading ? <LoadingState /> : null}
+
+        {jobsQuery.isError ? (
+          <div className="p-4">
+            <ErrorState message={formatApiErrorMessage(jobsQuery.error, t)} onRetry={() => void jobsQuery.refetch()} />
+          </div>
+        ) : null}
+
+        {showList && !jobs.length ? (
+          <EmptyState
+            title={t("暂无检测任务，点击“新建任务”开始一次批量检测。")}
+            action={
+              <Button size="sm" onClick={() => setCreateOpen(true)}>
+                <Plus size={15} />
+                {t("新建任务")}
+              </Button>
+            }
           />
         ) : null}
 
+        {jobs.length ? (
+          <TableWrap>
+            <Table>
+              <THead>
+                <TR>
+                  <TH>{t("任务")}</TH>
+                  <TH>{t("状态")}</TH>
+                  <TH>{t("种类")}</TH>
+                  <TH>{t("创建者")}</TH>
+                  <TH>{t("进度")}</TH>
+                  <TH className="text-right">{t("创建时间")}</TH>
+                  <TH className="text-right">{t("完成时间")}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {jobs.map((job) => (
+                  <TR
+                    key={job.id}
+                    tabIndex={0}
+                    className="cursor-pointer"
+                    selected={selectedJobID === job.id}
+                    aria-selected={selectedJobID === job.id}
+                    onClick={() => openJob(job)}
+                    onKeyDown={(event) => {
+                      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        openJob(job);
+                      }
+                    }}
+                  >
+                    <TD>
+                      <span className="readout text-xs" title={job.id}>
+                        {job.id.slice(0, 8)}
+                      </span>
+                    </TD>
+                    <TD>
+                      <JobStatusBadge status={job.status} />
+                    </TD>
+                    <TD>
+                      <JobKindBadge kind={job.kind} />
+                    </TD>
+                    <TD>
+                      <span className="block max-w-[18ch] truncate" title={job.created_by}>
+                        {job.created_by}
+                      </span>
+                    </TD>
+                    <TD>
+                      <div className="flex min-w-40 flex-col">
+                        <span className="readout text-xs">
+                          {job.done} / {job.total}
+                        </span>
+                        <ProgressMeter job={job} />
+                      </div>
+                    </TD>
+                    <TDNum>
+                      <span className="text-xs text-ink-soft">{formatNs(job.created_at_ns)}</span>
+                    </TDNum>
+                    <TDNum>
+                      <span className="text-xs text-ink-soft">{formatNs(job.finished_at_ns)}</span>
+                    </TDNum>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </TableWrap>
+        ) : null}
+
         {total > 0 ? (
-          <OffsetPagination
+          <JobsPagination
             page={page}
             totalPages={Math.max(1, Math.ceil(total / pageSize))}
             totalItems={total}
@@ -891,7 +1058,7 @@ export function JobsPage() {
             }}
           />
         ) : null}
-      </Card>
+      </Panel>
 
       {selectedJobID ? (
         <JobDetailDrawer

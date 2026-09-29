@@ -1,16 +1,16 @@
-import { DialogSurface } from "../../components/ui/DialogSurface";
 import { useQuery } from "@tanstack/react-query";
-import { createColumnHelper } from "@tanstack/react-table";
-import { AlertTriangle, Eraser, RefreshCw, Sparkles, X } from "lucide-react";
+import { AlertTriangle, Eraser, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { DataTable } from "../../components/ui/DataTable";
-import { CursorPagination } from "../../components/ui/CursorPagination";
 import { Input } from "../../components/ui/Input";
-import { Select } from "../../components/ui/Select";
+import { Panel, SectionTitle } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Sheet } from "../../components/ui/Sheet";
+import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -54,9 +54,6 @@ const defaultFilters: FilterDraft = {
 };
 const FILTER_DEBOUNCE_MS = 100;
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 1000, 2000] as const;
-const REQUEST_LOGS_FORWARD_BADGE_CLASS = "request-logs-proxy-badge-forward";
-const REQUEST_LOGS_REVERSE_BADGE_CLASS = "request-logs-proxy-badge-reverse";
-const REQUEST_LOGS_SOCKS_BADGE_CLASS = "request-logs-proxy-badge-socks";
 
 const PAYLOAD_TABS = ["request", "response"] as const;
 type PayloadTab = (typeof PAYLOAD_TABS)[number];
@@ -65,6 +62,11 @@ const BASE64_DECODE_FAILED = "[Base64 解码失败]";
 const UNSUPPORTED_CONTENT_ENCODING_PREFIX = "暂不支持的 Content-Encoding: ";
 const CONTENT_ENCODING_DECODE_FAILED_PREFIX = "Content-Encoding=";
 const CONTENT_ENCODING_DECODE_FAILED_SUFFIX = " 解压失败";
+
+const CONTROL_CLASS =
+  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
+const FILTER_CONTROL_CLASS =
+  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50";
 
 function toRFC3339(localDateTime: string): string {
   if (!localDateTime) {
@@ -315,19 +317,6 @@ function proxyTypeLabel(proxyType: number): string {
   return String(proxyType);
 }
 
-function proxyTypeBadgeClassName(proxyType: number): string | null {
-  if (proxyType === 1) {
-    return REQUEST_LOGS_FORWARD_BADGE_CLASS;
-  }
-  if (proxyType === 2) {
-    return REQUEST_LOGS_REVERSE_BADGE_CLASS;
-  }
-  if (proxyType === 3) {
-    return REQUEST_LOGS_SOCKS_BADGE_CLASS;
-  }
-  return null;
-}
-
 function dateLocale(): string {
   return isEnglishLocale(getCurrentLocale()) ? "en-US" : "zh-CN";
 }
@@ -359,6 +348,99 @@ function splitDateTime(input: string): { date: string; time: string } {
   return { date, time };
 }
 
+/** One labelled filter with its own validation message, so a bad value is fixed where it sits. */
+function FilterField({
+  id,
+  label,
+  warning,
+  children,
+}: {
+  id: string;
+  label: string;
+  warning?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <label htmlFor={id} className="block text-xs text-ink-soft">
+        {label}
+      </label>
+      <div className="mt-1">{children}</div>
+      {warning ? (
+        <p className="mt-1 flex items-start gap-1 text-2xs leading-snug text-warn">
+          <AlertTriangle size={11} className="mt-px shrink-0" />
+          <span>{warning}</span>
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function StatCell({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <div className="label">{label}</div>
+      <div className="mt-0.5 min-w-0 text-xs break-all">{children}</div>
+    </div>
+  );
+}
+
+/**
+ * Cursor pagination for the request stream: the server hands back a cursor, so the
+ * control reads as "page N of a scroll" rather than a numbered range.
+ */
+function LogsPagination({
+  pageIndex,
+  hasMore,
+  pageSize,
+  disabled,
+  onPageSizeChange,
+  onPrev,
+  onNext,
+}: {
+  pageIndex: number;
+  hasMore: boolean;
+  pageSize: number;
+  disabled: boolean;
+  onPageSizeChange: (pageSize: number) => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+      <p className="text-xs text-ink-soft">
+        {hasMore
+          ? t("第 {{page}} 页 · 有更多数据", { page: pageIndex + 1 })
+          : t("第 {{page}} 页 · 无更多数据", { page: pageIndex + 1 })}
+      </p>
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("每页")}</span>
+          <select
+            className={CONTROL_CLASS}
+            value={String(pageSize)}
+            disabled={disabled}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button variant="secondary" size="sm" onClick={onPrev} disabled={disabled || pageIndex <= 0}>
+          {t("上一页")}
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onNext} disabled={disabled || !hasMore}>
+          {t("下一页")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function RequestLogsPage() {
   const { t } = useI18n();
   const [filters, setFilters] = useState<FilterDraft>(defaultFilters);
@@ -378,6 +460,7 @@ export function RequestLogsPage() {
     staleTime: 60_000,
   });
 
+  // The text filters are debounced as a unit, so one keystroke is never one request.
   useEffect(() => {
     const timeoutID = window.setTimeout(() => {
       setDebouncedTextFilters({
@@ -390,7 +473,6 @@ export function RequestLogsPage() {
     }, FILTER_DEBOUNCE_MS);
     return () => window.clearTimeout(timeoutID);
   }, [filters.account, filters.egress_ip, filters.http_status, filters.platform_name, filters.target_host]);
-
   const queryFilters = useMemo<FilterDraft>(
     () => ({
       from_local: filters.from_local,
@@ -463,22 +545,6 @@ export function RequestLogsPage() {
     enabled: drawerVisible && Boolean(detailLog?.payload_present),
     staleTime: 30_000,
   });
-
-  useEffect(() => {
-    if (!drawerVisible) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      setDrawerOpen(false);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [drawerVisible]);
 
   const updateFilter = <K extends keyof FilterDraft>(key: K, value: FilterDraft[K]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -558,9 +624,10 @@ export function RequestLogsPage() {
   const payloadDecodePending = decodedPayload.isFetching;
 
   const hasMore = Boolean(logsQuery.data?.has_more && logsQuery.data?.next_cursor);
+
   const renderProxyTypeBadge = useCallback((proxyType: number, context: "table" | "drawer" = "table") => {
-    const className = proxyTypeBadgeClassName(proxyType);
-    if (!className) {
+    const known = proxyType === 1 || proxyType === 2 || proxyType === 3;
+    if (!known) {
       return t(proxyTypeLabel(proxyType));
     }
 
@@ -573,135 +640,50 @@ export function RequestLogsPage() {
       label = t("SOCKS5");
     }
 
-    return <Badge className={className}>{label}</Badge>;
+    return (
+      <Badge tone="outline" title={t(proxyTypeLabel(proxyType))}>
+        {label}
+      </Badge>
+    );
   }, [t]);
 
-  const col = useMemo(() => createColumnHelper<RequestLogItem>(), []);
+  const truncatedFor = (tab: PayloadTab): boolean => {
+    if (!payloadQuery.data) {
+      return false;
+    }
+    return tab === "request"
+      ? payloadQuery.data.truncated.req_headers || payloadQuery.data.truncated.req_body
+      : payloadQuery.data.truncated.resp_headers || payloadQuery.data.truncated.resp_body;
+  };
 
-  const logColumns = useMemo(
-    () => [
-      col.accessor("ts", {
-        header: t("时间"),
-        cell: (info) => {
-          const timeParts = splitDateTime(info.getValue());
-          return (
-            <div className="logs-cell-stack logs-time-cell">
-              <span>{timeParts.time}</span>
-              <small>{timeParts.date}</small>
-            </div>
-          );
-        },
-      }),
-      col.accessor("proxy_type", {
-        header: t("代理"),
-        cell: (info) => renderProxyTypeBadge(info.getValue()),
-      }),
-      col.display({
-        id: "platform_account",
-        header: t("平台 / 账号"),
-        cell: (info) => {
-          const log = info.row.original;
-          return (
-            <div className="logs-cell-stack">
-              <span>{log.platform_name || "-"}</span>
-              <small>{log.account || "-"}</small>
-            </div>
-          );
-        },
-      }),
-      col.display({
-        id: "target",
-        header: t("目标"),
-        cell: (info) => {
-          const log = info.row.original;
-          return (
-            <div className="logs-cell-stack">
-              <span title={log.target_host}>{log.target_host || "-"}</span>
-              <small title={log.target_url}>{log.target_url || "-"}</small>
-            </div>
-          );
-        },
-      }),
-      col.display({
-        id: "http",
-        header: t("HTTP"),
-        cell: (info) => {
-          const log = info.row.original;
-          return (
-            <div className="logs-cell-stack">
-              <span>{log.http_method || "-"}</span>
-              <small>{log.http_status || "-"}</small>
-            </div>
-          );
-        },
-      }),
+  const payloadTabLabels: Record<PayloadTab, string> = {
+    request: t("请求"),
+    response: t("响应"),
+  };
 
-      col.accessor("net_ok", {
-        header: t("网络"),
-        cell: (info) => (
-          <Badge variant={info.getValue() ? "success" : "warning"}>
-            {info.getValue() ? t("成功") : t("失败")}
-          </Badge>
-        ),
-      }),
-      col.accessor("first_byte_duration_ms", {
-        header: t("首字耗时"),
-        cell: (info) => formatOptionalDurationMs(info.getValue()),
-      }),
-      col.accessor("duration_ms", {
-        header: t("总耗时"),
-        cell: (info) => formatDurationMs(info.getValue()),
-      }),
-      col.display({
-        id: "traffic",
-        header: t("流量"),
-        cell: (info) => {
-          const log = info.row.original;
-          return formatBytes((log.ingress_bytes || 0) + (log.egress_bytes || 0));
-        },
-      }),
-      col.display({
-        id: "node",
-        header: t("节点"),
-        cell: (info) => {
-          const log = info.row.original;
-          return (
-            <div className="logs-cell-stack">
-              {log.node_tag ? (
-                <Link
-                  to={`/nodes?tag_keyword=${encodeURIComponent(log.node_tag)}`}
-                  title={t("在节点池搜索 {{tag}}", { tag: log.node_tag })}
-                  onClick={(event) => event.stopPropagation()}
-                  style={{
-                    color: "var(--accent-primary)",
-                    textDecoration: "none",
-                    width: "fit-content",
-                  }}
-                >
-                  {log.node_tag}
-                </Link>
-              ) : (
-                <span>-</span>
-              )}
-              <small title={log.egress_ip}>{log.egress_ip || "-"}</small>
-            </div>
-          );
-        },
-      }),
-    ],
-    [col, t, renderProxyTypeBadge]
+  const hasDiagnostics = Boolean(
+    detailLog &&
+      (detailLog.prism_error ||
+        detailLog.upstream_stage ||
+        detailLog.upstream_err_kind ||
+        detailLog.upstream_errno ||
+        detailLog.upstream_err_msg),
   );
 
+  const showList = !logsQuery.isLoading && !isPageTransitioning && !logsQuery.isError;
+
   return (
-    <section className="nodes-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("请求日志")}</h2>
-          <p className="module-description">{t("按条件检索请求记录，快速定位问题。")}</p>
+    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl">{t("请求日志")}</h1>
+          <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
+            {t("按条件检索请求记录，快速定位问题。")}
+          </p>
         </div>
         {!configQuery.isLoading && configQuery.data && (
-          <Link to="/system-config" style={{ display: "flex", textDecoration: "none" }}>
-            <Badge variant={configQuery.data.request_log_enabled ? "success" : "warning"} style={{ cursor: "pointer", fontSize: "13px", padding: "6px 12px" }}>
+          <Link to="/system-config" className="flex shrink-0 items-center transition-opacity hover:opacity-80">
+            <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
               {configQuery.data.request_log_enabled ? t("当前实时日志记录已开启") : t("当前实时日志记录未开启")}
             </Badge>
           </Link>
@@ -710,438 +692,446 @@ export function RequestLogsPage() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="filter-card platform-list-card platform-directory-card">
-        <div className="list-card-header">
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", width: "100%" }}>
-            {/* 时间与路由信息 */}
-            <div
-              className="logs-inline-filters"
-              style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}
+      <Panel>
+        <div className="border-b border-rule bg-paper-sunk/40 px-4 py-3">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            <FilterField id="logs-from" label={t("开始时间")} warning={rangeInvalid ? t("时间范围错误：开始时间必须早于结束时间，已暂不应用结束时间筛选。") : undefined}>
+              <Input
+                id="logs-from"
+                className="readout"
+                type="datetime-local"
+                value={filters.from_local}
+                onChange={(event) => updateFilter("from_local", event.target.value)}
+              />
+            </FilterField>
+
+            <FilterField id="logs-to" label={t("结束时间")}>
+              <Input
+                id="logs-to"
+                className="readout"
+                type="datetime-local"
+                value={filters.to_local}
+                onChange={(event) => updateFilter("to_local", event.target.value)}
+              />
+            </FilterField>
+
+            <FilterField id="logs-platform-name" label={t("平台")}>
+              <Input
+                id="logs-platform-name"
+                value={filters.platform_name}
+                onChange={(event) => updateFilter("platform_name", event.target.value)}
+              />
+            </FilterField>
+
+            <FilterField id="logs-account" label={t("账号")}>
+              <Input
+                id="logs-account"
+                className="readout text-xs"
+                value={filters.account}
+                onChange={(event) => updateFilter("account", event.target.value)}
+              />
+            </FilterField>
+
+            <FilterField id="logs-target-host" label={t("目标主机")}>
+              <Input
+                id="logs-target-host"
+                className="readout text-xs"
+                value={filters.target_host}
+                onChange={(event) => updateFilter("target_host", event.target.value)}
+              />
+            </FilterField>
+
+            <FilterField id="logs-egress-ip" label={t("出口 IP")}>
+              <Input
+                id="logs-egress-ip"
+                className="readout text-xs"
+                inputMode="numeric"
+                value={filters.egress_ip}
+                onChange={(event) => updateFilter("egress_ip", event.target.value)}
+              />
+            </FilterField>
+
+            <FilterField id="logs-proxy-type" label={t("代理类型")}>
+              <select
+                id="logs-proxy-type"
+                className={FILTER_CONTROL_CLASS}
+                value={filters.proxy_type}
+                onChange={(event) => updateFilter("proxy_type", event.target.value as ProxyTypeFilter)}
+              >
+                <option value="all">{t("全部")}</option>
+                <option value="1">{t("HTTP 正向代理")}</option>
+                <option value="2">{t("HTTP 反向代理")}</option>
+                <option value="3">{t("SOCKS5 正向代理")}</option>
+              </select>
+            </FilterField>
+
+            <FilterField id="logs-net-ok" label={t("网络状态")}>
+              <select
+                id="logs-net-ok"
+                className={FILTER_CONTROL_CLASS}
+                value={filters.net_ok}
+                onChange={(event) => updateFilter("net_ok", event.target.value as BoolFilter)}
+              >
+                <option value="all">{t("全部")}</option>
+                <option value="true">{t("成功")}</option>
+                <option value="false">{t("失败")}</option>
+              </select>
+            </FilterField>
+
+            <FilterField
+              id="logs-http-status"
+              label={t("HTTP 状态")}
+              warning={httpStatusInvalid ? t("HTTP 状态码需为 100-599 的整数，当前输入暂不应用。") : undefined}
             >
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-from" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("开始时间")}
-                </label>
-                <Input
-                  id="logs-from"
-                  type="datetime-local"
-                  value={filters.from_local}
-                  onChange={(event) => updateFilter("from_local", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
+              <Input
+                id="logs-http-status"
+                className="readout"
+                inputMode="numeric"
+                placeholder="100-599"
+                value={filters.http_status}
+                onChange={(event) => updateFilter("http_status", event.target.value)}
+              />
+            </FilterField>
 
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-to" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("结束时间")}
-                </label>
-                <Input
-                  id="logs-to"
-                  type="datetime-local"
-                  value={filters.to_local}
-                  onChange={(event) => updateFilter("to_local", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-platform-name" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("平台")}
-                </label>
-                <Input
-                  id="logs-platform-name"
-                  value={filters.platform_name}
-                  onChange={(event) => updateFilter("platform_name", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-account" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("账号")}
-                </label>
-                <Input
-                  id="logs-account"
-                  value={filters.account}
-                  onChange={(event) => updateFilter("account", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-target-host" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("目标主机")}
-                </label>
-                <Input
-                  id="logs-target-host"
-                  value={filters.target_host}
-                  onChange={(event) => updateFilter("target_host", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
-            </div>
-
-            {/* 网络状态与操作 */}
-            <div
-              className="logs-inline-filters"
-              style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "flex-end" }}
-            >
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-proxy-type" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("代理类型")}
-                </label>
-                <Select
-                  id="logs-proxy-type"
-                  value={filters.proxy_type}
-                  onChange={(event) => updateFilter("proxy_type", event.target.value as ProxyTypeFilter)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                >
-                  <option value="all">{t("全部")}</option>
-                  <option value="1">{t("HTTP 正向代理")}</option>
-                  <option value="2">{t("HTTP 反向代理")}</option>
-                  <option value="3">{t("SOCKS5 正向代理")}</option>
-                </Select>
-              </div>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-egress-ip" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("出口 IP")}
-                </label>
-                <Input
-                  id="logs-egress-ip"
-                  value={filters.egress_ip}
-                  onChange={(event) => updateFilter("egress_ip", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-net-ok" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("网络状态")}
-                </label>
-                <Select
-                  id="logs-net-ok"
-                  value={filters.net_ok}
-                  onChange={(event) => updateFilter("net_ok", event.target.value as BoolFilter)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                >
-                  <option value="all">{t("全部")}</option>
-                  <option value="true">{t("成功")}</option>
-                  <option value="false">{t("失败")}</option>
-                </Select>
-              </div>
-
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-                <label htmlFor="logs-http-status" style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                  {t("HTTP 状态")}
-                </label>
-                <Input
-                  id="logs-http-status"
-                  placeholder="100-599"
-                  value={filters.http_status}
-                  onChange={(event) => updateFilter("http_status", event.target.value)}
-                  style={{ width: "100%", padding: "4px 8px", fontSize: "0.875rem", minHeight: "32px", height: "32px" }}
-                />
-              </div>
-
-              <div style={{ flex: "0 0 auto", display: "flex", gap: "0.5rem", marginBottom: "0.125rem", marginLeft: "auto" }}>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => void logsQuery.refetch()}
-                  disabled={logsQuery.isFetching}
-                  style={{ minHeight: "32px", height: "32px", padding: "0 0.75rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                >
-                  <RefreshCw size={14} className={logsQuery.isFetching ? "spin" : undefined} />
-                  {t("刷新")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={resetFilters}
-                  style={{ minHeight: "32px", height: "32px", padding: "0 0.75rem", display: "flex", alignItems: "center", gap: "0.25rem" }}
-                >
-                  <Eraser size={14} />
-                  {t("重置")}
-                </Button>
-              </div>
+            <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-1 lg:justify-end">
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => void logsQuery.refetch()}
+                disabled={logsQuery.isFetching}
+              >
+                <RefreshCw size={14} className={logsQuery.isFetching ? "animate-spin" : undefined} />
+                {t("刷新")}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={resetFilters}>
+                <Eraser size={14} />
+                {t("重置")}
+              </Button>
             </div>
           </div>
         </div>
 
-        {rangeInvalid ? <div className="callout callout-warning">{t("时间范围错误：开始时间必须早于结束时间，已暂不应用结束时间筛选。")}</div> : null}
-        {httpStatusInvalid ? <div className="callout callout-warning">{t("HTTP 状态码需为 100-599 的整数，当前输入暂不应用。")}</div> : null}
-      </Card>
-
-      <Card className="nodes-table-card platform-cards-container subscriptions-table-card">
-        {logsQuery.isLoading || isPageTransitioning ? <p className="muted">{t("正在加载日志...")}</p> : null}
+        {logsQuery.isLoading || isPageTransitioning ? <LoadingState label={t("正在加载日志...")} /> : null}
 
         {logsQuery.isError ? (
-          <div className="callout callout-error">
-            <AlertTriangle size={14} />
-            <span>{formatApiErrorMessage(logsQuery.error, t)}</span>
+          <div className="p-4">
+            <ErrorState
+              message={formatApiErrorMessage(logsQuery.error, t)}
+              onRetry={() => void logsQuery.refetch()}
+            />
           </div>
         ) : null}
 
-        {!logsQuery.isLoading && !isPageTransitioning && !visibleLogs.length ? (
-          <div className="empty-box">
-            <Sparkles size={16} />
-            <p>{t("没有匹配日志")}</p>
-          </div>
-        ) : null}
+        {showList && !visibleLogs.length ? <EmptyState title={t("没有匹配日志")} /> : null}
 
         {visibleLogs.length ? (
-          <DataTable
-            data={visibleLogs}
-            columns={logColumns}
-            onRowClick={(log) => openDrawer(log.id)}
-            selectedRowId={drawerVisible ? detailLogId : undefined}
-            getRowId={(log) => log.id}
-            className="data-table-logs"
-            wrapClassName="data-table-wrap-logs"
-          />
+          <TableWrap>
+            <Table>
+              <THead>
+                <TR>
+                  <TH>{t("时间")}</TH>
+                  <TH>{t("代理")}</TH>
+                  <TH>{t("平台 / 账号")}</TH>
+                  <TH>{t("目标")}</TH>
+                  <TH>{t("HTTP")}</TH>
+                  <TH>{t("网络")}</TH>
+                  <TH className="text-right">{t("首字耗时")}</TH>
+                  <TH className="text-right">{t("总耗时")}</TH>
+                  <TH className="text-right">{t("流量")}</TH>
+                  <TH>{t("节点")}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {visibleLogs.map((log) => {
+                  const timeParts = splitDateTime(log.ts);
+                  return (
+                    <TR
+                      key={log.id}
+                      tabIndex={0}
+                      className="cursor-pointer"
+                      selected={drawerVisible && detailLogId === log.id}
+                      aria-selected={drawerVisible && detailLogId === log.id}
+                      onClick={() => openDrawer(log.id)}
+                      onKeyDown={(event) => {
+                        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault();
+                          openDrawer(log.id);
+                        }
+                      }}
+                    >
+                      <TD className="whitespace-nowrap">
+                        <div className="flex flex-col leading-tight">
+                          <span className="readout text-xs">{timeParts.time}</span>
+                          <span className="readout text-2xs text-ink-faint">{timeParts.date}</span>
+                        </div>
+                      </TD>
+                      <TD>{renderProxyTypeBadge(log.proxy_type)}</TD>
+                      <TD>
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs">{log.platform_name || "-"}</span>
+                          <span className="readout text-2xs text-ink-faint">{log.account || "-"}</span>
+                        </div>
+                      </TD>
+                      <TD>
+                        <div className="flex flex-col leading-tight">
+                          <span className="readout truncate text-xs" title={log.target_host}>
+                            {log.target_host || "-"}
+                          </span>
+                          <span className="max-w-[26ch] truncate text-2xs text-ink-faint" title={log.target_url}>
+                            {log.target_url || "-"}
+                          </span>
+                        </div>
+                      </TD>
+                      <TD>
+                        <div className="flex flex-col leading-tight">
+                          <span className="readout text-xs">{log.http_method || "-"}</span>
+                          <span className="readout text-2xs text-ink-faint">{log.http_status || "-"}</span>
+                        </div>
+                      </TD>
+                      <TD>
+                        <Badge tone={log.net_ok ? "signal" : "warn"} dot>
+                          {log.net_ok ? t("成功") : t("失败")}
+                        </Badge>
+                      </TD>
+                      <TDNum>
+                        <span className="text-xs text-ink-soft">{formatOptionalDurationMs(log.first_byte_duration_ms)}</span>
+                      </TDNum>
+                      <TDNum>
+                        <span className="text-xs">{formatDurationMs(log.duration_ms)}</span>
+                      </TDNum>
+                      <TDNum>
+                        <span className="text-xs text-ink-soft">
+                          {formatBytes((log.ingress_bytes || 0) + (log.egress_bytes || 0))}
+                        </span>
+                      </TDNum>
+                      <TD>
+                        <div className="flex flex-col leading-tight">
+                          {log.node_tag ? (
+                            <Link
+                              to={`/nodes?tag_keyword=${encodeURIComponent(log.node_tag)}`}
+                              title={t("在节点池搜索 {{tag}}", { tag: log.node_tag })}
+                              className="w-fit text-xs text-signal-deep hover:underline"
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              {log.node_tag}
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-ink-faint">-</span>
+                          )}
+                          <span className="readout text-2xs text-ink-faint" title={log.egress_ip}>
+                            {log.egress_ip || "-"}
+                          </span>
+                        </div>
+                      </TD>
+                    </TR>
+                  );
+                })}
+              </TBody>
+            </Table>
+          </TableWrap>
         ) : null}
 
-        <CursorPagination
+        <LogsPagination
           pageIndex={pageIndex}
           hasMore={hasMore}
           pageSize={filters.limit}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
           disabled={isPageTransitioning}
           onPageSizeChange={(limit) => updateFilter("limit", limit)}
           onPrev={movePrev}
           onNext={moveNext}
         />
-      </Card>
+      </Panel>
 
-      {drawerVisible && detailLog ? (
-        <DialogSurface title={t("请求日志详情 {{id}}", { id: detailLog.id })} variant="drawer" onClose={() => setDrawerOpen(false)}>
-          <Card className="drawer-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="drawer-header">
-              <div>
-                <h3>{detailLog.target_host || detailLog.account || t("请求日志详情")}</h3>
-                <p>{detailLog.id}</p>
-              </div>
-              <div className="drawer-header-actions">
-                <Button variant="ghost" size="sm" aria-label={t("关闭详情面板")} onClick={() => setDrawerOpen(false)}>
-                  <X size={16} />
-                </Button>
-              </div>
-            </div>
+      <Sheet
+        open={drawerVisible}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDrawerOpen(false);
+          }
+        }}
+        title={detailLog ? detailLog.target_host || detailLog.account || t("请求日志详情") : t("请求日志详情")}
+        description={detailLog ? <span className="readout text-xs text-ink-faint">{detailLog.id}</span> : undefined}
+        width="lg"
+      >
+        {detailLog ? (
+          <div className="flex flex-col gap-5">
+            <section>
+              <SectionTitle>{t("日志摘要")}</SectionTitle>
+              <p className="text-xs leading-relaxed text-ink-soft">{t("请求时间、协议结果与平台路由信息。")}</p>
 
-            <div className="platform-drawer-layout">
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("日志摘要")}</h4>
-                  <p>{t("请求时间、协议结果与平台路由信息。")}</p>
+              {detailQuery.isError ? (
+                <div className="mt-3">
+                  <ErrorState
+                    message={formatApiErrorMessage(detailQuery.error, t)}
+                    onRetry={() => void detailQuery.refetch()}
+                  />
                 </div>
+              ) : null}
 
-                {detailQuery.isError ? (
-                  <div className="callout callout-error">
-                    <AlertTriangle size={14} />
-                    <span>{formatApiErrorMessage(detailQuery.error, t)}</span>
-                  </div>
-                ) : null}
+              <ReadoutStrip className="mt-3 grid-cols-2 sm:grid-cols-3">
+                <ReadoutCell>
+                  <Readout label={t("时间")} value={formatDateTime(detailLog.ts)} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("代理类型")} value={renderProxyTypeBadge(detailLog.proxy_type, "drawer")} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout
+                    label={t("HTTP")}
+                    value={`${detailLog.http_method || "-"} ${detailLog.http_status || "-"}`}
+                    size="sm"
+                  />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout
+                    label={t("首字耗时")}
+                    value={formatOptionalDurationMs(detailLog.first_byte_duration_ms)}
+                    size="sm"
+                  />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("总耗时")} value={formatDurationMs(detailLog.duration_ms)} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("流量")} value={formatBytes((detailLog.ingress_bytes || 0) + (detailLog.egress_bytes || 0))} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("平台")} value={detailLog.platform_name || "-"} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("账号")} value={detailLog.account || "-"} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("出口 IP")} value={detailLog.egress_ip || "-"} size="sm" />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("客户端 IP")} value={detailLog.client_ip || "-"} size="sm" />
+                </ReadoutCell>
+              </ReadoutStrip>
+            </section>
 
-                <div className="stats-grid">
-                  <div>
-                    <span>{t("时间")}</span>
-                    <p>{formatDateTime(detailLog.ts)}</p>
-                  </div>
-                  <div>
-                    <span>{t("代理类型")}</span>
-                    <p>{renderProxyTypeBadge(detailLog.proxy_type, "drawer")}</p>
-                  </div>
-                  <div>
-                    <span>{t("HTTP")}</span>
-                    <p>
-                      {detailLog.http_method || "-"} {detailLog.http_status || "-"}
-                    </p>
-                  </div>
+            <section className="border-t border-rule pt-4">
+              <SectionTitle>{t("诊断")}</SectionTitle>
+              <p className="text-xs leading-relaxed text-ink-soft">{t("异常排查与连接状态分析。")}</p>
 
-                  <div>
-                    <span>{t("首字耗时")}</span>
-                    <p>{formatOptionalDurationMs(detailLog.first_byte_duration_ms)}</p>
-                  </div>
-                  <div>
-                    <span>{t("总耗时")}</span>
-                    <p>{formatDurationMs(detailLog.duration_ms)}</p>
-                  </div>
-                  <div>
-                    <span>{t("平台")}</span>
-                    <p>{detailLog.platform_name || "-"}</p>
-                  </div>
-                  <div>
-                    <span>{t("账号")}</span>
-                    <p>{detailLog.account || "-"}</p>
-                  </div>
-                  <div>
-                    <span>{t("出口 IP")}</span>
-                    <p>{detailLog.egress_ip || "-"}</p>
-                  </div>
-                  <div>
-                    <span>{t("客户端 IP")}</span>
-                    <p>{detailLog.client_ip || "-"}</p>
-                  </div>
-                </div>
-              </section>
-
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("诊断")}</h4>
-                  <p>{t("异常排查与连接状态分析。")}</p>
-                </div>
-                <div style={{
-                  backgroundColor: "var(--surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "12px",
-                  padding: "16px",
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  fontSize: "13px",
-                  color: "var(--text-secondary)",
-                  lineHeight: "1.6",
-                }}>
-                  {(detailLog.prism_error || detailLog.upstream_stage || detailLog.upstream_err_kind || detailLog.upstream_errno || detailLog.upstream_err_msg) ? (
-                    <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                      <tbody>
-                        {detailLog.prism_error ? (
-                          <tr>
-                            <td style={{ color: "var(--danger)", fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>{t("Prism 错误:")}</td>
-                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.prism_error}</td>
-                          </tr>
-                        ) : null}
-                        {detailLog.upstream_stage ? (
-                          <tr>
-                            <td style={{ color: "var(--warning)", fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>{t("失败阶段:")}</td>
-                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.upstream_stage}</td>
-                          </tr>
-                        ) : null}
-                        {detailLog.upstream_err_kind ? (
-                          <tr>
-                            <td style={{ fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>{t("错误类型:")}</td>
-                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.upstream_err_kind}</td>
-                          </tr>
-                        ) : null}
-                        {detailLog.upstream_errno ? (
-                          <tr>
-                            <td style={{ fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>Errno:</td>
-                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.upstream_errno}</td>
-                          </tr>
-                        ) : null}
-                        {detailLog.upstream_err_msg ? (
-                          <tr>
-                            <td style={{ fontWeight: 600, paddingBottom: "8px", paddingRight: "16px", whiteSpace: "nowrap", verticalAlign: "top", width: "1%" }}>{t("错误详情:")}</td>
-                            <td style={{ color: "var(--text)", paddingBottom: "8px", wordBreak: "break-all", verticalAlign: "top" }}>{detailLog.upstream_err_msg}</td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  ) : null}
-                  {!detailLog.prism_error && !detailLog.upstream_stage && !detailLog.upstream_err_kind && !detailLog.upstream_err_msg ? (
-                    <div style={{ color: "var(--success)", display: "flex", alignItems: "center", gap: "6px" }}>
-                      <span style={{ display: "inline-block", width: "8px", height: "8px", borderRadius: "50%", backgroundColor: "var(--success)" }}></span>
-                      {t("当前请求未产生异常诊断信息")}
+              {hasDiagnostics ? (
+                <dl className="mt-3 flex flex-col gap-2 text-xs">
+                  {detailLog.prism_error ? (
+                    <div className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-4">
+                      <dt className="font-medium text-alert">{t("Prism 错误:")}</dt>
+                      <dd className="readout min-w-0 break-all">{detailLog.prism_error}</dd>
                     </div>
                   ) : null}
-                </div>
-              </section>
-
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("目标与节点")}</h4>
-                  <p>{t("请求目标与命中节点信息。")}</p>
-                </div>
-
-                <div className="stats-grid">
-                  <div>
-                    <span>{t("目标地址")}</span>
-                    <p>{detailLog.target_host || "-"}</p>
-                    <code style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)', wordBreak: 'break-all' }}>{detailLog.target_url || "-"}</code>
-                  </div>
-
-                  <div>
-                    <span>{t("流量")}</span>
-                    <p>{formatBytes((detailLog.ingress_bytes || 0) + (detailLog.egress_bytes || 0))}</p>
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                      <span>↓ {formatBytes(detailLog.ingress_bytes || 0)}</span>
-                      <span>↑ {formatBytes(detailLog.egress_bytes || 0)}</span>
+                  {detailLog.upstream_stage ? (
+                    <div className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-4">
+                      <dt className="font-medium text-warn">{t("失败阶段:")}</dt>
+                      <dd className="readout min-w-0 break-all">{detailLog.upstream_stage}</dd>
                     </div>
-                  </div>
-
-                  <div>
-                    <span>{t("节点")}</span>
-                    <p>{detailLog.node_tag || "-"}</p>
-                    <code style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: 'var(--text-muted)', wordBreak: 'break-all' }}>{detailLog.node_hash || "-"}</code>
-                  </div>
-                </div>
-              </section>
-
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("报文内容")}</h4>
-                  <p>{t("查看请求/响应内容。")}</p>
-                </div>
-
-                {!detailLog.payload_present ? (
-                  <p className="muted" style={{ fontSize: "13px" }}>{t("该条日志未记录报文内容。")}</p>
-                ) : (
-                  <section className="logs-payload-section">
-                    <div className="logs-payload-tabs">
-                      {PAYLOAD_TABS.map((tab) => {
-                        const labelMap: Record<PayloadTab, string> = {
-                          request: t("请求"),
-                          response: t("响应"),
-                        };
-
-                        const truncated = payloadQuery.data
-                          ? (tab === "request"
-                            ? payloadQuery.data.truncated.req_headers || payloadQuery.data.truncated.req_body
-                            : payloadQuery.data.truncated.resp_headers || payloadQuery.data.truncated.resp_body)
-                          : false;
-
-                        return (
-                          <button
-                            key={tab}
-                            type="button"
-                            className={`payload-tab ${payloadTab === tab ? "payload-tab-active" : ""}`}
-                            onClick={() => setPayloadTab(tab)}
-                          >
-                            <span>{labelMap[tab]}</span>
-                            {truncated ? <Badge variant="warning">{t("已截断")}</Badge> : null}
-                          </button>
-                        );
-                      })}
+                  ) : null}
+                  {detailLog.upstream_err_kind ? (
+                    <div className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-4">
+                      <dt className="font-medium text-ink-soft">{t("错误类型:")}</dt>
+                      <dd className="readout min-w-0 break-all">{detailLog.upstream_err_kind}</dd>
                     </div>
+                  ) : null}
+                  {detailLog.upstream_errno ? (
+                    <div className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-4">
+                      <dt className="font-medium text-ink-soft">Errno:</dt>
+                      <dd className="readout min-w-0 break-all">{detailLog.upstream_errno}</dd>
+                    </div>
+                  ) : null}
+                  {detailLog.upstream_err_msg ? (
+                    <div className="grid grid-cols-[minmax(5rem,auto)_1fr] gap-x-4">
+                      <dt className="font-medium text-ink-soft">{t("错误详情:")}</dt>
+                      <dd className="min-w-0 text-ink break-all">{detailLog.upstream_err_msg}</dd>
+                    </div>
+                  ) : null}
+                </dl>
+              ) : null}
 
+              {!detailLog.prism_error && !detailLog.upstream_stage && !detailLog.upstream_err_kind && !detailLog.upstream_err_msg ? (
+                <p className="mt-3 flex items-center gap-2 text-xs text-signal-deep">
+                  <span aria-hidden className="size-2 shrink-0 rounded-full bg-signal" />
+                  {t("当前请求未产生异常诊断信息")}
+                </p>
+              ) : null}
+            </section>
+
+            <section className="border-t border-rule pt-4">
+              <SectionTitle>{t("目标与节点")}</SectionTitle>
+              <p className="text-xs leading-relaxed text-ink-soft">{t("请求目标与命中节点信息。")}</p>
+
+              <div className="mt-3 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-3">
+                <StatCell label={t("目标地址")}>
+                  <div className="readout">{detailLog.target_host || "-"}</div>
+                  <div className="readout mt-0.5 text-2xs break-all text-ink-faint">{detailLog.target_url || "-"}</div>
+                </StatCell>
+                <StatCell label={t("流量")}>
+                  <div className="readout text-sm">
+                    {formatBytes((detailLog.ingress_bytes || 0) + (detailLog.egress_bytes || 0))}
+                  </div>
+                  <div className="readout mt-0.5 flex gap-3 text-2xs text-ink-faint">
+                    <span>↓ {formatBytes(detailLog.ingress_bytes || 0)}</span>
+                    <span>↑ {formatBytes(detailLog.egress_bytes || 0)}</span>
+                  </div>
+                </StatCell>
+                <StatCell label={t("节点")}>
+                  <div className="text-xs">{detailLog.node_tag || "-"}</div>
+                  <div className="readout mt-0.5 text-2xs break-all text-ink-faint">{detailLog.node_hash || "-"}</div>
+                </StatCell>
+              </div>
+            </section>
+
+            <section className="border-t border-rule pt-4">
+              <SectionTitle>{t("报文内容")}</SectionTitle>
+              <p className="text-xs leading-relaxed text-ink-soft">{t("查看请求/响应内容。")}</p>
+
+              {!detailLog.payload_present ? (
+                <p className="mt-3 text-xs text-ink-soft">{t("该条日志未记录报文内容。")}</p>
+              ) : (
+                <Tabs
+                  value={payloadTab}
+                  className="mt-3"
+                  onValueChange={(next) => setPayloadTab(next === "response" ? "response" : "request")}
+                >
+                  <TabsList>
+                    {PAYLOAD_TABS.map((tab) => (
+                      <TabsTrigger key={tab} value={tab}>
+                        {payloadTabLabels[tab]}
+                        {truncatedFor(tab) ? <Badge tone="warn">{t("已截断")}</Badge> : null}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+
+                  <TabsContent value={payloadTab}>
                     {payloadQuery.isError ? (
-                      <div className="callout callout-error">
-                        <AlertTriangle size={14} />
-                        <span>{formatApiErrorMessage(payloadQuery.error, t)}</span>
+                      <div className="mt-3">
+                        <ErrorState
+                          message={formatApiErrorMessage(payloadQuery.error, t)}
+                          onRetry={() => void payloadQuery.refetch()}
+                        />
                       </div>
                     ) : null}
 
                     {(payloadQuery.isFetching || payloadDecodePending) && !(payloadData.headers || payloadData.body) ? (
-                      <div className="callout" style={{ marginTop: "12px", color: "var(--text-secondary)" }}>
-                        <RefreshCw size={14} className="spin" />
-                        <span>{t("加载报文内容中...")}</span>
-                      </div>
+                      <LoadingState label={t("加载报文内容中...")} />
                     ) : (
-                      <>
-                        <pre className="logs-payload-box" style={{ minHeight: "auto", border: "1px solid var(--border)", marginBottom: "8px" }}>
+                      <div className="mt-3 flex flex-col gap-2">
+                        <pre className="readout max-h-72 overflow-auto rounded-control border border-rule bg-paper-sunk px-3 py-2 text-2xs leading-relaxed break-words whitespace-pre-wrap">
                           {payloadData.headers || t("（空 Headers）")}
                         </pre>
-                        <pre className="logs-payload-box">
+                        <pre className="readout max-h-96 overflow-auto rounded-control border border-rule bg-paper-sunk px-3 py-2 text-2xs leading-relaxed break-words whitespace-pre-wrap">
                           {payloadData.body || t("（空 Body）")}
                         </pre>
-                      </>
+                      </div>
                     )}
-                  </section>
-                )}
-              </section>
-            </div>
-          </Card>
-        </DialogSurface>
-      ) : null}
+                  </TabsContent>
+                </Tabs>
+              )}
+            </section>
+          </div>
+        ) : null}
+      </Sheet>
     </section>
   );
 }

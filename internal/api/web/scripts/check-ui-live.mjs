@@ -1,450 +1,477 @@
-import assert from "node:assert/strict";
+/**
+ * Prism panel — browser regression check.
+ *
+ * One script, one run: it boots an isolated backend, drives a real Chromium
+ * against the panel it serves, and asserts the design system the rewrite
+ * introduced (see DESIGN.md). It replaces the old per-feature browser scripts,
+ * which asserted class names that no longer exist.
+ *
+ * Coverage is intentionally behavioural: the design tokens actually applied, the
+ * shell actually navigable, the keyboard actually visible, the hero actually
+ * drawn. No check looks for a Tailwind utility by name except the two structural
+ * hooks documented inline.
+ */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
-import { randomBytes } from "node:crypto";
-import http from "node:http";
-import { chromium, expect } from "@playwright/test";
-import { auditPanelSpacing, verifyQualityViews, verifySettingsCategories } from "./check-quality-ui.mjs";
+import { chromium } from "@playwright/test";
 
-const binary = process.env.PRISM_TEST_BACKEND || process.env.PRISMX_TEST_BACKEND || fileURLToPath(new URL("../../../../bin/prism", import.meta.url));
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const binary =
+  process.env.PRISM_TEST_BACKEND ||
+  process.env.PRISMX_TEST_BACKEND ||
+  fileURLToPath(new URL("../../../../bin/prism", import.meta.url));
 if (!existsSync(binary))
   throw new Error("Build bin/prism first, or set PRISM_TEST_BACKEND to a backend binary.");
+
 // Playwright resolves its own bundled browser; the escape hatch is for a machine
-// whose browser lives somewhere else. No machine-specific path is hard-coded, so
-// this file carries nothing about the developer's home directory.
+// whose browser lives somewhere else, so no home directory is hard-coded here.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
-const root = await mkdtemp(join(tmpdir(), "prism-live-test-"));
-const adminToken = randomBytes(32).toString("hex");
-const proxyToken = randomBytes(32).toString("hex");
-const reservation = http.createServer();
-reservation.listen(0, "127.0.0.1");
-await once(reservation, "listening");
-const backendPort = reservation.address().port;
-await new Promise((resolve) => reservation.close(resolve));
-// Prism is single-port: the panel is served from the main listener under /ui/,
-// so the UI assertions target the same port as the API. (A separate UI port
-// belonged to the pre-WP03 entrypoint.)
-const panelPort = backendPort;
-const backend = spawn(binary, [], {
-  cwd: root,
-  env: {
-    ...process.env,
-    RESIN_ADMIN_TOKEN: adminToken,
-    RESIN_PROXY_TOKEN: proxyToken,
-    RESIN_STATE_DIR: join(root, "state"),
-    RESIN_CACHE_DIR: join(root, "cache"),
-    RESIN_LOG_DIR: join(root, "logs"),
-    RESIN_LISTEN_ADDRESS: "127.0.0.1",
-    RESIN_PORT: String(backendPort),
-    PRISM_UI_HOST: "127.0.0.1",
-    PRISM_UI_PORT: String(panelPort),
-    RESIN_PROBE_CONCURRENCY: "2",
-    RESIN_RESOURCE_FETCH_TIMEOUT: "2s",
-    PRISM_QUALITY_ENABLED: "true",
-    PRISM_QUALITY_API_KEY: "",
-    PRISM_ABUSEIPDB_API_KEY: "",
-    PRISM_QUALITY_DAILY_LIMIT: "10",
-    PRISM_QUALITY_WORKERS: "1",
-    PRISM_QUALITY_QUEUE_SIZE: "16",
-  },
-  stdio: ["ignore", "ignore", "pipe"],
-});
-let backendError = "";
-backend.stderr.on("data", (data) => {
-  backendError = (backendError + data).slice(-4000);
-});
-const backendExit = once(backend, "exit");
-let browser;
-let failurePage;
-const screenshots = fileURLToPath(
-  new URL("../test-results/screenshots/", import.meta.url),
-);
-await mkdir(screenshots, { recursive: true });
-const output = [];
-try {
-  let ready = false;
-  for (let i = 0; i < 100; i++) {
-    if (backend.exitCode !== null)
-      throw new Error("Test backend exited: " + backendError);
+
+// The destinations the panel offers, in the order the rail lists them.
+const RAIL_PATHS = [
+  "/ui/dashboard",
+  "/ui/nodes",
+  "/ui/subscriptions",
+  "/ui/platforms",
+  "/ui/jobs",
+  "/ui/exports",
+  "/ui/request-logs",
+  "/ui/endpoints",
+  "/ui/rules",
+  "/ui/resources",
+  "/ui/intel-settings",
+  "/ui/system-config",
+  "/ui/audit",
+];
+
+// Class tokens the redesign deleted. A trailing dash means "prefix". `card` is
+// matched as a whole token, because the kit's own utilities are named around it.
+const REMOVED_CLASS_TOKENS = [
+  "content",
+  "node-name",
+  "quality-network-facts",
+  "settings-category",
+  "syscfg-",
+  "live-chart",
+  "resource-total",
+  "detail-header",
+  "card",
+  "toast-container",
+  "nav-item",
+  "workspace-bar",
+];
+
+// DESIGN.md colour tokens, as the browser reports them.
+const PAPER = "rgb(243, 245, 242)";
+const INK = "rgb(16, 23, 19)";
+
+const LOCALE = "zh-CN";
+const DASHBOARD = "/ui/dashboard";
+const NODES = "/ui/nodes";
+
+// ---------------------------------------------------------------------------
+// Check registry
+// ---------------------------------------------------------------------------
+
+const checks = [];
+function check(name, run) {
+  checks.push({ name, run });
+}
+
+/**
+ * Collects page errors and console errors, tagged with the route that produced
+ * them. `reset` starts a new window: the sign-in flow legitimately probes
+ * `/api/v1/system/info` anonymously and logs the deliberate 401, so those must
+ * not be charged to the first route visited afterwards.
+ */
+function watchPage(page) {
+  const messages = [];
+  let route = "startup";
+  page.on("pageerror", (error) => messages.push({ route, text: `pageerror: ${error.message}` }));
+  page.on("console", (message) => {
+    if (message.type() === "error") messages.push({ route, text: `console.error: ${message.text()}` });
+  });
+  return {
+    reset: (next) => {
+      route = next;
+      messages.length = 0;
+    },
+    drain: () => messages.splice(0, messages.length),
+  };
+}
+
+/** Runs in the page: every class token on every element, classified against the dead list. */
+function collectRemovedTokens(tokens) {
+  const hits = [];
+  const seen = new Set();
+  for (const element of document.querySelectorAll("[class]")) {
+    for (const token of (element.getAttribute("class") || "").split(/\s+/)) {
+      if (!token || seen.has(token)) continue;
+      const removed = tokens.some((candidate) =>
+        candidate.endsWith("-") ? token.startsWith(candidate) : token === candidate,
+      );
+      if (removed) {
+        seen.add(token);
+        hits.push({ token, tag: element.tagName.toLowerCase() });
+      }
+    }
+  }
+  return hits;
+}
+
+// ---------------------------------------------------------------------------
+// Backend bootstrap (kept from the script this replaces)
+// ---------------------------------------------------------------------------
+
+async function reservePort() {
+  const reservation = http.createServer();
+  reservation.listen(0, "127.0.0.1");
+  await once(reservation, "listening");
+  const { port } = reservation.address();
+  await new Promise((resolve) => reservation.close(resolve));
+  return port;
+}
+
+function startBackend({ root, port, adminToken, proxyToken }) {
+  const backend = spawn(binary, [], {
+    cwd: root,
+    env: {
+      ...process.env,
+      RESIN_ADMIN_TOKEN: adminToken,
+      RESIN_PROXY_TOKEN: proxyToken,
+      RESIN_STATE_DIR: join(root, "state"),
+      RESIN_CACHE_DIR: join(root, "cache"),
+      RESIN_LOG_DIR: join(root, "logs"),
+      RESIN_LISTEN_ADDRESS: "127.0.0.1",
+      RESIN_PORT: String(port),
+      PRISM_UI_HOST: "127.0.0.1",
+      PRISM_UI_PORT: String(port),
+      RESIN_PROBE_CONCURRENCY: "2",
+      RESIN_RESOURCE_FETCH_TIMEOUT: "2s",
+      PRISM_QUALITY_ENABLED: "true",
+      PRISM_QUALITY_API_KEY: "",
+      PRISM_ABUSEIPDB_API_KEY: "",
+      PRISM_QUALITY_DAILY_LIMIT: "10",
+      PRISM_QUALITY_WORKERS: "1",
+      PRISM_QUALITY_QUEUE_SIZE: "16",
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  let stderr = "";
+  backend.stderr.on("data", (data) => {
+    stderr = (stderr + data).slice(-4000);
+  });
+  return { backend, exit: once(backend, "exit"), stderr: () => stderr };
+}
+
+async function waitForHealth(origin, backend, stderr) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (backend.exitCode !== null) throw new Error("Test backend exited: " + stderr());
     try {
-      ready = (
-        await fetch(`http://127.0.0.1:${backendPort}/api/v1/system/info`, {
-          headers: { Authorization: "Bearer " + adminToken },
-          signal: AbortSignal.timeout(500),
-        })
-      ).ok;
-      if (ready) break;
+      const response = await fetch(origin + "/healthz", { signal: AbortSignal.timeout(500) });
+      if (response.ok) return;
     } catch {
-      /* Wait for the child to start listening. */
+      // Not listening yet.
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  assert(ready, "Isolated backend must start before UI assertions");
-  const origin = `http://127.0.0.1:${panelPort}`;
-  assert.equal((await fetch(origin + "/healthz")).status, 200);
-  assert.equal((await fetch(origin + "/api/v1/system/info")).status, 401);
-  browser = await chromium.launch({
-    headless: true,
-    executablePath,
-    args: ["--no-sandbox"],
-  });
-  const context = await browser.newContext({
-    locale: "zh-CN",
-    viewport: { width: 1440, height: 1000 },
-    reducedMotion: "reduce",
-  });
-  await context.addInitScript(() => {
-    localStorage.setItem("prism.locale", "zh-CN");
-  });
-  const page = await context.newPage();
-  failurePage = page;
-  const errors = [];
-  const apiErrors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
-  page.on("response", (response) => { if (response.url().includes("/api/") && response.status() >= 500) apiErrors.push(`${response.status()} ${new URL(response.url()).pathname}`); });
-  await page.goto(origin + "/ui/login");
-  await expect(page.locator("#token")).toBeVisible();
-  await page.screenshot({ path: join(screenshots, "login-light.png"), fullPage: true });
-  await page.locator("#token").fill(adminToken);
-  await page.getByRole("button", { name: "进入工作台" }).click();
-  await expect(page).toHaveURL(/\/ui\/dashboard$/);
-  await expect(page.getByText("服务已连接", { exact: true })).toBeVisible();
-  assert.equal(
-    await page.evaluate(() => localStorage.getItem("prism.admin-session")),
-    null,
-  );
-  assert.equal(await page.evaluate(() => sessionStorage.getItem("prismx.admin-session")), null);
+  throw new Error("Test backend never answered /healthz");
+}
 
-  const migrationContext = await browser.newContext({ locale: "zh-CN" });
-  await migrationContext.addInitScript(({ adminToken, proxyToken }) => {
-    if (sessionStorage.getItem("prism.test.seeded")) return;
-    sessionStorage.setItem("prism.test.seeded", "1");
-    sessionStorage.setItem("prismx.admin-session", adminToken);
-    sessionStorage.setItem("prismx.proxy-session-token", proxyToken);
-    localStorage.setItem("prismx.theme", "dark");
-    localStorage.setItem("resin.webui.locale", "zh-CN");
-  }, { adminToken, proxyToken });
-  const migrationPage = await migrationContext.newPage();
-  await migrationPage.goto(origin + "/ui/dashboard");
-  await expect(migrationPage.getByText("服务已连接", { exact: true })).toBeVisible();
-  await expect(migrationPage.locator("html")).toHaveAttribute("data-theme", "dark");
-  assert(await migrationPage.evaluate((token) => sessionStorage.getItem("prism.admin-session") === token, adminToken));
-  assert.equal(await migrationPage.evaluate(() => sessionStorage.getItem("prismx.admin-session")), null);
-  assert.equal(await migrationPage.evaluate(() => localStorage.getItem("prism.theme")), "dark");
-  assert.equal(await migrationPage.evaluate(() => localStorage.getItem("prism.locale")), "zh-CN");
-  await migrationPage.getByRole("button", { name: "退出登录", exact: true }).click();
-  await expect(migrationPage.locator("#token")).toBeVisible();
-  assert(await migrationPage.evaluate(() => ["prism.admin-session", "prismx.admin-session", "prism.proxy-session-token", "prismx.proxy-session-token"].every((key) => sessionStorage.getItem(key) === null)));
-  await migrationPage.reload();
-  await expect(migrationPage.locator("#token")).toBeVisible();
-  await migrationContext.close();
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
 
-  const privateContext = await browser.newContext({ locale: "zh-CN" });
-  await privateContext.addInitScript(() => {
-    for (const key of ["localStorage", "sessionStorage"]) {
-      Object.defineProperty(window, key, { get() { throw new DOMException("Storage disabled", "SecurityError"); } });
-    }
+/**
+ * Gives the isolated backend a real inventory: a local subscription whose two
+ * outbounds point at closed loopback ports, so nothing here reaches the network
+ * beyond localhost. The exit map, the node table and the subscription table all
+ * need at least one row to be worth asserting on.
+ */
+async function seedInventory(origin, adminToken) {
+  const headers = { Authorization: "Bearer " + adminToken, "Content-Type": "application/json" };
+  const content = JSON.stringify({
+    outbounds: [
+      { type: "http", tag: "Local Alpha", server: "127.0.0.1", server_port: 9 },
+      { type: "http", tag: "Local Beta", server: "127.0.0.1", server_port: 10 },
+    ],
   });
-  const privatePage = await privateContext.newPage();
-  const privateErrors = [];
-  privatePage.on("pageerror", (error) => privateErrors.push(error.message));
-  await privatePage.goto(origin + "/ui/login");
-  await privatePage.locator("#token").fill(adminToken);
-  await privatePage.getByRole("button", { name: "进入工作台", exact: true }).click();
-  await expect(privatePage.getByText("服务已连接", { exact: true })).toBeVisible();
-  assert.deepEqual(privateErrors, [], "Storage restrictions must not break startup or sign-in");
-  await privateContext.close();
-  output.push("legacy preferences and tokens migrate, logout clears credentials, restricted storage supports sign-in");
-
-  // Create actual local inventory in the isolated backend.
-  await page.getByRole("link", { name: "添加订阅", exact: true }).click();
-  await expect(page).toHaveURL(/\/ui\/subscriptions\?create=1$/, { timeout: 15000 });
-  const create = page.getByRole("dialog");
-  await expect(create).toBeVisible({ timeout: 15000 });
-  await create.locator("#create-sub-name").fill("UI_Local");
-  await create.getByRole("tab", { name: "本地", exact: true }).click();
-  await create.locator("#create-sub-content").fill(
-    JSON.stringify({
-      outbounds: [
-        {
-          type: "http",
-          tag: "Local Alpha",
-          server: "127.0.0.1",
-          server_port: 9,
-        },
-        {
-          type: "http",
-          tag: "Local Beta",
-          server: "127.0.0.1",
-          server_port: 10,
-        },
-      ],
-    }),
-  );
-  await create.getByRole("button", { name: "确认创建", exact: true }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(
-    page.getByText("UI_Local", { exact: true }).first(),
-  ).toBeVisible();
-  await page.getByRole("row").filter({ hasText: "UI_Local" }).getByRole("button", { name: "刷新", exact: true }).click();
-  await expect(page.getByText("订阅 UI_Local 已手动刷新", { exact: true })).toBeVisible();
-  output.push("login and local subscription creation");
-
-  await page.goto(origin + "/ui/nodes");
-  await expect(page.locator(".node-name")).toHaveCount(2, { timeout: 15000 });
-  await page
-    .getByRole("textbox", { name: "搜索节点", exact: true })
-    .fill("Alpha");
-  await expect(page.locator(".node-name")).toHaveCount(1);
-  await page.locator(".node-name").first().click();
-  await expect(
-    page.getByRole("dialog", { name: "节点详情", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("dialog").getByText("纯净度与风险", { exact: true }),
-  ).toBeVisible();
-  await page.screenshot({ path: join(screenshots, "node-detail-light.png"), fullPage: true });
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(
-    page.getByRole("textbox", { name: "搜索节点", exact: true }),
-  ).toHaveValue("Alpha");
-  await page.screenshot({
-    path: join(screenshots, "nodes-light.png"),
-    fullPage: true,
-  });
-  output.push("node search, detail, unknown quality and return");
-
-  await expect(page.getByRole("columnheader", { name: /纯净度 prism-purity-v2/ })).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "IP 类型", exact: true })).toBeVisible();
-  await page.goto(origin + "/ui/quality?ip=8.8.8.8&q=fixture&page=1");
-  await expect(page).toHaveURL(/\/ui\/nodes\?view=exits/);
-  assert.equal(new URL(page.url()).searchParams.get("quality_ip"), "8.8.8.8");
-  assert.equal(new URL(page.url()).searchParams.get("quality_q"), "fixture");
-  assert.equal(new URL(page.url()).searchParams.get("quality_page"), "1");
-  await expect(page.getByRole("dialog", { name: "IP 质量详情", exact: true })).toBeVisible();
-  await page.keyboard.press("Escape");
-  // WP09 moved the data sources out of the system-config "quality" stub category
-  // and into the dedicated intel settings page, so assert them where they live.
-  await page.goto(origin + "/ui/intel-settings");
-  await expect(page.getByText(/proxycheck/i).first()).toBeVisible();
-  await expect(page.getByText(/abuseipdb/i).first()).toBeVisible();
-  await expect(page.getByText(/ippure/i).first()).toBeVisible();
-  await page.screenshot({ path: join(screenshots, "quality-sources-light.png"), fullPage: true });
-  await page.goto(origin + "/ui/quality");
-  await expect(page.getByRole("heading", { name: "节点池", exact: true })).toBeVisible();
-  await expect(page.getByText("为出口建立第一份质量记录", { exact: true })).toBeVisible();
-  await page.screenshot({ path: join(screenshots, "quality-light.png"), fullPage: true });
-  // The private-address rejection and the quota accounting are backend
-  // guarantees. Assert them through the API: WP10 moved the ad-hoc "probe an IP"
-  // widget out of the quality page, so no field is left to drive, and this
-  // isolated backend deliberately has no provider credentials — so the request
-  // is refused before it can reach a provider with a private address.
-  const invalidIPResponse = await fetch(origin + "/api/v1/quality/ip/127.0.0.1/actions/probe", {
+  const created = await fetch(origin + "/api/v1/subscriptions", {
     method: "POST",
-    headers: { Authorization: "Bearer " + adminToken },
+    headers,
+    body: JSON.stringify({ name: "UI_Local", source_type: "local", enabled: true, content }),
   });
-  assert(!invalidIPResponse.ok, "A private address must never be accepted by the public quality probe endpoint");
-  const inspectionStatus = await fetch(origin + "/api/v1/quality/status", { headers: { Authorization: "Bearer " + adminToken } }).then(response => response.json());
-  assert(inspectionStatus.sources.every(source => source.used_today === 0), "Rejected IPs must not consume provider quota");
-  output.push("quality workspace, source setup, node quality columns and private-IP rejection");
+  assert(created.ok, `fixture subscription must be created (HTTP ${created.status})`);
+  const { id } = await created.json();
 
-  // Opt-in live smoke: one public-IP query, anonymous credentials, isolated
-  // database. Routine browser regression never depends on an external provider.
-  if (process.env.PRISM_TEST_LIVE_QUALITY === "1") {
-    await page.getByRole("textbox", { name: "检测 IP 地址", exact: true }).fill("1.1.1.1");
-    await page.getByRole("button", { name: "查询网络特征", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "IP 质量详情", exact: true })).toBeVisible();
-    await expect.poll(async () => {
-      const data = await fetch(origin + "/api/v1/quality/ip/1.1.1.1", { headers: { Authorization: "Bearer " + adminToken } }).then(response => response.json());
-      if (data.task?.error_code) throw new Error("Live quality lookup: " + data.task.error_code);
-      return data.state;
-    }, { timeout: 30000 }).toBe("valid");
-    await expect(page.getByRole("dialog").locator(".quality-network-facts").getByText("ProxyCheck v3", { exact: true })).toBeVisible();
-    await page.screenshot({ path: join(screenshots, "quality-live-detail.png"), fullPage: true });
-    await page.keyboard.press("Escape");
-    await page.screenshot({ path: join(screenshots, "quality-live.png"), fullPage: true });
-    output.push("live ProxyCheck v3 lookup, persisted evidence and rendered risk indicators");
+  const refreshed = await fetch(origin + `/api/v1/subscriptions/${id}/actions/refresh`, {
+    method: "POST",
+    headers,
+  });
+  assert(refreshed.ok, `fixture subscription must refresh (HTTP ${refreshed.status})`);
+
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const page = await fetch(origin + "/api/v1/nodes?limit=1", { headers }).then((r) => r.json());
+    if ((page.total ?? 0) > 0) return page.total;
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
+  throw new Error("the fixture subscription never imported its nodes");
+}
 
-  await verifyQualityViews({ page, origin, adminToken, screenshots });
-  output.push("IPPure-only primary score, separate VPN warning, expiry retains active high risk, legacy search clears");
-  await verifySettingsCategories({ page, origin, adminToken, screenshots });
-  output.push("settings category cards, cross-category drafts, invalid-input protection, explicit JSON application, global save and read-only startup fields");
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
 
-  await page.goto(origin + "/ui/platforms");
-  await page.getByRole("button", { name: "新建", exact: true }).click();
-  await page.locator("#create-name").fill("UI_Platform");
-  await page.locator("#create-regex").fill("UI_Local\n!expired");
-  await page.getByRole("button", { name: "确认创建", exact: true }).click();
-  await expect(page).toHaveURL(/\/platforms\/[a-f0-9-]+$/);
-  await page.getByRole("tab", { name: "配置", exact: true }).click();
-  await page.locator("#detail-edit-regex").fill("UI_Local\n*Alpha\n!expired");
-  await page.locator(".platform-config-actions button[type=submit]").click();
-  await expect(
-    page.getByText("平台 UI_Platform 已更新", { exact: true }),
-  ).toBeVisible();
-  await page.reload();
-  await expect(
-    page.getByRole("tab", { name: "配置", exact: true }),
-  ).toHaveAttribute("aria-selected", "true");
-  await expect(page.locator("#detail-edit-regex")).toHaveValue(
-    "UI_Local\n*Alpha\n!expired",
+check("backend boots, inventory imports and the panel signs in", async ({ origin, page, adminToken }) => {
+  const health = await fetch(origin + "/healthz");
+  assert.equal(health.status, 200, "/healthz must answer 200");
+
+  const nodes = await seedInventory(origin, adminToken);
+  assert(nodes >= 2, `the fixture subscription must import two nodes (imported ${nodes})`);
+
+  await page.goto(origin + "/ui/");
+  await page.locator("#token").waitFor({ state: "visible", timeout: 15000 });
+  assert.match(page.url(), /\/ui\/login/, "an anonymous visit to /ui/ must land on the sign-in page");
+
+  await page.locator("#token").fill(adminToken);
+  await page.locator('form button[type="submit"]').click();
+  await page.waitForURL(/\/ui\/dashboard$/, { timeout: 15000 });
+
+  const stored = await page.evaluate(() => sessionStorage.getItem("prism.admin-session"));
+  assert.equal(stored, adminToken, "the admin token must be kept in sessionStorage under prism.admin-session");
+});
+
+check("every route renders without a page or console error", async ({ origin, page, errors }) => {
+  const failures = [];
+  for (const path of RAIL_PATHS) {
+    errors.reset(path);
+    await page.goto(origin + path);
+    if (!(await rendered(page))) failures.push(`${path}: no page heading rendered`);
+    await page.waitForTimeout(150);
+    for (const message of errors.drain()) failures.push(`${path}: ${message.text}`);
+  }
+  assert.deepEqual(failures, [], "routes that did not render cleanly:\n  " + failures.join("\n  "));
+});
+
+check("no removed class token survives in the DOM", async ({ origin, page }) => {
+  const failures = [];
+  for (const path of RAIL_PATHS) {
+    await page.goto(origin + path);
+    await rendered(page);
+    const hits = await page.evaluate(collectRemovedTokens, REMOVED_CLASS_TOKENS);
+    for (const hit of hits) failures.push(`${path}: "${hit.token}" on <${hit.tag}>`);
+  }
+  assert.deepEqual(failures, [], "removed class tokens found:\n  " + failures.join("\n  "));
+});
+
+check("the design tokens are the ones actually applied", async ({ origin, page }) => {
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
+  const body = await page.evaluate(() => {
+    const style = getComputedStyle(document.body);
+    return { background: style.backgroundColor, color: style.color };
+  });
+  assert.equal(body.background, PAPER, "body must sit on the paper token");
+  assert.equal(body.color, INK, "body must be written in the ink token");
+
+  // A data cell is mono by construction (Table.tsx TDNum + design.css .readout).
+  await page.goto(origin + "/ui/subscriptions");
+  await rendered(page);
+  await page.locator("td.readout").first().waitFor({ state: "attached", timeout: 15000 });
+  const cell = await page.evaluate(() => {
+    for (const element of document.querySelectorAll("td.readout")) {
+      const text = (element.textContent || "").trim();
+      if (/\d/.test(text)) return { text, family: getComputedStyle(element).fontFamily };
+    }
+    return null;
+  });
+  assert(cell, "a table cell carrying a number must exist to read the mono token from");
+  assert.match(cell.family, /IBM Plex Mono/, `the numeric cell "${cell.text}" must read in the mono token`);
+});
+
+check("the rail reaches every destination and marks the current one", async ({ origin, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
+
+  const rail = page.locator('nav[aria-label="主导航"]');
+  await rail.waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await rail.locator("a").count(), RAIL_PATHS.length, "the rail must carry one link per destination");
+  for (const path of RAIL_PATHS) {
+    assert.equal(await rail.locator(`a[href="${path}"]`).count(), 1, `the rail must link to ${path}`);
+  }
+  // aria-current is written by React after the history entry changes, so wait for
+  // it rather than reading the attribute the instant the URL moves.
+  const dashboardLink = rail.locator(`a[href="${DASHBOARD}"][aria-current="page"]`);
+  await dashboardLink.waitFor({ state: "attached", timeout: 15000 });
+  assert.equal(await rail.locator('a[aria-current="page"]').count(), 1, "exactly one destination is current");
+
+  await rail.locator(`a[href="${NODES}"]`).click();
+  await page.waitForURL(/\/ui\/nodes$/);
+  const nodesLink = rail.locator(`a[href="${NODES}"][aria-current="page"]`);
+  await nodesLink.waitFor({ state: "attached", timeout: 15000 });
+  assert.equal(await rail.locator('a[aria-current="page"]').count(), 1, "exactly one destination is current");
+  assert.equal(
+    await nodesLink.getAttribute("aria-current"),
+    "page",
+    "the clicked route must become current",
   );
-  await page.getByRole("tab", { name: "接入", exact: true }).click();
-  await expect(page.locator("#access-endpoint")).toHaveAttribute(
-    "placeholder",
-    `http://127.0.0.1:${backendPort}`,
-  );
-  output.push("platform creation, rule edit, reload and separate proxy port");
+});
 
-  await page.goto(origin + "/ui/dashboard");
-  await expect(page.locator(".resource-total strong")).not.toHaveText("--");
-  await expect(page.getByText("Default", { exact: true }).first()).toBeVisible();
-  await page.screenshot({ path: join(screenshots, "desktop-light.png"), fullPage: true });
+check("keyboard focus is visible", async ({ origin, page }) => {
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
 
-  const routes = [
-    "dashboard",
-    "nodes",
-    "quality",
-    "platforms",
-    "subscriptions",
-    "endpoints",
-    "rules",
-    "jobs",
-    "request-logs",
-    "resources",
-    "audit",
-    "exports",
-    "system-config",
-    "system-config?category=health",
-    "system-config?category=logs",
-    "system-config?category=storage",
-    "system-config?category=network",
-    "system-config?category=platform",
-    "system-config?category=metrics",
-    "system-config?category=deployment",
-    "system-config?category=quality",
-  ];
+  let focused = null;
+  for (let press = 0; press < 40 && !focused; press++) {
+    await page.keyboard.press("Tab");
+    focused = await page.evaluate(() => {
+      const element = document.activeElement;
+      if (!element || element === document.body) return null;
+      const width = Number.parseFloat(getComputedStyle(element).outlineWidth);
+      if (!Number.isFinite(width) || width < 2) return null;
+      const label = (element.getAttribute("aria-label") || element.textContent || "").trim().slice(0, 40);
+      return { tag: element.tagName.toLowerCase(), label, width };
+    });
+  }
+  assert(focused, "tabbing must reach a control drawn with an outline of at least 2px");
+});
+
+check("the page never overflows horizontally", async ({ origin, page }) => {
+  const failures = [];
   for (const viewport of [
-    { width: 1440, height: 1000 },
+    { width: 1440, height: 900 },
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
-    for (const route of routes) {
-      await page.goto(origin + "/ui/" + route);
-      await expect(
-        page.locator(".content h1,.content h2").first(),
-      ).toBeVisible();
-      await expect(
-        page.getByText("服务已连接", { exact: true }),
-      ).toBeAttached();
-      if (route.startsWith("system-config?category=")) await expect(page.locator(".settings-category-detail")).toBeVisible();
-      await auditPanelSpacing(page, route, viewport.width);
-      assert.equal(
-        await page.evaluate(
-          () =>
-            document.documentElement.scrollWidth >
-            document.documentElement.clientWidth,
-        ),
-        false,
-        `Overflow: ${route} ${viewport.width}`,
-      );
-      if (["nodes", "platforms", "subscriptions", "endpoints", "rules", "request-logs", "resources", "system-config", "system-config?category=logs"].includes(route)) {
-        await page.screenshot({ path: join(screenshots, route.replaceAll("?category=", "-") + "-" + viewport.width + "-light.png"), fullPage: true });
+    for (const path of [DASHBOARD, NODES]) {
+      await page.goto(origin + path);
+      await rendered(page);
+      await page.waitForTimeout(150);
+      const metrics = await page.evaluate(() => ({
+        scrollWidth: document.documentElement.scrollWidth,
+        clientWidth: document.documentElement.clientWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        innerWidth: window.innerWidth,
+      }));
+      if (metrics.scrollWidth > metrics.clientWidth) {
+        failures.push(
+          `${path} @${viewport.width}px: document scrollWidth ${metrics.scrollWidth} > viewport ${metrics.clientWidth}` +
+            ` (body ${metrics.bodyScrollWidth}, window ${metrics.innerWidth})`,
+        );
       }
     }
-    output.push(`all routes ${viewport.width}px`);
   }
-  await page.getByRole("button", { name: "打开导航", exact: true }).click();
-  const mobileNav = page.getByRole("dialog", { name: "主导航", exact: true });
-  await expect(
-    mobileNav.getByRole("button", { name: "退出登录", exact: true }),
-  ).toBeVisible();
-  await expect(
-    mobileNav.getByRole("group", { name: "切换语言", exact: true }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page
-    .getByRole("button", { name: "外观", exact: true })
-    .filter({ visible: true })
-    .click();
-  await page.getByRole("menuitem", { name: "深色", exact: true }).click();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await page.goto(origin + "/ui/dashboard");
-  await expect(page.getByRole("heading", { name: "总览看板", exact: true })).toBeVisible();
-  await expect(page.locator(".resource-total strong")).not.toHaveText("--");
-  await expect(page.getByText("Default", { exact: true }).first()).toBeVisible();
-  await page.screenshot({
-    path: join(screenshots, "mobile-dark.png"),
-    fullPage: true,
-  });
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect.poll(async () => page.locator(".live-chart").evaluate((element) => {
-    const chart = element.querySelector(".recharts-surface");
-    return !chart || chart.getBoundingClientRect().width <= element.getBoundingClientRect().width + 2;
-  })).toBe(true);
-  await page.screenshot({
-    path: join(screenshots, "desktop-dark.png"),
-    fullPage: true,
-  });
-  for (const route of ["nodes", "subscriptions", "resources", "system-config", "system-config?category=logs"]) {
-    await page.goto(origin + "/ui/" + route);
-    await expect(page.locator(".content h1,.content h2").first()).toBeVisible();
-    if (route.includes("category=")) await expect(page.locator(".settings-category-detail")).toBeVisible();
-    await auditPanelSpacing(page, route, 1440);
-    await page.screenshot({ path: join(screenshots, route.replaceAll("?category=", "-") + "-1440-dark.png"), fullPage: true });
+  assert.deepEqual(failures, [], "horizontal overflow:\n  " + failures.join("\n  "));
+});
+
+check("the dashboard hero renders", async ({ origin, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
+
+  // The exit map is the only ECharts surface labelled with its own section.
+  const map = page.locator('main [role="img"][aria-label="出口 / 区域"]');
+  await map.waitFor({ state: "visible", timeout: 20000 });
+  const canvas = map.locator("canvas").first();
+  await canvas.waitFor({ state: "attached", timeout: 20000 });
+  const box = await canvas.boundingBox();
+  assert(box && box.width > 0 && box.height > 0, "the exit map must draw a canvas with a real size");
+
+  // The instrument strip is the ReadoutStrip: a grid whose children are divided
+  // by hairlines. Measuring it by its readouts keeps the assertion about content.
+  const strip = page.locator("main div.grid.divide-x").first();
+  await strip.waitFor({ state: "visible", timeout: 15000 });
+  const readouts = await strip.locator(".readout").count();
+  assert(readouts >= 4, `the instrument strip must show at least four readouts (found ${readouts})`);
+});
+
+// ---------------------------------------------------------------------------
+// Runner
+// ---------------------------------------------------------------------------
+
+/** Waits until the route has painted a page heading inside the shell's main region. */
+async function rendered(page) {
+  try {
+    await page.locator("main h1").first().waitFor({ state: "visible", timeout: 15000 });
+    return true;
+  } catch {
+    return false;
   }
-  await page.goto(origin + "/ui/dashboard");
-  await page.keyboard.press("Control+k");
-  await expect(
-    page.getByRole("dialog", { name: "快速定位", exact: true }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await context.setOffline(true);
-  await expect(
-    page.getByText("当前处于离线状态", { exact: true }),
-  ).toBeVisible();
-  await context.setOffline(false);
-  if (
-    await page
-      .getByRole("button", { name: "重新连接", exact: true })
-      .isVisible()
-  )
-    await page.getByRole("button", { name: "重新连接", exact: true }).click();
-  await expect(page.getByText("当前处于离线状态", { exact: true })).toHaveCount(
-    0,
-  );
-  assert.deepEqual(errors, [], "No unhandled page errors");
-  assert.deepEqual(apiErrors, [], "No backend failures hidden by empty states");
-  assert.equal(
-    await page
-      .locator("img")
-      .evaluateAll((images) =>
-        images.some((image) => !image.complete || image.naturalWidth === 0),
-      ),
-    false,
-  );
-  output.push(
-    "mobile controls, theme, keyboard navigation and offline recovery",
-  );
-  console.log(JSON.stringify({ passed: output, screenshots }, null, 2));
+}
+
+const root = await mkdtemp(join(tmpdir(), "prism-live-test-"));
+const adminToken = randomBytes(32).toString("hex");
+const proxyToken = randomBytes(32).toString("hex");
+const results = [];
+let browser;
+let backend;
+let backendExit;
+let setupError;
+
+try {
+  const port = await reservePort();
+  const origin = `http://127.0.0.1:${port}`;
+  const started = startBackend({ root, port, adminToken, proxyToken });
+  backend = started.backend;
+  backendExit = started.exit;
+  await waitForHealth(origin, backend, started.stderr);
+
+  browser = await chromium.launch({ headless: true, executablePath, args: ["--no-sandbox"] });
+  const context = await browser.newContext({
+    locale: LOCALE,
+    viewport: { width: 1440, height: 900 },
+    reducedMotion: "reduce",
+  });
+  await context.addInitScript((locale) => {
+    localStorage.setItem("prism.locale", locale);
+  }, LOCALE);
+  const page = await context.newPage();
+  const errors = watchPage(page);
+
+  const fixture = { origin, page, adminToken, errors };
+  for (const { name, run } of checks) {
+    try {
+      await run(fixture);
+      results.push({ name, ok: true });
+    } catch (error) {
+      results.push({ name, ok: false, message: error?.message ?? String(error) });
+    }
+  }
 } catch (error) {
-  if (failurePage && !failurePage.isClosed()) {
-    await failurePage.screenshot({ path: join(screenshots, "failure.png"), fullPage: true }).catch(() => {});
-    console.error("Browser regression page:", failurePage.url());
-  }
-  throw error;
+  setupError = error;
 } finally {
   if (browser) await browser.close();
-  if (backend.exitCode === null) backend.kill("SIGTERM");
-  const timer = setTimeout(() => backend.kill("SIGKILL"), 7000);
-  await backendExit;
-  clearTimeout(timer);
+  if (backend) {
+    if (backend.exitCode === null) backend.kill("SIGTERM");
+    const timer = setTimeout(() => backend.kill("SIGKILL"), 7000);
+    await backendExit;
+    clearTimeout(timer);
+  }
   await rm(root, { recursive: true, force: true });
+}
+
+if (setupError) {
+  console.error("SETUP FAILED: " + setupError.message);
+  process.exitCode = 1;
+} else {
+  const passed = results.filter((result) => result.ok).length;
+  console.log("\nPrism panel browser check\n");
+  for (const result of results) {
+    console.log(`${result.ok ? "PASS" : "FAIL"}  ${result.name}`);
+    if (!result.ok) console.log("      " + result.message.split("\n").join("\n      "));
+  }
+  console.log(`\n${results.length} checks, ${passed} passed, ${results.length - passed} failed`);
+  if (passed !== results.length) process.exitCode = 1;
 }

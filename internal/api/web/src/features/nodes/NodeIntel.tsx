@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { LoaderCircle, RefreshCw } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
+import { Badge, type BadgeProps } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
@@ -51,38 +51,77 @@ const outcomeLabels: Record<string, string> = {
   error: "检测失败",
 };
 
+type Tone = NonNullable<BadgeProps["tone"]>;
+
+// The purity bands in presentation.ts still carry the old variant vocabulary;
+// the tones are the same three meanings under the names the kit uses.
+const bandTones: Record<string, Tone> = {
+  success: "signal",
+  info: "live",
+  warning: "warn",
+  danger: "alert",
+};
+
+const outcomeTones: Record<string, Tone> = {
+  available: "signal",
+  blocked: "alert",
+  region_limited: "warn",
+  captcha: "warn",
+  error: "alert",
+  unknown: "neutral",
+};
+
+/** One measurement in a definition list: quiet label above, value on the sheet. */
+function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="label">{label}</dt>
+      <dd className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink">
+        {children}
+      </dd>
+    </div>
+  );
+}
+
 /** Compact purity cell of the node list table. */
 export function NodeIntelCell({ intel }: { intel?: NodeIntel | null }) {
   const { t } = useI18n();
   const state = intel?.state || "unassessed";
   if (state === "unassessed") {
     return (
-      <div className="node-quality-cell">
-        <Badge variant="muted">{t(stateLabels.unassessed)}</Badge>
-        <small>{t("等待纯净度评估")}</small>
+      <div className="flex min-w-0 flex-col items-start gap-1">
+        <Badge tone="neutral" dot>
+          {t(stateLabels.unassessed)}
+        </Badge>
+        <span className="text-2xs text-ink-faint">{t("等待纯净度评估")}</span>
       </div>
     );
   }
   if (state === "pending" || state === "unsupported") {
+    const pending = state === "pending";
     return (
-      <div className="node-quality-cell">
-        <Badge>{t(stateLabels[state])}</Badge>
+      <div className="flex min-w-0 flex-col items-start gap-1">
+        <Badge tone={pending ? "live" : "neutral"} dot pulse={pending}>
+          {t(stateLabels[state])}
+        </Badge>
       </div>
     );
   }
   const band = purityBands.find((item) => item.id === intel?.purity_band);
   const score = typeof intel?.purity_score === "number" ? intel.purity_score : null;
   return (
-    <div className="node-quality-cell">
-      <Badge variant={band?.variant || "neutral"}>
-        {score !== null && <strong className="purity-badge-score">{score}</strong>}
+    <div className="flex min-w-0 flex-col items-start gap-1">
+      <Badge tone={bandTones[band?.variant ?? ""] ?? "neutral"}>
+        {score !== null && <span className="readout font-semibold">{score}</span>}
         {t(band?.label || "评级未知")}
       </Badge>
-      <small>
-        {t(confidenceLabels[intel?.confidence || "none"])}
-        {intel?.assessed_at ? " · " + formatRelativeTime(intel.assessed_at) : ""}
-      </small>
-      {state === "stale" && <small>{t(stateLabels.stale)}</small>}
+      <span className="flex flex-wrap items-center gap-1.5 text-2xs text-ink-faint">
+        <span>{t(confidenceLabels[intel?.confidence || "none"])}</span>
+        {intel?.assessed_at && (
+          <span className="readout">{formatRelativeTime(intel.assessed_at)}</span>
+        )}
+        {state === "stale" && <span className="text-warn">{t(stateLabels.stale)}</span>}
+      </span>
     </div>
   );
 }
@@ -119,7 +158,7 @@ export function NodeIntelPanel({ intel, nodeHash, ready, notify }: {
     onError: (error) => notify("error", formatApiErrorMessage(error, t)),
   });
   const actions = (
-    <div className="node-intel-actions">
+    <div className="flex flex-wrap items-center gap-2">
       <Button
         size="sm"
         variant="secondary"
@@ -127,91 +166,90 @@ export function NodeIntelPanel({ intel, nodeHash, ready, notify }: {
         title={t("为该节点创建完整检测任务，完成后刷新纯净度评估。")}
         onClick={() => reinspect.mutate()}
       >
-        {reinspect.isPending ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}
+        {reinspect.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}
         {t("重新检测")}
       </Button>
-      {jobCreated && <Link className="btn btn-ghost btn-sm" to="/jobs">{t("查看检测任务")}</Link>}
+      {jobCreated && (
+        <Button asChild variant="ghost" size="sm">
+          <Link to="/jobs">{t("查看检测任务")}</Link>
+        </Button>
+      )}
     </div>
   );
   const state = intel?.state || "unassessed";
   if (state === "unassessed") {
     return (
-      <>
+      <div className="space-y-3">
         {actions}
-        <p className="muted">{t("该节点还没有纯净度评估，运行一次节点检测后即可看到评分。")}</p>
-      </>
+        <p className="max-w-[80ch] text-sm leading-relaxed text-ink-soft">
+          {t("该节点还没有纯净度评估，运行一次节点检测后即可看到评分。")}
+        </p>
+      </div>
     );
   }
   const band = purityBands.find((item) => item.id === intel?.purity_band);
   const checks = Object.entries(intel?.checks || {});
   return (
-    <>
+    <div className="space-y-4">
       {actions}
-      <dl className="detail-facts">
-        <div>
-          <dt>{t("纯净度评分")}</dt>
-          <dd>
-            {typeof intel?.purity_score === "number" ? intel.purity_score + " / 100" : "--"}
-            {band && " · " + t(band.label)}
-          </dd>
-        </div>
-        <div>
-          <dt>{t("评估状态")}</dt>
-          <dd>{t(stateLabels[state] || state)}</dd>
-        </div>
-        <div>
-          <dt>{t("置信度")}</dt>
-          <dd>{t(confidenceLabels[intel?.confidence || "none"])}</dd>
-        </div>
-        <div>
-          <dt>{t("判定")}</dt>
-          <dd>{intel?.verdict || "--"}</dd>
-        </div>
-        <div>
-          <dt>{t("网络类型")}</dt>
-          <dd>{intel?.ip_type || "--"}</dd>
-        </div>
-        <div>
-          <dt>{t("原生 IP")}</dt>
-          <dd>{intel?.native === null || intel?.native === undefined ? "--" : t(intel.native ? "是" : "否")}</dd>
-        </div>
-        <div>
-          <dt>ASN</dt>
-          <dd>{intel?.asn ? `AS${intel.asn}${intel.as_org ? " · " + intel.as_org : ""}` : "--"}</dd>
-        </div>
-        <div>
-          <dt>{t("国家 / 城市")}</dt>
-          <dd>{[intel?.country, intel?.city].filter(Boolean).join(" · ") || "--"}</dd>
-        </div>
-        <div>
-          <dt>{t("出口地址")}</dt>
-          <dd>{[intel?.egress_ipv4, intel?.egress_ipv6].filter(Boolean).join(" · ") || "--"}{intel?.colo ? ` · ${intel.colo}` : ""}</dd>
-        </div>
-        <div>
-          <dt>{t("评估时间")}</dt>
-          <dd>{intel?.assessed_at ? formatRelativeTime(intel.assessed_at) : "--"}</dd>
-        </div>
-        <div>
-          <dt>{t("风险标记")}</dt>
-          <dd>
-            {(intel?.flags || []).length
-              ? (intel?.flags || []).map((flag) => <Badge key={flag} variant="warning">{t(flagLabels[flag] || flag)}</Badge>)
-              : t("未见明显标记")}
-          </dd>
-        </div>
-        {checks.length > 0 && (
-          <div>
-            <dt>{t("检测结果")}</dt>
-            <dd>
-              {checks.map(([id, outcome]) => (
-                <Badge key={id} variant={outcome === "available" ? "success" : "neutral"}>
-                  {id}: {t(outcomeLabels[outcome] || outcome)}
+      <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+        <Fact label={t("纯净度评分")}>
+          <span className="readout text-base font-semibold">
+            {typeof intel?.purity_score === "number" ? intel.purity_score : "--"}
+          </span>
+          <span className="text-2xs text-ink-faint">/ 100</span>
+          {band && <Badge tone={bandTones[band.variant] ?? "neutral"}>{t(band.label)}</Badge>}
+        </Fact>
+        <Fact label={t("评估状态")}>{t(stateLabels[state] || state)}</Fact>
+        <Fact label={t("置信度")}>{t(confidenceLabels[intel?.confidence || "none"])}</Fact>
+        <Fact label={t("判定")}>
+          <span className="readout">{intel?.verdict || "--"}</span>
+        </Fact>
+        <Fact label={t("网络类型")}>
+          <span className="readout">{intel?.ip_type || "--"}</span>
+        </Fact>
+        <Fact label={t("原生 IP")}>
+          {intel?.native === null || intel?.native === undefined ? "--" : t(intel.native ? "是" : "否")}
+        </Fact>
+        <Fact label="ASN">
+          {intel?.asn ? <span className="readout">AS{intel.asn}</span> : "--"}
+          {intel?.asn && intel.as_org ? <span className="text-ink-soft">{intel.as_org}</span> : null}
+        </Fact>
+        <Fact label={t("国家 / 城市")}>
+          {intel?.country && <span>{intel.country}</span>}
+          {intel?.city && <span className="text-ink-soft">{intel.city}</span>}
+          {!intel?.country && !intel?.city && "--"}
+        </Fact>
+        <Fact label={t("出口地址")}>
+          <span className="readout">{intel?.egress_ipv4 || "—"}</span>
+          {intel?.egress_ipv6 && <span className="readout">{intel.egress_ipv6}</span>}
+          {intel?.colo && <span className="text-2xs text-ink-faint">{intel.colo}</span>}
+        </Fact>
+        <Fact label={t("评估时间")}>
+          <span className="readout">
+            {intel?.assessed_at ? formatRelativeTime(intel.assessed_at) : "--"}
+          </span>
+        </Fact>
+        <Fact label={t("风险标记")}>
+          {(intel?.flags || []).length
+            ? (intel?.flags || []).map((flag) => (
+                <Badge key={flag} tone="warn">
+                  {t(flagLabels[flag] || flag)}
                 </Badge>
-              ))}
-            </dd>
-          </div>
+              ))
+            : t("未见明显标记")}
+        </Fact>
+        {checks.length > 0 && (
+          <Fact label={t("检测结果")}>
+            {checks.map(([id, outcome]) => (
+              <Badge key={id} tone={outcomeTones[outcome] ?? "neutral"}>
+                <span className="readout">{id}</span>
+                <span>{t(outcomeLabels[outcome] || outcome)}</span>
+              </Badge>
+            ))}
+          </Fact>
         )}
       </dl>
-    </>
+    </div>
   );
 }

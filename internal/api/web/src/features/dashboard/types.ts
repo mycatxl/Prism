@@ -139,3 +139,18 @@ export type DashboardPlatformData = {
   snapshot_platform_node_pool: SnapshotPlatformNodePool;
   snapshot_latency_platform: SnapshotNodeLatencyDistribution;
 };
+
+/** One node reduced to the facts the exit map needs. */
+export type NodeExitFact = {
+  /** ISO 3166-1 alpha-2, uppercase. Empty when the node's egress is unlocated. */
+  region: string;
+  healthy: boolean;
+  egressIp: string;
+};
+
+/** Exit nodes of one country. The map plots `exits` and the tooltip adds `healthy`. */
+export type RegionExitCount = {
+  region: string;
+  exits: number;
+  healthy: number;
+};

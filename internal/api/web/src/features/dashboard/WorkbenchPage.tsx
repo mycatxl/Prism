@@ -1,506 +1,443 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  ArrowDownLeft,
-  ArrowRight,
-  ArrowUpRight,
-  CircleCheck,
-  CircleHelp,
-  Globe2,
-  Network,
-  Plus,
-  RefreshCw,
-  Rss,
-  ShieldCheck,
-  Waypoints,
-} from "lucide-react";
-import { lazy, Suspense } from "react";
+import { Globe2, Plus, RefreshCw } from "lucide-react";
+import { lazy, Suspense, useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { Button } from "../../components/ui/Button";
-import { QueryState } from "../../components/ui/QueryState";
-import { Badge } from "../../components/ui/Badge";
+import { SectionTitle } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Sparkline } from "../../components/ui/Sparkline";
 import { useI18n } from "../../i18n";
 import { formatRelativeTime } from "../../lib/time";
-import { listPlatforms } from "../platforms/api";
-import { allocationPolicyLabel } from "../platforms/constants";
-import { listSubscriptions } from "../subscriptions/api";
-import { getQualityStatus, qualityPollingInterval } from "../quality/api";
-import { QualityOverview } from "../quality/QualityOverview";
 import {
+  type DashboardGlobalHistoryData,
+  type DashboardGlobalRealtimeData,
+  getDashboardGlobalHistoryData,
   getDashboardGlobalRealtimeData,
   getDashboardGlobalSnapshotData,
+  listNodeExitFacts,
 } from "./api";
+import { EXIT_COUNT_BANDS, exitCountBandLabel } from "./chartPalette";
+import { PLACEHOLDER, formatBytes, formatCount, formatPercent, toEpochMs } from "./format";
+import {
+  DEFAULT_RANGE_KEY,
+  NODE_EXITS_REFRESH_MS,
+  RANGE_OPTIONS,
+  SNAPSHOT_REFRESH_MS,
+  type RangeKey,
+  getTimeWindow,
+  historyRefreshMsFromBuckets,
+  parseRangeKey,
+  rangeOption,
+  realtimeRefreshMsFromSteps,
+} from "./range";
+import { aggregateExitsByRegion } from "./worldMap";
+import LatencyProfile from "./LatencyProfile";
 
-const Trends = lazy(() =>
-  import("./DashboardPage").then((module) => ({
-    default: module.DashboardPage,
-  })),
-);
-const count = (n: number | undefined) =>
-  n === undefined ? "--" : n.toLocaleString();
-const rate = (n: number | undefined) =>
-  n === undefined
-    ? "--"
-    : n >= 1e6
-      ? `${(n / 1e6).toFixed(1)} Mbps`
-      : `${(n / 1e3).toFixed(1)} Kbps`;
+/**
+ * The two charts are the only ECharts consumers in the panel, so they load with
+ * the map and the canvas, not with the route table.
+ */
+const EgressMap = lazy(() => import("./EgressMap"));
+const TrafficChart = lazy(() => import("./TrafficChart"));
 
+type Point = [number, number];
+
+function toPoints<T>(items: T[], valueOf: (item: T) => number, stampOf: (item: T) => string): Point[] {
+  const points: Point[] = [];
+  for (const item of items) {
+    const stamp = toEpochMs(stampOf(item));
+    if (stamp === null) {
+      continue;
+    }
+    points.push([stamp, guardValue(valueOf(item))]);
+  }
+  return points.sort((left, right) => left[0] - right[0]);
+}
+
+function guardValue(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function toSeries<T>(items: T[], valueOf: (item: T) => number): number[] {
+  return items.map((item) => guardValue(valueOf(item)));
+}
+
+/**
+ * The overview screen: where traffic leaves, and how it is doing.
+ *
+ * Three bands on one sheet of paper, separated by hairlines — an instrument
+ * strip, the exit map, then the live half. Nothing is boxed into a card: the
+ * structure is the rules and the alignment, which is what makes a wall display
+ * readable from a few metres away.
+ */
 export function WorkbenchPage() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
-  const tab = params.get("view") === "trends" ? "trends" : "overview";
+  const rangeKey = parseRangeKey(params.get("range"));
   const queryClient = useQueryClient();
+
   const snapshot = useQuery({
     queryKey: ["dashboard-global-snapshot"],
     queryFn: getDashboardGlobalSnapshotData,
-    refetchInterval: 15_000,
+    refetchInterval: SNAPSHOT_REFRESH_MS,
+    placeholderData: (previous) => previous,
   });
+
   const realtime = useQuery({
-    queryKey: ["workbench", "realtime"],
-    queryFn: () =>
-      getDashboardGlobalRealtimeData({
-        from: new Date(Date.now() - 30 * 60_000).toISOString(),
-        to: new Date().toISOString(),
-      }),
-    refetchInterval: 15_000,
+    queryKey: ["workbench", "realtime", rangeKey],
+    queryFn: async () => {
+      const previous = queryClient.getQueryData<DashboardGlobalRealtimeData>(["workbench", "realtime", rangeKey]);
+      return getDashboardGlobalRealtimeData(getTimeWindow(rangeKey), previous);
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data as DashboardGlobalRealtimeData | undefined;
+      return realtimeRefreshMsFromSteps([
+        data?.realtime_throughput.step_seconds,
+        data?.realtime_connections.step_seconds,
+        data?.realtime_leases.step_seconds,
+      ]);
+    },
+    placeholderData: (previous) => previous,
   });
-  const platforms = useQuery({
-    queryKey: ["platforms", "workbench"],
-    queryFn: () => listPlatforms({ limit: 5 }),
-    refetchInterval: 30_000,
+
+  const history = useQuery({
+    queryKey: ["workbench", "history", rangeKey],
+    queryFn: async () => {
+      const previous = queryClient.getQueryData<DashboardGlobalHistoryData>(["workbench", "history", rangeKey]);
+      return getDashboardGlobalHistoryData(getTimeWindow(rangeKey), previous);
+    },
+    refetchInterval: (query) => {
+      const data = query.state.data as DashboardGlobalHistoryData | undefined;
+      return historyRefreshMsFromBuckets([
+        data?.history_traffic.bucket_seconds,
+        data?.history_requests.bucket_seconds,
+        data?.history_node_pool.bucket_seconds,
+      ]);
+    },
+    placeholderData: (previous) => previous,
   });
-  const subscriptions = useQuery({
-    queryKey: ["subscriptions", "workbench"],
-    queryFn: () => listSubscriptions({ limit: 4 }),
-    refetchInterval: 30_000,
+
+  const nodes = useQuery({
+    queryKey: ["workbench", "node-exits"],
+    queryFn: ({ signal }) => listNodeExitFacts(signal),
+    refetchInterval: NODE_EXITS_REFRESH_MS,
+    placeholderData: (previous) => previous,
   });
+
   const pool = snapshot.data?.snapshot_node_pool;
-  const quality = useQuery({
-    queryKey: ["quality", "status"],
-    queryFn: getQualityStatus,
-    refetchInterval: query => qualityPollingInterval(query.state.data),
-  });
-  const samples = realtime.data?.realtime_throughput.items ?? [];
-  const latest = samples.at(-1);
-  const connections = realtime.data?.realtime_connections.items.at(-1);
-  const leases = realtime.data?.realtime_leases.items.at(-1);
-  const healthPercent = pool?.total_nodes
-    ? Math.round((pool.healthy_nodes / pool.total_nodes) * 100)
-    : 0;
-  const loading =
-    snapshot.isFetching ||
-    realtime.isFetching ||
-    platforms.isFetching ||
-    subscriptions.isFetching;
-  const otherNodes = pool ? Math.max(0, pool.total_nodes - pool.healthy_nodes) : 0;
+  const latency = snapshot.data?.snapshot_latency_global;
+
+  const nodeFacts = useMemo(() => nodes.data ?? [], [nodes.data]);
+  const { regions, unknown } = useMemo(() => aggregateExitsByRegion(nodeFacts), [nodeFacts]);
+
+  // Band 1 — the four values that describe the pool, each with the trend the
+  // panel already holds for it.
+  const leaseItems = useMemo(() => realtime.data?.realtime_leases.items ?? [], [realtime.data]);
+  const leaseValues = useMemo(() => toSeries(leaseItems, (item) => item.active_leases), [leaseItems]);
+  const latestLease = leaseItems.at(-1);
+
+  const nodePoolItems = useMemo(() => history.data?.history_node_pool.items ?? [], [history.data]);
+  const nodeHealthyValues = useMemo(() => toSeries(nodePoolItems, (item) => item.healthy_nodes), [nodePoolItems]);
+  const egressIpValues = useMemo(() => toSeries(nodePoolItems, (item) => item.egress_ip_count), [nodePoolItems]);
+
+  const requestItems = useMemo(() => history.data?.history_requests.items ?? [], [history.data]);
+  const successRateValues = useMemo(() => toSeries(requestItems, (item) => item.success_rate), [requestItems]);
+  const latestMeasuredRequest = useMemo(
+    () => [...requestItems].reverse().find((item) => item.total_requests > 0),
+    [requestItems],
+  );
+  const windowRequests = useMemo(
+    () =>
+      requestItems.reduce(
+        (totals, item) => ({
+          total: totals.total + item.total_requests,
+          success: totals.success + item.success_requests,
+        }),
+        { total: 0, success: 0 },
+      ),
+    [requestItems],
+  );
+
+  // Band 3 — throughput per bucket over the window, and the connections that
+  // were in flight while those buckets were written.
+  const trafficItems = useMemo(() => history.data?.history_traffic.items ?? [], [history.data]);
+  const ingressPoints = useMemo(
+    () => toPoints(trafficItems, (item) => item.ingress_bytes, (item) => item.bucket_start),
+    [trafficItems],
+  );
+  const egressPoints = useMemo(
+    () => toPoints(trafficItems, (item) => item.egress_bytes, (item) => item.bucket_start),
+    [trafficItems],
+  );
+  const windowVolume = useMemo(
+    () => trafficItems.reduce((total, item) => total + item.ingress_bytes + item.egress_bytes, 0),
+    [trafficItems],
+  );
+
+  const connectionItems = useMemo(() => realtime.data?.realtime_connections.items ?? [], [realtime.data]);
+  const connectionPoints = useMemo(
+    () => toPoints(connectionItems, (item) => item.inbound_connections + item.outbound_connections, (item) => item.ts),
+    [connectionItems],
+  );
+
+  const busy =
+    snapshot.isFetching || realtime.isFetching || history.isFetching || nodes.isFetching;
+  const poolHealthy = pool?.healthy_nodes ?? 0;
+
+  const selectRange = (next: RangeKey) => {
+    const nextParams = new URLSearchParams(params);
+    if (next === DEFAULT_RANGE_KEY) {
+      nextParams.delete("range");
+    } else {
+      nextParams.set("range", next);
+    }
+    setParams(nextParams, { replace: true });
+  };
+
+  const chartEmpty = ingressPoints.length === 0 && egressPoints.length === 0 && connectionPoints.length === 0;
+
   return (
-    <section className="workbench-page">
-      <header className="module-header">
-        <div>
-          <h1>{t("总览看板")}</h1>
-          <p className="workspace-description">
+    <section className="min-h-full bg-paper px-4 py-4 lg:px-6 lg:py-5">
+      <header className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl">{t("总览看板")}</h1>
+          <p className="mt-1 max-w-[60ch] text-sm text-ink-soft">
             {t("查看线路健康、出口质量和实时连接。")}
           </p>
         </div>
-        <div className="page-actions">
+        <div className="flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-label={t("时间范围")}
+            className="inline-flex divide-x divide-rule overflow-hidden rounded-control border border-rule bg-paper-raised"
+          >
+            {RANGE_OPTIONS.map((option) => (
+              <Button
+                key={option.key}
+                variant="quiet"
+                size="sm"
+                className="rounded-none border-0 px-3 aria-pressed:bg-paper-sunk aria-pressed:font-semibold aria-pressed:text-ink"
+                aria-pressed={option.key === rangeKey}
+                onClick={() => selectRange(option.key)}
+              >
+                {t(option.label)}
+              </Button>
+            ))}
+          </div>
           <Button
             variant="ghost"
-            className="icon-button"
+            size="icon"
+            type="button"
             title={t("刷新")}
             aria-label={t("刷新")}
-            disabled={loading}
+            disabled={busy}
             onClick={() => void queryClient.invalidateQueries()}
           >
-            <RefreshCw size={17} className={loading ? "spin" : ""} />
+            <RefreshCw size={16} className={busy ? "animate-spin" : ""} />
           </Button>
-          <Link className="btn btn-primary" to="/subscriptions?create=1">
-            <Plus size={16} />
-            {t("添加订阅")}
-          </Link>
+          <Button asChild variant="primary">
+            <Link to="/subscriptions?create=1">
+              <Plus size={15} />
+              {t("添加订阅")}
+            </Link>
+          </Button>
         </div>
       </header>
-      <div className="view-tabs" role="tablist" aria-label={t("总览视图")}>
-        {[
-          { key: "overview", label: "运行概况" },
-          { key: "trends", label: "历史趋势" },
-        ].map((item, index) => (
-          <button
-            key={item.key}
-            role="tab"
-            aria-selected={tab === item.key}
-            aria-controls="workbench-view"
-            tabIndex={tab === item.key ? 0 : -1}
-            className={tab === item.key ? "is-active" : ""}
-            onClick={() =>
-              setParams(item.key === "overview" ? {} : { view: item.key })
-            }
-            onKeyDown={(event) => {
-              if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-                event.preventDefault();
-                setParams(index === 0 ? { view: "trends" } : {});
-                (
-                  event.currentTarget.parentElement?.children[
-                    index === 0 ? 1 : 0
-                  ] as HTMLElement
-                )?.focus();
-              }
-            }}
-          >
-            {t(item.label)}
-          </button>
-        ))}
+
+      {snapshot.isError && (
+        <ErrorState
+          className="mt-4"
+          message={t("无法连接服务，请检查连接后重试。")}
+          onRetry={() => void snapshot.refetch()}
+        />
+      )}
+
+      {/* Band 1 — the instrument strip: one baseline, hairline separations. */}
+      <div className="mt-4">
+        <ReadoutStrip className="grid-cols-2 lg:grid-cols-4">
+          <ReadoutCell className="px-4 py-4 xl:px-6">
+            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+              <Readout
+                size="lg"
+                label={t("可路由节点")}
+                value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
+                hint={`${t("健康")} ${pool ? formatCount(poolHealthy) : PLACEHOLDER}`}
+              />
+              <Sparkline className="shrink-0" values={nodeHealthyValues} width={48} height={20} tone="muted" />
+            </div>
+          </ReadoutCell>
+          <ReadoutCell className="px-4 py-4 xl:px-6">
+            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+              <Readout
+                size="lg"
+                label={t("出口 IP 数")}
+                value={pool ? formatCount(pool.egress_ip_count) : PLACEHOLDER}
+                hint={`${t("健康出口 IP")} ${pool ? formatCount(pool.healthy_egress_ip_count) : PLACEHOLDER}`}
+              />
+              <Sparkline className="shrink-0" values={egressIpValues} width={48} height={20} tone="muted" />
+            </div>
+          </ReadoutCell>
+          <ReadoutCell className="px-4 py-4 xl:px-6">
+            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+              <Readout
+                size="lg"
+                label={t("活跃租约数")}
+                value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
+                hint={t(rangeOption(rangeKey).label)}
+              />
+              <Sparkline className="shrink-0" values={leaseValues} width={48} height={20} tone="live" />
+            </div>
+          </ReadoutCell>
+          <ReadoutCell className="px-4 py-4 xl:px-6">
+            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+              <Readout
+                size="lg"
+                label={t("请求成功率")}
+                value={latestMeasuredRequest ? formatPercent(latestMeasuredRequest.success_rate) : PLACEHOLDER}
+                hint={`${t("成功请求")} ${formatCount(windowRequests.success)} / ${t("总请求")} ${formatCount(windowRequests.total)}`}
+              />
+              <Sparkline className="shrink-0" values={successRateValues} width={48} height={20} tone="signal" />
+            </div>
+          </ReadoutCell>
+        </ReadoutStrip>
       </div>
-      <div id="workbench-view" role="tabpanel">
-        {tab === "trends" ? (
-          <Suspense fallback={<QueryState loading />}>
-            <Trends />
-          </Suspense>
-        ) : (
-          <>
-            <QueryState
-              error={snapshot.error}
-              onRetry={() => void snapshot.refetch()}
+
+      {/* Band 2 — the map: the hero, and the only place the layout is allowed
+          to be tall. */}
+      <section className="mt-6">
+        <SectionTitle
+          trailing={
+            <span className="text-xs text-ink-faint">
+              {formatCount(regions.length)} {t("地区")}
+            </span>
+          }
+        >
+          {t("出口 / 区域")}
+        </SectionTitle>
+        <div className="mt-2 h-[clamp(320px,44vh,620px)]">
+          {nodes.isError ? (
+            <ErrorState
+              className="my-auto"
+              message={t("无法连接服务，请检查连接后重试。")}
+              onRetry={() => void nodes.refetch()}
             />
-            {pool?.total_nodes === 0 && !snapshot.isError && (
-              <div className="onboarding-row">
-                <span className="onboarding-icon"><Rss size={23} /></span>
-                <div>
-                  <h2>{t("建立你的第一个节点池")}</h2>
-                  <p>{t("添加订阅链接或导入本地节点，开始查看线路状态。")}</p>
-                </div>
-                <Link className="btn btn-primary" to="/subscriptions?create=1">
-                  {t("开始导入")}<ArrowRight size={15} />
-                </Link>
-              </div>
-            )}
-            <div className="resource-overview" aria-busy={snapshot.isLoading}>
-              <div className="resource-total">
-                <span>
-                  <Network size={16} />
-                  {t("库存节点")}
-                </span>
-                <strong>{count(pool?.total_nodes)}</strong>
-                <Link to="/nodes">
-                  {t("查看节点池")}
-                  <ArrowUpRight size={15} />
-                </Link>
-              </div>
-              <div className="resource-health">
-                <div className="section-heading">
-                  <h2>{t("节点健康")}</h2>
-                  <span>{pool?.total_nodes ? `${healthPercent}%` : "--"}</span>
-                </div>
-                <div
-                  className="health-strip"
-                  role="img"
-                  aria-label={
-                    pool
-                      ? `${t("健康")} ${pool.healthy_nodes} / ${pool.total_nodes}`
-                      : t("正在加载")
-                  }
-                >
-                  {Array.from({ length: 24 }, (_, i) => (
-                    <span
-                      className={
-                        pool && i < healthPercent * 0.24 ? "healthy" : ""
-                      }
-                      key={i}
-                    />
-                  ))}
-                </div>
-                <div className="health-legend">
-                  <Link to="/nodes?status=healthy">
-                    <i className="dot-success" />
-                    {t("健康")}
-                    <b>{count(pool?.healthy_nodes)}</b>
-                  </Link>
-                  <Link to="/nodes">
-                    <i className="dot-muted" />
-                    {t("其他节点")}
-                    <b>
-                      {pool
-                        ? count(pool.total_nodes - pool.healthy_nodes)
-                        : "--"}
-                    </b>
-                  </Link>
-                </div>
-              </div>
-              <div className="resource-exits">
-                <span>
-                  <Globe2 size={16} />
-                  {t("健康出口 IP")}
-                </span>
-                <strong>{count(pool?.healthy_egress_ip_count)}</strong>
-                <small>
-                  {t("已发现出口")} {count(pool?.egress_ip_count)}
-                </small>
-              </div>
-              <div className="resource-quality">
-                <span><ShieldCheck size={16} />{t("网络证据")}</span>
-                <strong>{count(quality.data?.checked_ips)}</strong>
-                <Link to="/nodes?view=exits">{t("出口记录")}<ArrowUpRight size={15} /></Link>
-              </div>
-            </div>
-            {otherNodes > 0 && !snapshot.isError && (
-              <div className="pool-attention">
-                <CircleHelp size={16} aria-hidden="true" />
-                <span>{t("还有 {{count}} 个节点待检测或暂不可用", { count: otherNodes })}</span>
-                <Link to="/nodes">{t("查看节点状态")}<ArrowRight size={14} /></Link>
-              </div>
-            )}
-            <QualityOverview status={quality.data} />
-            <div className="workbench-live">
-              <section className="traffic-section">
-                <div className="section-heading">
-                  <h2>{t("实时流量")}</h2>
-                  <span>{t("最近 30 分钟")}</span>
-                </div>
-                <div className="traffic-values">
-                  <span>
-                    <ArrowDownLeft size={15} />
-                    {t("下载")} <strong>{rate(latest?.ingress_bps)}</strong>
-                  </span>
-                  <span>
-                    <ArrowUpRight size={15} />
-                    {t("上传")} <strong>{rate(latest?.egress_bps)}</strong>
-                  </span>
-                </div>
-                <QueryState
-                  loading={realtime.isLoading}
-                  error={realtime.error}
-                  empty={
-                    !realtime.isLoading && !realtime.isError && !samples.length
-                  }
-                  emptyText={t("暂无流量采样")}
-                  onRetry={() => void realtime.refetch()}
+          ) : !nodes.data ? (
+            <LoadingState className="h-full" label={t("正在加载")} />
+          ) : nodeFacts.length === 0 ? (
+            <EmptyState
+              className="h-full justify-center"
+              title={t("建立你的第一个节点池")}
+              hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
+              action={
+                <Button asChild variant="primary">
+                  <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
+                </Button>
+              }
+            />
+          ) : (
+            <Suspense fallback={<LoadingState className="h-full" label={t("正在加载")} />}>
+              <EgressMap regions={regions} />
+            </Suspense>
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 text-2xs text-ink-faint">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+            <span>{t("节点")}</span>
+            {EXIT_COUNT_BANDS.map((band) => (
+              <span key={band.min} className="inline-flex items-center gap-1.5">
+                <span
+                  aria-hidden
+                  className="size-2.5 border border-rule"
+                  style={{ backgroundColor: band.color }}
                 />
-                {samples.length > 0 && (
-                  <div className="live-chart" aria-label={t("实时流量")}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={samples}
-                        margin={{ top: 12, right: 12, bottom: 0, left: 0 }}
-                      >
-                        <CartesianGrid
-                          stroke="var(--border)"
-                          vertical={false}
-                          strokeDasharray="2 4"
-                        />
-                        <XAxis
-                          dataKey="ts"
-                          tickFormatter={(v: string) =>
-                            new Date(v).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              ...(samples.length > 1 && Date.parse(samples.at(-1)!.ts) - Date.parse(samples[0].ts) < 120000 ? { second: "2-digit" as const } : {}),
-                            })
-                          }
-                          minTickGap={55}
-                          tick={{ fill: "var(--text-muted)", fontSize: 11 }}
-                          tickLine={false}
-                          axisLine={false}
-                        />
-                        <YAxis
-                          width={72}
-                          domain={[0, (maximum: number) => Math.max(1000, maximum)]}
-                          tickFormatter={(v: number) => rate(v)}
-                          tick={{ fill: "var(--text-muted)", fontSize: 10 }}
-                          tickLine={false}
-                          axisLine={false}
-                        />
-                        <Tooltip
-                          labelFormatter={(v) =>
-                            new Date(String(v)).toLocaleTimeString()
-                          }
-                          formatter={(v) => rate(Number(v))}
-                          contentStyle={{
-                            background: "var(--surface)",
-                            border: "1px solid var(--border)",
-                            borderRadius: 6,
-                            color: "var(--text)",
-                          }}
-                        />
-                        <Line
-                          dataKey="ingress_bps"
-                          name={t("下载")}
-                          stroke="var(--primary)"
-                          strokeWidth={2}
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                        <Line
-                          dataKey="egress_bps"
-                          name={t("上传")}
-                          stroke="var(--chart-secondary)"
-                          strokeWidth={1.5}
-                          dot={false}
-                          isAnimationActive={false}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </section>
-              <aside className="connection-section">
-                <div className="section-heading">
-                  <h2>{t("连接与会话")}</h2>
-                  <Link
-                    to="/endpoints"
-                    title={t("接入点")}
-                    aria-label={t("接入点")}
-                  >
-                    <ArrowUpRight size={17} />
-                  </Link>
-                </div>
-                <dl className="connection-facts">
-                  <div>
-                    <dt>{t("入站连接")}</dt>
-                    <dd>{count(connections?.inbound_connections)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("出站连接")}</dt>
-                    <dd>{count(connections?.outbound_connections)}</dd>
-                  </div>
-                  <div>
-                    <dt>{t("活跃租约数")}</dt>
-                    <dd>{count(leases?.active_leases)}</dd>
-                  </div>
-                </dl>
-                <Link className="text-link" to="/request-logs">
-                  {t("查看请求日志")}
-                  <ArrowRight size={15} />
-                </Link>
-              </aside>
-            </div>
-            <div className="workbench-objects">
-              <section>
-                <div className="section-heading">
-                  <h2>
-                    <Waypoints size={17} />
-                    {t("平台管理")}
-                  </h2>
-                  <Link to="/platforms">
-                    {t("全部平台")}
-                    <ArrowUpRight size={14} />
-                  </Link>
-                </div>
-                <QueryState
-                  loading={platforms.isLoading}
-                  error={platforms.error}
-                  empty={
-                    !platforms.isLoading &&
-                    !platforms.isError &&
-                    !platforms.data?.items.length
-                  }
-                  emptyText={t("暂无平台")}
-                  onRetry={() => void platforms.refetch()}
-                />
-                {platforms.data?.items.map((platform) => (
-                  <Link
-                    className="workbench-object"
-                    to={`/platforms/${platform.id}`}
-                    key={platform.id}
-                  >
-                    <span className="object-icon">
-                      <Waypoints size={17} />
-                    </span>
-                    <div>
-                      <strong>{platform.name}</strong>
-                      <small>
-                        {t(allocationPolicyLabel[platform.allocation_policy])} /{" "}
-                        {platform.regex_filters.length
-                          ? platform.regex_filters.join("  ")
-                          : t("全部标签")}
-                      </small>
-                    </div>
-                    <Badge
-                      variant={
-                        platform.routable_node_count ? "success" : "neutral"
-                      }
-                    >
-                      {count(platform.routable_node_count)} {t("节点")}
-                    </Badge>
-                    <ArrowRight size={14} />
-                  </Link>
-                ))}
-              </section>
-              <section>
-                <div className="section-heading">
-                  <h2>
-                    <Rss size={17} />
-                    {t("最近订阅")}
-                  </h2>
-                  <Link to="/subscriptions">
-                    {t("全部订阅")}
-                    <ArrowUpRight size={14} />
-                  </Link>
-                </div>
-                <QueryState
-                  loading={subscriptions.isLoading}
-                  error={subscriptions.error}
-                  empty={
-                    !subscriptions.isLoading &&
-                    !subscriptions.isError &&
-                    !subscriptions.data?.items.length
-                  }
-                  emptyText={t("尚未添加订阅")}
-                  onRetry={() => void subscriptions.refetch()}
-                />
-                {subscriptions.data?.items.map((sub) => (
-                  <Link
-                    className="workbench-object"
-                    to={`/subscriptions?selected=${sub.id}`}
-                    key={sub.id}
-                  >
-                    <span className="object-icon">
-                      <Rss size={17} />
-                    </span>
-                    <div>
-                      <strong>{sub.name}</strong>
-                      <small>
-                        {sub.last_error || formatRelativeTime(sub.last_checked)}
-                      </small>
-                    </div>
-                    <Badge
-                      variant={
-                        sub.last_error
-                          ? "danger"
-                          : sub.enabled
-                            ? "success"
-                            : "neutral"
-                      }
-                    >
-                      {t(
-                        sub.last_error
-                          ? "异常"
-                          : sub.enabled
-                            ? "已启用"
-                            : "已停用",
-                      )}
-                    </Badge>
-                  </Link>
-                ))}
-              </section>
-            </div>
-            <footer className="workbench-footer">
-              <CircleCheck size={13} />
-              <span>
-                {pool?.generated_at
-                  ? `${t("快照更新")} ${formatRelativeTime(pool.generated_at)}`
-                  : t("等待服务数据")}
+                <span className="readout">{exitCountBandLabel(band)}</span>
               </span>
-            </footer>
-          </>
-        )}
-      </div>
+            ))}
+          </div>
+          <span className="inline-flex items-center gap-1.5">
+            <Globe2 size={12} aria-hidden />
+            {t("地区")} {t("未知")}
+            <span className="readout text-ink-soft">{formatCount(unknown)}</span>
+          </span>
+        </div>
+      </section>
+
+      {/* Band 3 — the live half: a vertical rule, not two cards. */}
+      <section className="mt-6 border-t border-rule pt-4 lg:grid lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+        <div className="min-w-0 lg:pr-6">
+          <SectionTitle
+            trailing={
+              <span className="text-xs text-ink-faint">
+                {t("流量累计")}{" "}
+                <span className="readout text-ink-soft">{formatBytes(windowVolume)}</span>
+              </span>
+            }
+          >
+            {t("流量")}
+          </SectionTitle>
+          <div className="mt-2 h-[240px] xl:h-[280px]">
+            {realtime.isError || history.isError ? (
+              <ErrorState
+                className="my-auto"
+                message={t("无法连接服务，请检查连接后重试。")}
+                onRetry={() => {
+                  void realtime.refetch();
+                  void history.refetch();
+                }}
+              />
+            ) : (realtime.isLoading && !realtime.data) || (history.isLoading && !history.data) ? (
+              <LoadingState className="h-full" label={t("正在加载")} />
+            ) : chartEmpty ? (
+              <EmptyState className="h-full justify-center" title={t("暂无流量采样")} />
+            ) : (
+              <Suspense fallback={<LoadingState className="h-full" label={t("正在加载")} />}>
+                <TrafficChart egress={egressPoints} ingress={ingressPoints} connections={connectionPoints} />
+              </Suspense>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-5 min-w-0 border-t border-rule pt-4 lg:mt-0 lg:border-t-0 lg:border-l lg:pl-6 lg:pt-0">
+          <SectionTitle
+            trailing={
+              <span className="text-xs text-ink-faint">
+                {t("节点数")}{" "}
+                <span className="readout text-ink-soft">{formatCount(latency?.sample_count ?? 0)}</span>
+              </span>
+            }
+          >
+            {t("节点延迟分布")}
+          </SectionTitle>
+          <div className="mt-2">
+            {snapshot.isError ? (
+              <ErrorState
+                message={t("无法连接服务，请检查连接后重试。")}
+                onRetry={() => void snapshot.refetch()}
+              />
+            ) : !latency ? (
+              <LoadingState label={t("正在加载")} />
+            ) : (
+              <LatencyProfile
+                buckets={latency.buckets}
+                overflowCount={latency.overflow_count}
+                overflowMs={latency.overflow_ms}
+              />
+            )}
+          </div>
+        </div>
+      </section>
+
+      <footer className="mt-4 flex flex-wrap items-center justify-between gap-x-6 gap-y-1 border-t border-rule pt-2 text-xs text-ink-faint">
+        <span>
+          {pool?.generated_at
+            ? `${t("快照更新")} ${formatRelativeTime(pool.generated_at)}`
+            : t("等待服务数据")}
+        </span>
+        <span className="inline-flex items-center gap-3">
+          <Link to="/nodes">{t("查看节点池")}</Link>
+        </span>
+      </footer>
     </section>
   );
 }

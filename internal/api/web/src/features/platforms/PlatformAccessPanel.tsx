@@ -2,10 +2,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Info } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
+import { Fieldset, Input } from "../../components/ui/Input";
+import { SectionTitle } from "../../components/ui/Panel";
+import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useI18n } from "../../i18n";
-import { getEnvConfig } from "../systemConfig/api";
+import { cn } from "../../lib/cn";
 import { readMigratedValue, removeStoredValues } from "../../lib/storage";
+import { getEnvConfig } from "../systemConfig/api";
 
 const PROXY_TOKEN_STORAGE_KEY = "prism.proxy-session-token";
 const LEGACY_PROXY_TOKEN_KEYS = ["prismx.proxy-session-token"];
@@ -123,6 +126,12 @@ type CopyFieldProps = {
   copiedLabel: string;
 };
 
+/**
+ * A credential or address that gets copied rather than typed.
+ *
+ * The value is mono because it is read character by character, and it wraps
+ * instead of scrolling so no part of an address is ever hidden from the operator.
+ */
 function CopyField({
   label,
   value,
@@ -154,22 +163,23 @@ function CopyField({
   };
 
   return (
-    <div className="platform-access-field">
-      <div className="platform-access-field-head">
-        <span className="platform-access-field-label">{label}</span>
-        {hint ? (
-          <span className="platform-access-field-hint">{hint}</span>
-        ) : null}
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-2 pb-1">
+        <span className="label">{label}</span>
+        {hint ? <span className="text-2xs text-ink-faint">{hint}</span> : null}
       </div>
-      <div className="platform-access-field-body">
-        <code className="platform-access-value" title={value}>
+      <div className="flex items-start gap-2">
+        <code
+          className="min-w-0 flex-1 rounded-control border border-rule bg-paper-sunk px-2 py-1.5 font-mono text-xs break-all text-ink"
+          title={value}
+        >
           {value}
         </code>
         <Button
           variant="secondary"
           size="sm"
           onClick={() => void handleCopy()}
-          className="platform-access-copy-btn"
+          aria-label={`${copied ? copiedLabel : copyLabel}：${label}`}
         >
           {copied ? <Check size={14} /> : <Copy size={14} />}
           {copied ? copiedLabel : copyLabel}
@@ -260,146 +270,148 @@ export function PlatformAccessPanel({
   const copiedLabel = t("已复制");
   const tokenMissing = proxyTokenSet && !token.trim();
   const tokenInputValue = proxyTokenSet ? token : "";
+  const endpointInvalid = Boolean(endpointOverride && !parseProxyEndpoint(endpointOverride));
+  const tokenHint = t(
+    "即后端 PRISM_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
+  );
 
   return (
-    <section className="platform-detail-tabpanel platform-access-section">
-      <div className="platform-drawer-section-head">
-        <h4>{t("接入方式")}</h4>
-        <p>{t("填写账号与代理 token，一键复制正向/反向代理地址。")}</p>
-      </div>
-
-      <div className="platform-access-inputs">
-        <div className="field-group">
-          <label className="field-label" htmlFor="access-endpoint">
-            {t("代理服务地址")}
-          </label>
-          <Input
-            id="access-endpoint"
-            placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
-            value={endpointOverride}
-            onChange={(event) => setEndpointOverride(event.target.value)}
-            invalid={Boolean(
-              endpointOverride && !parseProxyEndpoint(endpointOverride),
-            )}
-          />
-          {endpointOverride && !parseProxyEndpoint(endpointOverride) ? (
-            <p className="field-error">
-              {t("请输入不含凭证和路径的 HTTP(S) 地址")}
-            </p>
-          ) : null}
-        </div>
-        <div className="field-group">
-          <label className="field-label" htmlFor="access-account">
-            {t("业务账号（可选）")}
-          </label>
-          <Input
-            id="access-account"
-            placeholder={t("例如 user_tom，留空则只按平台路由")}
-            value={account}
-            onChange={(event) => setAccount(event.target.value)}
-          />
-        </div>
-
-        <div className="field-group">
-          <label
-            className="field-label field-label-with-info"
-            htmlFor="access-token"
-          >
-            <span>{t("代理 token")}</span>
-            <span
-              className="subscription-info-icon"
-              title={t(
-                "即后端 PRISM_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
-              )}
-              aria-label={t(
-                "即后端 PRISM_PROXY_TOKEN。仅保存在浏览器本地，不会上传服务器。",
-              )}
-              tabIndex={0}
-            >
-              <Info size={13} />
-            </span>
-          </label>
-          <Input
-            id="access-token"
-            type="password"
-            placeholder={
-              proxyTokenSet
-                ? t("填写 PRISM_PROXY_TOKEN")
-                : t("当前代理免认证，无需填写")
-            }
-            value={tokenInputValue}
-            onChange={(event) => {
-              if (proxyTokenSet) {
-                handleTokenChange(event.target.value);
-              }
-            }}
-            disabled={!proxyTokenSet}
-            autoComplete="off"
-          />
-          {tokenMissing ? (
-            <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-              {t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}
-            </p>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="platform-access-group">
-        <h5>{t("正向代理")}</h5>
-        <CopyField
-          label={t("HTTP 正向代理")}
-          value={urls.httpForward}
-          copyLabel={copyLabel}
-          copiedLabel={copiedLabel}
-        />
-        <CopyField
-          label={t("SOCKS5 正向代理")}
-          value={urls.socksForward}
-          copyLabel={copyLabel}
-          copiedLabel={copiedLabel}
-        />
-        <CopyField
-          label={t("curl 示例")}
-          value={urls.curlForward}
-          copyLabel={copyLabel}
-          copiedLabel={copiedLabel}
-        />
-      </div>
-
-      <div className="platform-access-group">
-        <h5>{t("反向代理")}</h5>
-        <div className="field-group">
-          <label className="field-label" htmlFor="access-target">
-            {t("目标网址")}
-          </label>
-          <Input
-            id="access-target"
-            placeholder={t("例如 https://api.ipify.org")}
-            value={target}
-            onChange={(event) => setTarget(event.target.value)}
-          />
-        </div>
-        {urls.reverseUrl ? (
-          <>
-            <CopyField
-              label={t("反向代理地址")}
-              value={urls.reverseUrl}
-              copyLabel={copyLabel}
-              copiedLabel={copiedLabel}
-            />
-            <CopyField
-              label={t("curl 示例")}
-              value={urls.curlReverse}
-              copyLabel={copyLabel}
-              copiedLabel={copiedLabel}
-            />
-          </>
-        ) : (
-          <p className="muted" style={{ fontSize: 12 }}>
-            {t("请输入合法的 http/https 目标网址以生成反向代理地址。")}
+    <TooltipProvider>
+      <section className="space-y-5">
+        <div>
+          <SectionTitle>{t("接入方式")}</SectionTitle>
+          <p className="text-xs leading-relaxed text-ink-soft">
+            {t("填写账号与代理 token，一键复制正向/反向代理地址。")}
           </p>
-        )}
-      </div>
-    </section>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Fieldset
+            label={t("代理服务地址")}
+            htmlFor="access-endpoint"
+            hint={endpointInvalid ? t("请输入不含凭证和路径的 HTTP(S) 地址") : undefined}
+          >
+            <Input
+              id="access-endpoint"
+              className={cn("font-mono", endpointInvalid && "border-alert")}
+              aria-invalid={endpointInvalid || undefined}
+              placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
+              value={endpointOverride}
+              onChange={(event) => setEndpointOverride(event.target.value)}
+            />
+            {endpointInvalid ? (
+              <p className="text-xs text-alert">
+                {t("请输入不含凭证和路径的 HTTP(S) 地址")}
+              </p>
+            ) : null}
+          </Fieldset>
+
+          <Fieldset label={t("业务账号（可选）")} htmlFor="access-account">
+            <Input
+              id="access-account"
+              className="font-mono"
+              placeholder={t("例如 user_tom，留空则只按平台路由")}
+              value={account}
+              onChange={(event) => setAccount(event.target.value)}
+            />
+          </Fieldset>
+
+          <div className="space-y-1 sm:col-span-2">
+            <div className="flex items-center gap-1.5">
+              <label htmlFor="access-token" className="text-xs font-medium text-ink-soft">
+                {t("代理 token")}
+              </label>
+              <Tooltip content={tokenHint}>
+                <button
+                  type="button"
+                  aria-label={tokenHint}
+                  className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+                >
+                  <Info size={13} />
+                </button>
+              </Tooltip>
+            </div>
+            <Input
+              id="access-token"
+              className="font-mono"
+              type="password"
+              placeholder={
+                proxyTokenSet
+                  ? t("填写 PRISM_PROXY_TOKEN")
+                  : t("当前代理免认证，无需填写")
+              }
+              value={tokenInputValue}
+              onChange={(event) => {
+                if (proxyTokenSet) {
+                  handleTokenChange(event.target.value);
+                }
+              }}
+              disabled={!proxyTokenSet}
+              autoComplete="off"
+            />
+            {tokenMissing ? (
+              <p className="text-xs text-ink-faint">
+                {t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="space-y-3 border-t border-rule pt-4">
+          <h3 className="text-xs font-medium text-ink-soft">{t("正向代理")}</h3>
+          <CopyField
+            label={t("HTTP 正向代理")}
+            value={urls.httpForward}
+            copyLabel={copyLabel}
+            copiedLabel={copiedLabel}
+          />
+          <CopyField
+            label={t("SOCKS5 正向代理")}
+            value={urls.socksForward}
+            copyLabel={copyLabel}
+            copiedLabel={copiedLabel}
+          />
+          <CopyField
+            label={t("curl 示例")}
+            value={urls.curlForward}
+            copyLabel={copyLabel}
+            copiedLabel={copiedLabel}
+          />
+        </div>
+
+        <div className="space-y-3 border-t border-rule pt-4">
+          <h3 className="text-xs font-medium text-ink-soft">{t("反向代理")}</h3>
+          <Fieldset label={t("目标网址")} htmlFor="access-target">
+            <Input
+              id="access-target"
+              className="font-mono"
+              placeholder={t("例如 https://api.ipify.org")}
+              value={target}
+              onChange={(event) => setTarget(event.target.value)}
+            />
+          </Fieldset>
+          {urls.reverseUrl ? (
+            <>
+              <CopyField
+                label={t("反向代理地址")}
+                value={urls.reverseUrl}
+                copyLabel={copyLabel}
+                copiedLabel={copiedLabel}
+              />
+              <CopyField
+                label={t("curl 示例")}
+                value={urls.curlReverse}
+                copyLabel={copyLabel}
+                copiedLabel={copiedLabel}
+              />
+            </>
+          ) : (
+            <p className="text-xs text-ink-faint">
+              {t("请输入合法的 http/https 目标网址以生成反向代理地址。")}
+            </p>
+          )}
+        </div>
+      </section>
+    </TooltipProvider>
   );
 }

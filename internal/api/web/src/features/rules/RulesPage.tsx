@@ -1,14 +1,13 @@
-import { DialogSurface } from "../../components/ui/DialogSurface";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createColumnHelper } from "@tanstack/react-table";
-import { AlertTriangle, Bug, Pencil, Plus, RefreshCw, Search, Sparkles, Trash2, Wand2, X } from "lucide-react";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Bug, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { type FormEvent, useCallback, useMemo, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { DataTable } from "../../components/ui/DataTable";
-import { Input } from "../../components/ui/Input";
-import { Textarea } from "../../components/ui/Textarea";
+import { Fieldset, Input, Textarea } from "../../components/ui/Input";
+import { Panel, PanelHeader, SectionTitle } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Sheet } from "../../components/ui/Sheet";
+import { Table, TableWrap, TBody, TD, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -17,6 +16,7 @@ import { deleteRule, listRules, resolveRule, upsertRule } from "./api";
 import type { ResolveResult, Rule } from "./types";
 
 const EMPTY_RULES: Rule[] = [];
+const HEADERS_PREVIEW_LIMIT = 20;
 
 function parseHeaderList(raw: string): string[] {
   return raw
@@ -25,34 +25,22 @@ function parseHeaderList(raw: string): string[] {
     .filter(Boolean);
 }
 
-function getBadgeStyle(text: string): React.CSSProperties {
-  let hash = 0;
-  for (let i = 0; i < text.length; i++) {
-    hash = text.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const hue = Math.abs(hash) % 360;
-  return {
-    color: `hsl(${hue}, 80%, 35%)`,
-    backgroundColor: `hsla(${hue}, 80%, 45%, 0.14)`,
-  };
-}
-
 function RuleHeadersPreview({ rule }: { rule: Rule }) {
   if (!rule.headers.length) {
-    return <span className="muted">-</span>;
+    return <span className="text-ink-faint">-</span>;
   }
 
-  const displayHeaders = rule.headers.slice(0, 20);
-  const extraCount = rule.headers.length - 20;
+  const displayHeaders = rule.headers.slice(0, HEADERS_PREVIEW_LIMIT);
+  const extraCount = rule.headers.length - HEADERS_PREVIEW_LIMIT;
 
   return (
-    <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+    <div className="flex flex-wrap gap-1">
       {displayHeaders.map((header) => (
-        <Badge key={header} style={getBadgeStyle(header)}>
+        <Badge key={header} tone="outline">
           {header}
         </Badge>
       ))}
-      {extraCount > 0 && <Badge variant="neutral">+{extraCount}</Badge>}
+      {extraCount > 0 && <Badge tone="neutral">+{extraCount}</Badge>}
     </div>
   );
 }
@@ -212,347 +200,315 @@ export function RulesPage() {
     void createMutation.mutateAsync();
   };
 
-  useEffect(() => {
-    if (!drawerOpen && !resolveModalOpen && !createModalOpen) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      if (createModalOpen) {
-        setCreateModalOpen(false);
-        return;
-      }
-      if (resolveModalOpen) {
-        setResolveModalOpen(false);
-        return;
-      }
-      setDrawerOpen(false);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createModalOpen, drawerOpen, resolveModalOpen]);
-
-  const col = useMemo(() => createColumnHelper<Rule>(), []);
-
-  const ruleColumns = useMemo(
-    () => [
-      col.accessor("url_prefix", {
-        header: t("URL 前缀"),
-        cell: (info) => <span title={info.getValue()}>{info.getValue()}</span>,
-      }),
-      col.display({
-        id: "headers",
-        header: t("请求头"),
-        cell: (info) => <RuleHeadersPreview rule={info.row.original} />,
-      }),
-      col.display({
-        id: "actions",
-        header: t("操作"),
-        cell: (info) => {
-          const rule = info.row.original;
-          return (
-            <div className="subscriptions-row-actions" onClick={(event) => event.stopPropagation()}>
-              <Button size="sm" variant="ghost" onClick={() => openDrawerForRule(rule)} title={t("编辑")}>
-                <Pencil size={14} />
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => void handleDelete(rule)}
-                disabled={isDeletePending || isFallbackRule(rule)}
-                title={isFallbackRule(rule) ? t('兜底规则 "*" 不可删除') : t("删除")}
-                style={{ color: "var(--delete-btn-color, #c27070)" }}
-              >
-                <Trash2 size={14} />
-              </Button>
-            </div>
-          );
-        },
-      }),
-    ],
-    [col, handleDelete, isDeletePending, openDrawerForRule, t]
-  );
-
   return (
-    <section className="rules-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("请求头规则")}</h2>
-          <p className="module-description">{t("为不同地址设置请求头规则，并先测试后应用。")}</p>
-        </div>
+    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
+      <header className="min-w-0">
+        <h1 className="text-2xl">{t("请求头规则")}</h1>
+        <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
+          {t("为不同地址设置请求头规则，并先测试后应用。")}
+        </p>
       </header>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="platform-list-card platform-directory-card rules-list-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("规则列表")}</h3>
-            <p>{t("共 {{count}} 条", { count: rules.length })}</p>
-          </div>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <label className="search-box" htmlFor="rules-search" style={{ maxWidth: 200, margin: 0, gap: 6 }}>
-              <Search size={16} />
-              <Input
-                id="rules-search"
-                placeholder={t("搜索规则")}
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                style={{ padding: "6px 10px", borderRadius: 8 }}
-              />
-            </label>
-            <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-              <Plus size={16} />
-              {t("新建")}
-            </Button>
-            <Button variant="secondary" size="sm" onClick={() => setResolveModalOpen(true)}>
-              <Bug size={16} />
-              {t("调试")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void rulesQuery.refetch()}
-              disabled={rulesQuery.isFetching}
-            >
-              <RefreshCw size={16} className={rulesQuery.isFetching ? "spin" : undefined} />
-              {t("刷新")}
-            </Button>
-          </div>
-        </div>
-      </Card>
+      <Panel>
+        <PanelHeader
+          title={t("规则列表")}
+          description={t("共 {{count}} 条", { count: rules.length })}
+          actions={
+            <>
+              <label htmlFor="rules-search" className="relative block">
+                <Search
+                  size={13}
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+                />
+                <Input
+                  id="rules-search"
+                  className="h-7 w-40 pl-7 text-xs lg:w-52"
+                  placeholder={t("搜索规则")}
+                  aria-label={t("搜索规则")}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+              <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+                <Plus size={15} />
+                {t("新建")}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setResolveModalOpen(true)}>
+                <Bug size={15} />
+                {t("调试")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void rulesQuery.refetch()}
+                disabled={rulesQuery.isFetching}
+              >
+                <RefreshCw size={15} className={rulesQuery.isFetching ? "animate-spin" : undefined} />
+                {t("刷新")}
+              </Button>
+            </>
+          }
+        />
 
-      <Card className="platform-cards-container subscriptions-table-card rules-table-card">
-        {rulesQuery.isLoading ? <p className="muted">{t("正在加载规则...")}</p> : null}
+        {rulesQuery.isLoading ? <LoadingState label={t("正在加载规则...")} /> : null}
 
         {rulesQuery.isError ? (
-          <div className="callout callout-error">
-            <AlertTriangle size={14} />
-            <span>{formatApiErrorMessage(rulesQuery.error, t)}</span>
+          <div className="p-4">
+            <ErrorState message={formatApiErrorMessage(rulesQuery.error, t)} onRetry={() => void rulesQuery.refetch()} />
           </div>
         ) : null}
 
-        {!rulesQuery.isLoading && !rules.length ? (
-          <div className="empty-box">
-            <Sparkles size={16} />
-            <p>{t("没有匹配规则")}</p>
-          </div>
+        {!rulesQuery.isLoading && !rulesQuery.isError && !rules.length ? (
+          <EmptyState
+            title={t("没有匹配规则")}
+            action={
+              <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+                <Plus size={15} />
+                {t("新建")}
+              </Button>
+            }
+          />
         ) : null}
 
         {rules.length ? (
-          <DataTable
-            data={rules}
-            columns={ruleColumns}
-            onRowClick={openDrawerForRule}
-            getRowId={(r) => r.url_prefix}
-            className="data-table-rules"
-          />
+          <TableWrap>
+            <Table>
+              <THead>
+                <TR>
+                  <TH>{t("URL 前缀")}</TH>
+                  <TH>{t("请求头")}</TH>
+                  <TH className="text-right">{t("操作")}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {rules.map((rule) => (
+                  <TR
+                    key={rule.url_prefix}
+                    tabIndex={0}
+                    className="cursor-pointer"
+                    aria-selected={selectedPrefix === rule.url_prefix}
+                    selected={selectedPrefix === rule.url_prefix}
+                    onClick={() => openDrawerForRule(rule)}
+                    onKeyDown={(event) => {
+                      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                        event.preventDefault();
+                        openDrawerForRule(rule);
+                      }
+                    }}
+                  >
+                    <TD>
+                      <span className="readout text-xs" title={rule.url_prefix}>
+                        {rule.url_prefix}
+                      </span>
+                    </TD>
+                    <TD>
+                      <RuleHeadersPreview rule={rule} />
+                    </TD>
+                    <TD>
+                      <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+                        <Button size="icon" variant="ghost" onClick={() => openDrawerForRule(rule)} title={t("编辑")}>
+                          <Pencil size={14} />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                          onClick={() => void handleDelete(rule)}
+                          disabled={isDeletePending || isFallbackRule(rule)}
+                          title={isFallbackRule(rule) ? t('兜底规则 "*" 不可删除') : t("删除")}
+                        >
+                          <Trash2 size={14} />
+                        </Button>
+                      </div>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
+          </TableWrap>
         ) : null}
-      </Card>
+      </Panel>
 
-      {drawerOpen ? (
-        <DialogSurface title={t("规则编辑抽屉")} variant="drawer" onClose={() => setDrawerOpen(false)}>
-          <Card className="drawer-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="drawer-header">
-              <div>
-                <h3>{selectedRule?.url_prefix || t("规则编辑")}</h3>
-                <p>{t("编辑当前规则")}</p>
-              </div>
-              <div className="drawer-header-actions">
-                <Button aria-label={t("关闭")} variant="ghost" size="sm" onClick={() => setDrawerOpen(false)}>
-                  <X size={16} />
-                </Button>
-              </div>
-            </div>
+      <Sheet
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDrawerOpen(false);
+          }
+        }}
+        title={selectedRule?.url_prefix || t("规则编辑")}
+        description={t("编辑当前规则")}
+        width="md"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button type="submit" form="rule-edit-form" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? t("保存中...") : t("保存规则")}
+            </Button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-5">
+          <section>
+            <SectionTitle>{t("规则编辑")}</SectionTitle>
+            <p className="text-xs leading-relaxed text-ink-soft">{t("修改地址前缀和请求头后保存。")}</p>
 
-            <div className="platform-drawer-layout">
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("规则编辑")}</h4>
-                  <p>{t("修改地址前缀和请求头后保存。")}</p>
-                </div>
-
-                <form className="form-grid single-column" onSubmit={handleUpdateSubmit}>
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="rule-prefix">
-                      {t("地址前缀")}
-                    </label>
-                    <Input
-                      id="rule-prefix"
-                      placeholder={t("例如 api.example.com/v1")}
-                      value={formPrefix}
-                      readOnly={Boolean(selectedRule)}
-                      title={selectedRule ? t("已存在规则的地址前缀不可直接改名") : undefined}
-                      onChange={(event) => setFormPrefix(event.target.value)}
-                    />
-                    {selectedRule ? <p className="field-hint">{t("如需改名，请新建规则后删除当前规则。")}</p> : null}
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="rule-headers">
-                      {t("请求头")}
-                    </label>
-                    <Textarea
-                      id="rule-headers"
-                      rows={5}
-                      placeholder={t("每行一个 header，例如 Authorization")}
-                      value={formHeadersRaw}
-                      onChange={(event) => setFormHeadersRaw(event.target.value)}
-                    />
-                  </div>
-                  <div className="detail-actions" style={{ justifyContent: "flex-end" }}>
-                    <Button type="submit" disabled={updateMutation.isPending}>
-                      <Wand2 size={14} />
-                      {updateMutation.isPending ? t("保存中...") : t("保存规则")}
-                    </Button>
-                  </div>
-                </form>
-              </section>
-
-              {selectedRule ? (
-                <section className="platform-drawer-section platform-ops-section">
-                  <div className="platform-drawer-section-head">
-                    <h4>{t("运维操作")}</h4>
-                  </div>
-                  <div className="platform-ops-list">
-                    <article className="platform-op-item">
-                      <div className="platform-op-copy">
-                        <h5>{t("删除规则")}</h5>
-                        <p className="platform-op-hint">
-                          {isFallbackRule(selectedRule)
-                            ? t('兜底规则 "*" 仅允许编辑，不允许删除。')
-                            : t("删除后该规则将不再生效。")}
-                        </p>
-                      </div>
-                      <Button
-                        variant="danger"
-                        onClick={() => void handleDelete(selectedRule)}
-                        disabled={deleteMutation.isPending || isFallbackRule(selectedRule)}
-                      >
-                        {t("删除")}
-                      </Button>
-                    </article>
-                  </div>
-                </section>
-              ) : null}
-            </div>
-          </Card>
-        </DialogSurface>
-      ) : null}
-
-      {resolveModalOpen ? (
-        <DialogSurface title={t("规则测试")} variant="modal" onClose={() => setResolveModalOpen(false)}>
-          <Card className="modal-card rules-resolve-modal-card">
-            <div className="modal-header">
-              <div>
-                <h3>{t("规则测试")}</h3>
-                <p>{t("输入地址查看命中规则和请求头。")}</p>
-              </div>
-              <Button aria-label={t("关闭")} variant="ghost" size="sm" onClick={() => setResolveModalOpen(false)}>
-                <X size={16} />
-              </Button>
-            </div>
-
-            <div className="rules-resolve-modal-body">
-              <div className="field-group">
-                <label className="field-label" htmlFor="resolve-url">
-                  {t("目标地址")}
-                </label>
+            <form id="rule-edit-form" className="mt-3 flex flex-col gap-3" onSubmit={handleUpdateSubmit}>
+              <Fieldset
+                label={t("地址前缀")}
+                htmlFor="rule-prefix"
+                hint={selectedRule ? t("如需改名，请新建规则后删除当前规则。") : undefined}
+              >
                 <Input
-                  id="resolve-url"
-                  placeholder="https://api.example.com/v1/orders/123"
-                  value={resolveURL}
-                  onChange={(event) => setResolveURL(event.target.value)}
-                />
-              </div>
-
-              <div className="detail-actions">
-                <Button
-                  variant="secondary"
-                  onClick={() => void resolveMutation.mutateAsync()}
-                  disabled={resolveMutation.isPending}
-                >
-                  {resolveMutation.isPending ? t("测试中...") : t("开始测试")}
-                </Button>
-              </div>
-
-              {resolveOutput ? (
-                <div className="resolve-result">
-                  <p>
-                    <strong>{t("命中前缀：")}</strong> {resolveOutput.matched_url_prefix || t("无")}
-                  </p>
-                  <div className="resolve-headers">
-                    <strong>{t("命中请求头：")}</strong>
-                    {resolveOutput.headers?.length ? (
-                      <div className="resolve-badges">
-                        {resolveOutput.headers.map((header) => (
-                          <Badge key={header} style={getBadgeStyle(header)}>
-                            {header}
-                          </Badge>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="muted">{t("无")}</p>
-                    )}
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </Card>
-        </DialogSurface>
-      ) : null}
-
-      {createModalOpen ? (
-        <DialogSurface title={t("编辑")} variant="modal" onClose={() => setCreateModalOpen(false)}>
-          <Card className="modal-card">
-            <div className="modal-header">
-              <h3>{t("新建规则")}</h3>
-              <Button aria-label={t("关闭")} variant="ghost" size="sm" onClick={() => setCreateModalOpen(false)}>
-                <X size={16} />
-              </Button>
-            </div>
-
-            <form className="form-grid single-column" onSubmit={handleCreateSubmit}>
-              <div className="field-group">
-                <label className="field-label" htmlFor="create-rule-prefix">
-                  {t("地址前缀")}
-                </label>
-                <Input
-                  id="create-rule-prefix"
+                  id="rule-prefix"
+                  className="readout"
                   placeholder={t("例如 api.example.com/v1")}
-                  value={createPrefix}
-                  onChange={(event) => setCreatePrefix(event.target.value)}
+                  value={formPrefix}
+                  readOnly={Boolean(selectedRule)}
+                  title={selectedRule ? t("已存在规则的地址前缀不可直接改名") : undefined}
+                  onChange={(event) => setFormPrefix(event.target.value)}
                 />
-              </div>
+              </Fieldset>
 
-              <div className="field-group">
-                <label className="field-label" htmlFor="create-rule-headers">
-                  {t("请求头")}
-                </label>
+              <Fieldset label={t("请求头")} htmlFor="rule-headers">
                 <Textarea
-                  id="create-rule-headers"
+                  id="rule-headers"
+                  className="readout text-xs"
                   rows={5}
                   placeholder={t("每行一个 header，例如 Authorization")}
-                  value={createHeadersRaw}
-                  onChange={(event) => setCreateHeadersRaw(event.target.value)}
+                  value={formHeadersRaw}
+                  onChange={(event) => setFormHeadersRaw(event.target.value)}
                 />
-              </div>
-              <div className="detail-actions" style={{ justifyContent: "flex-end" }}>
-                <Button type="submit" disabled={createMutation.isPending}>
-                  {createMutation.isPending ? t("创建中...") : t("确认创建")}
-                </Button>
-                <Button variant="secondary" onClick={() => setCreateModalOpen(false)}>
-                  {t("取消")}
-                </Button>
-              </div>
+              </Fieldset>
             </form>
-          </Card>
-        </DialogSurface>
-      ) : null}
+          </section>
+
+          {selectedRule ? (
+            <section className="border-t border-rule pt-4">
+              <SectionTitle>{t("运维操作")}</SectionTitle>
+              <div className="mt-2 flex items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-medium">{t("删除规则")}</h3>
+                  <p className="mt-0.5 max-w-[60ch] text-xs leading-relaxed text-ink-soft">
+                    {isFallbackRule(selectedRule)
+                      ? t('兜底规则 "*" 仅允许编辑，不允许删除。')
+                      : t("删除后该规则将不再生效。")}
+                  </p>
+                </div>
+                <Button
+                  variant="danger"
+                  onClick={() => void handleDelete(selectedRule)}
+                  disabled={deleteMutation.isPending || isFallbackRule(selectedRule)}
+                >
+                  {t("删除")}
+                </Button>
+              </div>
+            </section>
+          ) : null}
+        </div>
+      </Sheet>
+
+      <Sheet
+        open={resolveModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setResolveModalOpen(false);
+          }
+        }}
+        title={t("规则测试")}
+        description={t("输入地址查看命中规则和请求头。")}
+        width="sm"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => void resolveMutation.mutateAsync()}
+              disabled={resolveMutation.isPending}
+            >
+              {resolveMutation.isPending ? t("测试中...") : t("开始测试")}
+            </Button>
+          </div>
+        }
+      >
+        <Fieldset label={t("目标地址")} htmlFor="resolve-url">
+          <Input
+            id="resolve-url"
+            className="readout text-xs"
+            placeholder="https://api.example.com/v1/orders/123"
+            value={resolveURL}
+            onChange={(event) => setResolveURL(event.target.value)}
+          />
+        </Fieldset>
+
+        {resolveOutput ? (
+          <div className="mt-4 flex flex-col gap-2 border-t border-rule pt-3 text-sm">
+            <p className="flex items-baseline gap-2">
+              <span className="text-xs text-ink-soft">{t("命中前缀：")}</span>
+              <span className="readout text-xs">{resolveOutput.matched_url_prefix || t("无")}</span>
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs text-ink-soft">{t("命中请求头：")}</span>
+              {resolveOutput.headers?.length ? (
+                <div className="flex flex-wrap gap-1">
+                  {resolveOutput.headers.map((header) => (
+                    <Badge key={header} tone="outline">
+                      {header}
+                    </Badge>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-xs text-ink-faint">{t("无")}</span>
+              )}
+            </div>
+          </div>
+        ) : null}
+      </Sheet>
+
+      <Sheet
+        open={createModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCreateModalOpen(false);
+          }
+        }}
+        title={t("新建规则")}
+        width="sm"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCreateModalOpen(false)} disabled={createMutation.isPending}>
+              {t("取消")}
+            </Button>
+            <Button type="submit" form="create-rule-form" disabled={createMutation.isPending}>
+              {createMutation.isPending ? t("创建中...") : t("确认创建")}
+            </Button>
+          </div>
+        }
+      >
+        <form id="create-rule-form" className="flex flex-col gap-3" onSubmit={handleCreateSubmit}>
+          <Fieldset label={t("地址前缀")} htmlFor="create-rule-prefix">
+            <Input
+              id="create-rule-prefix"
+              className="readout text-xs"
+              placeholder={t("例如 api.example.com/v1")}
+              value={createPrefix}
+              onChange={(event) => setCreatePrefix(event.target.value)}
+            />
+          </Fieldset>
+
+          <Fieldset label={t("请求头")} htmlFor="create-rule-headers">
+            <Textarea
+              id="create-rule-headers"
+              className="readout text-xs"
+              rows={5}
+              placeholder={t("每行一个 header，例如 Authorization")}
+              value={createHeadersRaw}
+              onChange={(event) => setCreateHeadersRaw(event.target.value)}
+            />
+          </Fieldset>
+        </form>
+      </Sheet>
     </section>
   );
 }
