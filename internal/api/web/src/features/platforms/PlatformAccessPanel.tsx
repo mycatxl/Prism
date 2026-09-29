@@ -3,7 +3,7 @@ import { Check, Copy, Info } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { SectionTitle } from "../../components/ui/Panel";
+import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
@@ -277,141 +277,144 @@ export function PlatformAccessPanel({
 
   return (
     <TooltipProvider>
-      <section className="space-y-5">
-        <div>
-          <SectionTitle>{t("接入方式")}</SectionTitle>
-          <p className="text-xs leading-relaxed text-ink-soft">
-            {t("填写账号与代理 token，一键复制正向/反向代理地址。")}
-          </p>
-        </div>
+      <div className="flex flex-col gap-3">
+        <Panel>
+          <PanelHeader
+            title={t("接入方式")}
+            description={t("填写账号与代理 token，一键复制正向/反向代理地址。")}
+          />
+          <PanelBody className="grid gap-3 sm:grid-cols-2">
+            <Fieldset
+              label={t("代理服务地址")}
+              htmlFor="access-endpoint"
+              hint={endpointInvalid ? t("请输入不含凭证和路径的 HTTP(S) 地址") : undefined}
+            >
+              <Input
+                id="access-endpoint"
+                className={cn("font-mono", endpointInvalid && "border-alert")}
+                aria-invalid={endpointInvalid || undefined}
+                placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
+                value={endpointOverride}
+                onChange={(event) => setEndpointOverride(event.target.value)}
+              />
+              {endpointInvalid ? (
+                <p className="text-xs text-alert">
+                  {t("请输入不含凭证和路径的 HTTP(S) 地址")}
+                </p>
+              ) : null}
+            </Fieldset>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Fieldset
-            label={t("代理服务地址")}
-            htmlFor="access-endpoint"
-            hint={endpointInvalid ? t("请输入不含凭证和路径的 HTTP(S) 地址") : undefined}
-          >
-            <Input
-              id="access-endpoint"
-              className={cn("font-mono", endpointInvalid && "border-alert")}
-              aria-invalid={endpointInvalid || undefined}
-              placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
-              value={endpointOverride}
-              onChange={(event) => setEndpointOverride(event.target.value)}
-            />
-            {endpointInvalid ? (
-              <p className="text-xs text-alert">
-                {t("请输入不含凭证和路径的 HTTP(S) 地址")}
-              </p>
-            ) : null}
-          </Fieldset>
+            <Fieldset label={t("业务账号（可选）")} htmlFor="access-account">
+              <Input
+                id="access-account"
+                className="font-mono"
+                placeholder={t("例如 user_tom，留空则只按平台路由")}
+                value={account}
+                onChange={(event) => setAccount(event.target.value)}
+              />
+            </Fieldset>
 
-          <Fieldset label={t("业务账号（可选）")} htmlFor="access-account">
-            <Input
-              id="access-account"
-              className="font-mono"
-              placeholder={t("例如 user_tom，留空则只按平台路由")}
-              value={account}
-              onChange={(event) => setAccount(event.target.value)}
-            />
-          </Fieldset>
-
-          <div className="space-y-1 sm:col-span-2">
-            <div className="flex items-center gap-1.5">
-              <label htmlFor="access-token" className="text-xs font-medium text-ink-soft">
-                {t("代理 token")}
-              </label>
-              <Tooltip content={tokenHint}>
-                <button
-                  type="button"
-                  aria-label={tokenHint}
-                  className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
-                >
-                  <Info size={13} />
-                </button>
-              </Tooltip>
-            </div>
-            <Input
-              id="access-token"
-              className="font-mono"
-              type="password"
-              placeholder={
-                proxyTokenSet
-                  ? t("填写 PRISM_PROXY_TOKEN")
-                  : t("当前代理免认证，无需填写")
-              }
-              value={tokenInputValue}
-              onChange={(event) => {
-                if (proxyTokenSet) {
-                  handleTokenChange(event.target.value);
+            <div className="space-y-1 sm:col-span-2">
+              <div className="flex items-center gap-1.5">
+                <label htmlFor="access-token" className="text-xs font-medium text-ink-soft">
+                  {t("代理 token")}
+                </label>
+                <Tooltip content={tokenHint}>
+                  <button
+                    type="button"
+                    aria-label={tokenHint}
+                    className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+                  >
+                    <Info size={13} />
+                  </button>
+                </Tooltip>
+              </div>
+              <Input
+                id="access-token"
+                className="font-mono"
+                type="password"
+                placeholder={
+                  proxyTokenSet
+                    ? t("填写 PRISM_PROXY_TOKEN")
+                    : t("当前代理免认证，无需填写")
                 }
-              }}
-              disabled={!proxyTokenSet}
-              autoComplete="off"
+                value={tokenInputValue}
+                onChange={(event) => {
+                  if (proxyTokenSet) {
+                    handleTokenChange(event.target.value);
+                  }
+                }}
+                disabled={!proxyTokenSet}
+                autoComplete="off"
+              />
+              {tokenMissing ? (
+                <p className="max-w-[68ch] text-xs text-ink-faint">
+                  {t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}
+                </p>
+              ) : null}
+            </div>
+          </PanelBody>
+        </Panel>
+
+        <Panel>
+          <PanelHeader title={t("正向代理")} />
+          <PanelBody className="space-y-3">
+            <CopyField
+              label={t("HTTP 正向代理")}
+              value={urls.httpForward}
+              copyLabel={copyLabel}
+              copiedLabel={copiedLabel}
             />
-            {tokenMissing ? (
-              <p className="text-xs text-ink-faint">
-                {t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}
+            <CopyField
+              label={t("SOCKS5 正向代理")}
+              value={urls.socksForward}
+              copyLabel={copyLabel}
+              copiedLabel={copiedLabel}
+            />
+            <CopyField
+              label={t("curl 示例")}
+              value={urls.curlForward}
+              copyLabel={copyLabel}
+              copiedLabel={copiedLabel}
+            />
+          </PanelBody>
+        </Panel>
+
+        <Panel>
+          <PanelHeader title={t("反向代理")} />
+          <PanelBody className="space-y-3">
+            <Fieldset label={t("目标网址")} htmlFor="access-target">
+              <Input
+                id="access-target"
+                className="font-mono"
+                placeholder={t("例如 https://api.ipify.org")}
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+              />
+            </Fieldset>
+            {urls.reverseUrl ? (
+              <>
+                <CopyField
+                  label={t("反向代理地址")}
+                  value={urls.reverseUrl}
+                  copyLabel={copyLabel}
+                  copiedLabel={copiedLabel}
+                />
+                <CopyField
+                  label={t("curl 示例")}
+                  value={urls.curlReverse}
+                  copyLabel={copyLabel}
+                  copiedLabel={copiedLabel}
+                />
+              </>
+            ) : (
+              <p className="max-w-[68ch] text-xs text-ink-faint">
+                {t("请输入合法的 http/https 目标网址以生成反向代理地址。")}
               </p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="space-y-3 border-t border-rule pt-4">
-          <h3 className="text-xs font-medium text-ink-soft">{t("正向代理")}</h3>
-          <CopyField
-            label={t("HTTP 正向代理")}
-            value={urls.httpForward}
-            copyLabel={copyLabel}
-            copiedLabel={copiedLabel}
-          />
-          <CopyField
-            label={t("SOCKS5 正向代理")}
-            value={urls.socksForward}
-            copyLabel={copyLabel}
-            copiedLabel={copiedLabel}
-          />
-          <CopyField
-            label={t("curl 示例")}
-            value={urls.curlForward}
-            copyLabel={copyLabel}
-            copiedLabel={copiedLabel}
-          />
-        </div>
-
-        <div className="space-y-3 border-t border-rule pt-4">
-          <h3 className="text-xs font-medium text-ink-soft">{t("反向代理")}</h3>
-          <Fieldset label={t("目标网址")} htmlFor="access-target">
-            <Input
-              id="access-target"
-              className="font-mono"
-              placeholder={t("例如 https://api.ipify.org")}
-              value={target}
-              onChange={(event) => setTarget(event.target.value)}
-            />
-          </Fieldset>
-          {urls.reverseUrl ? (
-            <>
-              <CopyField
-                label={t("反向代理地址")}
-                value={urls.reverseUrl}
-                copyLabel={copyLabel}
-                copiedLabel={copiedLabel}
-              />
-              <CopyField
-                label={t("curl 示例")}
-                value={urls.curlReverse}
-                copyLabel={copyLabel}
-                copiedLabel={copiedLabel}
-              />
-            </>
-          ) : (
-            <p className="text-xs text-ink-faint">
-              {t("请输入合法的 http/https 目标网址以生成反向代理地址。")}
-            </p>
-          )}
-        </div>
-      </section>
+            )}
+          </PanelBody>
+        </Panel>
+      </div>
     </TooltipProvider>
   );
 }

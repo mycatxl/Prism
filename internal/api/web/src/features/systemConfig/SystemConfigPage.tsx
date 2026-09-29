@@ -21,9 +21,11 @@ import { QualitySources } from "../quality/QualitySources";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelHeader, PanelToolbar, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Switch } from "../../components/ui/Switch";
+import { Table, TableWrap, TBody, TD, TDClip, TR } from "../../components/ui/Table";
 import { Textarea } from "../../components/ui/Textarea";
 import { ToastContainer } from "../../components/ui/Toast";
 import { cn } from "../../lib/cn";
@@ -261,13 +263,15 @@ function buildPatch(current: RuntimeConfig, next: RuntimeConfig): RuntimeConfigP
   return patch;
 }
 
-/** A settings section inside a panel: heading, hairline, then a two-column field grid. */
+/** One block of related controls: its own panel, so the group is a region and not a heading. */
 function ConfigSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="px-4 py-4">
-      <h3 className="text-sm font-semibold text-ink">{title}</h3>
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">{children}</div>
-    </section>
+    <Panel className="min-w-0">
+      <PanelHeader as="h3" title={title} />
+      <PanelBody>
+        <div className="grid gap-4 sm:grid-cols-2">{children}</div>
+      </PanelBody>
+    </Panel>
   );
 }
 
@@ -320,12 +324,31 @@ function ConfigSwitch({
   );
 }
 
-/** A read-only value that comes from the deployment environment. */
-function StaticField({ label, id, value }: { label: string; id: string; value: string }) {
+/**
+ * A read-only value that comes from the deployment environment: the label is the
+ * row's name and the value is clipped to one line, because a data directory path
+ * is read as a value, not as a paragraph.
+ */
+function StaticRow({ label, value }: { label: string; value: string }) {
   return (
-    <Fieldset label={label} htmlFor={id}>
-      <Input id={id} className="font-mono" readOnly value={value} />
-    </Fieldset>
+    <TR>
+      <TD className="w-1/3 text-ink-soft">{label}</TD>
+      <TDClip className="readout text-xs">{value}</TDClip>
+    </TR>
+  );
+}
+
+/** One read-only block of the deployment configuration. */
+function StaticGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <SectionTitle>{title}</SectionTitle>
+      <TableWrap>
+        <Table>
+          <TBody>{children}</TBody>
+        </Table>
+      </TableWrap>
+    </div>
   );
 }
 
@@ -551,112 +574,120 @@ export function SystemConfigPage() {
   });
 
   return (
-    <section className="min-h-full">
-      <header className="border-b border-rule bg-paper-raised px-4 py-3 lg:px-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 id="settings-title" tabIndex={-1} className="text-xl outline-none">
-              {t("系统配置")}
-            </h1>
-            <p className="mt-1 max-w-[75ch] text-sm leading-relaxed text-ink-soft">
-              {category ? t(category.description) : t("选择一类设置，集中查看和调整。")}
-            </p>
-          </div>
-          {category && (
-            <Button variant="secondary" onClick={() => selectCategory()}>
-              <ArrowLeft size={15} aria-hidden />
-              {t("所有配置")}
-            </Button>
-          )}
-        </div>
-      </header>
+    <Page bleed>
+      <PageHeader
+        title={
+          <span id="settings-title" tabIndex={-1} className="outline-none">
+            {t("系统配置")}
+          </span>
+        }
+        description={category ? t(category.description) : t("选择一类设置，集中查看和调整。")}
+        meta={
+          <>
+            <PageMeta label={t("所有配置")} value={t("{{count}} 个配置项", { count: SETTINGS_CATEGORIES.length })} />
+            <PageMeta
+              label={t("配置草稿")}
+              value={changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")}
+            />
+          </>
+        }
+        actions={category ? (
+          <Button variant="secondary" onClick={() => selectCategory()}>
+            <ArrowLeft size={15} aria-hidden />
+            {t("所有配置")}
+          </Button>
+        ) : undefined}
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="px-4 py-4 lg:px-6">
+      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
         {!form ? (
-          <div className="max-w-3xl">
-            {configQuery.isLoading || envConfigQuery.isLoading ? (
-              <LoadingState label={t("正在加载配置...")} />
-            ) : null}
-            {configQuery.isError ? (
-              <ErrorState
-                message={formatApiErrorMessage(configQuery.error, t)}
-                onRetry={() => void configQuery.refetch()}
-              />
-            ) : null}
-          </div>
+          <Panel className="max-w-3xl">
+            <PanelBody>
+              {configQuery.isLoading || envConfigQuery.isLoading ? (
+                <LoadingState label={t("正在加载配置...")} />
+              ) : null}
+              {configQuery.isError ? (
+                <ErrorState
+                  message={formatApiErrorMessage(configQuery.error, t)}
+                  onRetry={() => void configQuery.refetch()}
+                />
+              ) : null}
+            </PanelBody>
+          </Panel>
         ) : (
-          <div className="space-y-4">
+          <div className="space-y-3">
             {!category && (
-              <div className="max-w-3xl space-y-3">
-                <label className="relative block">
-                  <Search
-                    size={14}
-                    aria-hidden
-                    className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
-                  />
-                  <Input
-                    className="pl-7"
-                    aria-label={t("搜索配置分类")}
-                    placeholder={t("搜索配置分类或参数")}
-                    value={categorySearch}
-                    onChange={event => setCategorySearch(event.target.value)}
-                  />
-                </label>
-
-                <Panel>
-                  {visibleCategories.length ? (
-                    <ul className="divide-y divide-rule">
-                      {visibleCategories.map(item => {
-                        const dirty = changedKeys.filter(field => (item.fields as readonly string[]).includes(field)).length;
-                        return (
-                          <li key={item.id}>
-                            <button
-                              type="button"
-                              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-paper-sunk/60"
-                              onClick={() => selectCategory(item.id)}
-                              aria-label={t(item.title)}
-                            >
-                              <item.icon size={16} aria-hidden className="shrink-0 text-ink-faint" />
-                              <span className="min-w-0 flex-1">
-                                <span className="block truncate text-sm font-medium text-ink">{t(item.title)}</span>
-                                <span className="mt-0.5 block text-xs leading-relaxed text-ink-soft">{t(item.description)}</span>
+              <Panel className="flex min-w-0 flex-col">
+                <PanelHeader title={t("所有配置")} description={t("选择一类设置，集中查看和调整。")} />
+                <PanelToolbar>
+                  <label className="relative block w-full sm:w-72">
+                    <Search
+                      size={14}
+                      aria-hidden
+                      className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
+                    />
+                    <Input
+                      className="h-7 pl-7 text-xs"
+                      aria-label={t("搜索配置分类")}
+                      placeholder={t("搜索配置分类或参数")}
+                      value={categorySearch}
+                      onChange={event => setCategorySearch(event.target.value)}
+                    />
+                  </label>
+                  <span className="ml-auto text-xs text-ink-faint">
+                    {t("{{count}} 个配置项", { count: visibleCategories.length })}
+                  </span>
+                </PanelToolbar>
+                {visibleCategories.length ? (
+                  <ul className="divide-y divide-rule-faint">
+                    {visibleCategories.map(item => {
+                      const dirty = changedKeys.filter(field => (item.fields as readonly string[]).includes(field)).length;
+                      return (
+                        <li key={item.id}>
+                          <button
+                            type="button"
+                            className="flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-paper-sunk/60"
+                            onClick={() => selectCategory(item.id)}
+                            aria-label={t(item.title)}
+                          >
+                            <item.icon size={16} aria-hidden className="shrink-0 text-ink-faint" />
+                            <span className="w-40 shrink-0 truncate text-sm font-medium text-ink">{t(item.title)}</span>
+                            <span className="min-w-0 flex-1 truncate text-xs text-ink-soft">{t(item.description)}</span>
+                            {dirty ? (
+                              <Badge tone="warn">{t("{{count}} 项待保存", { count: dirty })}</Badge>
+                            ) : (
+                              <span className="shrink-0 text-xs text-ink-faint">
+                                {item.id === "quality" ? t("评分来源与复核") : t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}
                               </span>
-                              {dirty ? (
-                                <Badge tone="warn">{t("{{count}} 项待保存", { count: dirty })}</Badge>
-                              ) : (
-                                <span className="shrink-0 text-xs text-ink-faint">
-                                  {item.id === "quality" ? t("评分来源与复核") : t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}
-                                </span>
-                              )}
-                              <ChevronRight size={15} aria-hidden className="shrink-0 text-ink-faint" />
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  ) : (
+                            )}
+                            <ChevronRight size={15} aria-hidden className="shrink-0 text-ink-faint" />
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <PanelBody>
                     <EmptyState
                       className="py-8"
                       title={t("没有匹配的配置分类")}
                       hint={t("搜索配置分类或参数")}
                     />
-                  )}
-                </Panel>
-              </div>
+                  </PanelBody>
+                )}
+              </Panel>
             )}
 
             {category && (
-              <div className="space-y-4" data-category={category.id}>
+              <div className="space-y-3" data-category={category.id}>
                 {activeCategory === "quality" && <QualitySources />}
 
                 {category.fields.length > 0 && (
-                  <Panel>
-                    <PanelHeader
-                      title={t(category.title)}
-                      description={t("运行时配置，保存后生效。")}
-                      actions={
+                  <div className="space-y-3">
+                    <SectionTitle
+                      trailing={
                         <Button
                           variant="secondary"
                           size="sm"
@@ -671,9 +702,14 @@ export function SystemConfigPage() {
                           {t("重新加载")}
                         </Button>
                       }
-                    />
+                    >
+                      <span className="flex items-baseline gap-2">
+                        {t(category.title)}
+                        <span className="text-xs font-normal text-ink-faint">{t("运行时配置，保存后生效。")}</span>
+                      </span>
+                    </SectionTitle>
 
-                    <fieldset className="min-w-0 divide-y divide-rule" disabled={saveMutation.isPending}>
+                    <fieldset className="min-w-0 space-y-3" disabled={saveMutation.isPending}>
                       {activeCategory === "health" && (
                         <ConfigSection title={t("基础与健康检查")}>
                           <ConfigField
@@ -794,7 +830,7 @@ export function SystemConfigPage() {
 
                       {activeCategory === "logs" && (
                         <ConfigSection title={t("请求日志")}>
-                          <div className="divide-y divide-rule border-y border-rule sm:col-span-2">
+                          <div className="divide-y divide-rule-faint border-y border-rule-faint sm:col-span-2">
                             <ConfigSwitch
                               label={t("启用请求日志")}
                               checked={form.request_log_enabled}
@@ -903,7 +939,7 @@ export function SystemConfigPage() {
                         </ConfigSection>
                       )}
                     </fieldset>
-                  </Panel>
+                  </div>
                 )}
 
                 {category.staticCount > 0 && (
@@ -915,7 +951,7 @@ export function SystemConfigPage() {
                       />
                     )}
                     {envBaseline && (
-                      <Panel>
+                      <Panel className="min-w-0">
                         <PanelHeader
                           title={t("启动配置")}
                           description={t("只读参数，修改部署配置并重启服务后生效。")}
@@ -936,124 +972,91 @@ export function SystemConfigPage() {
                           }
                         />
 
-                        <div className="divide-y divide-rule">
+                        <PanelBody className="space-y-3">
                           {activeCategory === "deployment" && (
-                            <ConfigSection title={t("目录与端口")}>
-                              <StaticField id="env-cache-dir" label={t("数据缓存目录")} value={envBaseline.cache_dir} />
-                              <StaticField id="env-state-dir" label={t("状态存储目录")} value={envBaseline.state_dir} />
-                              <StaticField id="env-log-dir" label={t("日志保留目录")} value={envBaseline.log_dir} />
-                              <StaticField id="env-listen-address" label={t("代理 / API 监听地址")} value={envBaseline.listen_address} />
-                              <StaticField id="env-prism-port" label={t("代理 / API 端口")} value={String(envBaseline.prism_port)} />
-                            </ConfigSection>
+                            <StaticGroup title={t("目录与端口")}>
+                              <StaticRow label={t("数据缓存目录")} value={envBaseline.cache_dir} />
+                              <StaticRow label={t("状态存储目录")} value={envBaseline.state_dir} />
+                              <StaticRow label={t("日志保留目录")} value={envBaseline.log_dir} />
+                              <StaticRow label={t("代理 / API 监听地址")} value={envBaseline.listen_address} />
+                              <StaticRow label={t("代理 / API 端口")} value={String(envBaseline.prism_port)} />
+                            </StaticGroup>
                           )}
 
                           {activeCategory === "network" && (
-                            <ConfigSection title={t("全局限额与性能调优")}>
-                              <StaticField id="env-api-max-body" label={t("控制面最大请求体")} value={String(envBaseline.api_max_body_bytes)} />
-                              <StaticField id="env-max-latency-entries" label={t("最大延迟表条目数")} value={String(envBaseline.max_latency_table_entries)} />
-                              <StaticField id="env-probe-concurrency" label={t("节点拨测并发数")} value={String(envBaseline.probe_concurrency)} />
-                              <StaticField id="env-probe-timeout" label={t("拨测超时时间")} value={envBaseline.probe_timeout} />
-                              <StaticField id="env-resource-fetch-timeout" label={t("资源获取超时时间")} value={envBaseline.resource_fetch_timeout} />
-                              <ConfigField span label={t("节点 DNS 上游")} htmlFor="env-node-dns-upstreams">
-                                <Textarea
-                                  id="env-node-dns-upstreams"
-                                  className="font-mono"
-                                  readOnly
-                                  rows={3}
-                                  value={envBaseline.node_dns_upstreams?.join("\n") || t("无")}
-                                />
-                              </ConfigField>
-                              <StaticField id="env-geoip-schedule" label={t("GeoIP 更新计划")} value={envBaseline.geoip_update_schedule} />
-                              <StaticField id="env-proxy-max-idle" label={t("代理传输最大空闲连接")} value={String(envBaseline.proxy_transport_max_idle_conns)} />
-                              <StaticField id="env-proxy-max-idle-per-host" label={t("单主机最大空闲连接")} value={String(envBaseline.proxy_transport_max_idle_conns_per_host)} />
-                              <StaticField id="env-proxy-idle-timeout" label={t("空闲连接超时时间")} value={envBaseline.proxy_transport_idle_conn_timeout} />
-                              <ConfigField span label={t("代理直连目标")} htmlFor="env-proxy-bypass">
-                                <Textarea
-                                  id="env-proxy-bypass"
-                                  className="font-mono"
-                                  readOnly
-                                  rows={3}
-                                  value={envBaseline.proxy_bypass_rules?.join("\n") || t("无")}
-                                />
-                              </ConfigField>
-                            </ConfigSection>
+                            <StaticGroup title={t("全局限额与性能调优")}>
+                              <StaticRow label={t("控制面最大请求体")} value={String(envBaseline.api_max_body_bytes)} />
+                              <StaticRow label={t("最大延迟表条目数")} value={String(envBaseline.max_latency_table_entries)} />
+                              <StaticRow label={t("节点拨测并发数")} value={String(envBaseline.probe_concurrency)} />
+                              <StaticRow label={t("拨测超时时间")} value={envBaseline.probe_timeout} />
+                              <StaticRow label={t("资源获取超时时间")} value={envBaseline.resource_fetch_timeout} />
+                              <StaticRow label={t("节点 DNS 上游")} value={envBaseline.node_dns_upstreams?.join(", ") || t("无")} />
+                              <StaticRow label={t("GeoIP 更新计划")} value={envBaseline.geoip_update_schedule} />
+                              <StaticRow label={t("代理传输最大空闲连接")} value={String(envBaseline.proxy_transport_max_idle_conns)} />
+                              <StaticRow label={t("单主机最大空闲连接")} value={String(envBaseline.proxy_transport_max_idle_conns_per_host)} />
+                              <StaticRow label={t("空闲连接超时时间")} value={envBaseline.proxy_transport_idle_conn_timeout} />
+                              <StaticRow label={t("代理直连目标")} value={envBaseline.proxy_bypass_rules?.join(", ") || t("无")} />
+                            </StaticGroup>
                           )}
 
                           {activeCategory === "platform" && (
-                            <ConfigSection title={t("默认平台回退规则")}>
-                              <StaticField id="env-sticky-ttl" label={t("默认粘性会话 TTL")} value={envBaseline.default_platform_sticky_ttl} />
-                              <StaticField
-                                id="env-allocation-policy"
+                            <StaticGroup title={t("默认平台回退规则")}>
+                              <StaticRow label={t("默认粘性会话 TTL")} value={envBaseline.default_platform_sticky_ttl} />
+                              <StaticRow
                                 label={t("默认节点分配策略")}
                                 value={t(displayAllocationPolicy(envBaseline.default_platform_allocation_policy))}
                               />
-                              <StaticField
-                                id="env-miss-action"
+                              <StaticRow
                                 label={t("默认反代不匹配行为")}
                                 value={t(displayMissAction(envBaseline.default_platform_reverse_proxy_miss_action))}
                               />
-                              <StaticField
-                                id="env-empty-account-behavior"
+                              <StaticRow
                                 label={t("默认反代空账号行为")}
                                 value={t(displayEmptyAccountBehavior(envBaseline.default_platform_reverse_proxy_empty_account_behavior))}
                               />
-                              <ConfigField span label={t("默认反代固定账号 Header 列表")} htmlFor="env-fixed-account-header">
-                                <Textarea
-                                  id="env-fixed-account-header"
-                                  className="font-mono"
-                                  readOnly
-                                  rows={3}
-                                  value={envBaseline.default_platform_reverse_proxy_fixed_account_header || t("无")}
-                                />
-                              </ConfigField>
-                              <ConfigField span label={t("默认正则黑名单")} htmlFor="env-regex-filters">
-                                <Textarea
-                                  id="env-regex-filters"
-                                  className="font-mono"
-                                  readOnly
-                                  rows={3}
-                                  value={envBaseline.default_platform_regex_filters?.join("\n") || t("无")}
-                                />
-                              </ConfigField>
-                              <ConfigField span label={t("默认地区黑名单")} htmlFor="env-region-filters">
-                                <Textarea
-                                  id="env-region-filters"
-                                  className="font-mono"
-                                  readOnly
-                                  rows={2}
-                                  value={envBaseline.default_platform_region_filters?.join(",") || t("无")}
-                                />
-                              </ConfigField>
-                            </ConfigSection>
+                              <StaticRow
+                                label={t("默认反代固定账号 Header 列表")}
+                                value={envBaseline.default_platform_reverse_proxy_fixed_account_header || t("无")}
+                              />
+                              <StaticRow
+                                label={t("默认正则黑名单")}
+                                value={envBaseline.default_platform_regex_filters?.join(", ") || t("无")}
+                              />
+                              <StaticRow
+                                label={t("默认地区黑名单")}
+                                value={envBaseline.default_platform_region_filters?.join(",") || t("无")}
+                              />
+                            </StaticGroup>
                           )}
 
                           {activeCategory === "logs" && (
-                            <ConfigSection title={t("请求日志落库")}>
-                              <StaticField id="env-log-queue-size" label={t("队列大小")} value={String(envBaseline.request_log_queue_size)} />
-                              <StaticField id="env-log-flush-batch" label={t("落盘批大小")} value={String(envBaseline.request_log_queue_flush_batch_size)} />
-                              <StaticField id="env-log-flush-interval" label={t("落盘间隔")} value={envBaseline.request_log_queue_flush_interval} />
-                              <StaticField id="env-log-db-max-mb" label={t("数据库保留阈值")} value={envBaseline.request_log_db_max_mb + " MB"} />
-                              <StaticField id="env-log-db-retain" label={t("数据库旧分片保留数")} value={String(envBaseline.request_log_db_retain_count)} />
-                            </ConfigSection>
+                            <StaticGroup title={t("请求日志落库")}>
+                              <StaticRow label={t("队列大小")} value={String(envBaseline.request_log_queue_size)} />
+                              <StaticRow label={t("落盘批大小")} value={String(envBaseline.request_log_queue_flush_batch_size)} />
+                              <StaticRow label={t("落盘间隔")} value={envBaseline.request_log_queue_flush_interval} />
+                              <StaticRow label={t("数据库保留阈值")} value={envBaseline.request_log_db_max_mb + " MB"} />
+                              <StaticRow label={t("数据库旧分片保留数")} value={String(envBaseline.request_log_db_retain_count)} />
+                            </StaticGroup>
                           )}
 
                           {activeCategory === "metrics" && (
-                            <ConfigSection title={t("可观测性指标")}>
-                              <StaticField id="env-metric-throughput-interval" label={t("吞吐量抽样间隔")} value={envBaseline.metric_throughput_interval_seconds + "s"} />
-                              <StaticField id="env-metric-throughput-retention" label={t("吞吐量保留时间")} value={envBaseline.metric_throughput_retention_seconds + "s"} />
-                              <StaticField id="env-metric-connections-interval" label={t("连接数抽样间隔")} value={envBaseline.metric_connections_interval_seconds + "s"} />
-                              <StaticField id="env-metric-connections-retention" label={t("连接数保留时间")} value={envBaseline.metric_connections_retention_seconds + "s"} />
-                              <StaticField id="env-metric-bucket" label={t("租期与连接指标分桶数")} value={envBaseline.metric_bucket_seconds + "s"} />
-                              <StaticField id="env-metric-leases-interval" label={t("租期抽样间隔")} value={envBaseline.metric_leases_interval_seconds + "s"} />
-                              <StaticField id="env-metric-leases-retention" label={t("租期保留时间")} value={envBaseline.metric_leases_retention_seconds + "s"} />
-                              <StaticField id="env-metric-latency-bin" label={t("延迟统计桶宽")} value={envBaseline.metric_latency_bin_width_ms + "ms"} />
-                              <StaticField id="env-metric-latency-overflow" label={t("延迟统计截断值")} value={envBaseline.metric_latency_bin_overflow_ms + "ms"} />
-                            </ConfigSection>
+                            <StaticGroup title={t("可观测性指标")}>
+                              <StaticRow label={t("吞吐量抽样间隔")} value={envBaseline.metric_throughput_interval_seconds + "s"} />
+                              <StaticRow label={t("吞吐量保留时间")} value={envBaseline.metric_throughput_retention_seconds + "s"} />
+                              <StaticRow label={t("连接数抽样间隔")} value={envBaseline.metric_connections_interval_seconds + "s"} />
+                              <StaticRow label={t("连接数保留时间")} value={envBaseline.metric_connections_retention_seconds + "s"} />
+                              <StaticRow label={t("租期与连接指标分桶数")} value={envBaseline.metric_bucket_seconds + "s"} />
+                              <StaticRow label={t("租期抽样间隔")} value={envBaseline.metric_leases_interval_seconds + "s"} />
+                              <StaticRow label={t("租期保留时间")} value={envBaseline.metric_leases_retention_seconds + "s"} />
+                              <StaticRow label={t("延迟统计桶宽")} value={envBaseline.metric_latency_bin_width_ms + "ms"} />
+                              <StaticRow label={t("延迟统计截断值")} value={envBaseline.metric_latency_bin_overflow_ms + "ms"} />
+                            </StaticGroup>
                           )}
 
                           {activeCategory === "deployment" && (
-                            <ConfigSection title={t("服务鉴权状态")}>
-                              <div className="divide-y divide-rule border-y border-rule sm:col-span-2">
+                            <div className="space-y-1.5">
+                              <SectionTitle>{t("服务鉴权状态")}</SectionTitle>
+                              <div className="divide-y divide-rule-faint border-y border-rule-faint">
                                 <ConfigSwitch
                                   label={t("已配置管理端令牌")}
                                   checked={envBaseline.admin_token_set}
@@ -1067,117 +1070,118 @@ export function SystemConfigPage() {
                                   onChange={() => undefined}
                                 />
                               </div>
-                            </ConfigSection>
+                            </div>
                           )}
-                        </div>
+                        </PanelBody>
                       </Panel>
                     )}
                   </>
                 )}
               </div>
             )}
-                  <Panel>
-                    <PanelHeader
-                      title={t("配置草稿")}
-                      description={t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。")}
-                      actions={
-                        changedKeys.length ? (
-                          <Badge tone="warn">{t("{{count}} 项待保存", { count: changedKeys.length })}</Badge>
-                        ) : (
-                          <span className="text-xs text-ink-faint">{t("当前无未保存改动")}</span>
-                        )
-                      }
-                    />
 
-                    <div className="space-y-3 px-4 py-4">
-                      {changedKeys.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5">
-                          {changedKeys.map(field => (
-                            <Button
-                              key={field}
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => selectCategory(SETTINGS_CATEGORIES.find(item => (item.fields as readonly string[]).includes(field))?.id)}
-                            >
-                              {t(FIELD_LABELS[field])}
-                            </Button>
-                          ))}
-                        </div>
-                      )}
+            <Panel className="min-w-0">
+              <PanelHeader
+                title={t("配置草稿")}
+                description={t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。")}
+                actions={
+                  changedKeys.length ? (
+                    <Badge tone="warn">{t("{{count}} 项待保存", { count: changedKeys.length })}</Badge>
+                  ) : (
+                    <span className="text-xs text-ink-faint">{t("当前无未保存改动")}</span>
+                  )
+                }
+              />
 
-                      {parsedResult.error && <ErrorState message={parsedResult.error} />}
-
-                      <details>
-                        <summary className="cursor-pointer text-sm font-medium text-ink-soft select-none hover:text-ink">
-                          {t("高级：JSON 变更")}
-                          {customPatchText !== null && (
-                            <Badge tone="warn" className="ml-2">
-                              {t("待应用")}
-                            </Badge>
-                          )}
-                        </summary>
-                        <p className="mt-2 text-xs leading-relaxed text-ink-soft">
-                          {t("JSON 先应用到草稿，再统一保存。分类切换会保留所有未保存更改。")}
-                        </p>
-                        <Textarea
-                          className="mt-2 font-mono"
-                          aria-label={t("JSON 变更内容")}
-                          value={displayedPatchText}
-                          onChange={handlePatchEdit}
-                          rows={7}
-                          spellCheck={false}
-                          disabled={saveMutation.isPending}
-                        />
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={applyCustomPatch}
-                            disabled={customPatchText === null || saveMutation.isPending}
-                          >
-                            {t("应用 JSON 到草稿")}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setCustomPatchText(null)}
-                            disabled={customPatchText === null || saveMutation.isPending}
-                          >
-                            {t("取消 JSON 编辑")}
-                          </Button>
-                        </div>
-                      </details>
-                    </div>
-                  </Panel>
-
-                <Panel className="sticky bottom-0 z-10">
-                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-ink">
-                        {changedKeys.length
-                          ? t("{{count}} 项待保存", { count: changedKeys.length })
-                          : t("当前无未保存改动")}
-                      </p>
-                      <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
-                        {t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。")}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                      <Button variant="ghost" onClick={resetDraft} disabled={!hasUnsavedChanges || saveMutation.isPending}>
-                        <RotateCcw size={14} aria-hidden />
-                        {t("重置草稿")}
+              <PanelBody className="space-y-3">
+                {changedKeys.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {changedKeys.map(field => (
+                      <Button
+                        key={field}
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => selectCategory(SETTINGS_CATEGORIES.find(item => (item.fields as readonly string[]).includes(field))?.id)}
+                      >
+                        {t(FIELD_LABELS[field])}
                       </Button>
-                      <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={isSaveDisabled}>
-                        <Save size={14} aria-hidden />
-                        {t(saveMutation.isPending ? "保存中..." : "保存全部更改")}
-                      </Button>
-                    </div>
+                    ))}
                   </div>
-                </Panel>
+                )}
+
+                {parsedResult.error && <ErrorState message={parsedResult.error} />}
+
+                <details>
+                  <summary className="cursor-pointer text-sm font-medium text-ink-soft select-none hover:text-ink">
+                    {t("高级：JSON 变更")}
+                    {customPatchText !== null && (
+                      <Badge tone="warn" className="ml-2">
+                        {t("待应用")}
+                      </Badge>
+                    )}
+                  </summary>
+                  <p className="mt-2 max-w-[68ch] text-xs leading-relaxed text-ink-soft">
+                    {t("JSON 先应用到草稿，再统一保存。分类切换会保留所有未保存更改。")}
+                  </p>
+                  <Textarea
+                    className="mt-2 font-mono"
+                    aria-label={t("JSON 变更内容")}
+                    value={displayedPatchText}
+                    onChange={handlePatchEdit}
+                    rows={7}
+                    spellCheck={false}
+                    disabled={saveMutation.isPending}
+                  />
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={applyCustomPatch}
+                      disabled={customPatchText === null || saveMutation.isPending}
+                    >
+                      {t("应用 JSON 到草稿")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCustomPatchText(null)}
+                      disabled={customPatchText === null || saveMutation.isPending}
+                    >
+                      {t("取消 JSON 编辑")}
+                    </Button>
+                  </div>
+                </details>
+              </PanelBody>
+            </Panel>
+
+            <Panel className="sticky bottom-0 z-10">
+              <PanelBody className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-ink">
+                    {changedKeys.length
+                      ? t("{{count}} 项待保存", { count: changedKeys.length })
+                      : t("当前无未保存改动")}
+                  </p>
+                  <p className="mt-0.5 max-w-[68ch] text-xs leading-relaxed text-ink-soft">
+                    {t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。")}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                  <Button variant="ghost" onClick={resetDraft} disabled={!hasUnsavedChanges || saveMutation.isPending}>
+                    <RotateCcw size={14} aria-hidden />
+                    {t("重置草稿")}
+                  </Button>
+                  <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={isSaveDisabled}>
+                    <Save size={14} aria-hidden />
+                    {t(saveMutation.isPending ? "保存中..." : "保存全部更改")}
+                  </Button>
+                </div>
+              </PanelBody>
+            </Panel>
           </div>
         )}
       </div>
-    </section>
+    </Page>
   );
 }

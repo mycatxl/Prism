@@ -3,7 +3,8 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Badge, type BadgeProps } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Readout, ReadoutCell } from "../../components/ui/Readout";
+import { Panel, PanelBody, PanelHeader, SectionTitle } from "../../components/ui/Panel";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { useI18n } from "../../i18n";
 import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import type { QualityEvidence, QualitySummary } from "./types";
@@ -150,50 +151,58 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
   const pureScore = purityScore(pure?.risk_score);
   const abuse = summary?.sources?.find(source => source.provider === "abuseipdb");
   const tor = summary?.sources?.find(source => source.provider === "torproject");
-  return <div className="space-y-4">
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-rule pb-2">
-      <h3 className="flex items-center gap-1.5 text-sm font-semibold">
-        <ShieldCheck size={16} aria-hidden className="text-ink-faint" />
-        {t("纯净度与风险")}
-      </h3>
-      {onInspect && <Button size="sm" variant="secondary" onClick={onInspect} disabled={pending || disabled}>
-        {pending ? <LoaderCircle size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-        {t("更新网络特征")}
-      </Button>}
-    </div>
+  return <div className="space-y-3">
+    {/* The two headline measurements of this exit, on one baseline rather than in
+        two boxes, plus the verdict the operator reads first. */}
+    <Panel className="min-w-0">
+      <PanelHeader
+        title={
+          <span className="flex min-w-0 items-center gap-1.5">
+            <ShieldCheck size={16} aria-hidden className="shrink-0 text-ink-faint" />
+            <span className="truncate">{t("纯净度与风险")}</span>
+          </span>
+        }
+        actions={onInspect && <Button size="sm" variant="secondary" onClick={onInspect} disabled={pending || disabled}>
+          {pending ? <LoaderCircle size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+          {t("更新网络特征")}
+        </Button>}
+      />
+      <PanelBody className="space-y-3">
+        <ReadoutStrip>
+          <ReadoutCell>
+            <Readout
+              label={t("IPPure 纯净度参考")}
+              value={pureFresh ? pureScore ?? "—" : "—"}
+              unit="/ 100"
+              size="lg"
+              tone={pureFresh ? bandReadoutTones[purityBand(pureScore)?.variant ?? ""] ?? "ink" : "muted"}
+            />
+          </ReadoutCell>
+          <ReadoutCell>
+            <Readout
+              label={t("来源原始风险")}
+              hint="IPPure"
+              value={pure?.risk_score ?? "—"}
+              unit="/ 100"
+            />
+          </ReadoutCell>
+        </ReadoutStrip>
 
-    <div className="grid gap-4 border border-rule bg-paper-raised px-4 py-3 sm:grid-cols-2">
-      <div className="space-y-2">
-        <Readout
-          label={t("IPPure 纯净度参考")}
-          value={pureFresh ? pureScore ?? "—" : "—"}
-          unit="/ 100"
-          size="lg"
-          tone={pureFresh ? bandReadoutTones[purityBand(pureScore)?.variant ?? ""] ?? "ink" : "muted"}
-        />
         <div className="flex flex-wrap items-center gap-1.5">
           <QualityBadge summary={summary} showScore={false} />
           <IPTypeBadge summary={summary} />
         </div>
-      </div>
-      <div className="space-y-1 sm:border-l sm:border-rule sm:pl-4">
-        <Readout
-          label={t("来源原始风险")}
-          hint="IPPure"
-          value={pure?.risk_score ?? "—"}
-          unit="/ 100"
-        />
-        <p className="max-w-[40ch] text-2xs leading-relaxed text-ink-faint">{t("数值越低，来源判定风险越低")}</p>
-      </div>
-    </div>
+        <p className="max-w-[68ch] text-2xs leading-relaxed text-ink-faint">{t("数值越低，来源判定风险越低")}</p>
+      </PanelBody>
+    </Panel>
 
-    <div className="flex flex-wrap items-start gap-2 border-y border-rule py-2.5">
-      <span className="label pt-0.5">{t("综合判定")}</span>
-      <div className="min-w-0 flex-1 space-y-1">
+    <Panel className="min-w-0">
+      <PanelHeader title={t("综合判定")} />
+      <PanelBody className="space-y-1.5">
         <VerdictBadge summary={summary} />
-        {summary?.assessment?.reasons?.length ? <ul className="max-w-[80ch] space-y-0.5 text-xs leading-relaxed text-ink-soft">{summary.assessment.reasons.map(reason => <li key={reason}>{t(assessmentReasons[reason] || reason)}</li>)}</ul> : null}
-      </div>
-    </div>
+        {summary?.assessment?.reasons?.length ? <ul className="max-w-[68ch] space-y-0.5 text-xs leading-relaxed text-ink-soft">{summary.assessment.reasons.map(reason => <li key={reason}>{t(assessmentReasons[reason] || reason)}</li>)}</ul> : null}
+      </PanelBody>
+    </Panel>
 
     <PurityGuide />
 
@@ -206,7 +215,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
       <EvidenceTime evidence={pure} />
     </div>}
 
-    {!evidence && <p className="max-w-[80ch] text-sm leading-relaxed text-ink-soft">{t(summary?.ip
+    {!evidence && <p className="max-w-[68ch] text-sm leading-relaxed text-ink-soft">{t(summary?.ip
       ? "查询此出口的网络类型、代理特征与风险记录。"
       : "确认节点出口 IP 后，即可检测质量。同一出口的线路共享结果。")}</p>}
 
@@ -216,12 +225,12 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
       {evidence && <span className="text-2xs">{t("保留上次证据")}</span>}
     </p>}
 
-    {evidence && <div className="space-y-3 border-t border-rule pt-3">
-      <h4 className="text-sm font-semibold">{t("ProxyCheck 网络证据")}</h4>
+    {evidence && <section className="space-y-3 border-t border-rule pt-3">
+      <SectionTitle>{t("ProxyCheck 网络证据")}</SectionTitle>
       <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
         <Fact label={t("数据来源")}>{providerName(evidence.provider)}</Fact>
         <Fact label="ASN"><span className="readout">{evidence.asn || "—"}</span></Fact>
-        <Fact label={t("网络组织")}>{evidence.organization || "—"}</Fact>
+        <Fact label={t("网络组织")}><span className="block max-w-[46ch] truncate" title={evidence.organization || undefined}>{evidence.organization || "—"}</span></Fact>
         <Fact label={t("来源分类")}>{evidence.source_type || "—"}</Fact>
         {evidence.network_provider && <Fact label={t("网络供应商")}>{evidence.network_provider}</Fact>}
         {evidence.operator && <Fact label={t("代理服务商")}>
@@ -245,7 +254,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           ["proxy", "公开代理"], ["vpn", "VPN"], ["tor", "Tor"], ["hosting", "机房特征"], ["compromised", "被入侵记录"], ["scraper", "爬取特征"], ["anonymous", "匿名网络"],
         ] as const).map(([key, label]) => {
           const value = evidence.signals[key];
-          return <div key={key} className="flex min-w-0 items-center justify-between gap-2 border-b border-rule py-1.5">
+          return <div key={key} className="flex min-w-0 items-center justify-between gap-2 border-b border-rule-faint py-1.5">
             <span className="truncate text-xs text-ink-soft">{t(label)}</span>
             <Badge tone={value === true ? "alert" : value === false ? "signal" : "neutral"}>
               {value === true ? <AlertCircle size={12} aria-hidden /> : value === false ? <Check size={12} aria-hidden /> : null}
@@ -263,20 +272,19 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
             <span className="readout font-medium">{count}</span>
           </span>)}
         </div>
-        <p className="max-w-[80ch] text-xs leading-relaxed text-ink-soft">{t("展示来源返回的攻击类型与次数，最多保留 8 类；不推断为节点使用者的行为。")}</p>
+        <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("展示来源返回的攻击类型与次数，最多保留 8 类；不推断为节点使用者的行为。")}</p>
       </div>}
 
       <EvidenceTime evidence={evidence} />
-    </div>}
+    </section>}
 
     {tor && <section className="space-y-2 border-t border-rule pt-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="flex items-center gap-1.5 text-sm font-semibold">
+      <SectionTitle trailing={<span className="text-2xs text-ink-faint">Tor Project</span>}>
+        <span className="flex items-center gap-1.5">
           <ShieldCheck size={15} aria-hidden className="text-ink-faint" />
           {t("Tor 角色核验")}
-        </h4>
-        <span className="text-2xs text-ink-faint">Tor Project</span>
-      </div>
+        </span>
+      </SectionTitle>
       {tor.evidence ? <>
         <div className="flex flex-wrap items-center gap-1.5">
           {tor.evidence.tor_roles?.length
@@ -285,20 +293,19 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           {Date.parse(tor.evidence.valid_until) <= now && <Badge tone="warn">{t("已过期")}</Badge>}
         </div>
         <EvidenceTime evidence={tor.evidence} />
-      </> : <p className="max-w-[80ch] text-xs leading-relaxed text-ink-soft">{t("角色资料暂不可用，保留 Tor 标记，具体角色未知。")}</p>}
-      <p className="max-w-[80ch] text-xs leading-relaxed text-ink-soft">{t("出口依据最近 24 小时的实际出口记录；Guard 表示具备入口守卫资格。未列出不代表未使用 Tor，私有网桥不会公开地址。")}</p>
+      </> : <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("角色资料暂不可用，保留 Tor 标记，具体角色未知。")}</p>}
+      <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("出口依据最近 24 小时的实际出口记录；Guard 表示具备入口守卫资格。未列出不代表未使用 Tor，私有网桥不会公开地址。")}</p>
     </section>}
 
     {(abuse?.configured || abuse?.evidence) && <section className="space-y-2 border-t border-rule pt-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="flex items-center gap-1.5 text-sm font-semibold">
+      <SectionTitle trailing={<span className="text-2xs text-ink-faint">AbuseIPDB</span>}>
+        <span className="flex items-center gap-1.5">
           <ShieldCheck size={15} aria-hidden className="text-ink-faint" />
           {t("近期滥用记录")}
-        </h4>
-        <span className="text-2xs text-ink-faint">AbuseIPDB</span>
-      </div>
+        </span>
+      </SectionTitle>
       {abuse?.evidence ? <>
-        <div className="grid grid-cols-1 divide-y divide-rule border-y border-rule bg-paper-raised sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+        <ReadoutStrip>
           <ReadoutCell>
             <Readout label={t("举报置信度")} value={abuse.evidence.abuse_confidence ?? "—"} unit="/ 100" size="sm" />
           </ReadoutCell>
@@ -308,18 +315,18 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           <ReadoutCell>
             <Readout label={t("独立举报者")} value={abuse.evidence.distinct_reporters ?? "—"} size="sm" />
           </ReadoutCell>
-        </div>
+        </ReadoutStrip>
         {(abuse.state === "stale" || Date.parse(abuse.evidence.valid_until) <= now) && <Badge tone="warn">{t("已过期")}</Badge>}
         <EvidenceTime evidence={abuse.evidence} />
-        <p className="max-w-[80ch] text-xs leading-relaxed text-ink-soft">{t("没有举报不等于没有风险；此项与网络类型、代理识别分别展示。")}</p>
-      </> : <p className="max-w-[80ch] text-xs leading-relaxed text-ink-soft">{t(abuse?.configured
+        <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("没有举报不等于没有风险；此项与网络类型、代理识别分别展示。")}</p>
+      </> : <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t(abuse?.configured
         ? (abuse.task?.error_code ? inspectionErrorLabel(abuse.task.error_code) : "等待近期滥用记录")
         : "可配置免费的 AbuseIPDB API Key，补充近 30 天的举报记录。")}</p>}
     </section>}
 
     {nodeHash ? <IPPureReviewPanel key={nodeHash + ":" + nodeIP} nodeHash={nodeHash} nodeIP={nodeIP} ready={nodeReady} /> : <div className="space-y-1 border-t border-rule pt-3">
       <Link className="inline-flex items-center gap-1 text-sm" to={"/nodes?egress_ip=" + encodeURIComponent(summary?.ip || "")}>{t("查看此出口的节点")}<ArrowUpRight size={12} aria-hidden /></Link>
-      <p className="max-w-[80ch] text-xs leading-relaxed text-ink-soft">{t("IPPure 需要经目标节点查询，可在节点详情中直接复核。")}</p>
+      <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("IPPure 需要经目标节点查询，可在节点详情中直接复核。")}</p>
     </div>}
   </div>;
 }

@@ -25,13 +25,16 @@ function subscribeOnline(callback: () => void) {
 const RAIL_COLLAPSED_KEY = "prism.rail-collapsed";
 
 /**
- * The application frame: a left rail of destinations and a top bar that answers
- * "where am I" and "is this instance healthy".
+ * The application frame: a rail of destinations and a bar that answers "where am I"
+ * and "is this instance healthy".
  *
- * The rail is grouped by section with a hairline between groups rather than a
- * heading above each, so the grouping is visible without spending vertical space
- * on labels. It collapses to icons only, because the operator knows the icons once
- * they have used the panel for a day.
+ * Geometry is fixed by tokens (rail 232 expanded / 56 collapsed, bar 48) rather than
+ * chosen per screen, because the whole point of a console is that the frame never
+ * moves. 232 is what Vben, Tabler and shadcn-admin converge on; 56 is the width at
+ * which a 15px icon still has a 36px hit target.
+ *
+ * The rail sits on its own neutral layer (`--color-rail`) so the frame and the sheet
+ * the data is read on never blur into one field.
  */
 export function AppShell() {
   const { t } = useI18n();
@@ -111,36 +114,38 @@ export function AppShell() {
     <nav
       aria-label={t("主导航")}
       className={cn(
-        "flex h-full flex-col border-r border-rule bg-rail",
-        collapsed ? "w-14" : "w-56",
+        "flex h-full flex-col border-r border-rule bg-rail shadow-[inset_-1px_0_0_0_var(--color-rule)]",
+        collapsed ? "w-[var(--shell-rail-w-collapsed)]" : "w-[var(--shell-rail-w)]",
       )}
     >
       <div
         className={cn(
-          "flex h-12 shrink-0 items-center border-b border-rule",
-          collapsed ? "justify-center px-2" : "gap-2 px-3",
+          "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule",
+          collapsed ? "justify-center px-2" : "gap-2.5 px-3",
         )}
       >
         <span
           aria-hidden
-          className="grid size-6 shrink-0 place-items-center rounded-control bg-signal text-2xs font-semibold text-white"
+          className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-ink text-2xs font-semibold tracking-tight text-white"
         >
           P
         </span>
         {!collapsed && (
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
-            Prism
-          </span>
+          <>
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
+              Prism
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleRail}
+              className="hidden shrink-0 lg:inline-flex"
+              aria-label={t("收起导航")}
+            >
+              <PanelLeftClose size={15} />
+            </Button>
+          </>
         )}
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleRail}
-          className={cn("hidden shrink-0 lg:inline-flex", collapsed && "hidden")}
-          aria-label={t("收起导航")}
-        >
-          <PanelLeftClose size={15} />
-        </Button>
       </div>
 
       {collapsed && (
@@ -157,7 +162,14 @@ export function AppShell() {
 
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
         {Object.entries(sections).map(([section, items], index) => (
-          <div key={section} className={cn(index > 0 && "mt-2 border-t border-rule pt-2")}>
+          <div key={section} className={cn(index > 0 && "mt-3")}>
+            {/* A rail group label, not an eyebrow over a heading: it names the set
+                of destinations under it, which is the one job micro-caps have. */}
+            {collapsed ? (
+              index > 0 && <div className="mx-2.5 mb-2 border-t border-rule" />
+            ) : (
+              <div className="micro px-3 pb-1.5">{t(section)}</div>
+            )}
             {items.map((item) => {
               const Icon = item.icon;
               const active =
@@ -170,14 +182,13 @@ export function AppShell() {
                   title={collapsed ? t(item.label) : undefined}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "mx-1.5 flex items-center gap-2.5 rounded-control py-1.5 text-sm transition-colors",
-                    collapsed ? "justify-center px-0" : "px-2",
-                    // The current destination is marked by fill, weight and text
-                    // colour together. A coloured edge stripe on a list row is the
-                    // loudest generic-UI tell there is, and it says nothing the
-                    // fill does not already say.
+                    // The current destination is a filled pill. A coloured edge
+                    // stripe on a list row is the loudest generic-UI tell there is,
+                    // and it says nothing the fill does not already say.
+                    "mx-2 flex h-8 items-center gap-2.5 rounded-control text-sm transition-colors",
+                    collapsed ? "justify-center px-0" : "px-2.5",
                     active
-                      ? "bg-paper-raised font-semibold text-accent-deep"
+                      ? "bg-paper-raised font-semibold text-accent-deep shadow-xs"
                       : "text-ink-soft hover:bg-paper-raised/70 hover:text-ink",
                   )}
                 >
@@ -216,18 +227,18 @@ export function AppShell() {
 
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
-          <div className="w-56">{rail}</div>
+          <div className="w-[var(--shell-rail-w)]">{rail}</div>
           <button
             type="button"
             aria-label={t("关闭导航")}
-            className="flex-1 bg-ink/25"
+            className="flex-1 bg-ink/30"
             onClick={() => setMobileNavOpen(false)}
           />
         </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-rule bg-paper-raised px-3 lg:px-4">
+        <header className="flex h-[var(--shell-bar-h)] shrink-0 items-center gap-3 border-b border-rule bg-paper-raised px-3 lg:px-4">
           <Button
             variant="ghost"
             size="icon"
@@ -240,7 +251,7 @@ export function AppShell() {
           </Button>
 
           <div className="flex min-w-0 items-baseline gap-2">
-            <span className="text-sm font-semibold text-ink">
+            <span className="truncate text-sm font-semibold text-ink">
               {t(current?.label ?? "工作区")}
             </span>
             {current && (

@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { ToastContainer } from "../../components/ui/Toast";
@@ -17,22 +18,14 @@ import { getRegionName } from "../nodes/regions";
 import { getGeoIPStatus, lookupIP, updateGeoIPNow } from "./api";
 import type { GeoIPLookupResult } from "./types";
 
-function getFlagEmoji(countryCode: string) {
-  if (!countryCode || countryCode.length !== 2) return "";
-  const codePoints = countryCode
-    .toUpperCase()
-    .split("")
-    .map((char) => 127397 + char.charCodeAt(0));
-  return String.fromCodePoint(...codePoints);
-}
-
 /**
  * The address desk.
  *
  * The database state is an instrument reading — two timestamps on one baseline —
  * and the lookup result is the same strip once there is something to read. Both
  * numbers are mono so they can be compared against a log line character by
- * character.
+ * character. The two blocks are separate panels because they answer two separate
+ * questions: what is loaded, and what does one address resolve to.
  */
 export function GeoIPPage() {
   const { t } = useI18n();
@@ -86,144 +79,154 @@ export function GeoIPPage() {
     if (!name) {
       return code;
     }
-    const emoji = getFlagEmoji(code);
-    return `${emoji} ${code} ${name}`;
+    return `${code} ${name}`;
   }, [singleResult, t]);
 
   return (
-    <section className="min-h-full">
-      <header className="border-b border-rule bg-paper-raised px-4 py-3 lg:px-6">
-        <h1 className="text-xl">{t("资源")}</h1>
-        <p className="mt-1 max-w-[75ch] text-sm leading-relaxed text-ink-soft">
-          {t("查询 IP 所在地区，并维护 GeoIP 数据库。")}
-        </p>
-      </header>
+    <Page bleed>
+      <PageHeader
+        title={t("资源")}
+        description={t("查询 IP 所在地区，并维护 GeoIP 数据库。")}
+        meta={
+          <>
+            <PageMeta
+              label={t("数据库状态")}
+              value={
+                <Badge tone={hasDBTime ? "signal" : "warn"} dot>
+                  {hasDBTime ? t("数据库已加载") : t("数据库未加载")}
+                </Badge>
+              }
+            />
+            <PageMeta
+              label={t("数据库更新时间")}
+              value={hasDBTime ? formatDateTime(status?.db_mtime || "") : "-"}
+            />
+            <PageMeta
+              label={t("下次计划更新")}
+              value={hasNextSchedule ? formatDateTime(status?.next_scheduled_update || "") : "-"}
+            />
+          </>
+        }
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void statusQuery.refetch()}
+            disabled={statusQuery.isFetching}
+          >
+            <RefreshCw size={14} aria-hidden className={cn(statusQuery.isFetching && "animate-spin")} />
+            {t("刷新")}
+          </Button>
+        }
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="px-4 py-4 lg:px-6">
-        <Panel>
+      <div className="grid gap-3 px-4 py-3 lg:grid-cols-2 lg:px-5 lg:py-4 2xl:gap-4 2xl:px-6 2xl:py-5">
+        <Panel className="min-w-0">
           <PanelHeader
-            title="GeoIP"
-            description={t("可查看数据库状态并进行 IP 查询。")}
-            actions={
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void statusQuery.refetch()}
-                disabled={statusQuery.isFetching}
-              >
-                <RefreshCw size={14} aria-hidden className={cn(statusQuery.isFetching && "animate-spin")} />
-                {t("刷新")}
-              </Button>
-            }
+            title={t("数据库状态")}
+            description={t("当前加载时间与下一次计划更新时间")}
           />
+          <PanelBody>
+            {statusQuery.isError ? (
+              <ErrorState
+                message={formatApiErrorMessage(statusQuery.error, t)}
+                onRetry={() => void statusQuery.refetch()}
+              />
+            ) : null}
 
-          <div className="grid divide-y divide-rule lg:grid-cols-2 lg:divide-x lg:divide-y-0">
-            <section className="min-w-0 px-4 py-4">
-              <h3 className="text-sm font-semibold">{t("数据库状态")}</h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
-                {t("当前加载时间与下一次计划更新时间")}
-              </p>
-
-              {statusQuery.isError ? (
-                <ErrorState
-                  className="mt-3"
-                  message={formatApiErrorMessage(statusQuery.error, t)}
-                  onRetry={() => void statusQuery.refetch()}
-                />
-              ) : null}
-
-              {statusQuery.isPending ? (
-                <LoadingState className="py-8" />
-              ) : !statusQuery.isError ? (
-                <>
-                  <div className="mt-3 grid grid-cols-2 gap-3">
+            {statusQuery.isPending ? (
+              <LoadingState className="py-8" />
+            ) : !statusQuery.isError ? (
+              <div className="space-y-3">
+                <ReadoutStrip>
+                  <ReadoutCell>
                     <Readout
-                      size="sm"
                       label={t("数据库更新时间")}
                       value={hasDBTime ? formatDateTime(status?.db_mtime || "") : "-"}
                     />
+                  </ReadoutCell>
+                  <ReadoutCell>
                     <Readout
-                      size="sm"
                       label={t("下次计划更新")}
                       value={hasNextSchedule ? formatDateTime(status?.next_scheduled_update || "") : "-"}
                     />
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-rule pt-3">
-                    <Badge tone={hasDBTime ? "signal" : "warn"} dot>
-                      {hasDBTime ? t("数据库已加载") : t("数据库未加载")}
-                    </Badge>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => void updateMutation.mutateAsync()}
-                      disabled={updateMutation.isPending}
-                    >
-                      <ArrowDownToLine
-                        size={14}
-                        aria-hidden
-                        className={cn(updateMutation.isPending && "animate-spin")}
-                      />
-                      {updateMutation.isPending ? t("更新中...") : t("立即更新")}
-                    </Button>
-                  </div>
-                </>
-              ) : null}
-            </section>
-
-            <section className="min-w-0 px-4 py-4">
-              <h3 className="text-sm font-semibold">{t("单 IP 查询")}</h3>
-              <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{t("输入 IP 后点击查询。")}</p>
-
-              <div className="mt-3 flex items-end gap-1.5">
-                <Fieldset
-                  className="min-w-0 flex-1"
-                  label={t("输入 IP 地址例如 8.8.8.8")}
-                  htmlFor="geoip-single-ip"
-                >
-                  <Input
-                    id="geoip-single-ip"
-                    className="font-mono"
-                    value={singleIP}
-                    onChange={(event) => setSingleIP(event.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void lookupMutation.mutateAsync();
-                      }
-                    }}
-                  />
-                </Fieldset>
-                <Button
-                  variant="secondary"
-                  className="shrink-0"
-                  onClick={() => void lookupMutation.mutateAsync()}
-                  disabled={lookupMutation.isPending}
-                  aria-label={t("查询")}
-                  title={t("查询")}
-                >
-                  <Search size={15} aria-hidden className={cn(lookupMutation.isPending && "animate-spin")} />
-                </Button>
-              </div>
-
-              {singleResult ? (
-                <ReadoutStrip className="mt-4 grid-cols-2">
-                  <ReadoutCell>
-                    <Readout size="sm" label="IP" value={singleResult.ip} />
-                  </ReadoutCell>
-                  <ReadoutCell>
-                    <Readout size="sm" label={t("区域")} value={singleRegion} />
                   </ReadoutCell>
                 </ReadoutStrip>
-              ) : (
-                <EmptyState className="py-8" title={t("输入 IP 执行查询")} />
-              )}
-            </section>
-          </div>
+
+                <div className="flex flex-wrap items-center gap-2 border-t border-rule-faint pt-3">
+                  <Badge tone={hasDBTime ? "signal" : "warn"} dot>
+                    {hasDBTime ? t("数据库已加载") : t("数据库未加载")}
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void updateMutation.mutateAsync()}
+                    disabled={updateMutation.isPending}
+                  >
+                    <ArrowDownToLine
+                      size={14}
+                      aria-hidden
+                      className={cn(updateMutation.isPending && "animate-spin")}
+                    />
+                    {updateMutation.isPending ? t("更新中...") : t("立即更新")}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </PanelBody>
+        </Panel>
+
+        <Panel className="min-w-0">
+          <PanelHeader title={t("单 IP 查询")} description={t("输入 IP 后点击查询。")} />
+          <PanelBody>
+            <div className="flex items-end gap-1.5">
+              <Fieldset
+                className="min-w-0 flex-1"
+                label={t("输入 IP 地址例如 8.8.8.8")}
+                htmlFor="geoip-single-ip"
+              >
+                <Input
+                  id="geoip-single-ip"
+                  className="readout"
+                  value={singleIP}
+                  onChange={(event) => setSingleIP(event.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void lookupMutation.mutateAsync();
+                    }
+                  }}
+                />
+              </Fieldset>
+              <Button
+                variant="secondary"
+                className="shrink-0"
+                onClick={() => void lookupMutation.mutateAsync()}
+                disabled={lookupMutation.isPending}
+                aria-label={t("查询")}
+                title={t("查询")}
+              >
+                <Search size={15} aria-hidden className={cn(lookupMutation.isPending && "animate-spin")} />
+              </Button>
+            </div>
+
+            {singleResult ? (
+              <ReadoutStrip className="mt-3">
+                <ReadoutCell>
+                  <Readout label="IP" value={singleResult.ip} />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout label={t("区域")} value={singleRegion} />
+                </ReadoutCell>
+              </ReadoutStrip>
+            ) : (
+              <EmptyState className="py-8" title={t("输入 IP 执行查询")} />
+            )}
+          </PanelBody>
         </Panel>
       </div>
-    </section>
+    </Page>
   );
 }

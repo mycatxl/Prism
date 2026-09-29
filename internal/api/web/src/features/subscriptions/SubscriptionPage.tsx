@@ -10,11 +10,12 @@ import { cn } from "../../lib/cn";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Readout } from "../../components/ui/Readout";
-import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { Switch } from "../../components/ui/Switch";
 import { ToastContainer } from "../../components/ui/Toast";
@@ -155,12 +156,12 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
       </div>
 
       {summary === null ? (
-        <p className="mt-1 text-xs text-ink-faint">
+        <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
           {t("该订阅尚未解析；刷新一次后会在这里列出被丢弃的节点及原因。")}
         </p>
       ) : (
         <>
-          <p className="mt-1 text-xs text-ink-soft">
+          <p className="mt-1 max-w-[68ch] text-xs text-ink-soft">
             {t("共 {{total}} 个节点：导入 {{imported}} 个，丢弃 {{skipped}} 个。", {
               total: summary.total,
               imported: summary.imported,
@@ -169,20 +170,20 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
           </p>
 
           {summary.reasons.length === 0 ? (
-            <p className="mt-1 text-xs text-ink-faint">{t("没有节点被丢弃。")}</p>
+            <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">{t("没有节点被丢弃。")}</p>
           ) : (
             <ul className="mt-2 divide-y divide-rule border-y border-rule">
               {summary.reasons.map((bucket: SubscriptionParseReason) => (
                 <li key={bucket.reason} className="py-2">
                   <h4 className="text-xs font-medium">{`${bucket.reason} × ${bucket.count}`}</h4>
-                  <p className="mt-0.5 text-xs text-ink-faint">
+                  <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">
                     {bucket.sample_names.length > 0
                       ? t("名称样例：{{names}}", { names: bucket.sample_names.join("、") })
                       : t("没有可显示的名称")}
                     {bucket.samples_truncated ? t("（样例已截断）") : ""}
                   </p>
                   {bucket.detail ? (
-                    <p className="mt-0.5 text-xs text-ink-faint">{bucket.detail}</p>
+                    <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">{bucket.detail}</p>
                   ) : null}
                 </li>
               ))}
@@ -190,14 +191,14 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
           )}
 
           {summary.skipped_overflow ? (
-            <p className="mt-1 text-xs text-ink-faint">
+            <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
               {t("另有 {{count}} 个被丢弃的节点只计入数量，未记录名称。", {
                 count: summary.skipped_overflow,
               })}
             </p>
           ) : null}
           {summary.reasons_overflow ? (
-            <p className="mt-1 text-xs text-ink-faint">
+            <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
               {t("另有 {{count}} 种原因只计入数量。", { count: summary.reasons_overflow })}
             </p>
           ) : null}
@@ -221,9 +222,9 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
                 onRetry={() => void detailQuery.refetch()}
               />
             ) : !detail || !detail.parsed ? (
-              <p className="mt-1 text-xs text-ink-faint">{t("该订阅尚未解析。")}</p>
+              <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">{t("该订阅尚未解析。")}</p>
             ) : detail.truncated ? (
-              <p className="mt-1 text-xs text-ink-faint">
+              <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
                 {t("解析报告超过 64 KiB，只保留了截断标记。")}
               </p>
             ) : (
@@ -233,7 +234,7 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
                     <h4 className="text-xs font-medium">
                       {`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}
                     </h4>
-                    <p className="mt-0.5 text-xs text-ink-faint">{`${entry.reason}: ${entry.detail}`}</p>
+                    <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">{`${entry.reason}: ${entry.detail}`}</p>
                   </li>
                 ))}
               </ul>
@@ -326,7 +327,7 @@ function PageNavigator({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule px-3 py-2">
+    <PanelFooter className="justify-between gap-x-4">
       <p className="text-xs text-ink-soft">
         {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -391,7 +392,7 @@ function PageNavigator({
           <ChevronRight size={16} />
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -786,237 +787,241 @@ export function SubscriptionPage() {
 
 
   return (
-    <section className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-6">
-      <header className="pb-3">
-        <h1 className="text-2xl font-semibold">{t("订阅管理")}</h1>
-        <p className="mt-1 text-xs text-ink-soft">{t("保障订阅按计划更新，异常时可一键刷新。")}</p>
-      </header>
-
+    <Page bleed>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Panel>
-        <PanelHeader
-          title={t("订阅列表")}
-          description={t("共 {{count}} 个订阅", { count: totalSubscriptions })}
-          actions={
-            <>
-              <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                <Plus size={14} />
-                {t("新建")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => subscriptionsQuery.refetch()}
-                disabled={subscriptionsQuery.isFetching}
-                aria-label={t("刷新")}
-                title={t("刷新")}
-              >
-                <RefreshCw size={15} className={cn(subscriptionsQuery.isFetching && "animate-spin")} />
-              </Button>
-            </>
-          }
-        />
-
-        <div className="flex flex-wrap items-center gap-2 border-b border-rule px-3 py-2">
-          <div className="flex items-center gap-1.5">
-            <Filter size={14} aria-hidden className="text-ink-faint" />
-            <select
-              id="sub-status-filter"
-              className={selectClass}
-              aria-label={t("刷新状态")}
-              value={enabledFilter}
-              onChange={(event) => {
-                setEnabledFilter(event.target.value as EnabledFilter);
-                setPage(0);
-              }}
+      <PageHeader
+        title={t("订阅管理")}
+        description={t("保障订阅按计划更新，异常时可一键刷新。")}
+        meta={<PageMeta label={t("订阅")} value={totalSubscriptions.toLocaleString()} />}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+              <Plus size={14} />
+              {t("新建")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => subscriptionsQuery.refetch()}
+              disabled={subscriptionsQuery.isFetching}
+              aria-label={t("刷新")}
+              title={t("刷新")}
             >
-              <option value="all">{t("全部")}</option>
-              <option value="enabled">{t("仅启用")}</option>
-              <option value="disabled">{t("仅禁用")}</option>
-            </select>
-          </div>
-          <div className="relative w-full sm:w-64">
-            <label htmlFor="subscription-search" className="sr-only">
-              {t("搜索订阅")}
-            </label>
-            <Search
-              size={14}
-              aria-hidden
-              className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
-            />
-            <Input
-              id="subscription-search"
-              placeholder={t("搜索订阅")}
-              value={search}
-              onChange={(event) => {
-                setSearch(event.target.value);
-                setPage(0);
-              }}
-              className="pl-7"
-            />
-          </div>
-        </div>
+              <RefreshCw size={15} className={cn(subscriptionsQuery.isFetching && "animate-spin")} />
+            </Button>
+          </>
+        }
+      />
 
-        {subscriptionsQuery.isLoading ? (
-          <LoadingState label={t("正在加载订阅数据...")} />
-        ) : subscriptionsQuery.isError ? (
-          <ErrorState
-            className="m-3"
-            message={formatApiErrorMessage(subscriptionsQuery.error, t)}
-            onRetry={() => void subscriptionsQuery.refetch()}
-          />
-        ) : !subscriptions.length ? (
-          <EmptyState
-            title={t("没有匹配的订阅")}
-            action={
-              <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                <Plus size={14} />
-                {t("新建")}
-              </Button>
-            }
-          />
-        ) : (
-          <TableWrap>
-            <Table className="min-w-[920px]">
-              <caption className="sr-only">{t("订阅列表")}</caption>
-              <THead>
-                <TR className="hover:bg-transparent">
-                  <TH>{t("名称")}</TH>
-                  <TH>{t("订阅源")}</TH>
-                  <TH>{t("更新间隔")}</TH>
-                  <TH className="text-right">{t("节点数")}</TH>
-                  <TH>{t("刷新状态")}</TH>
-                  <TH>{t("上次检查")}</TH>
-                  <TH>{t("上次更新")}</TH>
-                  <TH>{t("启用")}</TH>
-                  <TH className="text-right">{t("操作")}</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {subscriptions.map((subscription) => {
-                  const enabled = displayedEnabledState(subscription);
-                  const toggleLabel = enabled
-                    ? t("停用订阅 {{name}}", { name: subscription.name })
-                    : t("启用订阅 {{name}}", { name: subscription.name });
-                  return (
-                    <TR
-                      key={subscription.id}
-                      tabIndex={0}
-                      className="cursor-pointer"
-                      onClick={() => openDrawer(subscription)}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return;
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openDrawer(subscription);
-                        }
-                      }}
-                    >
-                      <TD className="font-medium text-ink">{subscription.name}</TD>
-                      <TD
-                        className="font-mono text-xs text-ink-soft"
-                        title={
-                          subscription.source_type === "local"
-                            ? t("本地订阅")
-                            : subscription.url
-                        }
+      <div className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+        <Panel className="flex min-w-0 flex-col">
+          <PanelHeader title={t("订阅列表")} />
+
+          <PanelToolbar>
+            <div className="flex items-center gap-1.5">
+              <Filter size={14} aria-hidden className="text-ink-faint" />
+              <select
+                id="sub-status-filter"
+                className={selectClass}
+                aria-label={t("刷新状态")}
+                value={enabledFilter}
+                onChange={(event) => {
+                  setEnabledFilter(event.target.value as EnabledFilter);
+                  setPage(0);
+                }}
+              >
+                <option value="all">{t("全部")}</option>
+                <option value="enabled">{t("仅启用")}</option>
+                <option value="disabled">{t("仅禁用")}</option>
+              </select>
+            </div>
+            <div className="relative w-full sm:w-64">
+              <label htmlFor="subscription-search" className="sr-only">
+                {t("搜索订阅")}
+              </label>
+              <Search
+                size={14}
+                aria-hidden
+                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+              />
+              <Input
+                id="subscription-search"
+                placeholder={t("搜索订阅")}
+                value={search}
+                onChange={(event) => {
+                  setSearch(event.target.value);
+                  setPage(0);
+                }}
+                className="pl-7"
+              />
+            </div>
+          </PanelToolbar>
+
+          {subscriptionsQuery.isLoading ? (
+            <PanelBody>
+              <LoadingState label={t("正在加载订阅数据...")} />
+            </PanelBody>
+          ) : subscriptionsQuery.isError ? (
+            <PanelBody>
+              <ErrorState
+                message={formatApiErrorMessage(subscriptionsQuery.error, t)}
+                onRetry={() => void subscriptionsQuery.refetch()}
+              />
+            </PanelBody>
+          ) : !subscriptions.length ? (
+            <PanelBody>
+              <EmptyState
+                title={t("没有匹配的订阅")}
+                action={
+                  <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+                    <Plus size={14} />
+                    {t("新建")}
+                  </Button>
+                }
+              />
+            </PanelBody>
+          ) : null}
+
+          {subscriptions.length ? (
+            <TableWrap>
+              <Table className="min-w-[920px]">
+                <caption className="sr-only">{t("订阅列表")}</caption>
+                <THead>
+                  <TR>
+                    <TH>{t("名称")}</TH>
+                    <TH>{t("订阅源")}</TH>
+                    <TH>{t("更新间隔")}</TH>
+                    <TH className="text-right">{t("节点数")}</TH>
+                    <TH>{t("刷新状态")}</TH>
+                    <TH>{t("上次检查")}</TH>
+                    <TH>{t("上次更新")}</TH>
+                    <TH>{t("启用")}</TH>
+                    <TH className="text-right">{t("操作")}</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {subscriptions.map((subscription) => {
+                    const enabled = displayedEnabledState(subscription);
+                    const toggleLabel = enabled
+                      ? t("停用订阅 {{name}}", { name: subscription.name })
+                      : t("启用订阅 {{name}}", { name: subscription.name });
+                    return (
+                      <TR
+                        key={subscription.id}
+                        tabIndex={0}
+                        className="cursor-pointer"
+                        onClick={() => openDrawer(subscription)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openDrawer(subscription);
+                          }
+                        }}
                       >
-                        {subscription.source_type === "local"
-                          ? t("本地订阅")
-                          : extractHostname(subscription.url)}
-                      </TD>
-                      <TD className="font-mono text-xs text-ink-soft">
-                        {formatGoDuration(subscription.update_interval)}
-                      </TD>
-                      <TDNum className="text-xs">
-                        {`${subscription.healthy_node_count} / ${subscription.node_count}`}
-                      </TDNum>
-                      <TD>
-                        {subscription.last_error ? (
-                          <Badge tone="alert" dot>
-                            {t("错误")}
-                          </Badge>
-                        ) : subscription.last_checked ? (
-                          <Badge tone="signal" dot>
-                            {t("正常")}
-                          </Badge>
-                        ) : (
-                          <Badge tone="neutral" dot>
-                            {t("未检查")}
-                          </Badge>
-                        )}
-                      </TD>
-                      <TD className="font-mono text-xs text-ink-soft">
-                        {formatRelativeTime(subscription.last_checked || "")}
-                      </TD>
-                      <TD className="font-mono text-xs text-ink-soft">
-                        {formatRelativeTime(subscription.last_updated || "")}
-                      </TD>
-                      <TD>
-                        <div title={toggleLabel} onClick={(event) => event.stopPropagation()}>
-                          <Switch
-                            checked={enabled}
-                            disabled={isEnabledTogglePending(subscription.id)}
-                            onCheckedChange={(next) => void handleEnabledChange(subscription, next)}
-                            aria-label={toggleLabel}
-                          />
-                        </div>
-                      </TD>
-                      <TD className="text-right">
-                        <div
-                          className="flex items-center justify-end gap-1"
-                          onClick={(event) => event.stopPropagation()}
+                        <TDClip className="font-medium text-ink">{subscription.name}</TDClip>
+                        <TDClip
+                          className="font-mono text-xs text-ink-soft"
+                          title={
+                            subscription.source_type === "local" ? t("本地订阅") : subscription.url
+                          }
                         >
-                          <Button asChild variant="ghost" size="icon" title={t("预览节点池")}>
-                            <Link
-                              to={`/nodes?subscription_id=${encodeURIComponent(subscription.id)}`}
-                              aria-label={t("预览订阅 {{name}} 的节点池", {
-                                name: subscription.name,
-                              })}
+                          {subscription.source_type === "local"
+                            ? t("本地订阅")
+                            : extractHostname(subscription.url)}
+                        </TDClip>
+                        <TD className="font-mono text-xs text-ink-soft">
+                          {formatGoDuration(subscription.update_interval)}
+                        </TD>
+                        <TDNum className="text-xs">
+                          {`${subscription.healthy_node_count} / ${subscription.node_count}`}
+                        </TDNum>
+                        <TD>
+                          {subscription.last_error ? (
+                            <Badge tone="alert" dot>
+                              {t("错误")}
+                            </Badge>
+                          ) : subscription.last_checked ? (
+                            <Badge tone="signal" dot>
+                              {t("正常")}
+                            </Badge>
+                          ) : (
+                            <Badge tone="neutral" dot>
+                              {t("未检查")}
+                            </Badge>
+                          )}
+                        </TD>
+                        <TDClip className="font-mono text-xs text-ink-soft">
+                          {formatRelativeTime(subscription.last_checked || "")}
+                        </TDClip>
+                        <TDClip className="font-mono text-xs text-ink-soft">
+                          {formatRelativeTime(subscription.last_updated || "")}
+                        </TDClip>
+                        <TD>
+                          <div title={toggleLabel} onClick={(event) => event.stopPropagation()}>
+                            <Switch
+                              checked={enabled}
+                              disabled={isEnabledTogglePending(subscription.id)}
+                              onCheckedChange={(next) => void handleEnabledChange(subscription, next)}
+                              aria-label={toggleLabel}
+                            />
+                          </div>
+                        </TD>
+                        <TD className="text-right">
+                          <div
+                            className="flex items-center justify-end gap-1"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Button asChild variant="ghost" size="icon" title={t("预览节点池")}>
+                              <Link
+                                to={`/nodes?subscription_id=${encodeURIComponent(subscription.id)}`}
+                                aria-label={t("预览订阅 {{name}} 的节点池", {
+                                  name: subscription.name,
+                                })}
+                              >
+                                <Eye size={14} />
+                              </Link>
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => openDrawer(subscription)}
+                              title={t("编辑")}
+                              aria-label={t("编辑")}
                             >
-                              <Eye size={14} />
-                            </Link>
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => openDrawer(subscription)}
-                            title={t("编辑")}
-                            aria-label={t("编辑")}
-                          >
-                            <Pencil size={14} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => void handleRefresh(subscription)}
-                            disabled={isRefreshPending(subscription.id)}
-                            title={t("刷新")}
-                            aria-label={t("刷新")}
-                          >
-                            <RefreshCw size={14} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-ink-faint hover:bg-alert-wash hover:text-alert"
-                            onClick={() => void handleDelete(subscription)}
-                            disabled={isDeletePending}
-                            title={t("删除")}
-                            aria-label={t("删除")}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </TBody>
-            </Table>
-          </TableWrap>
-        )}
+                              <Pencil size={14} />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => void handleRefresh(subscription)}
+                              disabled={isRefreshPending(subscription.id)}
+                              title={t("刷新")}
+                              aria-label={t("刷新")}
+                            >
+                              <RefreshCw size={14} />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                              onClick={() => void handleDelete(subscription)}
+                              disabled={isDeletePending}
+                              title={t("删除")}
+                              aria-label={t("删除")}
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </TD>
+                      </TR>
+                    );
+                  })}
+                </TBody>
+              </Table>
+            </TableWrap>
+          ) : null}
 
         <PageNavigator
           page={currentPage}
@@ -1027,7 +1032,8 @@ export function SubscriptionPage() {
           onPageChange={setPage}
           onPageSizeChange={changePageSize}
         />
-      </Panel>
+        </Panel>
+      </div>
 
       {drawerOpen && !selectedSubscription ? (
         <Sheet
@@ -1069,37 +1075,43 @@ export function SubscriptionPage() {
               <section>
                 <div>
                   <h2 className="text-sm font-semibold">{t("订阅配置")}</h2>
-                  <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
+                  <p className="mt-0.5 max-w-[68ch] text-xs leading-relaxed text-ink-soft">
                     {editSourceType === "local"
                       ? t("更新本地订阅配置、刷新周期与状态开关后点击保存。")
                       : t("更新 URL、刷新周期与状态开关后点击保存。")}
                   </p>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 border-y border-rule py-3 sm:grid-cols-3">
-                  <Readout
-                    label={t("创建时间")}
-                    value={formatDateTime(selectedSubscription.created_at)}
-                    size="sm"
-                  />
-                  <Readout
-                    label={t("上次检查")}
-                    value={formatDateTime(selectedSubscription.last_checked || "")}
-                    size="sm"
-                  />
-                  <Readout
-                    label={t("上次更新")}
-                    value={formatDateTime(selectedSubscription.last_updated || "")}
-                    size="sm"
-                  />
-                </div>
+                <ReadoutStrip className="mt-3">
+                  <ReadoutCell>
+                    <Readout
+                      label={t("创建时间")}
+                      value={formatDateTime(selectedSubscription.created_at)}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout
+                      label={t("上次检查")}
+                      value={formatDateTime(selectedSubscription.last_checked || "")}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout
+                      label={t("上次更新")}
+                      value={formatDateTime(selectedSubscription.last_updated || "")}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                </ReadoutStrip>
 
                 {selectedSubscription.last_error ? (
-                  <p className="mt-3 border border-alert/30 bg-alert-wash px-3 py-2 text-xs text-alert">
+                  <p className="mt-3 max-w-[68ch] border border-alert/30 bg-alert-wash px-3 py-2 text-xs text-alert">
                     {t("最近错误：{{message}}", { message: selectedSubscription.last_error })}
                   </p>
                 ) : (
-                  <p className="mt-3 border border-rule bg-signal-wash px-3 py-2 text-xs text-signal-deep">
+                  <p className="mt-3 max-w-[68ch] border border-rule bg-signal-wash px-3 py-2 text-xs text-signal-deep">
                     {t("最近一次刷新无错误")}
                   </p>
                 )}
@@ -1285,7 +1297,7 @@ export function SubscriptionPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3 py-3">
                     <div className="min-w-0">
                       <h3 className="text-sm font-medium">{t("手动刷新")}</h3>
-                      <p className="mt-0.5 text-xs text-ink-soft">
+                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
                         {t("立即刷新订阅并同步节点。")}
                       </p>
                     </div>
@@ -1301,7 +1313,7 @@ export function SubscriptionPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3 py-3">
                     <div className="min-w-0">
                       <h3 className="text-sm font-medium">{t("清理失效节点")}</h3>
-                      <p className="mt-0.5 text-xs text-ink-soft">
+                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
                         {t("立即清理当前熔断，或出错的节点。")}
                       </p>
                     </div>
@@ -1319,7 +1331,7 @@ export function SubscriptionPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3 py-3">
                     <div className="min-w-0">
                       <h3 className="text-sm font-medium">{t("删除订阅")}</h3>
-                      <p className="mt-0.5 text-xs text-ink-soft">
+                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
                         {t("删除订阅并清理关联节点，操作不可撤销。")}
                       </p>
                     </div>
@@ -1535,6 +1547,6 @@ export function SubscriptionPage() {
           </TooltipProvider>
         </Sheet>
       ) : null}
-    </section>
+    </Page>
   );
 }

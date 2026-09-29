@@ -3,8 +3,7 @@ import { Link2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Badge } from "../../components/ui/Badge";
-import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { useI18n } from "../../i18n";
@@ -755,6 +754,9 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
     !historyQuery.data &&
     !snapshotQuery.data &&
     (realtimeQuery.isLoading || historyQuery.isLoading || snapshotQuery.isLoading);
+  const isRefreshing =
+    (realtimeQuery.isFetching || historyQuery.isFetching || snapshotQuery.isFetching) &&
+    !isInitialLoading;
 
   const realtimeItems = realtimeQuery.data?.items ?? EMPTY_REALTIME_ITEMS;
   const sortedRealtimeItems = useMemo(
@@ -818,11 +820,11 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
   }, [sortedLeaseLifetimeItems]);
 
   return (
-    <section>
+    <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold">{t("平台监控")}</h2>
-          <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{t("查看当前平台的租约、请求成功率、延迟和节点情况。")}</p>
+          <p className="mt-0.5 max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("查看当前平台的租约、请求成功率、延迟和节点情况。")}</p>
         </div>
 
         <label className="flex items-center gap-1.5 text-xs text-ink-soft" htmlFor="platform-monitor-range">
@@ -843,10 +845,14 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
       </div>
 
       {monitorError ? (
-        <ErrorState className="mt-3" message={formatApiErrorMessage(monitorError, t)} />
+        <Panel>
+          <PanelBody>
+            <ErrorState message={formatApiErrorMessage(monitorError, t)} />
+          </PanelBody>
+        </Panel>
       ) : null}
 
-      <ReadoutStrip className="mt-3 -mx-4 grid-cols-2 divide-x-0 sm:grid-cols-4 sm:divide-x">
+      <ReadoutStrip className="grid grid-cols-2 sm:grid-cols-4">
         <ReadoutCell>
           <Readout
             label={t("活跃租约")}
@@ -894,22 +900,26 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
         </ReadoutCell>
       </ReadoutStrip>
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         <Panel>
-          <PanelHeader title={t("活跃租约趋势")} description={t("平台实时租约数量")} />
-          <div className="px-3 py-3">
+          <PanelHeader
+            title={t("活跃租约趋势")}
+            description={t("平台实时租约数量")}
+            meta={isRefreshing ? t("监控数据刷新中") : undefined}
+          />
+          <PanelBody>
             <TrendLineChart
               data={leaseTrendData}
               emptyText={t("暂无租约实时数据")}
               yTickFormatter={formatShortNumber}
               lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "var(--color-live)" }]}
             />
-          </div>
+          </PanelBody>
         </Panel>
 
         <Panel>
           <PanelHeader title={t("请求统计")} description={t("总请求数 / 成功请求数")} />
-          <div className="px-3 py-3">
+          <PanelBody>
             <TrendLineChart
               data={requestTrendData}
               emptyText={t("暂无请求统计数据")}
@@ -919,8 +929,8 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
                 { dataKey: "success_requests", name: t("成功请求数"), color: "var(--color-signal)" },
               ]}
             />
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-rule px-3 py-2 text-xs text-ink-soft">
+          </PanelBody>
+          <PanelFooter className="gap-x-4 gap-y-1 text-ink-soft">
             <span>
               {t("总请求")}{" "}
               <span className="readout font-medium text-ink">{formatCount(totalRequests)}</span>
@@ -929,12 +939,12 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
               {t("成功请求")}{" "}
               <span className="readout font-medium text-ink">{formatCount(successRequests)}</span>
             </span>
-          </div>
+          </PanelFooter>
         </Panel>
 
         <Panel>
           <PanelHeader title={t("租约存活分位趋势")} description="P1 / P5 / P50" />
-          <div className="px-3 py-3">
+          <PanelBody>
             <TrendLineChart
               data={leaseLifetimeTrendData}
               emptyText={t("暂无租约生命周期数据")}
@@ -946,12 +956,12 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
                 { dataKey: "p50_ms", name: "P50", color: "var(--color-signal)" },
               ]}
             />
-          </div>
+          </PanelBody>
         </Panel>
 
         <Panel>
           <PanelHeader title={t("平台节点快照")} description={t("当前平台节点池与延迟样本")} />
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-3 py-3 sm:grid-cols-4">
+          <PanelBody className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
             <Readout
               label={t("可路由节点数")}
               value={formatCount(snapshotNodePool?.routable_node_count ?? 0)}
@@ -972,18 +982,18 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
               value={snapshotLatency?.generated_at ? formatClock(snapshotLatency.generated_at) : "--"}
               size="sm"
             />
-          </div>
+          </PanelBody>
         </Panel>
 
         <Panel className="lg:col-span-2">
           <PanelHeader title={t("访问延迟分布（历史最新桶）")} description={t("历史访问延迟分布")} />
-          <div className="px-3 pt-3">
+          <PanelBody>
             <LatencyHistogram
               buckets={latestAccessLatency?.buckets ?? []}
               emptyText={t("暂无访问延迟分布数据")}
             />
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-rule px-3 py-2 text-xs text-ink-soft">
+          </PanelBody>
+          <PanelFooter className="gap-x-4 gap-y-1 text-ink-soft">
             <span>
               {t("时间")}{" "}
               <span className="readout font-medium text-ink">
@@ -1002,18 +1012,18 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
                 {formatCount(latestAccessLatency?.overflow_count ?? 0)}
               </span>
             </span>
-          </div>
+          </PanelFooter>
         </Panel>
 
         <Panel className="lg:col-span-2">
           <PanelHeader title={t("节点延迟分布（实时快照）")} description={t("实时节点延迟分布快照")} />
-          <div className="px-3 pt-3">
+          <PanelBody>
             <LatencyHistogram
               buckets={snapshotLatency?.buckets ?? []}
               emptyText={t("暂无节点延迟快照数据")}
             />
-          </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-rule px-3 py-2 text-xs text-ink-soft">
+          </PanelBody>
+          <PanelFooter className="gap-x-4 gap-y-1 text-ink-soft">
             <span>
               {t("样本")}{" "}
               <span className="readout font-medium text-ink">
@@ -1032,17 +1042,17 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
                 {formatCount(snapshotLatency?.bin_width_ms ?? 0)}ms
               </span>
             </span>
-          </div>
+          </PanelFooter>
         </Panel>
       </div>
 
-      {isInitialLoading ? <LoadingState label={t("平台监控数据加载中...")} /> : null}
-
-      {(realtimeQuery.isFetching || historyQuery.isFetching || snapshotQuery.isFetching) && !isInitialLoading ? (
-        <div className="mt-4 flex justify-end">
-          <Badge tone="warn">{t("监控数据刷新中")}</Badge>
-        </div>
+      {isInitialLoading ? (
+        <Panel>
+          <PanelBody>
+            <LoadingState label={t("平台监控数据加载中...")} />
+          </PanelBody>
+        </Panel>
       ) : null}
-    </section>
+    </div>
   );
 }

@@ -7,11 +7,12 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Panel } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout } from "../../components/ui/Readout";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { Switch } from "../../components/ui/Switch";
-import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
@@ -95,7 +96,7 @@ function PageNavigator({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule px-4 py-2">
+    <PanelFooter className="justify-between gap-x-4 gap-y-2">
       <p className="text-xs text-ink-soft">
         {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -162,7 +163,7 @@ function PageNavigator({
           <ChevronRight size={16} />
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -441,135 +442,154 @@ export function PlatformDetailPage() {
 
   return (
     <TooltipProvider>
-      <section className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-6">
-        <header className="flex flex-wrap items-end justify-between gap-3 pb-3">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold">{t("平台详情")}</h1>
-            <p className="mt-1 text-xs text-ink-soft">{t("调整当前平台策略，并执行维护操作。")}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => navigate("/platforms")}>
-              <ArrowLeft size={15} />
-              {t("返回列表")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => platformQuery.refetch()}
-              disabled={!platformId || platformQuery.isFetching}
-            >
-              <RefreshCw size={15} className={cn(platformQuery.isFetching && "animate-spin")} />
-              {t("刷新")}
-            </Button>
-          </div>
-        </header>
-
-        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-
-        {!platformId ? (
-          <ErrorState className="mb-4" message={t("平台 ID 缺失，无法加载详情。")} />
-        ) : null}
-
-        {platformQuery.isError && !platform ? (
-          <ErrorState
-            className="mb-4"
-            message={formatApiErrorMessage(platformQuery.error, t)}
-            onRetry={() => void platformQuery.refetch()}
-          />
-        ) : null}
-
-        {platformQuery.isLoading && !platform ? (
-          <LoadingState label={t("正在加载平台详情...")} />
-        ) : null}
-
-        {platform ? (
-          <>
-            <div>
-              <div className="flex flex-wrap items-start justify-between gap-3 pb-3">
-                <div className="min-w-0">
-                  <h2 className="text-lg font-semibold">{platform.name}</h2>
-                  <p className="mt-0.5 font-mono text-xs break-all text-ink-faint">{platform.id}</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
+      <Page bleed>
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => setActiveTab(value as PlatformDetailTab)}
+          className="contents"
+        >
+          <PageHeader
+            title={t("平台详情")}
+            description={t("调整当前平台策略，并执行维护操作。")}
+            meta={
+              platform ? (
+                <>
                   <Badge tone={platform.id === ZERO_UUID ? "neutral" : "signal"}>
                     {platform.id === ZERO_UUID ? t("内置平台") : t("自定义平台")}
                   </Badge>
-                  <span className="text-xs text-ink-soft">
-                    {t("更新于 {{time}}", { time: formatRelativeTime(platform.updated_at) })}
+                  <PageMeta label={t("同步")} value={formatRelativeTime(platform.updated_at)} />
+                </>
+              ) : undefined
+            }
+            actions={
+              <>
+                <Button variant="secondary" size="sm" onClick={() => navigate("/platforms")}>
+                  <ArrowLeft size={15} />
+                  {t("返回列表")}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => platformQuery.refetch()}
+                  disabled={!platformId || platformQuery.isFetching}
+                >
+                  <RefreshCw size={15} className={cn(platformQuery.isFetching && "animate-spin")} />
+                  {t("刷新")}
+                </Button>
+              </>
+            }
+            tabs={
+              <TabsList aria-label={t("平台详情板块")}>
+                {DETAIL_TABS.map((tab) => (
+                  <TabsTrigger key={tab.key} value={tab.key} title={t(tab.hint)}>
+                    {t(tab.label)}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            }
+          />
+
+          <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+
+          <div className="flex flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:gap-4 2xl:px-6 2xl:py-5">
+            {!platformId ? (
+              <Panel>
+                <PanelBody>
+                  <ErrorState message={t("平台 ID 缺失，无法加载详情。")} />
+                </PanelBody>
+              </Panel>
+            ) : null}
+
+            {platformQuery.isError && !platform ? (
+              <Panel>
+                <PanelBody>
+                  <ErrorState
+                    message={formatApiErrorMessage(platformQuery.error, t)}
+                    onRetry={() => void platformQuery.refetch()}
+                  />
+                </PanelBody>
+              </Panel>
+            ) : null}
+
+            {platformQuery.isLoading && !platform ? (
+              <Panel>
+                <PanelBody>
+                  <LoadingState label={t("正在加载平台详情...")} />
+                </PanelBody>
+              </Panel>
+            ) : null}
+
+            {platform ? (
+              <>
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <h2 className="truncate text-base font-semibold">{platform.name}</h2>
+                  <span className="readout truncate text-xs text-ink-faint" title={platform.id}>
+                    {platform.id}
                   </span>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-y border-rule py-3 sm:grid-cols-4 lg:grid-cols-7">
-                <Readout label={t("区域")} value={regionCount} />
-                <Readout label={t("正则")} value={regexCount} />
-                <Readout label={t("租约时长")} value={stickyTTL} size="sm" className="self-end" />
-                <Readout
-                  label={t("策略")}
-                  value={t(allocationPolicyLabel[platform.allocation_policy])}
-                  size="sm"
-                  className="self-end"
-                />
-                <Readout
-                  label={t("未命中策略")}
-                  value={t(missActionLabel[platform.reverse_proxy_miss_action])}
-                  size="sm"
-                  className="self-end"
-                />
-                <Readout
-                  label={t("空账号行为")}
-                  value={t(emptyAccountBehaviorLabel[platform.reverse_proxy_empty_account_behavior])}
-                  size="sm"
-                  className="self-end"
-                />
-                <Readout
-                  label={t("请求失败熔断")}
-                  value={platform.passive_circuit_breaker_disabled ? t("已关闭") : t("已开启")}
-                  tone={platform.passive_circuit_breaker_disabled ? "warn" : "signal"}
-                  size="sm"
-                  className="self-end"
-                />
-              </div>
-            </div>
+                <ReadoutStrip>
+                  <ReadoutCell>
+                    <Readout label={t("区域")} value={regionCount} />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout label={t("正则")} value={regexCount} />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout label={t("租约时长")} value={stickyTTL} size="sm" />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout
+                      label={t("策略")}
+                      value={t(allocationPolicyLabel[platform.allocation_policy])}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout
+                      label={t("未命中策略")}
+                      value={t(missActionLabel[platform.reverse_proxy_miss_action])}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout
+                      label={t("空账号行为")}
+                      value={t(emptyAccountBehaviorLabel[platform.reverse_proxy_empty_account_behavior])}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                  <ReadoutCell>
+                    <Readout
+                      label={t("请求失败熔断")}
+                      value={platform.passive_circuit_breaker_disabled ? t("已关闭") : t("已开启")}
+                      tone={platform.passive_circuit_breaker_disabled ? "warn" : "signal"}
+                      size="sm"
+                    />
+                  </ReadoutCell>
+                </ReadoutStrip>
 
-            <Panel className="mt-4">
-              <Tabs
-                value={activeTab}
-                onValueChange={(value) => setActiveTab(value as PlatformDetailTab)}
-              >
-                <TabsList className="px-4 pt-3" aria-label={t("平台详情板块")}>
-                  {DETAIL_TABS.map((tab) => (
-                    <TabsTrigger key={tab.key} value={tab.key} title={t(tab.hint)}>
-                      {t(tab.label)}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-
-                <TabsContent value="monitor" className="px-4 py-4">
+                <TabsContent value="monitor" className="flex flex-col">
                   <PlatformMonitorPanel platform={platform} />
                 </TabsContent>
 
-                <TabsContent value="access" className="px-4 py-4">
+                <TabsContent value="access" className="flex flex-col">
                   <PlatformAccessPanel platformName={platform.name} />
                 </TabsContent>
 
-                <TabsContent value="config" className="px-4 py-4">
-                  <div>
-                    <h2 className="text-sm font-semibold">{t("平台配置")}</h2>
-                    <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
-                      {t("修改过滤策略与路由策略后点击保存。")}
-                    </p>
-                  </div>
-
-                  {hasUnsavedChanges ? (
-                    <p className="mt-2">
-                      <Badge tone="warn" dot>
-                        {t("保留未保存的修改")}
-                      </Badge>
-                    </p>
-                  ) : null}
-
-                  <form className="mt-4 space-y-4" onSubmit={onEditSubmit}>
+                <TabsContent value="config" className="panel flex flex-col">
+                  <PanelHeader
+                    title={t("平台配置")}
+                    description={t("修改过滤策略与路由策略后点击保存。")}
+                    meta={
+                      hasUnsavedChanges ? (
+                        <Badge tone="warn" dot>
+                          {t("保留未保存的修改")}
+                        </Badge>
+                      ) : undefined
+                    }
+                  />
+                  <form className="space-y-4 px-4 py-3" onSubmit={onEditSubmit}>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <Fieldset
                         label={t("名称")}
@@ -738,20 +758,18 @@ export function PlatformDetailPage() {
                   </form>
                 </TabsContent>
 
-                <TabsContent value="ops" className="px-4 py-4">
-                  <section>
-                    <div>
-                      <h2 className="text-sm font-semibold">{t("运维操作")}</h2>
-                      <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
-                        {t("以下操作会直接作用于当前平台，请谨慎执行。")}
-                      </p>
-                    </div>
+                <TabsContent value="ops" className="flex flex-col gap-3">
+                  <Panel className="flex min-w-0 flex-col">
+                    <PanelHeader
+                      title={t("运维操作")}
+                      description={t("以下操作会直接作用于当前平台，请谨慎执行。")}
+                    />
 
-                    <div className="mt-3 divide-y divide-rule border-y border-rule">
-                      <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                    <div className="divide-y divide-rule">
+                      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                         <div className="min-w-0">
                           <h3 className="text-sm font-medium">{t("重置为默认配置")}</h3>
-                          <p className="mt-0.5 text-xs text-ink-soft">
+                          <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
                             {t("恢复默认设置，并覆盖当前修改。")}
                           </p>
                         </div>
@@ -764,10 +782,10 @@ export function PlatformDetailPage() {
                         </Button>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                         <div className="min-w-0">
                           <h3 className="text-sm font-medium">{t("清除所有租约")}</h3>
-                          <p className="mt-0.5 text-xs text-ink-soft">
+                          <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
                             {t("立即清除当前平台的全部租约，下次请求将重新分配出口。")}
                           </p>
                         </div>
@@ -780,10 +798,10 @@ export function PlatformDetailPage() {
                         </Button>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                         <div className="min-w-0">
                           <h3 className="text-sm font-medium">{t("删除平台")}</h3>
-                          <p className="mt-0.5 text-xs text-ink-soft">
+                          <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
                             {t("永久删除当前平台及其配置，操作不可撤销。")}
                           </p>
                         </div>
@@ -796,119 +814,126 @@ export function PlatformDetailPage() {
                         </Button>
                       </div>
                     </div>
-                  </section>
+                  </Panel>
 
-                  <section id={LEASE_MANAGEMENT_ANCHOR} className="mt-6">
-                    <div className="flex flex-wrap items-end justify-between gap-3">
-                      <div className="min-w-0">
-                        <h2 className="text-sm font-semibold">{t("租约管理")}</h2>
-                        <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
-                          {t("查看当前平台的租约绑定，并按账号释放单个租约。")}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="relative w-full sm:w-56">
-                          <label htmlFor="platform-lease-search" className="sr-only">
-                            {t("搜索账号")}
-                          </label>
-                          <Search
-                            size={14}
-                            aria-hidden
-                            className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
-                          />
-                          <Input
-                            id="platform-lease-search"
-                            type="search"
-                            placeholder={t("搜索账号")}
-                            aria-label={t("搜索账号")}
-                            value={leaseSearch}
-                            onChange={(event) => setLeaseSearch(event.target.value)}
-                            className="pl-7"
-                          />
-                        </div>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => void leaseQuery.refetch()}
-                          disabled={leaseQuery.isFetching}
-                        >
-                          <RefreshCw size={15} className={cn(leaseQuery.isFetching && "animate-spin")} />
-                          {t("刷新")}
-                        </Button>
-                      </div>
-                    </div>
+                  <Panel id={LEASE_MANAGEMENT_ANCHOR} className="flex min-w-0 flex-col">
+                    <PanelHeader
+                      title={t("租约管理")}
+                      description={t("查看当前平台的租约绑定，并按账号释放单个租约。")}
+                    />
 
-                    <div className="mt-3 border-y border-rule">
-                      {leaseQuery.isLoading || isLeasePageTransitioning ? (
+                    <PanelToolbar>
+                      <div className="relative w-full sm:w-64">
+                        <label htmlFor="platform-lease-search" className="sr-only">
+                          {t("搜索账号")}
+                        </label>
+                        <Search
+                          size={14}
+                          aria-hidden
+                          className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+                        />
+                        <Input
+                          id="platform-lease-search"
+                          type="search"
+                          placeholder={t("搜索账号")}
+                          aria-label={t("搜索账号")}
+                          value={leaseSearch}
+                          onChange={(event) => setLeaseSearch(event.target.value)}
+                          className="h-7 pl-7 text-xs"
+                        />
+                      </div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="ml-auto"
+                        onClick={() => void leaseQuery.refetch()}
+                        disabled={leaseQuery.isFetching}
+                      >
+                        <RefreshCw size={14} className={cn(leaseQuery.isFetching && "animate-spin")} />
+                        {t("刷新")}
+                      </Button>
+                    </PanelToolbar>
+
+                    {leaseQuery.isLoading || isLeasePageTransitioning ? (
+                      <PanelBody>
                         <LoadingState label={t("正在加载租约数据...")} />
-                      ) : leaseQuery.isError ? (
+                      </PanelBody>
+                    ) : leaseQuery.isError ? (
+                      <PanelBody>
                         <ErrorState
-                          className="m-3"
                           message={formatApiErrorMessage(leaseQuery.error, t)}
                           onRetry={() => void leaseQuery.refetch()}
                         />
-                      ) : !visibleLeases.length ? (
+                      </PanelBody>
+                    ) : !visibleLeases.length ? (
+                      <PanelBody>
                         <EmptyState
                           title={debouncedLeaseSearch ? t("没有匹配的租约") : t("当前平台暂无租约")}
                         />
-                      ) : (
-                        <TableWrap>
-                          <Table className="min-w-[760px]">
-                            <caption className="sr-only">{t("租约管理")}</caption>
-                            <THead>
-                              <TR className="hover:bg-transparent">
-                                <TH>{t("账号")}</TH>
-                                <TH>{t("节点")}</TH>
-                                <TH>{t("出口 IP")}</TH>
-                                <TH className="text-right">{t("过期时间")}</TH>
-                                <TH className="text-right">{t("最后访问")}</TH>
-                                <TH className="text-right">{t("操作")}</TH>
-                              </TR>
-                            </THead>
-                            <TBody>
-                              {visibleLeases.map((lease) => {
-                                const releasing =
-                                  releaseLeaseMutation.isPending &&
-                                  releaseLeaseMutation.variables?.account === lease.account;
-                                return (
-                                  <TR key={lease.account}>
-                                    <TD className="font-mono text-xs" title={lease.account}>
-                                      {lease.account || "-"}
-                                    </TD>
-                                    <TD className="font-mono text-xs" title={lease.node_tag || lease.node_hash}>
-                                      <div className="text-ink">{lease.node_tag || "-"}</div>
-                                      <div className="text-ink-faint">{lease.node_hash || "-"}</div>
-                                    </TD>
-                                    <TD className="font-mono text-xs">{lease.egress_ip || "-"}</TD>
-                                    <TDNum className="text-xs text-ink-soft">
-                                      {formatDateTime(lease.expiry)}
-                                    </TDNum>
-                                    <TDNum className="text-xs text-ink-soft">
-                                      {formatDateTime(lease.last_accessed)}
-                                    </TDNum>
-                                    <TD className="text-right">
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        onClick={() => void handleReleaseLease(lease)}
-                                        disabled={releasing || clearLeasesMutation.isPending}
-                                        title={t("释放租约")}
-                                        aria-label={t("释放账号 {{account}} 的租约", {
-                                          account: lease.account,
-                                        })}
-                                        className="text-ink-faint hover:bg-alert-wash hover:text-alert"
-                                      >
-                                        <Trash2 size={14} />
-                                      </Button>
-                                    </TD>
-                                  </TR>
-                                );
-                              })}
-                            </TBody>
-                          </Table>
-                        </TableWrap>
-                      )}
-                    </div>
+                      </PanelBody>
+                    ) : (
+                      <TableWrap>
+                        <Table className="min-w-[760px]">
+                          <caption className="sr-only">{t("租约管理")}</caption>
+                          <THead>
+                            <TR className="hover:bg-transparent">
+                              <TH>{t("账号")}</TH>
+                              <TH>{t("节点")}</TH>
+                              <TH>{t("出口 IP")}</TH>
+                              <TH className="text-right">{t("过期时间")}</TH>
+                              <TH className="text-right">{t("最后访问")}</TH>
+                              <TH className="text-right">{t("操作")}</TH>
+                            </TR>
+                          </THead>
+                          <TBody>
+                            {visibleLeases.map((lease) => {
+                              const releasing =
+                                releaseLeaseMutation.isPending &&
+                                releaseLeaseMutation.variables?.account === lease.account;
+                              return (
+                                <TR key={lease.account}>
+                                  <TDClip className="readout text-xs" title={lease.account}>
+                                    {lease.account || "-"}
+                                  </TDClip>
+                                  <TDClip
+                                    className="text-xs"
+                                    title={lease.node_tag || lease.node_hash}
+                                  >
+                                    {lease.node_tag || "-"}
+                                    <span className="readout text-ink-faint">
+                                      {" · "}
+                                      {lease.node_hash || "-"}
+                                    </span>
+                                  </TDClip>
+                                  <TD className="readout text-xs">{lease.egress_ip || "-"}</TD>
+                                  <TDNum className="text-xs text-ink-soft">
+                                    {formatDateTime(lease.expiry)}
+                                  </TDNum>
+                                  <TDNum className="text-xs text-ink-soft">
+                                    {formatDateTime(lease.last_accessed)}
+                                  </TDNum>
+                                  <TD className="text-right">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      onClick={() => void handleReleaseLease(lease)}
+                                      disabled={releasing || clearLeasesMutation.isPending}
+                                      title={t("释放租约")}
+                                      aria-label={t("释放账号 {{account}} 的租约", {
+                                        account: lease.account,
+                                      })}
+                                      className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                                    >
+                                      <Trash2 size={14} />
+                                    </Button>
+                                  </TD>
+                                </TR>
+                              );
+                            })}
+                          </TBody>
+                        </Table>
+                      </TableWrap>
+                    )}
 
                     <PageNavigator
                       page={leasePage}
@@ -920,13 +945,13 @@ export function PlatformDetailPage() {
                       onPageChange={setLeasePage}
                       onPageSizeChange={changeLeasePageSize}
                     />
-                  </section>
+                  </Panel>
                 </TabsContent>
-              </Tabs>
-            </Panel>
-          </>
-        ) : null}
-      </section>
+              </>
+            ) : null}
+          </div>
+        </Tabs>
+      </Page>
     </TooltipProvider>
   );
 }

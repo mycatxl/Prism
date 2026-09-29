@@ -134,4 +134,12 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   返回工作台: "Back to workspace",
   确认操作: "Confirm action",
   确认: "Confirm",
+  "同步":
+    "Synced",
+  "出口地区排行":
+    "Top exit regions",
+  "节点占比":
+    "Share of pool",
+  "暂无出口数据":
+    "No exit data yet",
 };

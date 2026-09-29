@@ -5,11 +5,12 @@ import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
-import { Panel, SectionTitle } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { Sheet } from "../../components/ui/Sheet";
-import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
@@ -408,7 +409,7 @@ function LogsPagination({
 }) {
   const { t } = useI18n();
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+    <PanelFooter className="justify-between gap-3">
       <p className="text-xs text-ink-soft">
         {hasMore
           ? t("第 {{page}} 页 · 有更多数据", { page: pageIndex + 1 })
@@ -437,7 +438,7 @@ function LogsPagination({
           {t("下一页")}
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -673,28 +674,36 @@ export function RequestLogsPage() {
   const showList = !logsQuery.isLoading && !isPageTransitioning && !logsQuery.isError;
 
   return (
-    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl">{t("请求日志")}</h1>
-          <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
-            {t("按条件检索请求记录，快速定位问题。")}
-          </p>
-        </div>
-        {!configQuery.isLoading && configQuery.data && (
-          <Link to="/system-config" className="flex shrink-0 items-center transition-opacity hover:opacity-80">
-            <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
-              {configQuery.data.request_log_enabled ? t("当前实时日志记录已开启") : t("当前实时日志记录未开启")}
-            </Badge>
-          </Link>
-        )}
-      </header>
+    <Page bleed>
+      <PageHeader
+        title={t("请求日志")}
+        description={t("按条件检索请求记录，快速定位问题。")}
+        meta={
+          <>
+            <PageMeta label={t("每页")} value={filters.limit} />
+            {!configQuery.isLoading && configQuery.data && (
+              <Link
+                to="/system-config"
+                className="flex shrink-0 items-center transition-opacity hover:opacity-80"
+              >
+                <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
+                  {configQuery.data.request_log_enabled
+                    ? t("当前实时日志记录已开启")
+                    : t("当前实时日志记录未开启")}
+                </Badge>
+              </Link>
+            )}
+          </>
+        }
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Panel>
-        <div className="border-b border-rule bg-paper-sunk/40 px-4 py-3">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+        <Panel className="flex min-w-0 flex-col">
+          <PanelHeader title={t("请求日志")} />
+
+          <PanelToolbar className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <FilterField id="logs-from" label={t("开始时间")} warning={rangeInvalid ? t("时间范围错误：开始时间必须早于结束时间，已暂不应用结束时间筛选。") : undefined}>
               <Input
                 id="logs-from"
@@ -808,139 +817,129 @@ export function RequestLogsPage() {
                 {t("重置")}
               </Button>
             </div>
-          </div>
-        </div>
+          </PanelToolbar>
 
-        {logsQuery.isLoading || isPageTransitioning ? <LoadingState label={t("正在加载日志...")} /> : null}
+          {logsQuery.isLoading || isPageTransitioning ? (
+            <PanelBody>
+              <LoadingState label={t("正在加载日志...")} />
+            </PanelBody>
+          ) : null}
 
-        {logsQuery.isError ? (
-          <div className="p-4">
-            <ErrorState
-              message={formatApiErrorMessage(logsQuery.error, t)}
-              onRetry={() => void logsQuery.refetch()}
-            />
-          </div>
-        ) : null}
+          {logsQuery.isError ? (
+            <PanelBody>
+              <ErrorState
+                message={formatApiErrorMessage(logsQuery.error, t)}
+                onRetry={() => void logsQuery.refetch()}
+              />
+            </PanelBody>
+          ) : null}
 
-        {showList && !visibleLogs.length ? <EmptyState title={t("没有匹配日志")} /> : null}
+          {showList && !visibleLogs.length ? (
+            <PanelBody>
+              <EmptyState title={t("没有匹配日志")} />
+            </PanelBody>
+          ) : null}
 
-        {visibleLogs.length ? (
-          <TableWrap>
-            <Table>
-              <THead>
-                <TR>
-                  <TH>{t("时间")}</TH>
-                  <TH>{t("代理")}</TH>
-                  <TH>{t("平台 / 账号")}</TH>
-                  <TH>{t("目标")}</TH>
-                  <TH>{t("HTTP")}</TH>
-                  <TH>{t("网络")}</TH>
-                  <TH className="text-right">{t("首字耗时")}</TH>
-                  <TH className="text-right">{t("总耗时")}</TH>
-                  <TH className="text-right">{t("流量")}</TH>
-                  <TH>{t("节点")}</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {visibleLogs.map((log) => {
-                  const timeParts = splitDateTime(log.ts);
-                  return (
-                    <TR
-                      key={log.id}
-                      tabIndex={0}
-                      className="cursor-pointer"
-                      selected={drawerVisible && detailLogId === log.id}
-                      aria-selected={drawerVisible && detailLogId === log.id}
-                      onClick={() => openDrawer(log.id)}
-                      onKeyDown={(event) => {
-                        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-                          event.preventDefault();
-                          openDrawer(log.id);
-                        }
-                      }}
-                    >
-                      <TD className="whitespace-nowrap">
-                        <div className="flex flex-col leading-tight">
-                          <span className="readout text-xs">{timeParts.time}</span>
-                          <span className="readout text-2xs text-ink-faint">{timeParts.date}</span>
-                        </div>
-                      </TD>
-                      <TD>{renderProxyTypeBadge(log.proxy_type)}</TD>
-                      <TD>
-                        <div className="flex flex-col leading-tight">
-                          <span className="text-xs">{log.platform_name || "-"}</span>
-                          <span className="readout text-2xs text-ink-faint">{log.account || "-"}</span>
-                        </div>
-                      </TD>
-                      <TD>
-                        <div className="flex flex-col leading-tight">
-                          <span className="readout truncate text-xs" title={log.target_host}>
-                            {log.target_host || "-"}
-                          </span>
-                          <span className="max-w-[26ch] truncate text-2xs text-ink-faint" title={log.target_url}>
-                            {log.target_url || "-"}
-                          </span>
-                        </div>
-                      </TD>
-                      <TD>
-                        <div className="flex flex-col leading-tight">
-                          <span className="readout text-xs">{log.http_method || "-"}</span>
-                          <span className="readout text-2xs text-ink-faint">{log.http_status || "-"}</span>
-                        </div>
-                      </TD>
-                      <TD>
-                        <Badge tone={log.net_ok ? "signal" : "warn"} dot>
-                          {log.net_ok ? t("成功") : t("失败")}
-                        </Badge>
-                      </TD>
-                      <TDNum>
-                        <span className="text-xs text-ink-soft">{formatOptionalDurationMs(log.first_byte_duration_ms)}</span>
-                      </TDNum>
-                      <TDNum>
-                        <span className="text-xs">{formatDurationMs(log.duration_ms)}</span>
-                      </TDNum>
-                      <TDNum>
-                        <span className="text-xs text-ink-soft">
+          {visibleLogs.length ? (
+            <TableWrap>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>{t("时间")}</TH>
+                    <TH>{t("代理")}</TH>
+                    <TH>{t("平台 / 账号")}</TH>
+                    <TH>{t("目标")}</TH>
+                    <TH>{t("HTTP")}</TH>
+                    <TH>{t("网络")}</TH>
+                    <TH className="text-right">{t("首字耗时")}</TH>
+                    <TH className="text-right">{t("总耗时")}</TH>
+                    <TH className="text-right">{t("流量")}</TH>
+                    <TH>{t("节点")}</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {visibleLogs.map((log) => {
+                    const timeParts = splitDateTime(log.ts);
+                    const stamp = `${timeParts.date} ${timeParts.time}`;
+                    const platform = log.platform_name || "-";
+                    const account = log.account || "-";
+                    const egress = log.egress_ip || "-";
+                    const http = `${log.http_method || "-"} ${log.http_status || "-"}`;
+                    return (
+                      <TR
+                        key={log.id}
+                        tabIndex={0}
+                        className="cursor-pointer"
+                        selected={drawerVisible && detailLogId === log.id}
+                        aria-selected={drawerVisible && detailLogId === log.id}
+                        onClick={() => openDrawer(log.id)}
+                        onKeyDown={(event) => {
+                          if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                            event.preventDefault();
+                            openDrawer(log.id);
+                          }
+                        }}
+                      >
+                        <TDClip className="readout whitespace-nowrap text-xs" title={log.ts}>
+                          {stamp}
+                        </TDClip>
+                        <TD>{renderProxyTypeBadge(log.proxy_type)}</TD>
+                        <TDClip className="text-xs" title={`${platform} · ${account}`}>
+                          {platform}
+                          <span className="readout text-ink-faint"> · {account}</span>
+                        </TDClip>
+                        <TDClip className="readout text-xs" title={log.target_url || log.target_host}>
+                          {log.target_host || "-"}
+                        </TDClip>
+                        <TDClip className="readout text-xs text-ink-soft" title={http}>
+                          {http}
+                        </TDClip>
+                        <TD>
+                          <Badge tone={log.net_ok ? "signal" : "warn"} dot>
+                            {log.net_ok ? t("成功") : t("失败")}
+                          </Badge>
+                        </TD>
+                        <TDNum className="text-xs text-ink-soft">
+                          {formatOptionalDurationMs(log.first_byte_duration_ms)}
+                        </TDNum>
+                        <TDNum className="text-xs">{formatDurationMs(log.duration_ms)}</TDNum>
+                        <TDNum className="text-xs text-ink-soft">
                           {formatBytes((log.ingress_bytes || 0) + (log.egress_bytes || 0))}
-                        </span>
-                      </TDNum>
-                      <TD>
-                        <div className="flex flex-col leading-tight">
+                        </TDNum>
+                        <TDClip className="text-xs" title={`${log.node_tag || "-"} · ${egress}`}>
                           {log.node_tag ? (
                             <Link
                               to={`/nodes?tag_keyword=${encodeURIComponent(log.node_tag)}`}
                               title={t("在节点池搜索 {{tag}}", { tag: log.node_tag })}
-                              className="w-fit text-xs text-signal-deep hover:underline"
+                              className="text-signal-deep hover:underline"
                               onClick={(event) => event.stopPropagation()}
                             >
                               {log.node_tag}
                             </Link>
                           ) : (
-                            <span className="text-xs text-ink-faint">-</span>
+                            <span className="text-ink-faint">-</span>
                           )}
-                          <span className="readout text-2xs text-ink-faint" title={log.egress_ip}>
-                            {log.egress_ip || "-"}
-                          </span>
-                        </div>
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </TBody>
-            </Table>
-          </TableWrap>
-        ) : null}
+                          <span className="readout text-ink-faint"> · {egress}</span>
+                        </TDClip>
+                      </TR>
+                    );
+                  })}
+                </TBody>
+              </Table>
+            </TableWrap>
+          ) : null}
 
-        <LogsPagination
-          pageIndex={pageIndex}
-          hasMore={hasMore}
-          pageSize={filters.limit}
-          disabled={isPageTransitioning}
-          onPageSizeChange={(limit) => updateFilter("limit", limit)}
-          onPrev={movePrev}
-          onNext={moveNext}
-        />
-      </Panel>
+          <LogsPagination
+            pageIndex={pageIndex}
+            hasMore={hasMore}
+            pageSize={filters.limit}
+            disabled={isPageTransitioning}
+            onPageSizeChange={(limit) => updateFilter("limit", limit)}
+            onPrev={movePrev}
+            onNext={moveNext}
+          />
+        </Panel>
+      </div>
 
       <Sheet
         open={drawerVisible}
@@ -1071,8 +1070,12 @@ export function RequestLogsPage() {
                     {formatBytes((detailLog.ingress_bytes || 0) + (detailLog.egress_bytes || 0))}
                   </div>
                   <div className="readout mt-0.5 flex gap-3 text-2xs text-ink-faint">
-                    <span>↓ {formatBytes(detailLog.ingress_bytes || 0)}</span>
-                    <span>↑ {formatBytes(detailLog.egress_bytes || 0)}</span>
+                    <span>
+                      {t("入站")} {formatBytes(detailLog.ingress_bytes || 0)}
+                    </span>
+                    <span>
+                      {t("出站")} {formatBytes(detailLog.egress_bytes || 0)}
+                    </span>
                   </div>
                 </StatCell>
                 <StatCell label={t("节点")}>
@@ -1132,6 +1135,6 @@ export function RequestLogsPage() {
           </div>
         ) : null}
       </Sheet>
-    </section>
+    </Page>
   );
 }
