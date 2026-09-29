@@ -58,11 +58,14 @@ capacity:
 
 verify: lint test test-race protocol-matrix test-web
 
-# Frontend tests that need no browser: they exercise server/config.mjs,
-# server/http.mjs and the intel-scope mapping directly. Part of `verify`, so a
-# regression in the panel server fails CI like any Go test would.
+# Frontend checks that need no browser: the panel's server modules, the
+# intel-scope mapping, and the design system's contrast gate (which reads the
+# tokens in src/styles/design.css and fails on any pair below WCAG AA). Part of
+# `verify`, so a regression in the panel or in the palette fails CI like any Go
+# test would.
 test-web:
 	$(NPM) --prefix $(WEB_DIR) run test:config
+	$(NPM) --prefix $(WEB_DIR) run check:contrast
 
 # The browser-driven checks. They need Playwright's browser binaries, which no
 # workflow installs (CI has no browser step), so this is a local/on-demand target

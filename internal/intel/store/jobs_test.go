@@ -694,37 +694,96 @@ func TestViaNodeBudget_IntervalIsPerNode(t *testing.T) {
 	}
 }
 
-// TestViaNodeBudget_SharedPauseAndBlockState pins that the provider-wide
-// pause/block state still governs every node of a via-node data source.
-func TestViaNodeBudget_SharedPauseAndBlockState(t *testing.T) {
+// TestViaNodeBudget_BlockIsPerNode pins the 429 rule of a via-node data source:
+// the request leaves through one node, so the vendor's rate limit belongs to
+// that node's address and must not park its siblings. A pause is different - it
+// is about the data source itself and still covers every node.
+func TestViaNodeBudget_BlockIsPerNode(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
 
 	req := ViaNodeBudgetRequest{
 		Provider: "ippure", NodeHash: "node-a", Day: DayString(day),
-		NodeDailyLimit: 10, NowNs: day.UnixNano(),
+		NowNs: day.UnixNano(),
 	}
 	if _, err := st.ConsumeViaNodeBudget(ctx, req); err != nil {
 		t.Fatalf("first consume: %v", err)
 	}
-	if err := st.MarkProviderBlocked(ctx, "ippure", day.Add(time.Hour).UnixNano(), "PROVIDER_LIMIT"); err != nil {
-		t.Fatalf("MarkProviderBlocked: %v", err)
+	blockedUntil := day.Add(5 * time.Minute).UnixNano()
+	if err := st.MarkProviderNodeBlocked(ctx, "ippure", "node-a", blockedUntil, "PROVIDER_LIMIT"); err != nil {
+		t.Fatalf("MarkProviderNodeBlocked: %v", err)
 	}
+
+	// The node that hit the limit is parked, and the deadline it reports is its
+	// own.
+	state, err := st.ConsumeViaNodeBudget(ctx, req)
+	if !errors.Is(err, ErrProviderBlocked) {
+		t.Fatalf("node-a err = %v, want ErrProviderBlocked", err)
+	}
+	if state.NextRequestAtNs != blockedUntil {
+		t.Fatalf("next_request_at = %d, want %d", state.NextRequestAtNs, blockedUntil)
+	}
+
+	// Its sibling sends immediately: one address's cooldown is not the pool's.
 	other := req
 	other.NodeHash = "node-b"
-	if _, err := st.ConsumeViaNodeBudget(ctx, other); !errors.Is(err, ErrProviderBlocked) {
-		t.Fatalf("err = %v, want ErrProviderBlocked", err)
+	if _, err := st.ConsumeViaNodeBudget(ctx, other); err != nil {
+		t.Fatalf("node-b must not be parked by node-a's cooldown: %v", err)
 	}
+
+	// And the cooldown expires on its own.
+	expired := req
+	expired.NowNs = blockedUntil
+	if _, err := st.ConsumeViaNodeBudget(ctx, expired); err != nil {
+		t.Fatalf("node-a after its own cooldown: %v", err)
+	}
+
+	// A pause is about the data source, not about one address, so it still
+	// covers every node.
 	if err := st.MarkProviderPaused(ctx, "ippure", "PROVIDER_AUTH", "key-1"); err != nil {
 		t.Fatalf("MarkProviderPaused: %v", err)
 	}
-	state, err := st.ConsumeViaNodeBudget(ctx, other)
+	state, err = st.ConsumeViaNodeBudget(ctx, other)
 	if !errors.Is(err, ErrProviderPaused) {
 		t.Fatalf("err = %v, want ErrProviderPaused", err)
 	}
 	if !state.Paused {
 		t.Fatal("the returned state must report the pause")
+	}
+}
+
+// TestViaNodeBudget_ProviderWideBlockNoLongerGatesNodes pins the other half of
+// the rule: a provider-wide cooldown belongs to the keyed host-side sources, and
+// a via-node source must ignore it. A shared block here is what stopped the whole
+// inventory behind one node's 429.
+func TestViaNodeBudget_ProviderWideBlockNoLongerGatesNodes(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
+
+	if err := st.MarkProviderBlocked(ctx, "ippure", day.Add(time.Hour).UnixNano(), "PROVIDER_LIMIT"); err != nil {
+		t.Fatalf("MarkProviderBlocked: %v", err)
+	}
+	for _, node := range []string{"node-a", "node-b"} {
+		if _, err := st.ConsumeViaNodeBudget(ctx, ViaNodeBudgetRequest{
+			Provider: "ippure", NodeHash: node, Day: DayString(day), NowNs: day.UnixNano(),
+		}); err != nil {
+			t.Fatalf("%s: a provider-wide block must not gate a via-node source: %v", node, err)
+		}
+	}
+}
+
+// TestMarkProviderNodeBlocked_RequiresANode pins the marker's argument contract:
+// without a node there is no address to attribute the cooldown to.
+func TestMarkProviderNodeBlocked_RequiresANode(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if err := st.MarkProviderNodeBlocked(ctx, "ippure", "  ", 1, "PROVIDER_LIMIT"); err == nil {
+		t.Fatal("a node block without a node hash must fail")
+	}
+	if err := st.MarkProviderNodeBlocked(ctx, "", "node-a", 1, "PROVIDER_LIMIT"); err == nil {
+		t.Fatal("a node block without a provider must fail")
 	}
 }
 

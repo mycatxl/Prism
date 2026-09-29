@@ -5,17 +5,17 @@
  * These are copies of `src/styles/design.css` — the chart cannot read CSS
  * variables off its canvas, and a second palette would drift.
  */
-export const CHART_PAPER = "#f3f5f2";
-export const CHART_PAPER_SUNK = "#e8ece7";
-export const CHART_PAPER_RAISED = "#fbfcfa";
-export const CHART_RULE = "#d3dbd4";
-export const CHART_RULE_STRONG = "#b6c1b9";
-export const CHART_INK = "#101713";
-export const CHART_INK_SOFT = "#57635c";
-export const CHART_INK_FAINT = "#8b968f";
-export const CHART_SIGNAL = "#0b7a6e";
-export const CHART_SIGNAL_DEEP = "#064e47";
-export const CHART_LIVE = "#0e7490";
+export const CHART_PAPER = "#f2f4f7";
+export const CHART_PAPER_SUNK = "#e6eaf0";
+export const CHART_PAPER_RAISED = "#ffffff";
+export const CHART_RULE = "#d2d8e1";
+export const CHART_RULE_STRONG = "#a6afbd";
+export const CHART_INK = "#0a0f16";
+export const CHART_INK_SOFT = "#39434f";
+export const CHART_INK_FAINT = "#566170";
+export const CHART_SIGNAL = "#0a6b52";
+export const CHART_SIGNAL_DEEP = "#06483a";
+export const CHART_LIVE = "#0b5f8a";
 
 export const CHART_FONT_SANS = '"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif';
 export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace';
@@ -28,10 +28,10 @@ export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular",
  * and the paper step at the bottom lets a single exit read as "almost nothing".
  */
 export const EXIT_COUNT_BANDS: Array<{ min: number; max: number; color: string }> = [
-  { min: 1, max: 2, color: CHART_PAPER_SUNK },
-  { min: 3, max: 5, color: "#bcd9d2" },
-  { min: 6, max: 11, color: "#83bfb4" },
-  { min: 12, max: 24, color: "#3f9d8f" },
+  { min: 1, max: 2, color: "#dfe6ef" },
+  { min: 3, max: 5, color: "#b2ccc4" },
+  { min: 6, max: 11, color: "#74ac9e" },
+  { min: 12, max: 24, color: "#2f8570" },
   { min: 25, max: Number.POSITIVE_INFINITY, color: CHART_SIGNAL },
 ];
 

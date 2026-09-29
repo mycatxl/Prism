@@ -4,20 +4,21 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 const button = cva(
-  "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-control font-medium transition-colors select-none disabled:pointer-events-none disabled:opacity-45",
+  "action inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-control font-medium select-none disabled:pointer-events-none disabled:opacity-45",
   {
     variants: {
       variant: {
-        primary: "bg-signal text-white hover:bg-signal-deep",
+        // The accent owns interaction in every screen, so "clickable" and
+        // "healthy" never look the same in a dense table.
+        primary: "bg-accent text-white hover:bg-accent-deep",
         secondary:
-          "border border-rule bg-paper-raised text-ink hover:border-rule-strong hover:bg-paper-sunk",
+          "border border-rule-strong bg-paper-raised text-ink hover:border-ink-faint hover:bg-paper-sunk",
         ghost: "text-ink-soft hover:bg-paper-sunk hover:text-ink",
-        danger:
-          "border border-alert/35 bg-alert-wash text-alert hover:bg-alert hover:text-white",
+        danger: "bg-alert text-white hover:bg-ink",
         quiet: "border border-transparent text-ink-soft hover:text-ink",
       },
       size: {
-        sm: "h-7 px-2 text-xs",
+        sm: "h-6.5 px-2 text-xs",
         md: "h-8 px-3 text-sm",
         lg: "h-10 px-4 text-base",
         icon: "size-8 p-0",

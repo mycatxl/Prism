@@ -5,9 +5,8 @@ import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { Sparkline } from "../../components/ui/Sparkline";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { formatRelativeTime } from "../../lib/time";
 import {
   type DashboardGlobalHistoryData,
@@ -43,6 +42,41 @@ const TrafficChart = lazy(() => import("./TrafficChart"));
 
 type Point = [number, number];
 
+/**
+ * One fact about the inventory, as a definition rather than a card: a label read
+ * once, a value compared at a glance, and the fact's own detail underneath.
+ *
+ * No trend glyph. A sparkline in a summary row shows a shape nobody can read to
+ * two significant figures while hiding the number that matters, and the row of
+ * big-figure/small-label tiles is the most generic dashboard shape there is.
+ */
+function PoolFact({
+  label,
+  value,
+  detail,
+  tone = "ink",
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+  tone?: "ink" | "live" | "signal";
+}) {
+  const toneClass = {
+    ink: "text-ink",
+    live: "text-live",
+    signal: "text-signal",
+  }[tone];
+  return (
+    <div className="min-w-[9.5rem] flex-1 px-4 py-3">
+      <dt className="micro">{label}</dt>
+      <dd className={cn("readout mt-1.5 text-xl leading-none font-semibold", toneClass)}>
+        {value}
+      </dd>
+      {detail && <dd className="mt-1.5 truncate text-xs text-ink-faint">{detail}</dd>}
+    </div>
+  );
+}
+
 function toPoints<T>(items: T[], valueOf: (item: T) => number, stampOf: (item: T) => string): Point[] {
   const points: Point[] = [];
   for (const item of items) {
@@ -57,10 +91,6 @@ function toPoints<T>(items: T[], valueOf: (item: T) => number, stampOf: (item: T
 
 function guardValue(value: number): number {
   return Number.isFinite(value) ? value : 0;
-}
-
-function toSeries<T>(items: T[], valueOf: (item: T) => number): number[] {
-  return items.map((item) => guardValue(valueOf(item)));
 }
 
 /**
@@ -131,18 +161,12 @@ export function WorkbenchPage() {
   const nodeFacts = useMemo(() => nodes.data ?? [], [nodes.data]);
   const { regions, unknown } = useMemo(() => aggregateExitsByRegion(nodeFacts), [nodeFacts]);
 
-  // Band 1 — the four values that describe the pool, each with the trend the
-  // panel already holds for it.
+  // The pool line: what the inventory holds right now, and the request record
+  // over the selected window.
   const leaseItems = useMemo(() => realtime.data?.realtime_leases.items ?? [], [realtime.data]);
-  const leaseValues = useMemo(() => toSeries(leaseItems, (item) => item.active_leases), [leaseItems]);
   const latestLease = leaseItems.at(-1);
 
-  const nodePoolItems = useMemo(() => history.data?.history_node_pool.items ?? [], [history.data]);
-  const nodeHealthyValues = useMemo(() => toSeries(nodePoolItems, (item) => item.healthy_nodes), [nodePoolItems]);
-  const egressIpValues = useMemo(() => toSeries(nodePoolItems, (item) => item.egress_ip_count), [nodePoolItems]);
-
   const requestItems = useMemo(() => history.data?.history_requests.items ?? [], [history.data]);
-  const successRateValues = useMemo(() => toSeries(requestItems, (item) => item.success_rate), [requestItems]);
   const latestMeasuredRequest = useMemo(
     () => [...requestItems].reverse().find((item) => item.total_requests > 0),
     [requestItems],
@@ -253,55 +277,34 @@ export function WorkbenchPage() {
         />
       )}
 
-      {/* Band 1 — the instrument strip: one baseline, hairline separations. */}
-      <div className="mt-4">
-        <ReadoutStrip className="grid-cols-2 lg:grid-cols-4">
-          <ReadoutCell className="px-4 py-4 xl:px-6">
-            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
-              <Readout
-                size="lg"
-                label={t("可路由节点")}
-                value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
-                hint={`${t("健康")} ${pool ? formatCount(poolHealthy) : PLACEHOLDER}`}
-              />
-              <Sparkline className="shrink-0" values={nodeHealthyValues} width={48} height={20} tone="muted" />
-            </div>
-          </ReadoutCell>
-          <ReadoutCell className="px-4 py-4 xl:px-6">
-            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
-              <Readout
-                size="lg"
-                label={t("出口 IP 数")}
-                value={pool ? formatCount(pool.egress_ip_count) : PLACEHOLDER}
-                hint={`${t("健康出口 IP")} ${pool ? formatCount(pool.healthy_egress_ip_count) : PLACEHOLDER}`}
-              />
-              <Sparkline className="shrink-0" values={egressIpValues} width={48} height={20} tone="muted" />
-            </div>
-          </ReadoutCell>
-          <ReadoutCell className="px-4 py-4 xl:px-6">
-            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
-              <Readout
-                size="lg"
-                label={t("活跃租约数")}
-                value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
-                hint={t(rangeOption(rangeKey).label)}
-              />
-              <Sparkline className="shrink-0" values={leaseValues} width={48} height={20} tone="live" />
-            </div>
-          </ReadoutCell>
-          <ReadoutCell className="px-4 py-4 xl:px-6">
-            <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
-              <Readout
-                size="lg"
-                label={t("请求成功率")}
-                value={latestMeasuredRequest ? formatPercent(latestMeasuredRequest.success_rate) : PLACEHOLDER}
-                hint={`${t("成功请求")} ${formatCount(windowRequests.success)} / ${t("总请求")} ${formatCount(windowRequests.total)}`}
-              />
-              <Sparkline className="shrink-0" values={successRateValues} width={48} height={20} tone="signal" />
-            </div>
-          </ReadoutCell>
-        </ReadoutStrip>
-      </div>
+      {/* The pool line. Four facts on one baseline with hairline separations.
+          Deliberately not four tiles carrying a big figure, a small label and a
+          trend glyph: that template spends most of a screen on numbers that are
+          read once and then watched. */}
+      <dl className="mt-4 flex flex-wrap divide-x divide-rule border-y border-rule bg-paper-raised">
+        <PoolFact
+          label={t("可路由节点")}
+          value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
+          detail={`${t("健康")} ${pool ? formatCount(poolHealthy) : PLACEHOLDER}`}
+        />
+        <PoolFact
+          label={t("出口 IP 数")}
+          value={pool ? formatCount(pool.egress_ip_count) : PLACEHOLDER}
+          detail={`${t("健康出口 IP")} ${pool ? formatCount(pool.healthy_egress_ip_count) : PLACEHOLDER}`}
+        />
+        <PoolFact
+          tone="live"
+          label={t("活跃租约数")}
+          value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
+          detail={t(rangeOption(rangeKey).label)}
+        />
+        <PoolFact
+          tone="signal"
+          label={t("请求成功率")}
+          value={latestMeasuredRequest ? formatPercent(latestMeasuredRequest.success_rate) : PLACEHOLDER}
+          detail={`${t("成功请求")} ${formatCount(windowRequests.success)} / ${t("总请求")} ${formatCount(windowRequests.total)}`}
+        />
+      </dl>
 
       {/* Band 2 — the map: the hero, and the only place the layout is allowed
           to be tall. */}

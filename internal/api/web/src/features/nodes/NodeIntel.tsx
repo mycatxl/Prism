@@ -101,7 +101,7 @@ export function NodeIntelCell({ intel }: { intel?: NodeIntel | null }) {
     const pending = state === "pending";
     return (
       <div className="flex min-w-0 flex-col items-start gap-1">
-        <Badge tone={pending ? "live" : "neutral"} dot pulse={pending}>
+        <Badge tone={pending ? "live" : "neutral"} dot={pending}>
           {t(stateLabels[state])}
         </Badge>
       </div>

@@ -7,7 +7,9 @@ import { cn } from "../../lib/cn";
  * "this is a state" without needing a label to explain it.
  *
  * `dot` adds a small leading marker for states that are live rather than
- * categorical (running, in flight).
+ * categorical (running, in flight). It is deliberately static: a pulsing dot
+ * carries no state a colour and a word do not already carry, and it makes a
+ * dense board twitch.
  */
 const badge = cva("pill", {
   variants: {
@@ -24,20 +26,12 @@ const badge = cva("pill", {
 });
 
 export type BadgeProps = HTMLAttributes<HTMLSpanElement> &
-  VariantProps<typeof badge> & { dot?: boolean; pulse?: boolean };
+  VariantProps<typeof badge> & { dot?: boolean };
 
-export function Badge({ className, tone, dot, pulse, children, ...rest }: BadgeProps) {
+export function Badge({ className, tone, dot, children, ...rest }: BadgeProps) {
   return (
     <span className={cn(badge({ tone }), className)} {...rest}>
-      {dot && (
-        <span
-          aria-hidden
-          className={cn(
-            "size-1.5 shrink-0 rounded-full bg-current",
-            pulse && "animate-pulse",
-          )}
-        />
-      )}
+      {dot && <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />}
       {children}
     </span>
   );

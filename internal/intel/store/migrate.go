@@ -17,7 +17,8 @@ const (
 	// Keep these markers in sync with the SQL files under migrations/.
 	intelVersionBaseSchema        = 1
 	intelVersionViaNodeNodeBudget = 2
-	intelLatestVersion            = intelVersionViaNodeNodeBudget
+	intelVersionViaNodeBlock      = 3
+	intelLatestVersion            = intelVersionViaNodeBlock
 
 	migrationTable = "schema_migrations"
 )

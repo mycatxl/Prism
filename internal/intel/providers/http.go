@@ -90,11 +90,14 @@ func performRequest(ctx context.Context, client *http.Client, req *http.Request,
 func statusFailure(resp response, vendor string) Result {
 	switch resp.Status {
 	case http.StatusTooManyRequests:
+		// A 429 is a rate limit, not a credential failure: it cools the queue
+		// down for RetryAfter and leaves the key alone (§3.3). Pausing here
+		// turned a routine limit into a provider that only a resume or a key
+		// rotation could lift.
 		return Result{Err: &ProviderError{
 			Code:       CodeLimit,
 			Message:    vendor + " request limit reached",
 			RetryAfter: resp.RetryAfter,
-			Pause:      true,
 		}}
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return Result{Err: &ProviderError{

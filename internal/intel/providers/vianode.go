@@ -126,13 +126,13 @@ func NewIPPureProvider(opts IPPureOptions) *IPPure {
 		spec: Spec{
 			ID: "ippure", Name: "IPPure", Website: "https://ippure.com/MyIP-Info-API",
 			Terms: "IPPure's terms may restrict bulk or systematic use. The query runs through " +
-				"the node, so the vendor sees that node's address and the quota belongs to it: " +
-				"Prism counts a per-node daily budget (default 500) and keeps a provider-wide " +
-				"QPS valve (default 2/s) so the whole inventory never arrives at once. Check " +
-				"the vendor conditions yourself before raising these limits.",
+				"the node, so the vendor sees that node's address and the vendor's own " +
+				"per-address limit is the only gate: Prism counts no daily budget and no " +
+				"request interval of its own, and records a 429 against the one node that hit " +
+				"it. Check the vendor conditions yourself before scaling the inventory.",
 			Kind: KindViaNode, Profile: IPPureProfile,
 			RequiresKey: false, DefaultEnabled: true,
-			DefaultDailyLimit: 500, DefaultQPS: 2, BatchSize: 1,
+			DefaultDailyLimit: 0, DefaultQPS: 0, BatchSize: 1,
 			DefaultTTL: ttl, SupportsIPv6: true,
 		},
 		url: target, ttl: ttl, timeout: timeout, now: now,
@@ -285,11 +285,11 @@ func NewIPAPIProvider(opts IPAPIOptions) *IPAPI {
 			Terms: "The free endpoint is HTTP-only, limited to 45 requests per minute per " +
 				"source address and is not licensed for commercial use. Because the query runs " +
 				"through the node, that 45/minute budget belongs to the node's own egress " +
-				"address, so the daily budget Prism counts is per node. The provider-wide 5 " +
-				"queries per second valve only keeps the whole inventory from arriving at once.",
+				"address: Prism adds no daily budget and no request interval of its own and " +
+				"records a 429 against the one node that hit it.",
 			Kind: KindViaNode, Profile: IPAPIProfile,
 			RequiresKey: false, DefaultEnabled: true,
-			DefaultDailyLimit: 0, DefaultQPS: 5, BatchSize: 1,
+			DefaultDailyLimit: 0, DefaultQPS: 0, BatchSize: 1,
 			DefaultTTL: ttl, SupportsIPv6: true,
 		},
 		url: target, ttl: ttl, timeout: timeout, now: now,
@@ -496,13 +496,13 @@ func NewProxyCheckViaNodeProvider(opts ProxyCheckViaNodeOptions) *ProxyCheckViaN
 			Terms: "Anonymous queries must not be used commercially and share the quota of the " +
 				"requesting address (100/day). Because the query leaves through the node and " +
 				"names that same node, the quota is spent per node - which is what makes a " +
-				"large inventory affordable without a key. Prism counts a per-node daily " +
-				"budget (default 100) and keeps a provider-wide QPS valve (default 2/s). A key " +
-				"can raise the quota, but a key is never sent through a node: enter it on the " +
-				"host-side proxycheck.io source instead. See https://proxycheck.io/pricing/.",
+				"large inventory affordable without a key. Prism adds no daily budget and no " +
+				"request interval of its own; a 429 is recorded against the one node that hit " +
+				"it. A key can raise the quota, but a key is never sent through a node: enter " +
+				"it on the host-side proxycheck.io source instead. See https://proxycheck.io/pricing/.",
 			Kind: KindViaNode, Profile: ProxyCheckNodeProfile,
 			RequiresKey: false, DefaultEnabled: true,
-			DefaultDailyLimit: 100, DefaultQPS: 2, BatchSize: 1,
+			DefaultDailyLimit: 0, DefaultQPS: 0, BatchSize: 1,
 			DefaultTTL: ttl, SupportsIPv6: true,
 		},
 		url: target, ttl: ttl, timeout: timeout, now: now,

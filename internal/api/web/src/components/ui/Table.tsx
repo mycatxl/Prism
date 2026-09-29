@@ -17,14 +17,18 @@ export function Table({ className, ...rest }: HTMLAttributes<HTMLTableElement>) 
 }
 
 export function THead({ className, ...rest }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn("bg-paper-sunk/60", className)} {...rest} />;
+  return <thead className={cn("bg-paper-sunk/70", className)} {...rest} />;
 }
 
+/**
+ * A column head is micro-caps, tracked and quieter than any cell: that contrast
+ * is what lets a 13px data row read as data instead of as a label.
+ */
 export function TH({ className, ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
       className={cn(
-        "border-b border-rule px-3 py-2 text-left text-xs font-medium whitespace-nowrap text-ink-soft",
+        "micro border-b border-rule px-3 py-1.5 text-left whitespace-nowrap",
         className,
       )}
       {...rest}
@@ -46,7 +50,7 @@ export function TR({
       data-selected={selected ? "true" : undefined}
       className={cn(
         "transition-colors hover:bg-paper-sunk/50",
-        selected && "bg-signal-wash/60 hover:bg-signal-wash",
+        selected && "bg-accent-wash/70 hover:bg-accent-wash",
         className,
       )}
       {...rest}

@@ -224,10 +224,11 @@ curl -X POST http://127.0.0.1:2260/api/v1/export-profiles/<id>/actions/rotate-to
 配置被停用后该链接返回 404。公开入口只保存链接令牌的 sha256，由管理面处理函数在**所有**承载管理面的监听地址上提供（主监听 `PRISM_LISTEN_ADDRESS` / `PRISM_PORT`，以及独立的 `PRISM_ADMIN_LISTEN`），并与其他管理路由一样受该接入点 `allow_management` 开关约束。它有自己的限流（每令牌 60 次/分钟、每客户端 IP 120 次/分钟，超限返回 `429` 与 `Retry-After`），与 `PRISM_PROXY_AUTH_FAIL_LIMIT` 相互独立
 （`internal/api/handler_subscription_token.go`、`internal/api/export_token.go`）。
 
-**数据源与解锁检测设置。** 界面页面「数据源与解锁检测」（`/intel-settings`）与接口
-（`GET|PATCH /api/v1/intel/providers`、`POST /api/v1/intel/providers/{id}/actions/refresh`、
-`GET|PATCH /api/v1/intel/checks`）展示每个数据源的启用/可运行状态、密钥是否配置、每日额度
-与离线库的新鲜度。离线库不随包发布：DB-IP Lite、MaxMind GeoLite2 与 IPinfo Lite 需要先下载到
+**数据源与解锁检测。** 这些是内置项，由后台静默选择并自动运行，不是需要日常操作的配置面
+（因此没有界面页面）。接口（`GET|PATCH /api/v1/intel/providers`、
+`POST /api/v1/intel/providers/{id}/actions/refresh`、`GET|PATCH /api/v1/intel/checks`）可查看
+每个数据源的启用/可运行状态、密钥是否配置、每日额度与离线库的新鲜度。离线库不随包发布：
+DB-IP Lite、MaxMind GeoLite2 与 IPinfo Lite 需要先下载到
 `$PRISM_CACHE_DIR/geo` 才会提供证据，在此之前数据源返回 `PROVIDER_UNAVAILABLE`
 （`… database is not installed`），不会记录 ASN/地区证据。内置解锁检测：`chatgpt`、`claude`、
 `gemini`、`google_captcha`、`netflix`、`smtp25`、`tiktok`、`youtube_premium`。

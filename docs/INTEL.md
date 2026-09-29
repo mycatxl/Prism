@@ -75,7 +75,9 @@ item 记录 `step_index`（最后完成的步骤号），重启后从下一步�
 | `KindOnlineIP` | `online-ip` | 由 **Prism 主机**直接发出（严格 HTTP 客户端，不走节点、不继承 `HTTP_PROXY`、禁止重定向） | **Prism 主机的公网 IP** |
 | `KindViaNode` | `via-node` | 请求**经被测节点自己的 outbound 发出**（`internal/intel/providers/vianode.go` `fetchViaNode`：不走环境代理、不走路由、不走 bypass、不直连回退） | **那个节点自己的出口 IP** |
 
-因为额度归属不同，via-node 的日额度按节点计，而主机侧在线查询的日额度按主机计。
+归属不同，闸门就不同：**via-node 请求的额度属于那个节点的地址，所以 Prism 不给自己设额度**——
+唯一的闸门是厂商自己的每地址限速，被 429 时也只冷却命中限速的那一个节点（§2.3）。主机侧的在线数据源
+用的是 Prism 主机（或你的 Key）的额度，所以它的日额度、QPS 与 429 冷却仍然是 provider 级的。
 
 ### 2.2 内置数据源（`internal/intel/providers/builtin.go` `RegisterBuiltins`，共 13 个）
 
@@ -91,16 +93,16 @@ item 记录 `step_index`（最后完成的步骤号），重启后从下一步�
 | `ipqs` | IPQualityScore | online-ip | 是 | 有密钥时 | 150/天（上限 1,000,000） | 1 | 72h |
 | `ipapi_is` | ipapi.is | online-ip | 可选 | **否** | 500/天（上限 1,000,000） | 1 | 72h |
 | `dnsbl` | DNS blocklists | online-ip | 否 | 是 | 不限 | **5（每个 zone）** | 24h |
-| `ippure` | IPPure | via-node | 否 | 是 | **每节点 500/天** | 2（provider 级） | 7d |
-| `ip_api` | ip-api.com | via-node | 否 | 是 | **不限**（免费版真正限的是每源 IP 45 次/分钟） | 5（provider 级） | 7d |
-| `proxycheck_node` | proxycheck.io (via node) | via-node | 否 | 是 | **每节点 100/天** | 2（provider 级） | 24h |
+| `ippure` | IPPure | via-node | 否 | 是 | **不限**（厂商按节点地址限制） | 不限 | 7d |
+| `ip_api` | ip-api.com | via-node | 否 | 是 | **不限**（免费版真正限的是每源 IP 45 次/分钟） | 不限 | 7d |
+| `proxycheck_node` | proxycheck.io (via node) | via-node | 否 | 是 | **不限**（厂商按节点地址限 100/天） | 不限 | 24h |
 
 - 只有 `dnsbl` 不支持 IPv6（`SupportsIPv6: false`）。
 - `BatchSize` 全部为 1：`proxycheck` 的 v3 批量能力未经厂商确认，代码里按单个地址查询。
 - "有密钥时启用"来自 `internal/intel/providers/settings.go` `DefaultSetting`：`RequiresKey=true` 的数据源，
   生效 `Enabled` 等于"密钥是否齐全"，与 `DefaultEnabled` 无关。所以 `maxmind_geolite2`/`ipinfo_lite`/`abuseipdb`/`ipqs`
   在首次启动填入密钥后就是启用状态，而 `proxycheck`/`ipapi_is`（`RequiresKey=false`，`DefaultEnabled=false`）
-  **即使有密钥也保持关闭**，必须在设置页手动打开——`proxycheck` 关闭是刻意的，见 §2.4。
+  **即使有密钥也保持关闭**，必须用 `PATCH /api/v1/intel/providers/{id}` 打开——`proxycheck` 关闭是刻意的，见 §2.4。
 - 生效设置由三层合成：`Spec` 默认值 → `state.db` 的 `intel_provider_settings` → 首次启动时把旧
   `PRISM_QUALITY_API_KEY` / `PRISM_QUALITY_DAILY_LIMIT` / `PRISM_ABUSEIPDB_API_KEY` /
   `PRISM_IPQS_API_KEY` / `PRISM_IPAPI_IS_API_KEY` / `PRISM_MAXMIND_ACCOUNT_ID` / `PRISM_MAXMIND_LICENSE_KEY` /
@@ -109,17 +111,26 @@ item 记录 `step_index`（最后完成的步骤号），重启后从下一步�
 
 ### 2.3 via-node 的额度语义（这一节是全文最容易误解的地方）
 
-- **日额度按节点计**：`internal/intel/store/repo_provider.go` `ConsumeViaNodeBudget` 在一个事务里同时结算两行——
-  `provider_node_state`（`provider`+`node_hash`+`day`+`used`，见迁移 `internal/intel/store/migrations/000002_via_node_budget.up.sql`）
-  和 provider 级的 `provider_state`。节点的日计数耗尽时返回 `ErrBudgetExhausted`，最早重试时间是**下一个 UTC 日 0 点**。
-  迁移文件的注释记下了为什么必须这样改：把整池的计数放在 provider 级，`ippure` 就变成"所有节点一共 500 次/天"，
-  而不是"每个节点 500 次/天"。
-- **QPS 是 provider 级的总阀门**：`provider_state.next_request_at_ns` 由 `req.GlobalQPS` 推进
-  （`next = now + 1s/QPS`），与节点无关。它存在的意义不是节流某个节点，而是**防止整池节点同时打到上游**——
-  这也是厂商唯一能得到的保护，因为厂商根本无法把一个 via-node 请求归因到 Prism 主机。
-- **`paused` / `blocked_until`（401/403/429）也是 provider 级的**：换 Key 会自动解除 pause（`CredentialID` 变化）。
-- 三个 via-node 数据源的默认值：`ippure` **每节点 500/天**；`ip_api` **无日限**（`DefaultDailyLimit: 0`）；
-  `proxycheck_node` **每节点 100/天且不需要密钥**。
+**结论先说：Prism 对 via-node 数据源不设任何自己的额度或限速。** 请求从被测节点自己的出口发出，
+厂商看到的源地址就是那个节点，厂商的每地址限速本身就是唯一正确的闸门——Prism 再加一层只会让
+整池节点挤在 Prism 自己的计数器后面排队，而每个节点的厂商额度其实都还没动。
+
+- **不计日额度**：三个 via-node 数据源的 `Spec.DefaultDailyLimit` 都是 **0**（= 不限）。
+  `internal/intel/store/repo_provider.go` `ConsumeViaNodeBudget` 仍保留 `provider_node_state` 的
+  `used`/`day` 计数（迁移 `…/000002_via_node_budget.up.sql`），但它只是观测数据；
+  `req.NodeDailyLimit > 0` 的分支在默认配置下不触发。**只有 Key 类的主机侧数据源才有真额度**，
+  因为那才是你的备用金。
+- **不做 provider 级限速**：`Spec.DefaultQPS` 也都是 **0**（= 不限），`provider_state.next_request_at_ns`
+  在 via-node 路径上不再被推进。并发度由节点池决定（`intel_node_workers`，默认 100），
+  每个 worker 对着不同节点，所以"整池同时打到上游"在厂商侧看到的是 100 个不同源地址的正常请求。
+- **429 冷却只落在命中的那一个节点**：`MarkProviderNodeBlocked` 写 `provider_node_state.blocked_until_ns`
+  （迁移 `…/000003_via_node_block.up.sql`，与 `error_code` 同批加列）。
+  冷却时长取厂商的 `Retry-After`（无该头则 1 分钟），上限 15 分钟——封顶值刻意低于
+  `DefaultViaNodeDeferral`（30 分钟），这样被限速的节点是**被停放重试**，而不是记一条"额度耗尽"直接跳过。
+  迁移注释记下了这里的教训：冷却原来存在 provider 级的 `provider_state.blocked_until_ns`，
+  一个节点撞上 429 会把同一个数据源的所有其他节点一起停掉。
+- **`paused`（401/403）仍然是 provider 级的**：它说的是数据源本身有问题（凭据被拒、被操作员停用），
+  与某个地址无关；换 Key 会自动解除 pause（`CredentialID` 变化）。
 - 闸门关闭时 worker 不阻塞：等待时间在 30 分钟内就把 item 挂到那个时刻，超过就记一条
   `budget or quota exhausted for <时长>` 的 skip（`internal/intel/steps.go` `consumeViaNodeBudget`）。
 
@@ -146,8 +157,10 @@ HTTP 400 `No valid IP Addresses supplied.` 拒绝；可用的是**在请求里�
 
 ### 2.5 `Terms` 字段（原样转述，中文概括）
 
-`Spec.Terms` 是设置页显示的厂商条款/额度提示（`internal/intel/providers/settings_api.go` `ProviderStatus.Terms`
-→ 前端 `internal/api/web/src/features/intelSettings/IntelSettingsPage.tsx`）。原文都是英文，以下是如实概括：
+`Spec.Terms` 是这个数据源的厂商条款/额度提示，由 `GET /api/v1/intel/providers` 的
+`ProviderStatus.Terms` 返回（`internal/intel/providers/settings_api.go`）。面板没有对应页面——数据源与
+检测规则是内置项，由后台静默选择并自动运行（§5）——所以这里就是这些条款的完整落点。
+原文都是英文，以下是如实概括：
 
 | id | 条款要点 |
 |---|---|
@@ -161,9 +174,9 @@ HTTP 400 `No valid IP Addresses supplied.` 拒绝；可用的是**在请求里�
 | `ipqs` | 需要付费或试用 Key；免费档 5000 次/月，**没有付费计划时不允许商用**；Prism 默认 150/天、1 QPS。 |
 | `ipapi_is` | 匿名用量约 1000 次/天，**无计划或自建数据库时不允许商用**；Prism 默认 500/天、1 QPS。 |
 | `dnsbl` | Spamhaus 与 SpamCop 都把公开 zone 限制在**非商业、低流量、且必须从自己的递归解析器发起**的查询；经公共解析器的查询会被拒绝（记为 `DNSBL_REFUSED`，**不算命中**）。Prism 默认每 zone 5 QPS，且不查 IPv6。 |
-| `ippure` | IPPure 条款可能限制批量或系统性使用。查询经节点发出，厂商只看到该节点地址，**额度属于该节点**；Prism 按节点计默认 500/天，另加 provider 级 QPS 阀（默认 2/s）避免整池同时到达。**提高额度前请自行确认厂商条件。** |
-| `ip_api` | 免费端点仅 HTTP，每源地址 45 次/分钟，且**不允许商用**。因为经节点查询，这个 45/分钟属于节点自己的出口地址，所以 Prism 统计的日额度按节点计；provider 级 5 QPS 只用来避免整池同时到达。 |
-| `proxycheck_node` | 匿名查询**不得商用**，且共享发起地址的额度（100/天）。因为请求经节点发出并指名同一节点，额度按节点计——这才让大量节点在无 Key 的情况下可行。Prism 按节点计默认 100/天，另加 provider 级 QPS 阀（默认 2/s）。Key 可以提高额度，但**密钥永不经节点发送**：要填 Key 请填在主机侧的 proxycheck.io 数据源上。 |
+| `ippure` | IPPure 条款可能限制批量或系统性使用。查询经节点发出，厂商看到的是该节点地址，**厂商自己的每地址限制就是唯一的闸门**：Prism 不设日额度、不限速，只把 429 记在命中它的那一个节点上。**规模化前请自行确认厂商条件。** |
+| `ip_api` | 免费端点仅 HTTP，每源地址 45 次/分钟，且**不允许商用**。因为经节点查询，这个 45/分钟属于节点自己的出口地址：Prism 不额外加日额度和限速，只把 429 记在命中它的那一个节点上。 |
+| `proxycheck_node` | 匿名查询**不得商用**，且共享发起地址的额度（100/天）。因为请求经节点发出并指名同一节点，额度按节点计——这才让大量节点在无 Key 的情况下可行。Prism 不额外加日额度和限速，只把 429 记在命中它的那一个节点上。Key 可以提高额度，但**密钥永不经节点发送**：要填 Key 请填在主机侧的 proxycheck.io 数据源上。 |
 
 这些是厂商侧的条件、不是 Prism 的许可承诺；用户自行承担按条款使用的责任。
 
@@ -507,24 +520,26 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 未知或只读字段被拒绝（`unknown or read-only field: "…"`），改动立即作用于运行中的服务并写进 state.db。
 只关掉**一条**检测规则则用 `PATCH /api/v1/intel/checks/{id}` 配 `{"enabled": false}`，与上面的开关互不影响。
 
-设置页面的路径是 `/#/intel-settings`（`internal/api/web/src/app/routes.tsx`），
-在那里可以看到每个数据源的条款原文（`terms`）与今日用量，并能直接开关数据源与检测规则。
+数据源与检测规则**没有界面页面**：它们是一组固定的内置项，由后台静默选择并自动运行，
+不构成需要日常操作的配置面。要查看或调整它们用 `GET /api/v1/intel/providers`、
+`PATCH /api/v1/intel/providers/{id}`、`GET|PATCH /api/v1/intel/checks`（§2.6、§5）。
 
 ## 6. IPPure 条款提示（原文照录要点）
 
 `ippure` 是 **via-node** 数据源：请求经被测节点自己的出口发出，IPPure 只看到**那个节点的地址**，
-所以它的匿名额度属于**节点**而不是 Prism 主机。Prism 因此：
+所以厂商的每地址限制属于**节点**而不是 Prism 主机。Prism 因此：
 
-- 按**节点**计日额度，默认 **500/天**（`Spec.DefaultDailyLimit`）；
-- 另有一个 **provider 级** QPS 阀，默认 **2/s**，只用来防止整池节点同时到达上游；
-- 把完整条款写进 `Spec.Terms`，运行设置页会原样显示：
+- **不设日额度、不做 provider 级限速**（`Spec.DefaultDailyLimit` 与 `Spec.DefaultQPS` 都是 0）：
+  厂商自己的每地址限制是唯一闸门，再加一层只会让整池节点挤在 Prism 的计数器后面；
+- 被 429 时只冷却命中限速的那一个节点（`MarkProviderNodeBlocked`）；
+- 把完整条款写进 `Spec.Terms`，由 `GET /api/v1/intel/providers` 原样返回：
 
 > IPPure's terms may restrict bulk or systematic use. The query runs through the node, so the vendor sees
-> that node's address and the quota belongs to it: Prism counts a per-node daily budget (default 500) and
-> keeps a provider-wide QPS valve (default 2/s) so the whole inventory never arrives at once. Check the
-> vendor conditions yourself before raising these limits.
+> that node's address and the vendor's own per-address limit is the only gate: Prism counts no daily
+> budget and no request interval of its own, and records a 429 against the one node that hit it. Check
+> the vendor conditions yourself before scaling the inventory.
 
-即：**IPPure 的条款可能限制批量或系统性使用；Prism 默认低频调用，提高额度前请自行确认厂商条件。**
+即：**IPPure 的条款可能限制批量或系统性使用；Prism 完全按节点地址的厂商限制走，规模化前请自行确认厂商条件。**
 另外 IPPure 的 `fraudScore` 只对 IPv4 有效：IPv6 响应里的分数会被显式忽略（`DecodeIPPure`），
 评分层也不会给 IPv6 生成 IPPure 分量——不会因此变成"满分"。
 
@@ -589,9 +604,10 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 
 ### 7.3 配额门打开时任务会变慢，这是设计
 
-`kind=intel` 与 `kind=full` 的第 4 步（经节点数据源）受**provider 级 QPS 门**约束，默认 QPS 是 1
-（`DefaultQPS: 1`）。配额拿不到时 item **不会被阻塞**，而是被"停放"（§3.2 step 4 的
-never block the worker, park the item instead），停放到下次可用时间。
+`kind=intel` 与 `kind=full` 的第 4 步（经节点数据源）**默认不设任何 Prism 自己的闸门**（§2.3），
+所以配额门只有在两种情况下才关上：某个节点被厂商 429（冷却 ≤15 分钟，只影响该节点），
+或者操作员把该数据源的 `daily_limit`/`qps` 显式调成非 0。闸门关上时 item **不会被阻塞**，
+而是被"停放"（§3.2 step 4 的 never block the worker, park the item instead），停放到下次可用时间。
 
 2026-10-02 修掉了一个由此产生的恶性循环：停放时间原本就是 provider 给的"下次可用"，对 QPS 门
 来说约 **1 秒**，于是 311 个 item 每一秒一起醒来抢 1 个配额。实测一个 job 在 69 分钟里产生

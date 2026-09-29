@@ -111,7 +111,7 @@ export function AppShell() {
     <nav
       aria-label={t("主导航")}
       className={cn(
-        "flex h-full flex-col border-r border-rule bg-paper-raised",
+        "flex h-full flex-col border-r border-rule bg-rail",
         collapsed ? "w-14" : "w-56",
       )}
     >
@@ -170,19 +170,17 @@ export function AppShell() {
                   title={collapsed ? t(item.label) : undefined}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "relative flex items-center gap-2.5 py-1.5 text-sm transition-colors",
-                    collapsed ? "justify-center px-0" : "px-3",
+                    "mx-1.5 flex items-center gap-2.5 rounded-control py-1.5 text-sm transition-colors",
+                    collapsed ? "justify-center px-0" : "px-2",
+                    // The current destination is marked by fill, weight and text
+                    // colour together. A coloured edge stripe on a list row is the
+                    // loudest generic-UI tell there is, and it says nothing the
+                    // fill does not already say.
                     active
-                      ? "bg-signal-wash/70 font-medium text-signal-deep"
-                      : "text-ink-soft hover:bg-paper-sunk hover:text-ink",
+                      ? "bg-paper-raised font-semibold text-accent-deep"
+                      : "text-ink-soft hover:bg-paper-raised/70 hover:text-ink",
                   )}
                 >
-                  {active && (
-                    <span
-                      aria-hidden
-                      className="absolute inset-y-0 left-0 w-0.5 bg-signal"
-                    />
-                  )}
                   <Icon size={15} className="shrink-0" />
                   {!collapsed && <span className="truncate">{t(item.label)}</span>}
                 </NavLink>
@@ -242,11 +240,11 @@ export function AppShell() {
           </Button>
 
           <div className="flex min-w-0 items-baseline gap-2">
-            <span className="text-sm font-medium text-ink">
+            <span className="text-sm font-semibold text-ink">
               {t(current?.label ?? "工作区")}
             </span>
-            {current && current.path !== "/dashboard" && (
-              <span className="hidden truncate text-xs text-ink-faint sm:inline">
+            {current && (
+              <span className="hidden truncate text-2xs tracking-[0.06em] text-ink-faint uppercase sm:inline">
                 {t(current.section)}
               </span>
             )}
@@ -260,7 +258,7 @@ export function AppShell() {
                 {t("令牌失效")}
               </Badge>
             ) : disconnected ? (
-              <Badge tone="warn" dot pulse>
+              <Badge tone="warn" dot>
                 {t("连接中断")}
               </Badge>
             ) : weakTokens > 0 ? (
@@ -270,9 +268,12 @@ export function AppShell() {
             ) : info.data ? (
               <Badge tone="signal" dot title={`${info.data.version ?? ""}`}>
                 {t("实例在线")}
+                <span className="readout ml-1 font-normal opacity-70">
+                  {info.data.version ?? ""}
+                </span>
               </Badge>
             ) : (
-              <Badge tone="neutral" dot pulse>
+              <Badge tone="neutral" dot>
                 {t("连接中")}
               </Badge>
             )}
