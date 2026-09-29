@@ -264,7 +264,6 @@ Four traps, all hit while installing it here:
 - **The vendored engine can lag the checkout** (the installer ships 0.1.5, the local
   checkout here is 0.1.6). Keep one engine — replace the vendored copy or set
   `IMPECCABLE_BIN` — so every launcher reports the same version.
-
 - **The installer's Pi provider does not put the skill where this console reads it.** It
   writes `~/.pi/agent/skills/impeccable`; this console scans `~/.agents/skills`. It looks
   like the right place because the console *does* read `~/.pi/agent/AGENTS.md` for its
