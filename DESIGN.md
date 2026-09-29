@@ -240,6 +240,7 @@ run. `make test-slop` builds the correct root for you.
 ```bash
 npx impeccable install --providers=pi --scope=global   # lands in ~/.pi/agent/skills
 cp -a ~/.pi/agent/skills/impeccable ~/.agents/skills/  # where this console actually looks
+rm -rf ~/.pi/agent/skills                              # keep one place only; the copy above is the install
 ```
 
 The install that matters is a **directory-style skill under `~/.agents/skills/`**:
