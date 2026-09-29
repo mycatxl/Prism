@@ -110,7 +110,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
       </div>
     </div>
     <div className="quality-verdict"><span>{t("综合判定")}</span><VerdictBadge summary={summary} />
-      {summary?.assessment?.reasons.length ? <ul>{summary.assessment.reasons.map(reason => <li key={reason}>{t(assessmentReasons[reason] || reason)}</li>)}</ul> : null}
+      {summary?.assessment?.reasons?.length ? <ul>{summary.assessment.reasons.map(reason => <li key={reason}>{t(assessmentReasons[reason] || reason)}</li>)}</ul> : null}
     </div>
     <PurityGuide />
     {pure && <>

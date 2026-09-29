@@ -73,7 +73,10 @@ export type QualityAssessment = {
   network_source: string;
   native: boolean | null;
   verdict: "pending" | "incomplete" | "review" | "conflicting" | "caution" | "high_risk" | "favorable";
-  reasons: string[];
+  // Nullable because the projection path emitted `null` for an empty list (Go's
+  // nil slice). The server now sends [], but the type stays honest so a
+  // regression becomes a type error instead of a blank page.
+  reasons: string[] | null;
   tor_roles?: Array<"exit" | "guard" | "relay">;
 };
 

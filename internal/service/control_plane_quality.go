@@ -528,6 +528,9 @@ func qualityAssessmentFromRow(row store.Assessment) quality.Assessment {
 		PurityBand:  row.PurityBand,
 		NetworkType: row.IPType,
 		Verdict:     row.Verdict,
+		// Default to an empty list, not nil: a nil slice marshals to `null` and
+		// the WebUI reads this array. Rows without stored reasons keep this value.
+		Reasons: []string{},
 	}
 	if row.Native.Valid {
 		native := row.Native.Int64 != 0
@@ -556,6 +559,10 @@ func qualityAssessmentFromLite(lite intel.AssessmentLite) quality.Assessment {
 		NetworkType: intel.IPTypeName(lite.IPType),
 		Native:      lite.NativeValue(),
 		Verdict:     intel.VerdictName(lite.Verdict),
+		// A nil slice marshals to `null`, and "deliberately empty" has to look like
+		// an empty list on the wire. The WebUI reads this array, and the sibling
+		// qualityAssessmentFromRow path already yields [] from the stored JSON.
+		Reasons: []string{},
 	}
 }
 
