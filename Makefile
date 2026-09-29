@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend test test-race test-web capacity lint protocol-matrix verify test-ui init start clean
+.PHONY: build web backend test test-race test-web test-slop test-ui capacity lint protocol-matrix verify init start clean
 
 build: web backend
 
@@ -74,6 +74,14 @@ test-web:
 #   npx --prefix internal/api/web playwright install chromium
 test-ui:
 	$(NPM) --prefix $(WEB_DIR) run test:e2e
+
+# The anti-pattern gate: impeccable's deterministic detector (61 checks for the
+# defaults an agent reaches for before a design exists) over the console. It needs
+# the external engine, and it scans a built tree when one is present, so it is a
+# local/on-demand target rather than part of `verify`. Install once with:
+#   npx impeccable install
+test-slop:
+	$(NPM) --prefix $(WEB_DIR) run check:slop
 
 init:
 	./bin/prism init

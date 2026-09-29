@@ -1,178 +1,134 @@
-# Prism 前端设计规范
+# Prism console — implementation detail
 
-这份文档是控制台视觉与交互的唯一依据。任何页面的取舍以它为准；与它冲突的旧类名一律作废。
+How the console is built. The **visual system of record** — concept, colour, type,
+geometry, elevation, motion and the prohibited list — is [the root
+DESIGN.md](../../DESIGN.md), and it is checked mechanically. This file does not
+restate it: a second copy of the tokens is a second thing to drift.
 
-规范里的每条"禁止"都对应一个**可机械检查**的破绽，不是审美偏好。改完之后按末尾「验收」跑一遍，不靠眼睛判断。
+Product intent (who this is for, what it must do, accessibility floors) is
+[PRODUCT.md](../../PRODUCT.md). Server architecture is [docs/DESIGN.md](../../docs/DESIGN.md).
 
-## 概念
+## Token plumbing
 
-**校准台。** 主体是网络出口——流量从哪个地址出去、那个地址有多干净。所以界面按**测量仪器**做：
-明亮的冷调台面、石墨色油墨、**有边框的面板**承担结构、以及一个饱和色只表示"可交互"。
+Colour, type, spacing and chrome heights are defined in
+[`src/styles/design.css`](src/styles/design.css). The shape is deliberate and worth
+knowing before editing:
 
-三条刻意的取舍：
+- `@theme inline` **binds** Tailwind utility names to primitives — it defines no
+  values of its own. `--color-paper: var(--p-canvas)` and so on.
+- The primitives (`--p-*`) are declared **twice**: once in `:root` (light) and once in
+  `[data-theme="dark"]`. They are the only place a colour literal appears.
+- Static scales — fonts, the type scale, spacing, radii, chrome heights, easings — sit
+  in a second `@theme` block, plus a media query that collapses the rail.
 
-- **没有深色模式。** 这些数值在台面上被读，白天光线下，旁边是终端。第二套主题只是一次重映射，
-  会把每个对比度判断翻一倍，换不来可读性。
-- **颜色从不单独传递信息。** 每个状态同时带一个词、一个形状或一个位置。
-- **不追"大屏"的深蓝+霓虹。** 参照过的开源大屏（DataV、go-view、datav-vue3、iDataV、Grafana 主题）
-  里，**那些做得好的都在避免**：SVG 激光扫边、雷达扫描、平铺网格底纹、霓虹外发光、渐变文字、
-  青蓝配深蓝的万金油配色、3D 锥形图、拉伸九宫格 PNG 边框。抄它们的是**结构和几何**，不是配色。
+That split is what makes a theme switch cost one attribute on `<html>` instead of a
+second stylesheet. Adding a colour means adding a primitive in *both* blocks and a
+binding in `@theme inline`; adding it in one place only is how a theme breaks silently.
 
-## 令牌
+**Canvas cannot read CSS variables.** `src/features/dashboard/chartPalette.ts` holds a
+literal copy of the series, grid and axis colours for ECharts. Change the two together
+and re-run the contrast gate.
 
-全部定义在 `src/styles/design.css` 的 `@theme` 里。
+## Components
 
-### 颜色
+`src/components/ui/` is the only permitted source of components. A page composes
+these; it does not invent a control.
 
-| 令牌 | 值 | 用途 |
-|---|---|---|
-| `paper` | `#f1f3f7` | 台面底色。冷调中性，微蓝 |
-| `paper-sunk` | `#e5e9f0` | 凹陷区：表头、井 |
-| `paper-raised` | `#ffffff` | 面板所在的纸面 |
-| `paper-inset` | `#f8fafc` | 图表与地图底色 |
-| `rail` | `#e6eaf1` | **第二中性层**：导航。比内容更冷，框架和读数不会糊成一片 |
-| `rule` / `rule-strong` / `rule-faint` | `#d1d7e0` / `#a4adbb` / `#e3e7ee` | 发丝细线 |
-| `panel-edge` | `rgba(10,15,22,.12)` | 面板的 1px 边框。**有边才算区域** |
-| `row-rule` | `#eaeef3` | 表格行分隔线 |
-| `ink` / `ink-soft` / `ink-faint` | `#0a0f16` / `#39434f` / `#566170` | 三级文字，全部 ≥4.5:1 |
-| `signal` | `#0a6b52` | 健康 |
-| `live` | `#0b5f8a` | 在途、排队 |
-| `warn` | `#7d4a00` | 降级、过期 |
-| `alert` | `#a32313` | 风险、失败 |
-| `accent` | `#0b4fa8` | **只有交互**：主操作、当前选中、焦点环 |
-| `chart-grid` / `chart-axis` | `#e8ecf2` / `#5d6876` | 图表网格与轴标签（轴标签是文字，所以 ≥4.5:1） |
-
-`signal` 与 `accent` 必须分开。合成一个色，密集表格里"健康"和"可点"就长得一样了。
-
-**数据系列** `series-1..6` = `#0554bb` `#03725c` `#ba6e05` `#dd2206` `#6505d1` `#059bd1`。
-两条约束同时成立，且由 `scripts/check-contrast.mjs` 强制：
-
-1. 图表线条是**图形对象**，按 WCAG 1.4.11 要 **3:1**（不是正文的 4.5:1）；
-2. 序列表在**亮度轴上**拉开（相邻亮度差 ≥1.15），不只是色相拉开——灰度打印、色觉障碍、
-   三米外观看都只能靠亮度区分。**改顺序前先跑门。**
-
-### 字体与字号
-
-| 令牌 | 字体 |
+| Component | Purpose |
 |---|---|
-| `font-sans` | **IBM Plex Sans**（400/500/600） |
-| `font-mono` | **IBM Plex Mono**（400/500/600）——**只给真正被当作数据读的值** |
+| `Page` / `PageHeader` / `PageMeta` | Page skeleton. Header is a fixed 52px, title 18/600, description 12px at ≤68ch, actions on the right |
+| `Panel` / `PanelHeader` / `PanelToolbar` / `PanelBody` / `PanelFooter` | A region. Header 44px, padding 16, title 14/600. **Actions are visible, never hover-revealed** — an action behind `opacity: 0` does not exist on a touch screen |
+| `Table` / `THead` / `TH` / `TBody` / `TR` / `TD` / `TDNum` / `TDClip` | The data grid. Fixed row heights 32/28/36, sticky head, **row rules only, no cell borders**; long text must use `TDClip` |
+| `Readout` / `ReadoutStrip` / `ReadoutCell` / `Numeral` | Instrument readings and the count-up |
+| `Button` / `Input` / `Textarea` / `Select` / `Switch` | Controls, 28px tall (sm 24 / lg 32) |
+| `Badge` | Status. The only fully-round shape in the system, so the shape itself says "this is a state" |
+| `Tabs` / `Tooltip` / `Sheet` / `Toast` | Overlays and feedback |
+| `LoadingState` / `ErrorState` / `EmptyState` | The three states, identical everywhere |
 
-字号：`2xs` 11 · `xs` 12 · `sm` **14** · `base` **16** · `lg` **18** · `xl` **20** · `2xl` **24** ·
-`3xl` 30 · `4xl` 36。**相邻档至少差 1.125 倍**——相邻两步看不出差别却干不同的活，就是一页"平"的界面。
+**Radix owns behaviour; this repository owns appearance.**
 
-角色：`.micro` 列头/分区标记（11px/600/全大写/字距 .07em）· `.label` 元信息（12px/500）·
-正文 14px · 页标题 18/600 · 面板标题 14/600 · 仪器读数 20/600（`.numeral`，等宽 + 表格数字）。
-KPI 的**数字:单位 = 2.5:1**（Grafana BigValue），变化时 800ms `easeOutCubic` 计数滚动（go-view）。
+Charts are ECharts. The console's 3D globe is `echarts-gl` with a texture drawn at
+runtime from the repository's own `public/world-110m.geo.json` — no added asset, no
+network call at render time. Two `echarts-gl@2.1.0` traps are worked around in
+`EgressGlobe.tsx` and commented there: handing it a canvas as `baseTexture` turns the
+sphere white on the second render, and a colour-typed `environment` smears into an
+opaque black block. WebGL unavailable falls back to the flat map.
 
-### 几何与高度
-
-8px 栅格。`radius-control` 4 · `radius-panel` 8 · `radius-chip` 999。
-
-固定高度（**不许逐页决定**）：`--shell-rail-w` **232** / `--shell-rail-w-collapsed` **56** ·
-`--shell-bar-h` **48** · `--page-header-h` **52** · `--panel-header-h` **44** · `--toolbar-h` **40** ·
-`--control-h` **28**（sm 24 / lg 32）· `--row-h` **32**（compact 28 / comfortable 36）。
-
-这些数字来自 Tabler、shadcn-admin、Ant Design、Vben 收敛出的尺度，不是我定的。
-
-### 高度层级
-
-`shadow-xs` 面板 · `sm/md/lg` **只给浮层**（抽屉、菜单、弹窗）。
-面板 = 1px 12% 边 + xs。**同级容器之间不用阴影区分**，用面板边框和字号。
-
-### 动效
-
-`--ease-instrument` = `cubic-bezier(0.16, 1, 0.3, 1)`；110/170/240ms。**没有页面加载编排**。
-
-## 组件库
-
-`src/components/ui/` 是唯一允许的组件来源。
-
-| 组件 | 用途 |
-|---|---|
-| `Page` / `PageHeader` / `PageMeta` | 页面骨架。页头固定 52px，标题 18/600，描述 12px 且 ≤68ch，右侧动作区 |
-| `Panel` / `PanelHeader` / `PanelToolbar` / `PanelBody` / `PanelFooter` | 区域。面板头 44px、内边距 16、标题 14/600、动作区仅 hover/focus 出现 |
-| `Table` / `THead` / `TH` / `TBody` / `TR` / `TD` / `TDNum` / `TDClip` | 数据网格。行高固定 32/28/36，表头 sticky，**只有行线没有单元格边框**；长文本必须 `TDClip` |
-| `Readout` / `ReadoutStrip` / `ReadoutCell` / `Numeral` | 仪器读数与计数滚动 |
-| `Button` / `Input` / `Textarea` / `Select` / `Switch` | 控件，高度 28 |
-| `Badge` | 状态。全系统唯一的全圆形状，所以形状本身就说"这是状态" |
-| `Tabs` / `Tooltip` / `Sheet` / `Toast` | 覆盖层与反馈 |
-| `LoadingState` / `ErrorState` / `EmptyState` | 三种状态，全局一致 |
-
-**Radix 负责行为，本仓库负责外观。**
-
-图表：ECharts。字面量集中在 `src/features/dashboard/chartPalette.ts`（canvas 读不到 CSS 变量，
-那份是 `design.css` 的副本，**必须同步改**，并跑对比度门）。
-
-## 布局
+## Layout
 
 ```
 ┌──────┬────────────────────────────────────────────┐
-│ 轨道 │ 顶栏 48：位置 · 实例状态 · 语言              │
+│ rail │ top bar 48: location · instance state · lang│
 │ 232  ├────────────────────────────────────────────┤
-│      │ 页头 52：标题 · 元信息 · 动作（sticky）      │
-│ 分区 │────────────────────────────────────────────┤
-│ 微字 │ 面板网格（8px gap，2560 下不封顶）           │
+│      │ page header 52: title · meta · actions (sticky)│
+│ sect │────────────────────────────────────────────┤
+│ micro│ panel grid (8px gap, unconstrained above 2560)│
 └──────┴────────────────────────────────────────────┘
 ```
 
-- 轨道 `bg-rail`；**当前目的地是填充胶囊**（accent 洗底 + 600 字重 + 抬起纸面），
-  **不用彩色边条**——列表行上的彩色边条是最响的通用 UI 破绽，而且它说不出填充没说过的话
-- 内容宽度**流式不封顶**。shadcn 的 `max-w-7xl` 在 2560 上浪费一半硬件
-- 分区之间用细线或面板，不用间距堆叠
+- The rail is `bg-rail`; the **current destination is a filled pill** (accent wash,
+  600 weight, raised sheet) — **no coloured side bar**. A coloured edge on a list row
+  is the loudest generic UI tell, and it says nothing the fill did not already say.
+- The rail collapses to 56px below 1440 rather than holding 232 on a small laptop.
+- Content width **flows and is not capped**. shadcn's `max-w-7xl` wastes half a 2560
+  display.
+- Dense tables set a `min-width` and scroll horizontally instead of compressing
+  columns; every cell is `nowrap`. Measured at 1280: container 1172 = content 1172,
+  no compression, no overflow.
+- Sections are separated by a rule or a panel, never by stacked whitespace.
 
-## 写作
+## Writing
 
-- **主动语态**。按钮说"保存更改"，就产出"已保存"。
-- **按用户理解命名**，不按系统实现命名。
-- **空状态是邀请**，不是情绪。失败状态**说明发生了什么、怎么修**。
-- **句首大写**；全大写只留给 `.micro`（列头/分区标记），不做标题上方的装饰性小标签。
-- 每个元素只做一件事。
+- **Active voice.** If the button says "Save changes", the result says "Saved".
+- **Name things as the user understands them**, not as the system implements them.
+- **An empty state is an invitation**, not a mood. A failure state **says what
+  happened and how to fix it**.
+- **Sentence case**; all-caps is reserved for `.micro` (column heads, section marks),
+  never for a decorative label above a heading.
+- Each element does one job.
 
-## 禁止
+## Acceptance
 
-**页面骨架**
-
-- 同尺寸"图标 + 标题 + 正文"卡片网格当页面结构；卡片套卡片
-- **英雄数字模板**：大数字、小标签、辅助统计、强调色组成的 KPI 卡片墙
-- 标题上方的全大写小标签（kicker / eyebrow）
-- 装饰性区段编号（01 / 02 / 03）
-
-**表面**
-
-- 渐变文字；把毛玻璃/模糊当装饰
-- 圆角卡片上 >1px 的彩色 `border-left` / `border-right`
-- 硬偏移阴影（`box-shadow: 4px 4px 0`）；零偏移彩色光晕/外发光
-- 行内 sparkline、进度环、柔和阴影圆角矩形**代替内容**
-- 用等宽字当"技术感"的戏服；用 Unicode 字形或 emoji 当图标系统
-- 平铺装饰条纹或两轴网格底纹（除非底下的东西本身就是画布、地图、图纸或量具）
-
-**动效**
-
-- 装饰性脉冲状态点、闪烁光标、跑马灯
-- 每个区段套同一个淡入上滑
-- 图片在 hover 时缩放或旋转
-
-## 验收
-
-| 底线 | 怎么验 |
+| Floor | How it is checked |
 |---|---|
-| 文字对比度：正文 ≥4.5:1，大字号/图形对象 ≥3:1 | `npm run check:contrast`（读 `design.css` 计算 46 对，失败即非零退出，已接进 `make verify`） |
-| 数据系列在灰度下可区分 | 同一个门：相邻亮度差 ≥1.15 |
-| 行高与面板几何符合本文件 | DOM 审计脚本量算：`--row-h`、面板圆角 8、轨道 232、节奏跨 6/8/12/16 |
-| 键盘焦点可见 | `:focus-visible` 用 accent 描边 2px + 偏移 1px |
-| 尊重 `prefers-reduced-motion` | `design.css` 末尾的媒体查询 |
-| 浏览器表面也属于设计系统 | 选中色、插入符、滚动条、下划线偏移、`tabular-nums` 在 base 层 |
-| 每个交互组件有 default/hover/focus/active/disabled/loading/error | 组件库；缺一半不算完成 |
+| Contrast and series separation, both themes | `npm run check:contrast` — **86 pairs**, light and dark. In `make test-web` → `make verify`, so a palette regression fails CI like a Go test |
+| Row height and panel geometry | DOM audit of the live pages: `--row-h`, panel radius 8, rail width, rhythm on 6/8/12/16 |
+| Types are really checked | `npm run check:types` runs `tsc -p tsconfig.app.json --noEmit`. **`npx tsc --noEmit` at the repo root is a no-op** — `tsconfig.json` is a solution file with `files: []` — so it proves nothing |
+| Focus is visible | `:focus-visible` draws 2px accent with 1px offset |
+| Reduced motion | The media query at the end of `design.css` |
+| Anti-patterns | `make test-slop` — see the detector section below |
 
-第三方检查器：<https://github.com/pbakaus/impeccable> 的确定性检测器（61 条反模式 + DOM/几何阈值）：
+## Anti-patterns and how to check for them
+
+Every prohibition in the root DESIGN.md corresponds to a machine-detectable tell: the
+rules exist because a detector can fail the build on them, not because they are a
+matter of taste.
+
+<https://github.com/pbakaus/impeccable> ships the deterministic detector (61 checks,
+no model, no API key):
 
 ```bash
-IMPECCABLE_SKILL_DIR=$HOME/impeccable/skill \
-  sh $HOME/impeccable/skill/scripts/impeccable detect \
-  --viewport 1920x1080 http://127.0.0.1:2460/ui/dashboard
+make test-slop        # exit 0 = clean, exit 2 = findings
 ```
 
-exit 0 = 无发现，exit 2 = 有发现。**先确认它能报错再相信它报 0**：喂它一个故意违规的页面，
-它应当报出 `side-tab`、`gradient-text`、`dark-glow`、`pulsing-dot`、`icon-tile-stack`、
-`cream-palette` 等条目。
+Rules learned the hard way, recorded so they are not relearned:
+
+- **It does not scan `.tsx`.** It reads HTML, CSS and JS. Handed a directory of React
+  source it returns nothing, which looks exactly like a clean pass and is not one.
+- **A build scan needs resolvable asset paths.** Production `index.html` links
+  `/ui/assets/*` because the server mounts the bundle at `/ui/`, so the scan root must
+  contain `ui/assets/`. Pointed straight at `dist/`, the detector warns
+  `could not read linked stylesheet … color and custom-property rules will be
+  incomplete`, exits 2, and **silently skips its colour and custom-property checks**.
+  `make test-slop` assembles the correct root.
+- **Confirm it can fail before believing a 0.** Feed it a page with a thick coloured
+  `border-left`, gradient text, a zero-offset glow, a pulsing dot, an icon tile above
+  a heading, and a cream background: it must report `side-tab`, `gradient-text`,
+  `dark-glow`, `pulsing-dot`, `icon-tile-stack`, `cream-palette`. Injecting a
+  violation into `design.css` itself is the stronger test, because it proves the
+  stylesheet is being read at all.
+- **Attribution before suppression.** The one anti-pattern in the shipped bundle is
+  `[layout-transition] transition: padding` inside ECharts' bundled code, in a Vite
+  shared chunk whose filename (`useReducedMotion-*.js`) names the module the chunk was
+  split on rather than its contents. It is third-party. It is printed, attributed and
+  documented — not whitened out.
