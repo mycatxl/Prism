@@ -10,11 +10,11 @@ const button = cva(
       variant: {
         // The accent owns interaction in every screen, so "clickable" and
         // "healthy" never look the same in a dense table.
-        primary: "bg-accent text-white hover:bg-accent-deep",
+        primary: "bg-accent text-on-accent hover:bg-accent-deep",
         secondary:
           "border border-rule-strong bg-paper-raised text-ink hover:border-ink-faint hover:bg-paper-sunk",
         ghost: "text-ink-soft hover:bg-paper-sunk hover:text-ink",
-        danger: "bg-alert text-white hover:bg-ink",
+        danger: "bg-alert text-on-alert hover:bg-ink",
         quiet: "border border-transparent text-ink-soft hover:text-ink",
       },
       size: {

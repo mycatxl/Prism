@@ -56,11 +56,11 @@ import { buildBulkIntelScope, hasUnsupportedFilters } from "./intelScope";
 import { getAllRegions, getRegionName } from "./regions";
 import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
 import { getQualityStatus, inspectNode, qualityPollingInterval } from "../quality/api";
-import { IPTypeBadge, NetworkSignals, QualityDetails, VerdictBadge } from "../quality/QualityDetails";
+import { NetworkSignals, QualityDetails, VerdictBadge } from "../quality/QualityDetails";
 import { ExitRecordsPanel } from "../quality/QualityPage";
 import { PurityGuide } from "../quality/PurityGuide";
 import { purityBands, typeLabels } from "../quality/presentation";
-import { NodeIntelCell, NodeIntelPanel } from "./NodeIntel";
+import { NodeIntelCell, NodeIntelPanel, NodeLabels } from "./NodeIntel";
 
 type Tone = NonNullable<BadgeProps["tone"]>;
 
@@ -400,12 +400,6 @@ export function NodesPage() {
           }
           actions={
             <>
-              <Button asChild variant="secondary">
-                <Link to="/system-config?category=quality">
-                  <ShieldCheck size={15} />
-                  {t("数据源与额度")}
-                </Link>
-              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -872,7 +866,8 @@ export function NodesPage() {
                   <TR>
                     {sortableTH("tag", "节点名称")}
                     <TH>{t("状态")}</TH>
-                    {sortableTH("region", "出口 / 类型")}
+                    <TH>{t("出口 IP")}</TH>
+                    {sortableTH("region", "地区 / 网络类型")}
                     {sortableTH("purity_score", "纯净度", "prism-purity-v2")}
                     <TH className="w-auto">
                       {t("网络特征")}
@@ -918,20 +913,18 @@ export function NodesPage() {
                           </Badge>
                         </TD>
                         <TDClip title={nativeLabel || undefined}>
-                          <span className="flex min-w-0 items-center gap-1.5">
-                            <span className="readout truncate font-medium text-ink">
-                              {node.egress_ip || "—"}
-                            </span>
-                            <IPTypeBadge summary={node.quality} />
-                            {node.region && (
-                              <span
-                                className="readout shrink-0 text-2xs text-ink-soft"
-                                title={getRegionName(node.region.toUpperCase())}
-                              >
-                                {node.region.toUpperCase()}
-                              </span>
-                            )}
+                          <span className="readout truncate font-medium text-ink">
+                            {node.egress_ip || "—"}
                           </span>
+                        </TDClip>
+                        <TDClip>
+                          {/* 地区与网络类型同格：地点是国家码加城市（无城市时用机房代号），
+                              类型用 Badge。整格强制单行，行高才是一个 token 的高度。 */}
+                          <NodeLabels
+                            intel={node.intel}
+                            region={node.region}
+                            quality={node.quality}
+                          />
                         </TDClip>
                         <TDClip>
                           <NodeIntelCell intel={node.intel} />

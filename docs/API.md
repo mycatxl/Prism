@@ -169,14 +169,20 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | 方法 | 路径 | 用途 | 备注 |
 |---|---|---|---|
 | GET | `/api/v1/platforms` | 列表 | `keyword` 匹配 `id`/`name`/`region_filters`；`sort_by` ∈ `name`,`id`,`updated_at`；`Default` 平台恒排第一 |
-| POST | `/api/v1/platforms` | 创建 | 必填 `name`；可选 `sticky_ttl`、`regex_filters`、`region_filters`、`reverse_proxy_miss_action`、`reverse_proxy_empty_account_behavior`、`reverse_proxy_fixed_account_header`、`allocation_policy`、`passive_circuit_breaker_disabled`、`scheduled_rotation_interval`、`scheduled_rotation_enabled`、`rotation_avoid_previous_ip`、`quality_policy`。保留名 `Default` → 409。**201** |
+| POST | `/api/v1/platforms` | 创建 | 必填 `name`；可选 `sticky_ttl`、`regex_filters`、`region_filters`、`ip_types`、`purity_bands`、`subscription_filters`、`protocols`、`reverse_proxy_miss_action`、`reverse_proxy_empty_account_behavior`、`reverse_proxy_fixed_account_header`、`allocation_policy`、`passive_circuit_breaker_disabled`、`scheduled_rotation_interval`、`scheduled_rotation_enabled`、`rotation_avoid_previous_ip`、`quality_policy`。保留名 `Default` → 409。**201** |
 | GET | `/api/v1/platforms/{id}` | 详情 | UUID 校验；响应含 `routable_node_count` |
-| PATCH | `/api/v1/platforms/{id}` | 局部更新 | 白名单与创建字段基本相同（`name`,`sticky_ttl`,`regex_filters`,`region_filters`,`reverse_proxy_*`,`allocation_policy`,`passive_circuit_breaker_disabled`,`scheduled_rotation_*`,`rotation_avoid_previous_ip`,`quality_policy`）。`Default` 平台改名 → 409 |
+| PATCH | `/api/v1/platforms/{id}` | 局部更新 | 白名单与创建字段基本相同（`name`,`sticky_ttl`,`regex_filters`,`region_filters`,`ip_types`,`purity_bands`,`subscription_filters`,`protocols`,`reverse_proxy_*`,`allocation_policy`,`passive_circuit_breaker_disabled`,`scheduled_rotation_*`,`rotation_avoid_previous_ip`,`quality_policy`）。空数组表示清除该条件。`Default` 平台改名 → 409 |
 | DELETE | `/api/v1/platforms/{id}` | 删除 | **204**；`Default` 平台 → 409 |
 | POST | `/api/v1/platforms/{id}/actions/reset-to-default` | 把平台配置重置为环境默认值 | 200 返回重置后的平台 |
 | POST | `/api/v1/platforms/{id}/actions/rebuild-routable-view` | 强制重建可路由视图 | 200 `{"status":"ok"}` |
-| POST | `/api/v1/platforms/preview-filter` | 用一组过滤器预演命中与排除原因 | 体：`platform_id?`、`platform_spec{regex_filters,region_filters}?`、`quality_policy?`（仅本次预演生效）。响应是标准分页信封 **加** `excluded_by`（`regex`、`region` 与 `QUALITY_*` 计数） |
+| POST | `/api/v1/platforms/preview-filter` | 用一组过滤器预演命中与排除原因 | 体：`platform_id?`、`platform_spec{regex_filters,region_filters,ip_types,purity_bands,subscription_filters,protocols}?`、`quality_policy?`（仅本次预演生效）。响应是标准分页信封 **加** `excluded_by`（`regex`、`region`、`TAG_FILTER`… 与 `QUALITY_*` 计数）。扫描不被截断，只适合 §2.1 的 explain 视图 |
+| POST | `/api/v1/platforms/preview-scope` | 表单用的实时预演：当前条件会加载多少节点 | 体与 `preview-filter` 相同。响应 `{matched, scanned, truncated, sample[], excluded_by}`；`matched` 由与可路由视图**完全相同**的判定函数（`platform.MatchNodeCriteria`）算出，等于平台重建后真正加载的节点数。扫描上限 20000 个节点、样例上限 8 条，触顶时 `truncated=true` 且 `matched` 是下界 |
+| GET | `/api/v1/platforms/node-facets` | 表单可选项清单（来自实时节点池） | `{total_nodes, scanned, truncated, regions[], ip_types[], purity_bands[], protocols[], subscriptions[{id,name,enabled,node_count}]}`。`regions` 取自节点出口地区、`protocols` 取自节点池实际存在的协议、`subscriptions` 列出全部已注册订阅并给出引用它的节点数 |
 | GET | `/api/v1/platforms/{id}/nodes/{hash}/explain` | 说明某节点为何被该平台收录/排除 | 200 一组逐条判定（`node.*`、regex/region/quality 判据） |
+
+**节点条件语义（平台选点契约）**：每个已设置的条件必须**同时成立（AND）**；同一个条件内勾选多个值时**命中任意一个即通过（OR）**；某个条件留空表示不限制。
+`regex_filters` 是历史遗留的高级入口，保持原有「普通正则满足其一、`*` 开头必须匹配、`!` 开头排除」的标签语义，并与其它条件同样按 AND 生效（旧平台因此行为不变）。
+`region_filters` 沿用地区语义（小写 ISO 码，`!xx` 表示排除）；`ip_types`、`purity_bands`、`protocols`、`subscription_filters` 分别对应节点的网络类型、纯净度等级、协议与所属订阅。
 
 ## 9. 租约
 

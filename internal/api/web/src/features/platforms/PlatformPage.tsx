@@ -35,6 +35,7 @@ import {
   toPlatformCreateInput,
   type PlatformFormValues,
 } from "./formModel";
+import { NodeCriteriaFields } from "./NodeCriteriaFields";
 import type { Platform } from "./types";
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
@@ -533,30 +534,11 @@ export function PlatformPage() {
               </Fieldset>
             ) : null}
 
-            <Fieldset
-              label={t("节点名正则过滤规则（可选）")}
-              htmlFor="create-regex"
-              hint={t("普通正则表达式表示满足其一，* 开头表示必须包含，! 开头表示排除。")}
-            >
-              <Textarea
-                id="create-regex"
-                rows={4}
-                placeholder={t("每行一条正则表达式，例如：\n\n香港\n日本\n*专线\n!过期\n!失效\n\n表示：选择【香港】或【日本】的【专线】节点，并排除包含【过期】或【失效】的节点。")}
-                {...createForm.register("regex_filters_text")}
-              />
-              <p className="text-xs text-ink-faint">{t("技巧：^<订阅名>/ 可筛选来自该订阅的节点。")}</p>
-            </Fieldset>
-
-            <Fieldset
-              label={t("地区过滤规则（可选）")}
-              htmlFor="create-region"
-              hint={t("每行一条，如 hk / us / !hk")}
-            >
-              <Textarea id="create-region" rows={4} {...createForm.register("region_filters_text")} />
-              <p className="text-xs text-ink-faint">
-                {t("支持反选：以 ! 开头可排除地区（如 !hk）。可与正选混用，最终结果为“先正选再排除”。")}
-              </p>
-            </Fieldset>
+            {/* The node-selection criteria the platform loads. Every criterion
+                is ANDed with the others and the values inside one criterion are
+                alternatives; the live preview below the pickers reports the
+                number of nodes the current selection would load. */}
+            <NodeCriteriaFields form={createForm} idPrefix="create" />
           </form>
         </Sheet>
       </Page>

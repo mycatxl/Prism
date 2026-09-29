@@ -12,12 +12,10 @@ import {
   Save,
   Search,
   Server,
-  ShieldCheck,
   Waypoints,
 } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { useBeforeUnload, useSearchParams } from "react-router-dom";
-import { QualitySources } from "../quality/QualitySources";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
@@ -94,7 +92,6 @@ const FIELD_LABELS: Record<keyof RuntimeConfig, string> = {
 
 
 const SETTINGS_CATEGORIES = [
-  { id: "quality", title: "质量与数据源", description: "IPPure 评分、匿名特征与免费查询额度", icon: ShieldCheck, fields: [], staticCount: 0 },
   { id: "health", title: "探测与路由", description: "健康阈值、出口探测和线路选择", icon: Activity, fields: ["max_consecutive_failures", "max_latency_test_interval", "max_authority_latency_test_interval", "max_egress_test_interval", "latency_test_url", "latency_authorities", "p2c_latency_window", "latency_decay_window"], staticCount: 0 },
   { id: "logs", title: "请求日志", description: "记录内容、大小上限和日志留存", icon: FileText, fields: ["request_log_enabled", "reverse_proxy_log_detail_enabled", "reverse_proxy_log_req_headers_max_bytes", "reverse_proxy_log_req_body_max_bytes", "reverse_proxy_log_resp_headers_max_bytes", "reverse_proxy_log_resp_body_max_bytes"], staticCount: 5 },
   { id: "storage", title: "缓存与持久化", description: "运行状态的刷盘频率和批量阈值", icon: HardDrive, fields: ["cache_flush_interval", "cache_flush_dirty_threshold"], staticCount: 0 },
@@ -659,7 +656,7 @@ export function SystemConfigPage() {
                               <Badge tone="warn">{t("{{count}} 项待保存", { count: dirty })}</Badge>
                             ) : (
                               <span className="shrink-0 text-xs text-ink-faint">
-                                {item.id === "quality" ? t("评分来源与复核") : t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}
+                                {t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}
                               </span>
                             )}
                             <ChevronRight size={15} aria-hidden className="shrink-0 text-ink-faint" />
@@ -682,8 +679,6 @@ export function SystemConfigPage() {
 
             {category && (
               <div className="space-y-3" data-category={category.id}>
-                {activeCategory === "quality" && <QualitySources />}
-
                 {category.fields.length > 0 && (
                   <div className="space-y-3">
                     <SectionTitle

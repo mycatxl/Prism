@@ -142,4 +142,8 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Share of pool",
   "暂无出口数据":
     "No exit data yet",
+  视图: "View",
+  立体地球: "3D globe",
+  平面地图: "Flat map",
+  地球视图: "Globe view",
 };

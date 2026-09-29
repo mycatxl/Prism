@@ -68,3 +68,120 @@ export function exitCountBandLabel(band: { min: number; max: number }): string {
   }
   return `${band.min}\u2013${band.max}`;
 }
+
+/**
+ * The globe's own colours.
+ *
+ * The 3D egress view is the one chart in the console that cannot borrow the CSS
+ * tokens: its ground is a sphere seen against the panel, painted from a canvas
+ * the globe builds itself, and its tooltip floats over a WebGL layer that the
+ * theme's cascade never reaches. The literals live here so both themes stay one
+ * edit away from the design tokens, and no component hardcodes a colour of its
+ * own.
+ *
+ * The ramp is `EXIT_COUNT_BANDS` read from the other end. On paper the *fewest*
+ * exits take the palest step; on a near-black sphere legibility runs the other
+ * way, so the brightest step is the busiest region. The band boundaries are not
+ * restated — `exitCountBandIndex` walks the same table the legend prints, so a
+ * marker and its swatch can never disagree.
+ */
+export type GlobePalette = {
+  /** The sphere where no country is: the sea, and the void behind the globe. */
+  base: string;
+  /** Country fill. */
+  land: string;
+  /** Coastline, one hairline brighter than the land it outlines. */
+  coast: string;
+  /** The graticule, drawn under the land so it only crosses open water. */
+  graticule: string;
+  /** The atmosphere ring, and the rim glow the globe shader adds to the earth. */
+  atmosphere: string;
+  /** The hairline that keeps a marker readable on top of a country. */
+  markerStroke: string;
+  /** Marker colours, dimmest first — index with `exitCountBandIndex`. */
+  ramp: readonly string[];
+  tooltipPaper: string;
+  tooltipRule: string;
+  tooltipInk: string;
+  tooltipInkSoft: string;
+  tooltipSignal: string;
+};
+
+/**
+ * The dark panel, which is the globe's home: the board is read at night, on
+ * glass, from three metres away, and a bright sphere would be the only thing on
+ * it that has to be squinted at.
+ */
+export const GLOBE_DARK: GlobePalette = {
+  base: "#0b1220",
+  land: "#1b2a44",
+  coast: "#2f4a72",
+  graticule: "rgba(47, 74, 114, 0.42)",
+  atmosphere: "#3f6ea8",
+  markerStroke: "rgba(5, 10, 18, 0.75)",
+  ramp: EXIT_COUNT_BANDS.map((band) => band.color).reverse(),
+  tooltipPaper: "#111a2b",
+  tooltipRule: "#2f4a72",
+  tooltipInk: "#e9eff9",
+  tooltipInkSoft: "#9db0ca",
+  tooltipSignal: "#3ecfa0",
+};
+
+/**
+ * The paper theme, for the day the board is switched back. Same structure, the
+ * luminance axis inverted: the land is the pale step and the busiest region is
+ * the deepest blue, which is the order `EXIT_COUNT_BANDS` already runs in.
+ */
+export const GLOBE_LIGHT: GlobePalette = {
+  base: "#e2e8f2",
+  land: "#c3d2e8",
+  coast: "#8299bd",
+  graticule: "rgba(130, 153, 189, 0.35)",
+  atmosphere: "#0b5f8a",
+  markerStroke: "rgba(255, 255, 255, 0.85)",
+  ramp: EXIT_COUNT_BANDS.map((band) => band.color),
+  tooltipPaper: CHART_PAPER_RAISED,
+  tooltipRule: CHART_RULE,
+  tooltipInk: CHART_INK,
+  tooltipInkSoft: CHART_INK_SOFT,
+  tooltipSignal: CHART_SIGNAL_DEEP,
+};
+
+/** The two boards the console can be read on. */
+export type GlobeTheme = "dark" | "light";
+
+/**
+ * The theme the document is currently wearing.
+ *
+ * The panel's theme is a document-level attribute, not a prop: a chart reading
+ * it is the only way the sphere can follow a board that is switched at runtime.
+ * Nothing but an explicit `light` leaves the dark globe, so a document that
+ * never sets the attribute gets the board this console is built for.
+ */
+export function readGlobeTheme(): GlobeTheme {
+  if (typeof document === "undefined") {
+    return "dark";
+  }
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+/** The globe palette for a theme, as a pure lookup the caller can memoise. */
+export function globePaletteFor(theme: GlobeTheme): GlobePalette {
+  return theme === "light" ? GLOBE_LIGHT : GLOBE_DARK;
+}
+
+/**
+ * Which band a count falls in, as an index into `GlobePalette.ramp`.
+ *
+ * The boundaries come from `EXIT_COUNT_BANDS`, so the globe, the flat map's
+ * visual map and the legend row are the same five steps in the same order.
+ */
+export function exitCountBandIndex(exits: number): number {
+  const index = EXIT_COUNT_BANDS.findIndex((band) => exits >= band.min && exits <= band.max);
+  return index === -1 ? 0 : index;
+}
+
+/** The colour of one marker: the count's band, on the globe's own ramp. */
+export function globeMarkerColor(palette: GlobePalette, exits: number): string {
+  return palette.ramp[exitCountBandIndex(exits)];
+}

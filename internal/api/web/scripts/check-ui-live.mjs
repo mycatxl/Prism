@@ -72,8 +72,12 @@ const REMOVED_CLASS_TOKENS = [
 ];
 
 // DESIGN.md colour tokens, as the browser reports them.
-const PAPER = "rgb(243, 245, 242)";
-const INK = "rgb(16, 23, 19)";
+// The console ships dark by default and offers light as a switch, so these are the
+// dark primitives from src/styles/design.css. Both themes are verified pair by pair
+// by `npm run check:contrast`; this file only has to prove the page painted the
+// ground it was asked for rather than falling back to the browser's white.
+const PAPER = "rgb(11, 18, 32)";
+const INK = "rgb(241, 243, 247)";
 
 const LOCALE = "zh-CN";
 const DASHBOARD = "/ui/dashboard";
@@ -281,7 +285,7 @@ check("the design tokens are the ones actually applied", async ({ origin, page }
     const style = getComputedStyle(document.body);
     return { background: style.backgroundColor, color: style.color };
   });
-  assert.equal(body.background, PAPER, "body must sit on the paper token");
+  assert.equal(body.background, PAPER, "body must sit on the canvas token");
   assert.equal(body.color, INK, "body must be written in the ink token");
 
   // A data cell is mono by construction (Table.tsx TDNum + design.css .readout).
@@ -390,7 +394,12 @@ check("the dashboard hero renders", async ({ origin, page }) => {
 
   // The instrument strip is the ReadoutStrip: a grid whose children are divided
   // by hairlines. Measuring it by its readouts keeps the assertion about content.
-  const strip = page.locator("main div.grid.divide-x").first();
+  // The dashboard's composition has changed more than once; anchor on the panel
+  // the hero lives in rather than on the layout classes it happened to use.
+  const strip = page
+    .locator("main div.grid.divide-x")
+    .or(page.locator("main .panel"))
+    .first();
   await strip.waitFor({ state: "visible", timeout: 15000 });
   const readouts = await strip.locator(".readout").count();
   assert(readouts >= 4, `the instrument strip must show at least four readouts (found ${readouts})`);

@@ -32,7 +32,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "sticky top-0 z-20 flex min-h-[var(--page-header-h)] flex-col justify-center border-b border-rule bg-paper px-4 py-1.5 lg:px-5",
+        "sticky top-0 z-20 flex min-h-[var(--page-header-h)] flex-col justify-center gap-0.5 border-b border-rule bg-paper px-[var(--page-gutter)] py-1.5",
         className,
       )}
     >
@@ -84,7 +84,7 @@ export function Page({
     <section
       className={cn(
         "flex min-h-full flex-col bg-paper",
-        bleed ? "px-0" : "px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5",
+        bleed ? "px-0" : "px-[var(--page-gutter)] py-3 2xl:py-4",
         className,
       )}
     >

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Globe2, LoaderCircle, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
@@ -93,15 +93,10 @@ export function ExitRecordsPanel() {
         title={t("IP 检测记录")}
         description={t("相同出口共享结果，节点连通状态独立记录。")}
         actions={
-          <>
-            <Button asChild variant="secondary" size="sm">
-              <Link to="/system-config?category=quality">{t("数据源与额度")}</Link>
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => void records.refetch()} disabled={records.isFetching}>
-              <RefreshCw size={14} className={records.isFetching ? "animate-spin" : undefined} />
-              {t("刷新")}
-            </Button>
-          </>
+          <Button variant="ghost" size="sm" onClick={() => void records.refetch()} disabled={records.isFetching}>
+            <RefreshCw size={14} className={records.isFetching ? "animate-spin" : undefined} />
+            {t("刷新")}
+          </Button>
         }
       />
 

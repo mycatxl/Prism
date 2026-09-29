@@ -60,6 +60,65 @@ func CompileRegexFilters(regexFilters []string) (node.TagFilter, error) {
 	return compiled, nil
 }
 
+// nodeIPTypes and nodePurityBands mirror the vocabularies the quality model
+// emits (internal/intel/snapshot.go bandNames/ipTypeNames), plus the legacy
+// "review" band value the node list accepts for the review/conflicting verdicts.
+// A criterion value outside them can never match a node, so it is rejected at
+// the API boundary instead of silently selecting nothing.
+var (
+	nodeIPTypes = map[string]bool{
+		"unknown": true, "residential": true, "mobile": true, "business": true,
+		"wireless": true, "datacenter": true, "non_residential": true, "conflicting": true,
+	}
+	nodePurityBands = map[string]bool{
+		"unknown": true, "excellent": true, "clean": true, "fair": true,
+		"mixed": true, "poor": true, "review": true,
+	}
+)
+
+// ValidateNodeCriteria validates the explicit node-selection criteria lists.
+// An empty list is always valid: it means "do not restrict on this criterion".
+func ValidateNodeCriteria(ipTypes, purityBands, subscriptionIDs, protocols []string) error {
+	for i, value := range ipTypes {
+		if !nodeIPTypes[strings.ToLower(strings.TrimSpace(value))] {
+			return fmt.Errorf("ip_types[%d]: unsupported network type %q", i, value)
+		}
+	}
+	for i, value := range purityBands {
+		if !nodePurityBands[strings.ToLower(strings.TrimSpace(value))] {
+			return fmt.Errorf("purity_bands[%d]: unsupported band %q", i, value)
+		}
+	}
+	for i, value := range subscriptionIDs {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("subscription_filters[%d]: must not be empty", i)
+		}
+	}
+	for i, value := range protocols {
+		if !isProtocolName(value) {
+			return fmt.Errorf("protocols[%d]: %q is not a protocol name", i, value)
+		}
+	}
+	return nil
+}
+
+// isProtocolName mirrors the syntax the node list accepts for its protocol
+// filter: a lowercase identifier such as "vless" or "openvpn-client"
+// (internal/api/handler_node.go:18).
+func isProtocolName(value string) bool {
+	if value == "" || len(value) > 32 {
+		return false
+	}
+	for i := 0; i < len(value); i++ {
+		c := value[i]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
 // NewConfiguredPlatform builds a runtime platform with non-filter settings applied.
 func NewConfiguredPlatform(
 	id, name string,
@@ -141,7 +200,11 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 		)
 	}
 
-	return NewConfiguredPlatform(
+	if err := ValidateNodeCriteria(mp.IPTypes, mp.PurityBands, mp.SubscriptionFilters, mp.Protocols); err != nil {
+		return nil, fmt.Errorf("decode platform %s node criteria: %w", mp.ID, err)
+	}
+
+	plat := NewConfiguredPlatform(
 		mp.ID,
 		mp.Name,
 		regexFilters,
@@ -158,5 +221,14 @@ func BuildFromModel(mp model.Platform) (*Platform, error) {
 		mp.ScheduledRotationEnabled,
 		mp.ScheduledRotationIntervalNs,
 		mp.RotationAvoidPreviousIP,
-	), nil
+	)
+	// The explicit criteria must be installed before the platform is published:
+	// the routable view is built from them.
+	plat.SetNodeCriteria(NodeCriteria{
+		IPTypes:         mp.IPTypes,
+		PurityBands:     mp.PurityBands,
+		SubscriptionIDs: mp.SubscriptionFilters,
+		Protocols:       mp.Protocols,
+	})
+	return plat, nil
 }

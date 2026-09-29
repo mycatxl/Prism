@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "start": "node scripts/start.mjs",
-    "test:config": "node --test tests/config.test.mjs tests/request-limit.test.mjs tests/intel-scope.test.mjs",
+    "test:config": "node --test tests/config.test.mjs tests/request-limit.test.mjs tests/intel-scope.test.mjs tests/platform-criteria.test.mjs",
     "test:e2e": "node scripts/check-ui-live.mjs",
     "prep:world-map": "node scripts/build-world-map.mjs",
     "build": "tsc -b && vite build",
@@ -46,6 +46,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "echarts": "^6.1.0",
+    "echarts-gl": "^2.1.0",
     "framer-motion": "^12.34.2",
     "i18n-iso-countries": "^7.14.0",
     "i18next": "^25.8.13",

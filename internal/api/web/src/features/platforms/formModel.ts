@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { allocationPolicies, emptyAccountBehaviors, missActions } from "./constants";
 import { parseHeaderLines, parseLinesToList } from "./formParsers";
-import type { Platform, PlatformCreateInput, PlatformUpdateInput } from "./types";
+import type { Platform, PlatformCreateInput, PlatformScopeSpec, PlatformUpdateInput } from "./types";
 
 const platformNameForbiddenChars = ".:|/\\@?#%~";
 const platformNameForbiddenSpacing = " \t\r\n";
@@ -32,7 +32,13 @@ export const platformFormSchema = z.object({
     }),
   sticky_ttl: z.string().optional(),
   regex_filters_text: z.string().optional(),
+  // The region criterion stays line-based so that a legacy platform's negated
+  // entries ("!hk") survive an edit: the picker only toggles positive lines.
   region_filters_text: z.string().optional(),
+  ip_types: z.array(z.string()),
+  purity_bands: z.array(z.string()),
+  subscription_filters: z.array(z.string()),
+  protocols: z.array(z.string()),
   reverse_proxy_miss_action: z.enum(missActions),
   reverse_proxy_empty_account_behavior: z.enum(emptyAccountBehaviors),
   reverse_proxy_fixed_account_header: z.string().optional(),
@@ -58,6 +64,10 @@ export const defaultPlatformFormValues: PlatformFormValues = {
   sticky_ttl: "",
   regex_filters_text: "",
   region_filters_text: "",
+  ip_types: [],
+  purity_bands: [],
+  subscription_filters: [],
+  protocols: [],
   reverse_proxy_miss_action: "TREAT_AS_EMPTY",
   reverse_proxy_empty_account_behavior: "RANDOM",
   reverse_proxy_fixed_account_header: "Authorization",
@@ -74,6 +84,10 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
     sticky_ttl: platform.sticky_ttl,
     regex_filters_text: regexFilters.join("\n"),
     region_filters_text: regionFilters.join("\n"),
+    ip_types: [...(platform.ip_types ?? [])],
+    purity_bands: [...(platform.purity_bands ?? [])],
+    subscription_filters: [...(platform.subscription_filters ?? [])],
+    protocols: [...(platform.protocols ?? [])],
     reverse_proxy_miss_action: platform.reverse_proxy_miss_action,
     reverse_proxy_empty_account_behavior: platform.reverse_proxy_empty_account_behavior,
     reverse_proxy_fixed_account_header: platform.reverse_proxy_fixed_account_header,
@@ -82,11 +96,58 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
   };
 }
 
+/** listValues reads the values of one newline-separated form field. */
+export function listValues(text: string | undefined): string[] {
+  return parseLinesToList(text);
+}
+
+/**
+ * toggleListValue adds or removes one value of a newline-separated form field and
+ * returns the new text.
+ *
+ * It is how the multi-select pickers write into the line-based fields: every
+ * other line (an entry the operator cannot see in the picker, such as a legacy
+ * "!hk" exclusion) is preserved untouched.
+ */
+export function toggleListValue(
+  text: string | undefined,
+  value: string,
+  normalize?: (value: string) => string,
+): string {
+  const normalized = normalize ? normalize(value) : value;
+  const lines = listValues(text);
+  const index = lines.indexOf(normalized);
+  if (index >= 0) {
+    lines.splice(index, 1);
+  } else {
+    lines.push(normalized);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * toPlatformCriteria is the single source of the criteria payload: the create /
+ * update body and the live preview spec are built from this one function, so the
+ * preview can never describe criteria the saved platform would not apply.
+ *
+ * Every criterion is ANDed with the others and the values inside one criterion
+ * are alternatives; an empty list means "do not restrict on this criterion".
+ */
+export function toPlatformCriteria(values: PlatformFormValues): Required<PlatformScopeSpec> {
+  return {
+    regex_filters: listValues(values.regex_filters_text),
+    region_filters: listValues(values.region_filters_text).map((value) => value.toLowerCase()),
+    ip_types: [...values.ip_types],
+    purity_bands: [...values.purity_bands],
+    subscription_filters: [...values.subscription_filters],
+    protocols: [...values.protocols],
+  };
+}
+
 function toPlatformPayloadBase(values: PlatformFormValues) {
   return {
     name: values.name.trim(),
-    regex_filters: parseLinesToList(values.regex_filters_text),
-    region_filters: parseLinesToList(values.region_filters_text, (value) => value.toLowerCase()),
+    ...toPlatformCriteria(values),
     reverse_proxy_miss_action: values.reverse_proxy_miss_action,
     reverse_proxy_empty_account_behavior: values.reverse_proxy_empty_account_behavior,
     reverse_proxy_fixed_account_header: parseHeaderLines(values.reverse_proxy_fixed_account_header).join("\n"),

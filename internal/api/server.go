@@ -107,6 +107,8 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/platforms", HandleListPlatforms(cp))
 		authed.Handle("POST /api/v1/platforms", HandleCreatePlatform(cp))
 		authed.Handle("POST /api/v1/platforms/preview-filter", HandlePreviewFilter(cp))
+		authed.Handle("POST /api/v1/platforms/preview-scope", HandlePreviewPlatformScope(cp))
+		authed.Handle("GET /api/v1/platforms/node-facets", HandlePlatformNodeFacets(cp))
 		authed.Handle("GET /api/v1/platforms/{id}", HandleGetPlatform(cp))
 		authed.Handle("PATCH /api/v1/platforms/{id}", HandleUpdatePlatform(cp))
 		authed.Handle("DELETE /api/v1/platforms/{id}", HandleDeletePlatform(cp))

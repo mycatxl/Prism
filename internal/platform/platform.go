@@ -30,10 +30,18 @@ type Platform struct {
 	ID   string
 	Name string
 
-	// Filter configuration.
+	// Filter configuration. The criteria below are ANDed with each other and the
+	// values inside one criterion are alternatives (see NodeCriteria). Region
+	// filters hold lowercase ISO codes and support negation "!xx".
 	RegexFilters  node.TagFilter
-	RegionFilters []string // lowercase ISO codes, supports negation "!xx"
-	QualityPolicy model.QualityPolicy
+	RegionFilters []string
+	// IPTypes, PurityBands, SubscriptionFilters and Protocols are the explicit
+	// criteria the operator picks from the inventory (migration 000015).
+	IPTypes             []string
+	PurityBands         []string
+	SubscriptionFilters []string
+	Protocols           []string
+	QualityPolicy       model.QualityPolicy
 
 	// Other config fields.
 	StickyTTLNs                      int64
@@ -128,66 +136,25 @@ func (p *Platform) NotifyDirty(
 }
 
 // evaluateNode checks all filter conditions for platform routability.
+//
+// The decision itself lives in MatchNodeCriteria: the routable-view rebuild and
+// the API live preview must never disagree about which nodes a platform loads.
 func (p *Platform) evaluateNode(
 	entry *node.NodeEntry,
 	subLookup node.SubLookupFunc,
 	geoLookup GeoLookupFunc,
 	qualityLookup QualityLookupFunc,
 ) bool {
-	// 0. Disabled nodes are never routable.
-	if entry.IsDisabledBySubscriptions(subLookup) {
-		return false
-	}
-
-	// 1. Healthy for routing (outbound ready + circuit not open).
-	if !entry.IsHealthy() {
-		return false
-	}
-
-	// 2. Tag regex match.
-	if !entry.MatchTagFilter(p.RegexFilters, subLookup) {
-		return false
-	}
-
-	// 3. Egress IP must be known.
-	egressIP := entry.GetEgressIP()
-	if !egressIP.IsValid() {
-		return false
-	}
-
-	// 4. Region filter (when configured).
-	if len(p.RegionFilters) > 0 {
-		region := entry.GetRegion(geoLookup)
-		if !MatchRegionFilter(region, p.RegionFilters) {
-			return false
-		}
-	}
-
-	// 5. Has at least one latency record.
-	if !entry.HasLatency() {
-		return false
-	}
-
-	// 6. Quality policy check (when configured).
-	if !p.QualityPolicy.IsEmpty() {
-		switch {
-		case p.qualitySnapshot != nil:
-			if ok, _ := AdmitQuality(p.QualityPolicy, entry, p.qualitySnapshot, time.Now()); !ok {
-				return false
-			}
-		case qualityLookup != nil:
-			// Legacy quality.Summary path; it runs the same rule engine.
-			summary := qualityLookup(egressIP)
-			if !EvaluateQuality(p.QualityPolicy, summary, entry.GetLastEgressUpdate(), time.Now()) {
-				return false
-			}
-		default:
-			// Fail closed: a non-empty policy that cannot be verified never
-			// admits a node (WP10 §2, deviation X5 covers the empty policy).
-			return false
-		}
-	}
-	return true
+	ok, _ := MatchNodeCriteria(
+		p.Criteria(),
+		entry,
+		subLookup,
+		geoLookup,
+		qualityLookup,
+		p.qualitySnapshot,
+		time.Now(),
+	)
+	return ok
 }
 
 // MatchRegionFilter applies include/exclude region filters.
