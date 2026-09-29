@@ -208,10 +208,11 @@ type ViaNodeBudgetRequest struct {
 	Day      string
 	// NodeDailyLimit bounds this one node's lookups for the day (0 = unlimited).
 	NodeDailyLimit int
-	// GlobalQPS bounds the whole provider (0 = unlimited). It is the only
-	// protection the vendor gets, because it cannot attribute a via-node
-	// request to the Prism host at all.
-	GlobalQPS    float64
+	// NodeQPS bounds this one node's request interval (0 = unlimited). The
+	// vendor sees the node's address, so the vendor's own per-address rate
+	// limit applies per node -- pacing the provider as a whole would let one
+	// node's window hold back every other node.
+	NodeQPS      float64
 	NowNs        int64
 	CredentialID string
 }
@@ -220,11 +221,14 @@ type ViaNodeBudgetRequest struct {
 //
 // Two independent gates are evaluated inside one transaction:
 //
-//   - the per-node daily budget in provider_node_state, which stops Prism from
-//     re-polling a single node without limit, and
-//   - the provider-wide paused/blocked/next_request_at_ns state in
-//     provider_state, which stays the safety valve that keeps the whole
-//     inventory from reaching the vendor at once.
+//   - the per-node daily budget and request interval in provider_node_state,
+//     which stop Prism from re-polling a single node too often, and
+//   - the provider-wide paused/blocked state in provider_state, which is the
+//     safety valve for a real 429 from the vendor.
+//
+// The interval is per node on purpose. The vendor sees the node's address, so its
+// own per-address limit applies per node; pacing the provider as a whole would
+// serialise the entire inventory behind one node's window.
 //
 // The returned ProviderState carries an effective NextRequestAtNs whenever a
 // gate is closed, so the caller can park the item instead of blocking a worker
@@ -306,14 +310,20 @@ func (s *Store) ConsumeViaNodeBudget(ctx context.Context, req ViaNodeBudgetReque
 		state.Used = node.Used
 		state.NextRequestAtNs = nextUTCDayNs(req.NowNs)
 		return settle(state, ErrBudgetExhausted)
-	case global.NextRequestAtNs > req.NowNs:
-		return settle(global, ErrProviderNotReady)
+	case node.NextRequestAtNs > req.NowNs:
+		// This node is still inside its own interval. Reported through the
+		// shared state so the caller parks the item, but the deadline comes from
+		// the node row: another node may send immediately.
+		state := global
+		state.Used = node.Used
+		state.NextRequestAtNs = node.NextRequestAtNs
+		return settle(state, ErrProviderNotReady)
 	}
 
 	node.Used++
 	global.Used++
-	if req.GlobalQPS > 0 {
-		global.NextRequestAtNs = req.NowNs + int64(float64(time.Second)/req.GlobalQPS)
+	if req.NodeQPS > 0 {
+		node.NextRequestAtNs = req.NowNs + int64(float64(time.Second)/req.NodeQPS)
 	}
 	// The caller compares Used against NodeDailyLimit, so report the node's own
 	// counter here; provider_state.used keeps accumulating the provider total.

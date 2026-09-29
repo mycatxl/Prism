@@ -646,17 +646,22 @@ func TestViaNodeBudget_ExhaustedNodeDefersToNextDay(t *testing.T) {
 	}
 }
 
-// TestViaNodeBudget_GlobalQPSStillProtectsTheVendor pins the safety valve: the
-// per-node budget alone must never let the whole inventory reach the vendor at
-// once, so a provider-wide QPS still gates every node.
-func TestViaNodeBudget_GlobalQPSStillProtectsTheVendor(t *testing.T) {
+// TestViaNodeBudget_IntervalIsPerNode pins that one node's interval never holds
+// back another node.
+//
+// The request leaves through the node, so the vendor sees the node's address and
+// its per-address limit applies per node. Pacing the provider as a whole made the
+// entire inventory run one node at a time: measured on a live instance, 10 nodes
+// took 121 s (12 s/node, linear), which extrapolates to ~72 minutes for a
+// 359-node inventory, and the 16 node workers sat idle behind the single window.
+func TestViaNodeBudget_IntervalIsPerNode(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	day := time.Date(2026, 9, 24, 1, 0, 0, 0, time.UTC)
 
 	base := ViaNodeBudgetRequest{
 		Provider: "ippure", Day: DayString(day), NodeDailyLimit: 100,
-		GlobalQPS: 2, NowNs: day.UnixNano(),
+		NodeQPS: 2, NowNs: day.UnixNano(),
 	}
 	first := base
 	first.NodeHash = "node-a"
@@ -664,20 +669,28 @@ func TestViaNodeBudget_GlobalQPSStillProtectsTheVendor(t *testing.T) {
 		t.Fatalf("node-a: %v", err)
 	}
 
-	second := base
-	second.NodeHash = "node-b"
-	second.NowNs = day.UnixNano() + int64(250*time.Millisecond)
-	state, err := st.ConsumeViaNodeBudget(ctx, second)
-	if !errors.Is(err, ErrProviderNotReady) {
-		t.Fatalf("node-b inside the valve window: err = %v, want ErrProviderNotReady", err)
-	}
-	if state.NextRequestAtNs != day.UnixNano()+int64(500*time.Millisecond) {
-		t.Fatalf("next_request_at = %d, want now+500ms for a 2/s valve", state.NextRequestAtNs)
+	// A different node is a different address to the vendor: it may send at once.
+	other := base
+	other.NodeHash = "node-b"
+	other.NowNs = day.UnixNano() + int64(250*time.Millisecond)
+	if _, err := st.ConsumeViaNodeBudget(ctx, other); err != nil {
+		t.Fatalf("node-b must not wait for node-a's window: %v", err)
 	}
 
-	second.NowNs = day.UnixNano() + int64(500*time.Millisecond)
-	if _, err := st.ConsumeViaNodeBudget(ctx, second); err != nil {
-		t.Fatalf("node-b after the valve window: %v", err)
+	// The same node twice inside its own interval is what has to wait.
+	repeat := first
+	repeat.NowNs = day.UnixNano() + int64(250*time.Millisecond)
+	state, err := st.ConsumeViaNodeBudget(ctx, repeat)
+	if !errors.Is(err, ErrProviderNotReady) {
+		t.Fatalf("node-a inside its own window: err = %v, want ErrProviderNotReady", err)
+	}
+	if state.NextRequestAtNs != day.UnixNano()+int64(500*time.Millisecond) {
+		t.Fatalf("next_request_at = %d, want now+500ms for a 2/s per-node interval", state.NextRequestAtNs)
+	}
+
+	repeat.NowNs = day.UnixNano() + int64(500*time.Millisecond)
+	if _, err := st.ConsumeViaNodeBudget(ctx, repeat); err != nil {
+		t.Fatalf("node-a after its own window: %v", err)
 	}
 }
 

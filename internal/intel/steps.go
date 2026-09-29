@@ -758,9 +758,9 @@ func parseAnsweredViaNodeSources(resultJSON string) map[string]bool {
 }
 
 // consumeViaNodeBudget applies the per-node daily budget and the provider-wide
-// QPS valve of one via-node data source. Because the request leaves through the
+// pacing of one via-node data source. Because the request leaves through the
 // node itself, the vendor's anonymous quota belongs to that node's address, so
-// the daily budget is counted per node and only the QPS valve is provider-wide
+// both the daily budget and the request interval are counted per node
 // (it is what keeps the whole inventory from reaching the vendor at once). It
 // returns a wait duration when the item should be parked, or a non-empty reason
 // when the source must be skipped.
@@ -770,7 +770,7 @@ func (e *stepExecutor) consumeViaNodeBudget(ctx context.Context, setting provide
 		NodeHash:       nodeHash,
 		Day:            store.DayString(now),
 		NodeDailyLimit: setting.DailyLimit,
-		GlobalQPS:      setting.QPS,
+		NodeQPS:        setting.QPS,
 		NowNs:          now.UnixNano(),
 		CredentialID:   setting.CredentialID(),
 	})
