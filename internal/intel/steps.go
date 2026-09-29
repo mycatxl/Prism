@@ -35,6 +35,13 @@ const (
 	DefaultViaNodeDeferral = 30 * time.Minute
 	// maxJobRequestCache bounds the per-job request memo of the executor.
 	maxJobRequestCache = 128
+	// defaultViaNodeCooldown parks one node after the vendor answered 429
+	// without a Retry-After.
+	defaultViaNodeCooldown = time.Minute
+	// maxViaNodeCooldown bounds a vendor Retry-After. It stays below
+	// DefaultViaNodeDeferral so a rate-limited node is parked and retried
+	// inside the same item instead of being reported as an exhausted source.
+	maxViaNodeCooldown = 15 * time.Minute
 )
 
 // Named step failure codes. They land in job_items.error_code and in the step
@@ -677,6 +684,7 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 			if result.Failed() {
 				failed++
 				sourceFailed = true
+				e.noteViaNodeRateLimit(ctx, spec, nodeHash, result, now)
 			}
 		}
 		// Only a source that came back clean *and* whose evidence is in intel.db
@@ -796,6 +804,31 @@ func (e *stepExecutor) consumeViaNodeBudget(ctx context.Context, setting provide
 		return 0, fmt.Sprintf("budget or quota exhausted for %s", wait.Round(time.Second))
 	}
 	return wait, ""
+}
+
+// noteViaNodeRateLimit records a vendor 429 against the one node that hit it.
+//
+// The request left through this node, so the vendor saw this node's address and
+// only this node has to wait. The cooldown goes into the node row: recording it
+// in provider_state blocked every other node of the data source behind one
+// address's limit.
+//
+// A node cooldown longer than the step's deferral bound would turn into an
+// explicit skip, so the vendor's Retry-After is bounded by maxViaNodeCooldown.
+func (e *stepExecutor) noteViaNodeRateLimit(ctx context.Context, spec providers.Spec, nodeHash string, result providers.Result, now time.Time) {
+	if e.store == nil || result.Err == nil || result.Err.Code != providers.CodeLimit {
+		return
+	}
+	cooldown := result.Err.RetryAfter
+	if cooldown <= 0 {
+		cooldown = defaultViaNodeCooldown
+	}
+	if cooldown > maxViaNodeCooldown {
+		cooldown = maxViaNodeCooldown
+	}
+	if err := e.store.MarkProviderNodeBlocked(ctx, spec.ID, nodeHash, now.Add(cooldown).UnixNano(), "PROVIDER_LIMIT"); err != nil {
+		e.logf("[intel] block via-node %s through %s: %v", spec.ID, nodeHash, err)
+	}
 }
 
 // ---------------------------------------------------------------------------

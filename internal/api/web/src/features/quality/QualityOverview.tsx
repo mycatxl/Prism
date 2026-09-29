@@ -24,7 +24,7 @@ export function QualityOverview({ status }: { status?: QualityStatus }) {
         ? status.enabled
           ? <Badge tone="signal" dot>{t("网络特征自动更新")}</Badge>
           : <Badge tone="neutral" dot>{t("已停用")}</Badge>
-        : <Badge tone="neutral" dot pulse>{t("等待服务数据")}</Badge>}
+        : <Badge tone="neutral" dot>{t("等待服务数据")}</Badge>}
     >
       <span className="flex items-center gap-1.5">
         <ShieldCheck size={15} aria-hidden className="text-ink-faint" />

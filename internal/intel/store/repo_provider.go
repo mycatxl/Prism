@@ -192,11 +192,18 @@ func (s *Store) ConsumeProviderBudget(ctx context.Context, req BudgetRequest) (P
 
 // ProviderNodeState is the per-node budget row of a via-node data source.
 type ProviderNodeState struct {
-	Provider        string
-	NodeHash        string
-	Day             string
-	Used            int
+	Provider string
+	NodeHash string
+	Day      string
+	Used     int
+	// NextRequestAtNs is the node's own request interval gate.
 	NextRequestAtNs int64
+	// BlockedUntilNs is this node's 429 cooldown. It is per node on purpose:
+	// the request leaves through this node, so the vendor's rate limit is about
+	// this address and says nothing about the other nodes of the data source.
+	BlockedUntilNs int64
+	// ErrorCode is the provider error that produced the cooldown.
+	ErrorCode string
 }
 
 // ViaNodeBudgetRequest describes one via-node budget consumption attempt.
@@ -221,14 +228,19 @@ type ViaNodeBudgetRequest struct {
 //
 // Two independent gates are evaluated inside one transaction:
 //
-//   - the per-node daily budget and request interval in provider_node_state,
-//     which stop Prism from re-polling a single node too often, and
-//   - the provider-wide paused/blocked state in provider_state, which is the
-//     safety valve for a real 429 from the vendor.
+//   - the per-node daily budget, request interval and 429 cooldown in
+//     provider_node_state, which stop Prism from re-polling a single node too
+//     often, and
+//   - the provider-wide paused state in provider_state, which is about the data
+//     source itself (a rejected credential, an operator pause) rather than about
+//     one address.
 //
-// The interval is per node on purpose. The vendor sees the node's address, so its
-// own per-address limit applies per node; pacing the provider as a whole would
-// serialise the entire inventory behind one node's window.
+// Every per-node gate is per node on purpose. The request leaves through the
+// node, so the vendor sees that node's address and its per-address limit applies
+// to that node alone. Pacing or cooling the provider as a whole would park the
+// entire inventory behind one node's window: a 429 recorded in
+// provider_state.blocked_until_ns stopped the via-node step for every node, not
+// only for the one that hit the limit.
 //
 // The returned ProviderState carries an effective NextRequestAtNs whenever a
 // gate is closed, so the caller can park the item instead of blocking a worker
@@ -301,8 +313,17 @@ func (s *Store) ConsumeViaNodeBudget(ctx context.Context, req ViaNodeBudgetReque
 	switch {
 	case global.Paused:
 		return settle(global, ErrProviderPaused)
-	case global.BlockedUntilNs > req.NowNs:
-		return settle(global, ErrProviderBlocked)
+	case node.BlockedUntilNs > req.NowNs:
+		// This node hit the vendor's rate limit. The deadline is reported
+		// through the shared state so the caller parks the item exactly as it
+		// does for a budget gate, but it comes from the node row: every other
+		// node of this data source may still send.
+		state := global
+		state.Used = node.Used
+		state.BlockedUntilNs = node.BlockedUntilNs
+		state.NextRequestAtNs = node.BlockedUntilNs
+		state.ErrorCode = node.ErrorCode
+		return settle(state, ErrProviderBlocked)
 	case req.NodeDailyLimit > 0 && node.Used >= req.NodeDailyLimit:
 		// This node's budget for the day is gone; the earliest retry is the
 		// next UTC day, which the caller weighs against its deferral bound.
@@ -337,7 +358,48 @@ func nextUTCDayNs(nowNs int64) int64 {
 	return time.Unix(0, nowNs).UTC().Truncate(24 * time.Hour).Add(24 * time.Hour).UnixNano()
 }
 
-// MarkProviderBlocked records a 429 cooldown.
+// MarkProviderNodeBlocked records a 429 cooldown against the single node that
+// hit it (WP09 §3.2 step 4).
+//
+// A via-node lookup leaves through the node under test, so the vendor's rate
+// limit is about that node's address alone. Recording it in provider_state would
+// stop every other node of the data source as well; the cooldown therefore lives
+// in the node row, next to the node's budget.
+func (s *Store) MarkProviderNodeBlocked(ctx context.Context, provider, nodeHash string, untilNs int64, errorCode string) error {
+	if strings.TrimSpace(provider) == "" {
+		return fmt.Errorf("provider node state: provider is required")
+	}
+	if strings.TrimSpace(nodeHash) == "" {
+		return fmt.Errorf("provider node state: node_hash is required")
+	}
+	db, err := s.conn()
+	if err != nil {
+		return err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	st, err := scanProviderNodeState(tx.QueryRowContext(ctx,
+		providerNodeStateSelect+` WHERE provider = ? AND node_hash = ?`, provider, nodeHash))
+	if errors.Is(err, sql.ErrNoRows) {
+		st = ProviderNodeState{Provider: provider, NodeHash: nodeHash}
+	} else if err != nil {
+		return err
+	}
+	st.BlockedUntilNs = untilNs
+	st.ErrorCode = errorCode
+	if err := upsertProviderNodeStateTx(ctx, tx, st); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// MarkProviderBlocked records a 429 cooldown of a provider-wide data source: one
+// key, one budget, so the cooldown is shared. The via-node sources use
+// MarkProviderNodeBlocked instead.
 func (s *Store) MarkProviderBlocked(ctx context.Context, provider string, untilNs int64, errorCode string) error {
 	return s.patchProviderState(ctx, provider, func(st *ProviderState) {
 		st.BlockedUntilNs = untilNs
@@ -701,7 +763,8 @@ const providerStateSelect = `SELECT provider, day, used, next_request_at_ns, blo
 const queueItemSelect = `SELECT provider, ip, priority, job_id, status, attempts,
 	next_run_at_ns, lease_owner, lease_until_ns, error_code, enqueued_at_ns FROM provider_queue`
 
-const providerNodeStateSelect = `SELECT provider, node_hash, day, used, next_request_at_ns FROM provider_node_state`
+const providerNodeStateSelect = `SELECT provider, node_hash, day, used, next_request_at_ns, blocked_until_ns,
+	error_code FROM provider_node_state`
 
 func scanProviderState(row rowScanner) (ProviderState, error) {
 	var st ProviderState
@@ -742,19 +805,24 @@ func upsertProviderStateTx(ctx context.Context, tx *sql.Tx, st ProviderState) er
 
 func scanProviderNodeState(row rowScanner) (ProviderNodeState, error) {
 	var st ProviderNodeState
-	err := row.Scan(&st.Provider, &st.NodeHash, &st.Day, &st.Used, &st.NextRequestAtNs)
+	err := row.Scan(&st.Provider, &st.NodeHash, &st.Day, &st.Used, &st.NextRequestAtNs,
+		&st.BlockedUntilNs, &st.ErrorCode)
 	return st, err
 }
 
 func upsertProviderNodeStateTx(ctx context.Context, tx *sql.Tx, st ProviderNodeState) error {
 	_, err := tx.ExecContext(ctx, `
-		INSERT INTO provider_node_state (provider, node_hash, day, used, next_request_at_ns)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO provider_node_state (provider, node_hash, day, used, next_request_at_ns,
+			blocked_until_ns, error_code)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(provider, node_hash) DO UPDATE SET
 			day                = excluded.day,
 			used               = excluded.used,
-			next_request_at_ns = excluded.next_request_at_ns`,
-		st.Provider, st.NodeHash, st.Day, st.Used, st.NextRequestAtNs)
+			next_request_at_ns = excluded.next_request_at_ns,
+			blocked_until_ns   = excluded.blocked_until_ns,
+			error_code         = excluded.error_code`,
+		st.Provider, st.NodeHash, st.Day, st.Used, st.NextRequestAtNs,
+		st.BlockedUntilNs, st.ErrorCode)
 	return err
 }
 

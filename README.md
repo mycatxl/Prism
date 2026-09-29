@@ -188,12 +188,16 @@ runtime settings (`intel_enabled=true`, `intel_auto_checks=false`) the job runs
 (`internal/intel/jobs/jobs.go`), writes into `intel.db`, and resumes at the next step after a
 restart. Turning `intel_auto_checks` on adds the unlock checks to the same job.
 
-The `via-node` lookups are bound by each data source's own quota (a provider-wide QPS valve that
-defaults to 1), so a job over a large inventory advances gradually instead of finishing in one burst:
-the pipeline parks an item instead of blocking a worker, and a parked item now backs off
-exponentially (30s doubling to a 6h ceiling, spread by a per-node jitter) rather than retrying at the
-gate's own one-second pace. That matters operationally - a stalled job used to hold one of the two
-`max_running_jobs` slots forever and block every later job. `docs/INTEL.md` §7.3 has the numbers.
+The `via-node` lookups carry no quota of Prism's own: the request leaves through the tested node, so
+the vendor's own per-address limit is the only gate that applies, and a `429` cools down that one node
+for at most 15 minutes instead of pausing the whole data source. Concurrency comes from the node pool
+(`intel_node_workers`, 100 by default), each worker on a different node, so a large inventory is walked
+in parallel rather than at a shared one-request-per-second pace. The pipeline still parks an item
+instead of blocking a worker when a gate does close, and a parked item backs off exponentially (30s
+doubling to a 6h ceiling, spread by a per-node jitter) rather than retrying at the gate's own
+one-second pace. That matters operationally - a stalled job used to hold one of the two
+`max_running_jobs` slots forever and block every later job. `docs/INTEL.md` §2.3 and §7.3 have the
+numbers.
 
 ```bash
 curl -X POST http://127.0.0.1:2260/api/v1/subscriptions \
@@ -262,9 +266,9 @@ It is rate-limited on its own (60 requests per minute per token, 120 per minute 
 `429` with `Retry-After`) and is independent of `PRISM_PROXY_AUTH_FAIL_LIMIT`
 (`internal/api/handler_subscription_token.go`, `internal/api/export_token.go`).
 
-**Data sources and unlock checks.** The UI page *Data Sources & Unlock Checks* (`/intel-settings`)
-and the API (`GET|PATCH /api/v1/intel/providers`,
-`POST /api/v1/intel/providers/{id}/actions/refresh`, `GET|PATCH /api/v1/intel/checks`) show each
+**Data sources and unlock checks.** These are built-in and run automatically; they are not a page you
+operate. The API (`GET|PATCH /api/v1/intel/providers`,
+`POST /api/v1/intel/providers/{id}/actions/refresh`, `GET|PATCH /api/v1/intel/checks`) reports each
 source's enabled/runnable state, key presence, daily budget and offline database age. Offline
 databases are not bundled: DB-IP Lite, MaxMind GeoLite2 and IPinfo Lite need one download into
 `$PRISM_CACHE_DIR/geo` before they contribute evidence — until then the source answers

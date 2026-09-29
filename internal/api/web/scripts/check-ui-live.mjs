@@ -50,7 +50,6 @@ const RAIL_PATHS = [
   "/ui/endpoints",
   "/ui/rules",
   "/ui/resources",
-  "/ui/intel-settings",
   "/ui/system-config",
   "/ui/audit",
 ];

@@ -181,7 +181,9 @@ func DecodeProxyCheckAs(body []byte, ip netip.Addr, now time.Time, ttl time.Dura
 		}
 		return nil, &ProviderError{
 			Code: code, Message: "proxycheck.io did not accept the query",
-			Pause: code != CodeResponse, RetryAfter: 24 * time.Hour,
+			// Only a rejected key pauses the provider; a spent quota cools the
+			// queue down for RetryAfter instead (§3.3).
+			Pause: code == CodeAuth, RetryAfter: 24 * time.Hour,
 		}
 	}
 	var raw json.RawMessage

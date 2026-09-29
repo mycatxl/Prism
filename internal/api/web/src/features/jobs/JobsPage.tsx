@@ -201,7 +201,7 @@ function JobStatusBadge({ status }: { status: string }) {
   const { t } = useI18n();
   const tone = JOB_STATUS_TONES[status] ?? "neutral";
   return (
-    <Badge tone={tone} dot pulse={tone === "live"} title={status}>
+    <Badge tone={tone} dot={tone === "live"} title={status}>
       {t(textOf(JOB_STATUS_LABELS, status))}
     </Badge>
   );
@@ -533,7 +533,7 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
         </div>
 
         <div className="flex items-center gap-2">
-          <Badge tone={STREAM_TONES[streamState]} dot pulse={streamState === "live"}>
+          <Badge tone={STREAM_TONES[streamState]} dot={streamState === "live"}>
             {streamState === "live" ? <Wifi size={11} /> : streamState === "error" ? <WifiOff size={11} /> : null}
             {t(STREAM_LABELS[streamState])}
           </Badge>

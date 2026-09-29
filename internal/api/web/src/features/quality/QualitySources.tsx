@@ -125,7 +125,7 @@ export function QualitySources() {
       <PanelHeader
         title="IPPure"
         description={t("通过选中节点查询本次出口")}
-        actions={<Badge tone={manual.busy || manualWaiting ? "warn" : "outline"} dot={manual.busy} pulse={manual.busy}>
+        actions={<Badge tone={manual.busy || manualWaiting ? "warn" : "outline"} dot={manual.busy}>
           {t(manual.busy ? "检测中" : manualWaiting ? "冷却中" : "按需查询")}
         </Badge>}
       />

@@ -163,13 +163,17 @@ func TestDecodeProxyCheckRejects(t *testing.T) {
 	}
 }
 
+// TestProxyCheckHTTPStatusMapping pins the status split: a 429 is a rate limit
+// that must cool the queue down and leave the key alone, and only 401/403 pause
+// the data source (§3.3). Pausing on a 429 turned a routine limit into a
+// provider that only a manual resume or a key rotation could lift.
 func TestProxyCheckHTTPStatusMapping(t *testing.T) {
 	cases := []struct {
 		status int
 		code   string
 		pause  bool
 	}{
-		{http.StatusTooManyRequests, CodeLimit, true},
+		{http.StatusTooManyRequests, CodeLimit, false},
 		{http.StatusUnauthorized, CodeAuth, true},
 		{http.StatusForbidden, CodeAuth, true},
 		{http.StatusInternalServerError, CodeUnavailable, false},
@@ -187,7 +191,12 @@ func TestProxyCheckHTTPStatusMapping(t *testing.T) {
 			t.Fatalf("error message leaks or is empty: %q", err.Message)
 		}
 		if err.Pause != tc.pause {
-			t.Fatalf("pause: got %v want %v", err.Pause, tc.pause)
+			t.Fatalf("status %d: pause: got %v want %v", tc.status, err.Pause, tc.pause)
+		}
+		if tc.status == http.StatusTooManyRequests && err.RetryAfter <= 0 {
+			// Without a cooldown the queue worker has nothing to schedule: the
+			// same address would be retried immediately.
+			t.Fatalf("a 429 must carry a cooldown, got %v", err.RetryAfter)
 		}
 		server.Close()
 	}
@@ -398,25 +407,52 @@ func TestDecodeIPPureRules(t *testing.T) {
 	}
 }
 
-// TestIPPureSpecScopesLimitsPerNode pins the via-node limit split: the daily
-// budget is counted per node (the vendor's anonymous quota belongs to the
-// node's address) and the spec-level QPS is only the provider-wide valve that
-// keeps the whole inventory from reaching the vendor at once. The previous
-// "one query per minute" was a global gate that made a 287-node inventory take
-// hours to walk even though every node had its own untouched quota.
-func TestIPPureSpecScopesLimitsPerNode(t *testing.T) {
+// TestIPPureSpecCarriesNoSelfImposedLimit pins the via-node limit rule for
+// IPPure: the request leaves through the node, so the vendor's own per-address
+// limit is the only gate that applies and Prism must not add one of its own.
+//
+// Both earlier shapes were wrong in the same direction. A provider-wide daily
+// budget and QPS valve collapsed the whole inventory onto one gate even though
+// every node had its own untouched quota, and even after the counters became
+// per node the pacing still held every node behind one node's window.
+func TestIPPureSpecCarriesNoSelfImposedLimit(t *testing.T) {
 	spec := NewIPPureProvider(IPPureOptions{}).Spec()
 	if spec.Kind != KindViaNode {
 		t.Fatalf("kind: %v", spec.Kind)
 	}
-	if spec.DefaultDailyLimit != 500 {
-		t.Fatalf("daily limit: %d", spec.DefaultDailyLimit)
+	if spec.DefaultDailyLimit != 0 {
+		t.Fatalf("a via-node source must not count a daily budget of its own, got %d",
+			spec.DefaultDailyLimit)
 	}
-	if spec.DefaultQPS <= 0 || spec.DefaultQPS > 5 {
-		t.Fatalf("provider-wide QPS valve out of range: %v", spec.DefaultQPS)
+	if spec.DefaultQPS != 0 {
+		t.Fatalf("a via-node source must not pace the provider as a whole, got %v",
+			spec.DefaultQPS)
 	}
 	if spec.DefaultTTL != 7*24*time.Hour {
 		t.Fatalf("ttl: %v", spec.DefaultTTL)
+	}
+}
+
+// TestViaNodeSourcesCarryNoSelfImposedLimits pins the rule for the whole class,
+// so a new via-node source cannot reintroduce a provider-wide gate by accident.
+func TestViaNodeSourcesCarryNoSelfImposedLimits(t *testing.T) {
+	specs := []Spec{
+		NewIPPureProvider(IPPureOptions{}).Spec(),
+		NewIPAPIProvider(IPAPIOptions{}).Spec(),
+		NewProxyCheckViaNodeProvider(ProxyCheckViaNodeOptions{}).Spec(),
+	}
+	for _, spec := range specs {
+		if spec.Kind != KindViaNode {
+			t.Fatalf("%s: kind = %v", spec.ID, spec.Kind)
+		}
+		if spec.DefaultDailyLimit != 0 {
+			t.Fatalf("%s: daily limit %d: the vendor's own per-address quota is the only gate",
+				spec.ID, spec.DefaultDailyLimit)
+		}
+		if spec.DefaultQPS != 0 {
+			t.Fatalf("%s: qps %v: pacing the provider serialises the inventory behind one node",
+				spec.ID, spec.DefaultQPS)
+		}
 	}
 }
 
@@ -537,10 +573,8 @@ func TestProxyCheckNodeSpecSpendsQuotaPerNode(t *testing.T) {
 	if !spec.DefaultEnabled {
 		t.Fatal("the via-node variant is the default proxycheck source")
 	}
-	if spec.DefaultDailyLimit != 100 {
-		t.Fatalf("daily limit: %d", spec.DefaultDailyLimit)
-	}
-	if spec.DefaultQPS <= 0 || spec.DefaultQPS > 5 {
-		t.Fatalf("provider-wide QPS valve out of range: %v", spec.DefaultQPS)
+	if spec.DefaultDailyLimit != 0 || spec.DefaultQPS != 0 {
+		t.Fatalf("a via-node source must not cap itself: daily=%d qps=%v",
+			spec.DefaultDailyLimit, spec.DefaultQPS)
 	}
 }
