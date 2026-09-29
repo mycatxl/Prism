@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="%BASE_URL%prism-mark.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // The ground is decided before the first paint. A dark console that flashes
+      // white on every load is worse than either theme, and the module bundle
+      // cannot run early enough to prevent it.
+      (function () {
+        try {
+          document.documentElement.dataset.theme =
+            localStorage.getItem("prism.theme") === "light" ? "light" : "dark";
+        } catch (error) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
     <title>Prism · 节点工作台</title>
   </head>
   <body>

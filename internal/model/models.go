@@ -22,7 +22,16 @@ type Platform struct {
 	ScheduledRotationIntervalNs      int64         `json:"scheduled_rotation_interval_ns"`
 	ScheduledRotationEnabled         bool          `json:"scheduled_rotation_enabled"`
 	RotationAvoidPreviousIP          bool          `json:"rotation_avoid_previous_ip"`
-	UpdatedAtNs                      int64         `json:"updated_at_ns"`
+	// The operator-facing node-selection criteria below are ANDed with each
+	// other, and the values inside one criterion are alternatives. An empty
+	// slice leaves that criterion unrestricted. RegexFilters and RegionFilters
+	// keep their legacy tag/region semantics so a platform persisted before the
+	// explicit criteria existed keeps filtering exactly as before.
+	IPTypes             []string
+	PurityBands         []string
+	SubscriptionFilters []string
+	Protocols           []string
+	UpdatedAtNs         int64 `json:"updated_at_ns"`
 }
 
 // QualityPolicy defines quality-based routing admission rules.

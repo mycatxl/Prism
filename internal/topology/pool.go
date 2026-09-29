@@ -544,7 +544,14 @@ func (p *GlobalNodePool) RebuildAllPlatforms() {
 }
 
 // RebuildPlatform triggers a full rebuild on a specific platform.
+//
+// The intel projection is re-installed first: the node-selection criteria read
+// it (ip_type, purity_band and the quality policy), so a rebuild that ran before
+// the snapshot was injected would fail those criteria closed and leave the
+// platform with an empty routable view until the next dirty event. CreatePlatform
+// rebuilds before it registers, so this ordering is the one that matters there.
 func (p *GlobalNodePool) RebuildPlatform(plat *platform.Platform) {
+	p.instrumentQuality(plat)
 	subLookup := p.MakeSubLookup()
 	poolRange := func(fn func(node.Hash, *node.NodeEntry) bool) {
 		p.nodes.Range(fn)

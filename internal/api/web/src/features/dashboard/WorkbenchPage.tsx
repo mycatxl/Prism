@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Globe2, Plus, RefreshCw } from "lucide-react";
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
@@ -49,9 +49,13 @@ import LatencyProfile from "./LatencyProfile";
  * board and the canvas, not with the route table.
  */
 const EgressMap = lazy(() => import("./EgressMap"));
+const EgressGlobe = lazy(() => import("./EgressGlobe"));
 const TrafficChart = lazy(() => import("./TrafficChart"));
 
 type Point = [number, number];
+
+/** The two views of the egress panel: the sphere, and the plate it replaced. */
+type MapView = "globe" | "flat";
 
 function toPoints<T>(items: T[], valueOf: (item: T) => number, stampOf: (item: T) => string): Point[] {
   const points: Point[] = [];
@@ -86,6 +90,7 @@ function guardValue(value: number): number {
 export function WorkbenchPage() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
+  const [mapView, setMapView] = useState<MapView>("globe");
   const rangeKey = parseRangeKey(params.get("range"));
   const queryClient = useQueryClient();
 
@@ -320,9 +325,38 @@ export function WorkbenchPage() {
                 </>
               }
               actions={
-                <Button asChild variant="ghost" size="sm">
-                  <Link to="/nodes">{t("查看节点池")}</Link>
-                </Button>
+                <>
+                  {/* One question, two views. The sphere is what the board is
+                      read from, and the flat map stays one click away for the
+                      reader who wants a border rather than a marker. */}
+                  <div
+                    role="group"
+                    aria-label={t("视图")}
+                    className="inline-flex items-center divide-x divide-rule overflow-hidden rounded-control border border-rule"
+                  >
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="rounded-none border-0 aria-pressed:bg-paper-sunk aria-pressed:font-semibold aria-pressed:text-ink"
+                      aria-pressed={mapView === "globe"}
+                      onClick={() => setMapView("globe")}
+                    >
+                      {t("立体地球")}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="rounded-none border-0 aria-pressed:bg-paper-sunk aria-pressed:font-semibold aria-pressed:text-ink"
+                      aria-pressed={mapView === "flat"}
+                      onClick={() => setMapView("flat")}
+                    >
+                      {t("平面地图")}
+                    </Button>
+                  </div>
+                  <Button asChild variant="ghost" size="sm">
+                    <Link to="/nodes">{t("查看节点池")}</Link>
+                  </Button>
+                </>
               }
             />
             <div className="min-h-[clamp(320px,42vh,560px)] flex-1 px-2 py-2">
@@ -347,7 +381,11 @@ export function WorkbenchPage() {
                 />
               ) : (
                 <Suspense fallback={chartFallback}>
-                  <EgressMap regions={regions} />
+                  {mapView === "globe" ? (
+                    <EgressGlobe regions={regions} />
+                  ) : (
+                    <EgressMap regions={regions} />
+                  )}
                 </Suspense>
               )}
             </div>

@@ -144,6 +144,28 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 	if err != nil {
 		return fmt.Errorf("encode platform %s region_filters: %w", p.ID, err)
 	}
+	// The explicit node-selection criteria (migration 000015) are validated here
+	// as well as at the API boundary: a value the inventory can never produce
+	// would silently select nothing.
+	if err := platform.ValidateNodeCriteria(p.IPTypes, p.PurityBands, p.SubscriptionFilters, p.Protocols); err != nil {
+		return err
+	}
+	ipTypesJSON, err := encodeStringSliceJSON(p.IPTypes)
+	if err != nil {
+		return fmt.Errorf("encode platform %s ip_types: %w", p.ID, err)
+	}
+	purityBandsJSON, err := encodeStringSliceJSON(p.PurityBands)
+	if err != nil {
+		return fmt.Errorf("encode platform %s purity_bands: %w", p.ID, err)
+	}
+	subscriptionFiltersJSON, err := encodeStringSliceJSON(p.SubscriptionFilters)
+	if err != nil {
+		return fmt.Errorf("encode platform %s subscription_filters: %w", p.ID, err)
+	}
+	protocolsJSON, err := encodeStringSliceJSON(p.Protocols)
+	if err != nil {
+		return fmt.Errorf("encode platform %s protocols: %w", p.ID, err)
+	}
 
 	qualityPolicyJSON, err := json.Marshal(p.QualityPolicy)
 	if err != nil {
@@ -159,8 +181,9 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 		                       reverse_proxy_fixed_account_header, allocation_policy,
 		                       passive_circuit_breaker_disabled, quality_policy_json,
 		                       scheduled_rotation_enabled, scheduled_rotation_interval_ns,
-		                       rotation_avoid_previous_ip, updated_at_ns)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                       rotation_avoid_previous_ip, ip_types_json, purity_bands_json,
+		                       subscription_filters_json, protocols_json, updated_at_ns)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name                     = excluded.name,
 			sticky_ttl_ns            = excluded.sticky_ttl_ns,
@@ -175,11 +198,16 @@ func (r *StateRepo) UpsertPlatform(p model.Platform) error {
 			scheduled_rotation_enabled = excluded.scheduled_rotation_enabled,
 			scheduled_rotation_interval_ns = excluded.scheduled_rotation_interval_ns,
 			rotation_avoid_previous_ip = excluded.rotation_avoid_previous_ip,
+			ip_types_json            = excluded.ip_types_json,
+			purity_bands_json        = excluded.purity_bands_json,
+			subscription_filters_json = excluded.subscription_filters_json,
+			protocols_json           = excluded.protocols_json,
 			updated_at_ns            = excluded.updated_at_ns
 	`, p.ID, p.Name, p.StickyTTLNs, regexFiltersJSON, regionFiltersJSON,
 		p.ReverseProxyMissAction, p.ReverseProxyEmptyAccountBehavior, p.ReverseProxyFixedAccountHeader,
 		p.AllocationPolicy, p.PassiveCircuitBreakerDisabled, string(qualityPolicyJSON),
-		p.ScheduledRotationEnabled, p.ScheduledRotationIntervalNs, p.RotationAvoidPreviousIP, p.UpdatedAtNs)
+		p.ScheduledRotationEnabled, p.ScheduledRotationIntervalNs, p.RotationAvoidPreviousIP,
+		ipTypesJSON, purityBandsJSON, subscriptionFiltersJSON, protocolsJSON, p.UpdatedAtNs)
 	if err != nil {
 		if isSQLiteUniqueConstraint(err) {
 			return fmt.Errorf("%w: platform name already exists", ErrConflict)
@@ -237,17 +265,20 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 			reverse_proxy_fixed_account_header, allocation_policy,
 			passive_circuit_breaker_disabled, quality_policy_json,
 			scheduled_rotation_enabled, scheduled_rotation_interval_ns,
-			rotation_avoid_previous_ip, updated_at_ns
+			rotation_avoid_previous_ip, ip_types_json, purity_bands_json,
+			subscription_filters_json, protocols_json, updated_at_ns
 			FROM platforms WHERE id = ?`, id)
 
 	var p model.Platform
 	var regexFiltersJSON, regionFiltersJSON, qualityPolicyJSON string
+	var ipTypesJSON, purityBandsJSON, subscriptionFiltersJSON, protocolsJSON string
 	var passiveCircuitBreakerDisabled, scheduledRotationEnabled, rotationAvoidPreviousIP int
 	if err := row.Scan(&p.ID, &p.Name, &p.StickyTTLNs, &regexFiltersJSON,
 		&regionFiltersJSON, &p.ReverseProxyMissAction, &p.ReverseProxyEmptyAccountBehavior,
 		&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled,
 		&qualityPolicyJSON, &scheduledRotationEnabled, &p.ScheduledRotationIntervalNs,
-		&rotationAvoidPreviousIP, &p.UpdatedAtNs); err != nil {
+		&rotationAvoidPreviousIP, &ipTypesJSON, &purityBandsJSON,
+		&subscriptionFiltersJSON, &protocolsJSON, &p.UpdatedAtNs); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, ErrNotFound
 		}
@@ -269,12 +300,41 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 	}
 	p.RegexFilters = regexFilters
 	p.RegionFilters = regionFilters
+	if err := decodePlatformNodeCriteria(&p, ipTypesJSON, purityBandsJSON, subscriptionFiltersJSON, protocolsJSON); err != nil {
+		return nil, err
+	}
 	return &p, nil
+}
+
+// decodePlatformNodeCriteria fills the explicit node-selection criteria columns
+// (migration 000015) of a platform row.
+func decodePlatformNodeCriteria(
+	p *model.Platform,
+	ipTypesJSON, purityBandsJSON, subscriptionFiltersJSON, protocolsJSON string,
+) error {
+	columns := []struct {
+		name   string
+		raw    string
+		target *[]string
+	}{
+		{"ip_types_json", ipTypesJSON, &p.IPTypes},
+		{"purity_bands_json", purityBandsJSON, &p.PurityBands},
+		{"subscription_filters_json", subscriptionFiltersJSON, &p.SubscriptionFilters},
+		{"protocols_json", protocolsJSON, &p.Protocols},
+	}
+	for _, column := range columns {
+		values, err := decodeStringSliceJSON(column.raw)
+		if err != nil {
+			return fmt.Errorf("decode platform %s %s: %w", p.ID, column.name, err)
+		}
+		*column.target = values
+	}
+	return nil
 }
 
 // ListPlatforms returns all platforms.
 func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
-	rows, err := r.db.Query("SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json, reverse_proxy_miss_action, reverse_proxy_empty_account_behavior, reverse_proxy_fixed_account_header, allocation_policy, passive_circuit_breaker_disabled, quality_policy_json, scheduled_rotation_enabled, scheduled_rotation_interval_ns, rotation_avoid_previous_ip, updated_at_ns FROM platforms")
+	rows, err := r.db.Query("SELECT id, name, sticky_ttl_ns, regex_filters_json, region_filters_json, reverse_proxy_miss_action, reverse_proxy_empty_account_behavior, reverse_proxy_fixed_account_header, allocation_policy, passive_circuit_breaker_disabled, quality_policy_json, scheduled_rotation_enabled, scheduled_rotation_interval_ns, rotation_avoid_previous_ip, ip_types_json, purity_bands_json, subscription_filters_json, protocols_json, updated_at_ns FROM platforms")
 	if err != nil {
 		return nil, err
 	}
@@ -284,12 +344,14 @@ func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
 	for rows.Next() {
 		var p model.Platform
 		var regexFiltersJSON, regionFiltersJSON, qualityPolicyJSON string
+		var ipTypesJSON, purityBandsJSON, subscriptionFiltersJSON, protocolsJSON string
 		var passiveCircuitBreakerDisabled, scheduledRotationEnabled, rotationAvoidPreviousIP int
 		if err := rows.Scan(&p.ID, &p.Name, &p.StickyTTLNs, &regexFiltersJSON,
 			&regionFiltersJSON, &p.ReverseProxyMissAction, &p.ReverseProxyEmptyAccountBehavior,
 			&p.ReverseProxyFixedAccountHeader, &p.AllocationPolicy, &passiveCircuitBreakerDisabled,
 			&qualityPolicyJSON, &scheduledRotationEnabled, &p.ScheduledRotationIntervalNs,
-			&rotationAvoidPreviousIP, &p.UpdatedAtNs); err != nil {
+			&rotationAvoidPreviousIP, &ipTypesJSON, &purityBandsJSON,
+			&subscriptionFiltersJSON, &protocolsJSON, &p.UpdatedAtNs); err != nil {
 			return nil, err
 		}
 		p.PassiveCircuitBreakerDisabled = passiveCircuitBreakerDisabled != 0
@@ -308,6 +370,9 @@ func (r *StateRepo) ListPlatforms() ([]model.Platform, error) {
 		}
 		p.RegexFilters = regexFilters
 		p.RegionFilters = regionFilters
+		if err := decodePlatformNodeCriteria(&p, ipTypesJSON, purityBandsJSON, subscriptionFiltersJSON, protocolsJSON); err != nil {
+			return nil, err
+		}
 		result = append(result, p)
 	}
 	return result, rows.Err()

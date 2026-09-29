@@ -46,3 +46,6 @@ Thumbs.db
 # Go workspace
 go.work
 go.work.sum
+
+# npm pack output and release archives
+*.tgz

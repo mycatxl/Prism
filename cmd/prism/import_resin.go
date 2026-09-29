@@ -186,7 +186,7 @@ func importResinData(
 		fmt.Fprintf(logw, "Copied %s to %s\n", copy.src, copy.dest)
 	}
 
-	// 4. Apply the Prism migrations (state.db 000010..000014, cache.db 000002)
+	// 4. Apply the Prism migrations (state.db 000010..000015, cache.db 000002)
 	// so the imported data is usable by this build.
 	if err := migrateImportedDatabase(copies[0].dest, "state.db", state.MigrateStateDB); err != nil {
 		return nil, err

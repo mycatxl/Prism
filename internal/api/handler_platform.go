@@ -248,3 +248,45 @@ func HandlePreviewFilter(cp *service.ControlPlaneService) http.HandlerFunc {
 		})
 	}
 }
+
+// HandlePlatformNodeFacets returns a handler for
+// GET /api/v1/platforms/node-facets: the option lists of the platform
+// node-selection form, derived from the live node pool.
+func HandlePlatformNodeFacets(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		facets, err := cp.PlatformNodeFacets()
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, facets)
+	}
+}
+
+// HandlePreviewPlatformScope returns a handler for
+// POST /api/v1/platforms/preview-scope.
+//
+// It answers "匹配 N 个节点" for the criteria the form is editing: the count comes
+// from the same admission predicate the routable-view rebuild uses, so the
+// number shown is exactly what the platform would load. The scan is bounded
+// (previewScanLimit in the service) and the response says so through
+// `truncated`.
+func HandlePreviewPlatformScope(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req service.PreviewFilterRequest
+		if err := DecodeBody(r, &req); err != nil {
+			writeDecodeBodyError(w, err)
+			return
+		}
+		if req.PlatformID != nil && *req.PlatformID != "" && !ValidateUUID(*req.PlatformID) {
+			writeInvalidArgument(w, "platform_id: must be a valid UUID")
+			return
+		}
+		result, err := cp.PreviewPlatformScope(req)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, result)
+	}
+}

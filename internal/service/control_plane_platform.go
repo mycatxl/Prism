@@ -4,17 +4,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
+	"prism/internal/intel"
 	"prism/internal/model"
 	"prism/internal/node"
 	"prism/internal/platform"
 	"prism/internal/quality"
 	"prism/internal/state"
+	"prism/internal/subscription"
 )
 
 // ------------------------------------------------------------------
@@ -23,11 +26,18 @@ import (
 
 // PlatformResponse is the API response model for a platform.
 type PlatformResponse struct {
-	ID                               string              `json:"id"`
-	Name                             string              `json:"name"`
-	StickyTTL                        string              `json:"sticky_ttl"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	StickyTTL string `json:"sticky_ttl"`
+	// Node-selection criteria. They are ANDed with each other and the values
+	// inside one criterion are alternatives; an empty list means "no
+	// restriction". regex_filters keeps its legacy line-oriented tag semantics.
 	RegexFilters                     []string            `json:"regex_filters"`
 	RegionFilters                    []string            `json:"region_filters"`
+	IPTypes                          []string            `json:"ip_types"`
+	PurityBands                      []string            `json:"purity_bands"`
+	SubscriptionFilters              []string            `json:"subscription_filters"`
+	Protocols                        []string            `json:"protocols"`
 	RoutableNodeCount                int                 `json:"routable_node_count"`
 	ReverseProxyMissAction           string              `json:"reverse_proxy_miss_action"`
 	ReverseProxyEmptyAccountBehavior string              `json:"reverse_proxy_empty_account_behavior"`
@@ -50,6 +60,10 @@ func platformToResponse(p model.Platform) PlatformResponse {
 		StickyTTL:                        time.Duration(p.StickyTTLNs).String(),
 		RegexFilters:                     append([]string(nil), p.RegexFilters...),
 		RegionFilters:                    append([]string(nil), p.RegionFilters...),
+		IPTypes:                          append([]string(nil), p.IPTypes...),
+		PurityBands:                      append([]string(nil), p.PurityBands...),
+		SubscriptionFilters:              append([]string(nil), p.SubscriptionFilters...),
+		Protocols:                        append([]string(nil), p.Protocols...),
 		RoutableNodeCount:                0,
 		ReverseProxyMissAction:           p.ReverseProxyMissAction,
 		ReverseProxyEmptyAccountBehavior: behavior,
@@ -81,6 +95,10 @@ type platformConfig struct {
 	StickyTTLNs                      int64
 	RegexFilters                     []string
 	RegionFilters                    []string
+	IPTypes                          []string
+	PurityBands                      []string
+	SubscriptionFilters              []string
+	Protocols                        []string
 	QualityPolicy                    model.QualityPolicy
 	ReverseProxyMissAction           string
 	ReverseProxyEmptyAccountBehavior string
@@ -133,6 +151,10 @@ func platformConfigFromModel(mp model.Platform) platformConfig {
 		StickyTTLNs:                      mp.StickyTTLNs,
 		RegexFilters:                     append([]string(nil), mp.RegexFilters...),
 		RegionFilters:                    append([]string(nil), mp.RegionFilters...),
+		IPTypes:                          append([]string(nil), mp.IPTypes...),
+		PurityBands:                      append([]string(nil), mp.PurityBands...),
+		SubscriptionFilters:              append([]string(nil), mp.SubscriptionFilters...),
+		Protocols:                        append([]string(nil), mp.Protocols...),
 		ReverseProxyMissAction:           mp.ReverseProxyMissAction,
 		ReverseProxyEmptyAccountBehavior: normalizePlatformEmptyAccountBehavior(mp.ReverseProxyEmptyAccountBehavior),
 		ReverseProxyFixedAccountHeader:   normalizeHeaderFieldName(mp.ReverseProxyFixedAccountHeader),
@@ -152,6 +174,10 @@ func (cfg platformConfig) toModel(id string, updatedAtNs int64) model.Platform {
 		StickyTTLNs:                      cfg.StickyTTLNs,
 		RegexFilters:                     append([]string(nil), cfg.RegexFilters...),
 		RegionFilters:                    append([]string(nil), cfg.RegionFilters...),
+		IPTypes:                          append([]string(nil), cfg.IPTypes...),
+		PurityBands:                      append([]string(nil), cfg.PurityBands...),
+		SubscriptionFilters:              append([]string(nil), cfg.SubscriptionFilters...),
+		Protocols:                        append([]string(nil), cfg.Protocols...),
 		QualityPolicy:                    cfg.QualityPolicy,
 		ReverseProxyMissAction:           cfg.ReverseProxyMissAction,
 		ReverseProxyEmptyAccountBehavior: cfg.ReverseProxyEmptyAccountBehavior,
@@ -174,7 +200,7 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 	// on every sweep, so the rotation fields must be part of the construction
 	// call instead of being patched on afterwards (a missed patch leaves the
 	// platform rotating nothing).
-	return platform.NewConfiguredPlatform(
+	plat := platform.NewConfiguredPlatform(
 		id,
 		cfg.Name,
 		compiledRegexFilters,
@@ -189,7 +215,16 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 		cfg.ScheduledRotationEnabled,
 		cfg.ScheduledRotationIntervalNs,
 		cfg.RotationAvoidPreviousIP,
-	), nil
+	)
+	// The explicit node-selection criteria must be installed before the platform
+	// reaches the pool: the routable view is built from them.
+	plat.SetNodeCriteria(platform.NodeCriteria{
+		IPTypes:         cfg.IPTypes,
+		PurityBands:     cfg.PurityBands,
+		SubscriptionIDs: cfg.SubscriptionFilters,
+		Protocols:       cfg.Protocols,
+	})
+	return plat, nil
 }
 
 func validatePlatformMissAction(raw string) *ServiceError {
@@ -288,11 +323,17 @@ func setPlatformAllocationPolicy(cfg *platformConfig, policy string) *ServiceErr
 	return nil
 }
 
+// validatePlatformConfig checks one platform configuration before it is
+// persisted. The explicit node-selection criteria are always validated: a value
+// the inventory can never produce would silently select nothing.
 func validatePlatformConfig(cfg *platformConfig, validateRegionFilters bool) *ServiceError {
 	if validateRegionFilters {
 		if err := platform.ValidateRegionFilters(cfg.RegionFilters); err != nil {
 			return invalidArg(err.Error())
 		}
+	}
+	if err := platform.ValidateNodeCriteria(cfg.IPTypes, cfg.PurityBands, cfg.SubscriptionFilters, cfg.Protocols); err != nil {
+		return invalidArg(err.Error())
 	}
 	if err := validatePlatformEmptyAccountConfig(cfg); err != nil {
 		return err
@@ -453,6 +494,10 @@ type CreatePlatformRequest struct {
 	StickyTTL                        *string              `json:"sticky_ttl"`
 	RegexFilters                     []string             `json:"regex_filters"`
 	RegionFilters                    []string             `json:"region_filters"`
+	IPTypes                          []string             `json:"ip_types"`
+	PurityBands                      []string             `json:"purity_bands"`
+	SubscriptionFilters              []string             `json:"subscription_filters"`
+	Protocols                        []string             `json:"protocols"`
 	ReverseProxyMissAction           *string              `json:"reverse_proxy_miss_action"`
 	ReverseProxyEmptyAccountBehavior *string              `json:"reverse_proxy_empty_account_behavior"`
 	ReverseProxyFixedAccountHeader   *string              `json:"reverse_proxy_fixed_account_header"`
@@ -500,6 +545,18 @@ func (s *ControlPlaneService) CreatePlatform(req CreatePlatformRequest) (*Platfo
 	}
 	if req.RegionFilters != nil {
 		cfg.RegionFilters = req.RegionFilters
+	}
+	if req.IPTypes != nil {
+		cfg.IPTypes = req.IPTypes
+	}
+	if req.PurityBands != nil {
+		cfg.PurityBands = req.PurityBands
+	}
+	if req.SubscriptionFilters != nil {
+		cfg.SubscriptionFilters = req.SubscriptionFilters
+	}
+	if req.Protocols != nil {
+		cfg.Protocols = req.Protocols
 	}
 	if req.ReverseProxyMissAction != nil {
 		if err := setPlatformMissAction(&cfg, *req.ReverseProxyMissAction); err != nil {
@@ -624,6 +681,27 @@ func (s *ControlPlaneService) UpdatePlatform(id string, patchJSON json.RawMessag
 	} else if ok {
 		regionFiltersPatched = true
 		cfg.RegionFilters = filters
+	}
+
+	if filters, ok, err := patch.optionalStringSlice("ip_types"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.IPTypes = filters
+	}
+	if filters, ok, err := patch.optionalStringSlice("purity_bands"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.PurityBands = filters
+	}
+	if filters, ok, err := patch.optionalStringSlice("subscription_filters"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.SubscriptionFilters = filters
+	}
+	if filters, ok, err := patch.optionalStringSlice("protocols"); err != nil {
+		return nil, err
+	} else if ok {
+		cfg.Protocols = filters
 	}
 
 	if ma, ok, err := patch.optionalString("reverse_proxy_miss_action"); err != nil {
@@ -768,10 +846,17 @@ type PreviewFilterRequest struct {
 	QualityPolicy *model.QualityPolicy `json:"quality_policy,omitempty"`
 }
 
-// PlatformSpecFilter is the inline filter spec of a preview request.
+// PlatformSpecFilter is the inline filter spec of a preview request. It mirrors
+// the criteria fields of CreatePlatformRequest exactly, so the preview of an
+// unsaved form and the platform the form creates evaluate the same way: every
+// criterion is ANDed and the values inside one criterion are alternatives.
 type PlatformSpecFilter struct {
-	RegexFilters  []string `json:"regex_filters"`
-	RegionFilters []string `json:"region_filters"`
+	RegexFilters        []string `json:"regex_filters"`
+	RegionFilters       []string `json:"region_filters"`
+	IPTypes             []string `json:"ip_types"`
+	PurityBands         []string `json:"purity_bands"`
+	SubscriptionFilters []string `json:"subscription_filters"`
+	Protocols           []string `json:"protocols"`
 }
 
 // ProbeErrorView is the read model of NodeEntry.GetProbeFailure: the classified
@@ -936,52 +1021,94 @@ type PreviewFilterResult struct {
 	ExcludedBy map[string]int
 }
 
-// PreviewFilterReport runs the preview and returns the §2.1 excluded_by
-// counters with it.
-//
-// A node is counted under the first rule that rejects it: "regex", then
-// "region", then the first failing quality admission rule, whose counter is the
-// admission reason itself (QUALITY_MIN_PURITY, QUALITY_TOR, QUALITY_CHECK:<id>,
-// ...). The quality policy is the platform's own policy, unless the request
-// carries an explicit quality_policy, which wins (that is what the preview UI
-// experiments with). The admission is evaluated against the in-memory intel
-// projection, exactly like the routing path, so the counters match what a
-// rebuilt platform view would keep.
-func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (PreviewFilterResult, error) {
+// previewCriteria resolves the node-selection criteria one preview request
+// describes. Exactly one of platform_id (the persisted platform) and
+// platform_spec (the criteria the form is editing right now) must be set.
+func (s *ControlPlaneService) previewCriteria(req PreviewFilterRequest) (platform.NodeCriteria, *ServiceError) {
 	hasPlatformID := req.PlatformID != nil && *req.PlatformID != ""
 	hasPlatformSpec := req.PlatformSpec != nil
 
 	if hasPlatformID == hasPlatformSpec {
-		return PreviewFilterResult{}, invalidArg("exactly one of platform_id or platform_spec is required")
+		return platform.NodeCriteria{}, invalidArg("exactly one of platform_id or platform_spec is required")
 	}
 
-	var (
-		regexFilters  node.TagFilter
-		regionFilters []string
-		policy        model.QualityPolicy
-	)
-
+	var criteria platform.NodeCriteria
 	if hasPlatformID {
 		plat, ok := s.Pool.GetPlatform(*req.PlatformID)
 		if !ok {
-			return PreviewFilterResult{}, notFound("platform not found")
+			return platform.NodeCriteria{}, notFound("platform not found")
 		}
-		regexFilters = plat.RegexFilters
-		regionFilters = plat.RegionFilters
-		policy = plat.QualityPolicy
+		criteria = plat.Criteria()
 	} else {
 		compiled, err := platform.CompileRegexFilters(req.PlatformSpec.RegexFilters)
 		if err != nil {
-			return PreviewFilterResult{}, invalidArg(err.Error())
+			return platform.NodeCriteria{}, invalidArg(err.Error())
 		}
-		regexFilters = compiled
-		regionFilters = req.PlatformSpec.RegionFilters
-		if err := platform.ValidateRegionFilters(regionFilters); err != nil {
-			return PreviewFilterResult{}, invalidArg(err.Error())
+		if err := platform.ValidateRegionFilters(req.PlatformSpec.RegionFilters); err != nil {
+			return platform.NodeCriteria{}, invalidArg(err.Error())
+		}
+		if err := platform.ValidateNodeCriteria(
+			req.PlatformSpec.IPTypes,
+			req.PlatformSpec.PurityBands,
+			req.PlatformSpec.SubscriptionFilters,
+			req.PlatformSpec.Protocols,
+		); err != nil {
+			return platform.NodeCriteria{}, invalidArg(err.Error())
+		}
+		criteria = platform.NodeCriteria{
+			TagRules:        compiled,
+			Regions:         req.PlatformSpec.RegionFilters,
+			IPTypes:         req.PlatformSpec.IPTypes,
+			PurityBands:     req.PlatformSpec.PurityBands,
+			SubscriptionIDs: req.PlatformSpec.SubscriptionFilters,
+			Protocols:       req.PlatformSpec.Protocols,
 		}
 	}
 	if req.QualityPolicy != nil {
-		policy = *req.QualityPolicy
+		criteria.QualityPolicy = *req.QualityPolicy
+	}
+	return criteria, nil
+}
+
+// previewScanLimit bounds how many pool entries one synchronous preview walks.
+// The predicate itself is in-memory only, so the bound keeps the request
+// comfortably inside an interactive budget even for a very large pool; a preview
+// that stops at the bound reports Truncated so the caller never presents a
+// partial count as exact.
+const previewScanLimit = 20000
+
+// previewSampleLimit bounds the node sample a preview returns. The count is what
+// the UI shows; the sample only exists to prove which nodes match.
+const previewSampleLimit = 8
+
+// PreviewFilterReport runs the preview and returns the §2.1 excluded_by
+// counters with it.
+//
+// Every criterion is evaluated by platform.MatchNodeCriteria — the same
+// predicate the routable-view rebuild uses — and a node is counted under the
+// first criterion that rejects it (the platform.Reason* constants, with a
+// quality rejection reported as its own admission reason such as
+// QUALITY_MIN_PURITY).
+//
+// The counters keep the two legacy keys of this endpoint: a rejected tag rule
+// stays "regex" and a rejected region stays "region". The runtime health gates
+// (disabled, unhealthy, no egress, no latency) are deliberately NOT applied
+// here: this endpoint answers "which criteria exclude a node", so a node that is
+// merely unhealthy right now must still be reported under its criteria counter.
+// The form preview (PreviewPlatformScope) does apply them, because it answers
+// "how many nodes would the platform actually load".
+//
+// The quality policy is the platform's own policy, unless the request carries an
+// explicit quality_policy, which wins (that is what the preview UI experiments
+// with).
+//
+// Unlike PreviewPlatformScope this endpoint returns every matching node and is
+// therefore unbounded: it exists for the §2.1 explain view, not for the
+// interactive form preview.
+func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (PreviewFilterResult, error) {
+	criteria, svcErr := s.previewCriteria(req)
+	if svcErr != nil {
+		return PreviewFilterResult{}, svcErr
 	}
 
 	var subLookup node.SubLookupFunc
@@ -995,33 +1122,265 @@ func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (Pre
 	now := time.Now().UTC()
 
 	result := make([]NodeSummary, 0, 32)
-	excluded := make(map[string]int, 4)
+	excluded := make(map[string]int, 8)
 	s.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
-		if !entry.MatchTagFilter(regexFilters, subLookup) {
-			excluded[PreviewExcludedRegex]++
+		ok, reason := platform.MatchNodeCriteriaForPreview(criteria, entry, subLookup, s.geoLookupFunc(), nil, snap, now)
+		if !ok {
+			excluded[previewExclusionKey(reason)]++
 			return true
-		}
-		if len(regionFilters) > 0 {
-			region := entry.GetRegion(nil)
-			if s.GeoIP != nil {
-				region = entry.GetRegion(s.GeoIP.Lookup)
-			}
-			if !platform.MatchRegionFilter(region, regionFilters) {
-				excluded[PreviewExcludedRegion]++
-				return true
-			}
-		}
-		if !policy.IsEmpty() {
-			if ok, reason := platform.AdmitQuality(policy, entry, snap, now); !ok {
-				if reason == "" {
-					reason = platform.ReasonQualityUnknown
-				}
-				excluded[reason]++
-				return true
-			}
 		}
 		result = append(result, s.nodeEntryToSummary(h, entry))
 		return true
 	})
 	return PreviewFilterResult{Nodes: result, ExcludedBy: excluded}, nil
+}
+
+// previewExclusionKey maps an admission reason onto the exclusion counter key of
+// the §2.1 preview. The tag and region criteria keep the legacy keys this
+// endpoint has always used; every other criterion is reported under its own
+// reason, so a caller can tell the new criteria apart.
+func previewExclusionKey(reason string) string {
+	switch reason {
+	case platform.ReasonTagFilter:
+		return PreviewExcludedRegex
+	case platform.ReasonRegionFilter:
+		return PreviewExcludedRegion
+	default:
+		return reason
+	}
+}
+
+// geoLookupFunc returns the GeoIP region lookup of this build, or nil when the
+// service has no GeoIP database.
+func (s *ControlPlaneService) geoLookupFunc() platform.GeoLookupFunc {
+	if s == nil || s.GeoIP == nil {
+		return nil
+	}
+	return s.GeoIP.Lookup
+}
+
+// PreviewScopeSampleNode is one sample entry of a preview: enough to recognise a
+// node in the UI without paying for a full NodeSummary.
+type PreviewScopeSampleNode struct {
+	NodeHash          string   `json:"node_hash"`
+	DisplayTag        string   `json:"display_tag,omitempty"`
+	Region            string   `json:"region,omitempty"`
+	Protocol          string   `json:"protocol,omitempty"`
+	IPTYPE            string   `json:"ip_type,omitempty"`
+	PurityBand        string   `json:"purity_band,omitempty"`
+	SubscriptionNames []string `json:"subscription_names"`
+}
+
+// PreviewScopeResult is the live preview of the platform node-selection form:
+// how many nodes the criteria would load, and what they look like.
+//
+// Matched counts the nodes admitted inside the scanned window. Scanned is how
+// many pool entries were evaluated and Truncated is set when the scan stopped at
+// previewScanLimit, in which case Matched is a lower bound ("at least N") and
+// the UI must say so.
+type PreviewScopeResult struct {
+	Matched    int                      `json:"matched"`
+	Scanned    int                      `json:"scanned"`
+	Truncated  bool                     `json:"truncated"`
+	Sample     []PreviewScopeSampleNode `json:"sample"`
+	ExcludedBy map[string]int           `json:"excluded_by"`
+}
+
+// PreviewPlatformScope evaluates one criteria spec against the live pool and
+// reports the bounded count plus a small sample.
+//
+// The count comes from platform.MatchNodeCriteria, the same predicate the
+// routable-view rebuild uses, so "匹配 N 个节点" is exactly what the platform
+// would load — never a second implementation of the filter.
+func (s *ControlPlaneService) PreviewPlatformScope(req PreviewFilterRequest) (PreviewScopeResult, error) {
+	if s == nil || s.Pool == nil {
+		return PreviewScopeResult{}, internal("preview platform scope", fmt.Errorf("service not initialized"))
+	}
+	criteria, svcErr := s.previewCriteria(req)
+	if svcErr != nil {
+		return PreviewScopeResult{}, svcErr
+	}
+
+	subLookup := s.Pool.MakeSubLookup()
+	var snap platform.QualitySnapshotReader
+	if projection := s.intelProjection(); projection != nil {
+		snap = projection
+	}
+	now := time.Now().UTC()
+	geoLookup := s.geoLookupFunc()
+
+	out := PreviewScopeResult{
+		Sample:     make([]PreviewScopeSampleNode, 0, previewSampleLimit),
+		ExcludedBy: make(map[string]int, 8),
+	}
+	s.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
+		if out.Scanned >= previewScanLimit {
+			out.Truncated = true
+			return false
+		}
+		out.Scanned++
+		if ok, reason := platform.MatchNodeCriteria(criteria, entry, subLookup, geoLookup, nil, snap, now); !ok {
+			out.ExcludedBy[reason]++
+			return true
+		}
+		out.Matched++
+		if len(out.Sample) < previewSampleLimit {
+			out.Sample = append(out.Sample, s.previewSampleNode(h, entry, geoLookup))
+		}
+		return true
+	})
+	return out, nil
+}
+
+// previewSampleNode renders one preview sample row. It reads only in-memory
+// state: the display tag, the egress region and the projected assessment.
+func (s *ControlPlaneService) previewSampleNode(h node.Hash, entry *node.NodeEntry, geoLookup platform.GeoLookupFunc) PreviewScopeSampleNode {
+	sample := PreviewScopeSampleNode{
+		NodeHash:   h.Hex(),
+		Protocol:   entry.Protocol,
+		Region:     entry.GetRegion(geoLookup),
+		IPTYPE:     intel.IPTypeName(intel.IPTypeUnknown),
+		PurityBand: intel.BandName(intel.BandUnknown),
+	}
+	if s.Pool != nil {
+		sample.DisplayTag = s.Pool.ResolveNodeDisplayTag(h)
+	}
+	if lite, ok := assessmentOfEntry(entry, s.intelProjection()); ok {
+		sample.IPTYPE = intel.IPTypeName(lite.IPType)
+		sample.PurityBand = intel.BandName(lite.Band)
+	}
+	if s.SubMgr != nil {
+		for _, subID := range entry.SubscriptionIDs() {
+			if sub := s.SubMgr.Lookup(subID); sub != nil {
+				sample.SubscriptionNames = append(sample.SubscriptionNames, sub.Name())
+			}
+		}
+	}
+	if sample.SubscriptionNames == nil {
+		sample.SubscriptionNames = []string{}
+	}
+	return sample
+}
+
+// assessmentOfEntry resolves the projected assessment of one node's egress IP.
+// It is the service-side twin of platform.assessmentOf, which is unexported.
+func assessmentOfEntry(entry *node.NodeEntry, snap platform.QualitySnapshotReader) (intel.AssessmentLite, bool) {
+	if snap == nil || entry == nil {
+		return intel.AssessmentLite{}, false
+	}
+	ip := entry.GetEgressIP()
+	if !ip.IsValid() {
+		return intel.AssessmentLite{}, false
+	}
+	return snap.Assessment(ip)
+}
+
+// PlatformFacetSubscription is one selectable subscription of the platform
+// node-selection form, with the number of pool nodes that currently reference it.
+type PlatformFacetSubscription struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Enabled   bool   `json:"enabled"`
+	NodeCount int    `json:"node_count"`
+}
+
+// PlatformNodeFacets is the inventory-derived option list of the platform
+// node-selection form. Every value here is a value the live pool actually
+// carries, so the operator can only pick criteria that can match something.
+//
+// The option sets are collected from the same bounded walk as the preview
+// (previewScanLimit entries); TotalNodes is the pool size, and Scanned reports
+// how many of them the option sets were derived from.
+type PlatformNodeFacets struct {
+	TotalNodes    int                         `json:"total_nodes"`
+	Scanned       int                         `json:"scanned"`
+	Truncated     bool                        `json:"truncated"`
+	Regions       []string                    `json:"regions"`
+	IPTypes       []string                    `json:"ip_types"`
+	PurityBands   []string                    `json:"purity_bands"`
+	Protocols     []string                    `json:"protocols"`
+	Subscriptions []PlatformFacetSubscription `json:"subscriptions"`
+}
+
+// PlatformNodeFacets reports the option lists the platform form offers.
+func (s *ControlPlaneService) PlatformNodeFacets() (PlatformNodeFacets, error) {
+	if s == nil || s.Pool == nil {
+		return PlatformNodeFacets{}, internal("platform node facets", fmt.Errorf("service not initialized"))
+	}
+	out := PlatformNodeFacets{
+		TotalNodes:  s.Pool.Size(),
+		Regions:     []string{},
+		IPTypes:     []string{},
+		PurityBands: []string{},
+		Protocols:   []string{},
+	}
+	geoLookup := s.geoLookupFunc()
+	snap := s.intelProjection()
+	regions := map[string]struct{}{}
+	ipTypes := map[string]struct{}{}
+	bands := map[string]struct{}{}
+	protocols := map[string]struct{}{}
+	subCounts := map[string]int{}
+
+	s.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
+		if out.Scanned >= previewScanLimit {
+			out.Truncated = true
+			return false
+		}
+		out.Scanned++
+		if region := entry.GetRegion(geoLookup); region != "" {
+			regions[region] = struct{}{}
+		}
+		if protocol := strings.TrimSpace(entry.Protocol); protocol != "" {
+			protocols[protocol] = struct{}{}
+		}
+		if lite, ok := assessmentOfEntry(entry, snap); ok {
+			ipTypes[intel.IPTypeName(lite.IPType)] = struct{}{}
+			bands[intel.BandName(lite.Band)] = struct{}{}
+		}
+		for _, subID := range entry.SubscriptionIDs() {
+			subCounts[subID]++
+		}
+		return true
+	})
+
+	out.Regions = sortedKeys(regions)
+	out.IPTypes = sortedKeys(ipTypes)
+	out.PurityBands = sortedKeys(bands)
+	out.Protocols = sortedKeys(protocols)
+
+	// Every registered subscription is offered, with the number of pool nodes
+	// that reference it: a subscription with node_count 0 is listed honestly
+	// instead of being hidden (its nodes may simply be absent right now).
+	if s.SubMgr != nil {
+		s.SubMgr.Range(func(id string, sub *subscription.Subscription) bool {
+			if sub == nil {
+				return true
+			}
+			out.Subscriptions = append(out.Subscriptions, PlatformFacetSubscription{
+				ID:        id,
+				Name:      sub.Name(),
+				Enabled:   sub.Enabled(),
+				NodeCount: subCounts[id],
+			})
+			return true
+		})
+	}
+	sort.Slice(out.Subscriptions, func(i, j int) bool {
+		if out.Subscriptions[i].Name == out.Subscriptions[j].Name {
+			return out.Subscriptions[i].ID < out.Subscriptions[j].ID
+		}
+		return out.Subscriptions[i].Name < out.Subscriptions[j].Name
+	})
+	return out, nil
+}
+
+// sortedKeys renders a set as a sorted slice.
+func sortedKeys(set map[string]struct{}) []string {
+	out := make([]string, 0, len(set))
+	for key := range set {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
 }

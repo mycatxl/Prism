@@ -8,7 +8,10 @@ import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatRelativeTime } from "../../lib/time";
 import { createIntelJob } from "../jobs/api";
-import { purityBands } from "../quality/presentation";
+import { IPTypeBadge } from "../quality/QualityDetails";
+import { purityBands, typeLabels } from "../quality/presentation";
+import type { QualitySummary } from "../quality/types";
+import { getRegionName } from "./regions";
 import type { NodeIntel } from "./types";
 
 // WP10 §4 node intel surface. The API field `intel` carries the prism-purity-v2
@@ -130,6 +133,65 @@ export function NodeIntelCell({ intel }: { intel?: NodeIntel | null }) {
       >
         {qualifier}
       </span>
+    </span>
+  );
+}
+
+/**
+ * Where a node's exit is and what kind of network it is: the two row labels the
+ * list carries besides its measurements.
+ *
+ * The location comes from the assessment — its country plus the city, or the
+ * colo when no city was resolved (`JP · Tokyo`, `JP · NRT`). A node that has no
+ * assessment yet falls back to the region its egress probe reported, so a node
+ * with an egress carries a location label even before it is assessed.
+ *
+ * The network type is the assessment's own `ip_type`, which the backend votes
+ * on: residential, mobile, business, wireless, datacenter, non_residential or
+ * conflicting (`internal/intel/assess/assess.go`). When the assessment carries
+ * no type of its own the quality evidence answers instead (`IPTypeBadge`), so the
+ * row never claims "类型未知" while a provider does know the answer.
+ *
+ * This is one cell of one line by construction: the grid's rows are a fixed
+ * 28px, so nothing here may wrap.
+ */
+export function NodeLabels({
+  intel,
+  region,
+  quality,
+}: {
+  intel?: NodeIntel | null;
+  region?: string;
+  quality?: QualitySummary | null;
+}) {
+  const { t } = useI18n();
+  const code = (intel?.country || region || "").toUpperCase();
+  const place = intel?.city || intel?.colo || "";
+  const ipType = intel?.ip_type || "";
+  const type =
+    ipType && ipType !== "unknown"
+      ? typeLabels[ipType as keyof typeof typeLabels]
+      : "";
+  const title =
+    [code ? getRegionName(code) : undefined, place, type ? t(type) : ""]
+      .filter(Boolean)
+      .join(" · ") || undefined;
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" title={title}>
+      <span className="readout shrink-0 font-medium text-ink">{code || "—"}</span>
+      {place && (
+        <>
+          <span aria-hidden className="shrink-0 text-ink-faint">
+            ·
+          </span>
+          <span className="min-w-0 truncate text-xs text-ink-soft">{place}</span>
+        </>
+      )}
+      {type ? (
+        <Badge tone={ipType === "conflicting" ? "warn" : "outline"}>{t(type)}</Badge>
+      ) : (
+        <IPTypeBadge summary={quality} />
+      )}
     </span>
   );
 }

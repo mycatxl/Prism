@@ -9,6 +9,7 @@ import { useAuthStore } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { useI18n } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { ThemeSwitcher } from "./ThemeSwitcher";
 import { QuickSearch } from "./QuickSearch";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
@@ -44,9 +45,23 @@ export function AppShell() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(
+  const [railCollapsed, setRailCollapsed] = useState(
     () => window.localStorage.getItem(RAIL_COLLAPSED_KEY) === "1",
   );
+  // A 232px rail on a laptop is a fifth of the screen. Below 1440 the rail folds to
+  // its icon width on its own, so navigation stays reachable and the data gets the
+  // room; above that the operator's own preference applies. Nobody's console is one
+  // device, so this is a width the layout reacts to rather than a reference viewport.
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia("(max-width: 1439px)").matches,
+  );
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 1439px)");
+    const onChange = (event: MediaQueryListEvent) => setNarrow(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  const collapsed = narrow || railCollapsed;
   const online = useSyncExternalStore(
     subscribeOnline,
     () => navigator.onLine,
@@ -77,7 +92,7 @@ export function AppShell() {
     : 0;
 
   const toggleRail = useCallback(() => {
-    setCollapsed((previous) => {
+    setRailCollapsed((previous) => {
       const next = !previous;
       window.localStorage.setItem(RAIL_COLLAPSED_KEY, next ? "1" : "0");
       return next;
@@ -126,7 +141,7 @@ export function AppShell() {
       >
         <span
           aria-hidden
-          className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-ink text-2xs font-semibold tracking-tight text-white"
+          className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-ink text-2xs font-semibold tracking-tight text-paper"
         >
           P
         </span>
@@ -135,20 +150,22 @@ export function AppShell() {
             <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
               Prism
             </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleRail}
-              className="hidden shrink-0 lg:inline-flex"
-              aria-label={t("收起导航")}
-            >
-              <PanelLeftClose size={15} />
-            </Button>
+            {!narrow && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={toggleRail}
+                className="hidden shrink-0 lg:inline-flex"
+                aria-label={t("收起导航")}
+              >
+                <PanelLeftClose size={15} />
+              </Button>
+            )}
           </>
         )}
       </div>
 
-      {collapsed && (
+      {collapsed && !narrow && (
         <Button
           variant="ghost"
           size="icon"
@@ -207,7 +224,10 @@ export function AppShell() {
           collapsed ? "flex flex-col items-center gap-1" : "flex items-center justify-between gap-2",
         )}
       >
-        <LanguageSwitcher collapsed={collapsed} />
+        <div className={cn("flex items-center gap-1", collapsed && "flex-col gap-1")}>
+          <LanguageSwitcher collapsed={collapsed} />
+          <ThemeSwitcher collapsed={collapsed} />
+        </div>
         <Button
           variant="ghost"
           size="icon"

@@ -14,4 +14,7 @@ export const NODES_TRANSLATIONS: Record<string, string> = {
     "Some filters cannot be applied to bulk intel; the actual scope may be wider.",
   "已创建情报任务（预计 {{count}} 个节点）":
     "Intelligence job created (about {{count}} nodes)",
+  // 节点行标签（NodesPage 的“地区 / 网络类型”列）。
+  "地区 / 网络类型": "Region / network type",
+  网络类型: "Network type",
 };

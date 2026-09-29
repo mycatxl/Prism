@@ -1,144 +1,217 @@
 /*
  * Prism design system.
  *
- * Concept: a calibration console. The subject is network egress — which address
- * traffic actually leaves from, and how clean that address is — so the interface
- * is built like measuring equipment: a bright bench top, graphite ink, and panels
- * that are clearly framed regions rather than a continuous wash of text.
+ * Concept: an operations console for network egress. The subject is measurement —
+ * which address traffic leaves from and how clean that address is — so the surface
+ * is built like a control room instrument rather than like a document: a dark
+ * ground, one accent hue, data that carries the light, and structure carried by
+ * panel frames and hairline rules.
  *
- * Where the numbers in this file come from (they are not preferences):
+ * Two themes, one token set. Every colour is a *primitive* (`--p-*`) defined twice,
+ * for `:root` (light) and `[data-theme="dark"]`, and the Tailwind utilities are
+ * bound to those primitives through `@theme inline`. That is the only reason a
+ * runtime theme switch costs one attribute instead of a second stylesheet.
  *
- *  - the panel / row / control geometry follows the scale Tabler, shadcn-admin and
- *    Ant Design converge on (panel header 44px, body row 32/28, cell padding 12/8,
- *    panel radius 8, shadow xs), because those are the only open templates that
- *    survive a data-dense operator workload;
- *  - the KPI anatomy follows Grafana's BigValue (value to unit ratio 2.5:1) and
- *    go-view's animated counter (tabular-nums, 800ms easeOutCubic on change);
- *  - the depth system is Tabler's elevation ladder, not an invention;
- *  - the 大屏 vocabulary that was deliberately NOT copied: laser-sweep SVG borders,
- *    radar decorations, tiled grid backgrounds, neon outer glows, gradient text,
- *    cyan-on-navy as the whole palette, 3D cone charts. Every production dashboard
- *    studied avoids them; they are what makes a screen look like a 2019 template.
+ * Neither theme is an inversion of the other. On a dark ground the ink has to clear
+ * 4.5:1 against a *near-black* panel, the washes have to sit between the panel and
+ * the state colour instead of above it, and a filled button needs dark text rather
+ * than white — white on a bright accent is 2.9:1 and fails. All three are measured
+ * by `scripts/check-contrast.mjs`, which checks both themes and fails the build.
  *
- * Two deliberate positions:
- *
- *  - There is no dark theme. The values here are read on a bench, in daylight,
- *    next to a terminal. A second theme would be a remap and would double every
- *    contrast decision, so the palette is authored once, for light.
- *  - Colour never communicates alone. Every state also carries a word, a shape or
- *    a position, because the status column is the first thing an operator scans.
+ * The 大屏 vocabulary that was studied and deliberately NOT copied: laser-sweep SVG
+ * borders, radar decorations, tiled grid backgrounds, neon outer glows, gradient
+ * text, 3D cone charts, stretched nine-slice frames. The structure is what was worth
+ * taking; the chrome is what makes a board look like a 2019 template.
  */
 
 @import "tailwindcss";
 
+/* ---- theme-bound tokens -------------------------------------------------- */
+@theme inline {
+  --color-paper: var(--p-canvas);
+  --color-paper-sunk: var(--p-sunk);
+  --color-paper-raised: var(--p-raised);
+  --color-paper-inset: var(--p-inset);
+  --color-rail: var(--p-rail);
+
+  --color-rule: var(--p-rule);
+  --color-rule-strong: var(--p-rule-strong);
+  --color-rule-faint: var(--p-rule-faint);
+  --color-panel-edge: var(--p-panel-edge);
+  --color-row-rule: var(--p-row-rule);
+
+  --color-ink: var(--p-ink);
+  --color-ink-soft: var(--p-ink-soft);
+  --color-ink-faint: var(--p-ink-faint);
+
+  --color-signal: var(--p-signal);
+  --color-signal-deep: var(--p-signal-deep);
+  --color-signal-wash: var(--p-signal-wash);
+  --color-live: var(--p-live);
+  --color-live-wash: var(--p-live-wash);
+  --color-warn: var(--p-warn);
+  --color-warn-wash: var(--p-warn-wash);
+  --color-alert: var(--p-alert);
+  --color-alert-wash: var(--p-alert-wash);
+  --color-accent: var(--p-accent);
+  --color-accent-deep: var(--p-accent-deep);
+  --color-accent-wash: var(--p-accent-wash);
+
+  /* Text that sits ON a filled state colour. It is a token, not a constant,
+     because a bright accent takes dark ink and a dark accent takes white. */
+  --color-on-accent: var(--p-on-accent);
+  --color-on-signal: var(--p-on-signal);
+  --color-on-alert: var(--p-on-alert);
+  --color-on-live: var(--p-on-live);
+
+  --color-series-1: var(--p-series-1);
+  --color-series-2: var(--p-series-2);
+  --color-series-3: var(--p-series-3);
+  --color-series-4: var(--p-series-4);
+  --color-series-5: var(--p-series-5);
+  --color-series-6: var(--p-series-6);
+  --color-chart-grid: var(--p-chart-grid);
+  --color-chart-axis: var(--p-chart-axis);
+
+  --shadow-xs: var(--p-shadow-xs);
+  --shadow-sm: var(--p-shadow-sm);
+  --shadow-md: var(--p-shadow-md);
+  --shadow-lg: var(--p-shadow-lg);
+}
+
+/* ---- the light theme ----------------------------------------------------- */
+:root {
+  --p-canvas: #f1f3f7;
+  --p-sunk: #e5e9f0;
+  --p-raised: #ffffff;
+  --p-inset: #f8fafc;
+  --p-rail: #e6eaf1;
+
+  --p-rule: #d1d7e0;
+  --p-rule-strong: #a4adbb;
+  --p-rule-faint: #e3e7ee;
+  --p-panel-edge: rgba(10, 15, 22, 0.12);
+  --p-row-rule: #eaeef3;
+
+  --p-ink: #0a0f16;
+  --p-ink-soft: #39434f;
+  --p-ink-faint: #566170;
+
+  --p-signal: #0a6b52;
+  --p-signal-deep: #06483a;
+  --p-signal-wash: #dcefe8;
+  --p-live: #0b5f8a;
+  --p-live-wash: #ddebf5;
+  --p-warn: #7d4a00;
+  --p-warn-wash: #f7ecd5;
+  --p-alert: #a32313;
+  --p-alert-wash: #f8e4e0;
+  --p-accent: #0b4fa8;
+  --p-accent-deep: #073a7d;
+  --p-accent-wash: #e2ebf9;
+
+  --p-on-accent: #ffffff;
+  --p-on-signal: #ffffff;
+  --p-on-alert: #ffffff;
+  --p-on-live: #ffffff;
+
+  --p-series-1: #0554bb;
+  --p-series-2: #03725c;
+  --p-series-3: #ba6e05;
+  --p-series-4: #dd2206;
+  --p-series-5: #6505d1;
+  --p-series-6: #059bd1;
+  --p-chart-grid: #e8ecf2;
+  --p-chart-axis: #5d6876;
+
+  --p-shadow-xs: 0 1px 2px 0 rgb(10 15 22 / 0.05);
+  --p-shadow-sm: 0 1px 3px 0 rgb(10 15 22 / 0.1), 0 1px 2px -1px rgb(10 15 22 / 0.06);
+  --p-shadow-md: 0 2px 4px -1px rgb(10 15 22 / 0.06), 0 4px 6px -1px rgb(10 15 22 / 0.08);
+  --p-shadow-lg: 0 4px 6px -2px rgb(10 15 22 / 0.05), 0 10px 15px -3px rgb(10 15 22 / 0.08);
+}
+
+/* ---- the dark theme ------------------------------------------------------ */
+/* Not an inversion: each value was solved for its own target contrast against
+   these exact surfaces. See scripts/check-contrast.mjs, which checks both. */
+[data-theme="dark"] {
+  --p-canvas: #0b1220;
+  --p-sunk: #0f1828;
+  --p-raised: #131d2f;
+  --p-inset: #0d1626;
+  --p-rail: #0a101c;
+
+  --p-rule: #374455;
+  --p-rule-strong: #4d5f78;
+  --p-rule-faint: #2b3544;
+  --p-panel-edge: rgba(255, 255, 255, 0.1);
+  --p-row-rule: #28313e;
+
+  --p-ink: #f1f3f7;
+  --p-ink-soft: #a5b2c3;
+  --p-ink-faint: #788aa1;
+
+  --p-signal: #2daa7d;
+  --p-signal-deep: #27926a;
+  --p-signal-wash: #0d3023;
+  --p-live: #36a1d6;
+  --p-live-wash: #0d2f3f;
+  --p-warn: #c88b23;
+  --p-warn-wash: #39270a;
+  --p-alert: #de7c71;
+  --p-alert-wash: #4f1912;
+  --p-accent: #6399e1;
+  --p-accent-deep: #3e82da;
+  --p-accent-wash: #0f2b4f;
+
+  /* Bright accent, dark text: white on these is 2.9:1. */
+  --p-on-accent: #08101c;
+  --p-on-signal: #08101c;
+  --p-on-alert: #08101c;
+  --p-on-live: #08101c;
+
+  --p-series-1: #236ec4;
+  --p-series-2: #238b72;
+  --p-series-3: #b9801e;
+  --p-series-4: #e67f6f;
+  --p-series-5: #c49ee7;
+  --p-series-6: #6ed2ea;
+  --p-chart-grid: #313c4d;
+  --p-chart-axis: #7a8ba2;
+
+  /* On a dark ground an edge separates a panel, not a shadow: a drop shadow
+     under a near-black surface is invisible at best and muddy at worst. */
+  --p-shadow-xs: none;
+  --p-shadow-sm: none;
+  --p-shadow-md: 0 8px 24px -8px rgb(0 0 0 / 0.6);
+  --p-shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.7);
+}
+
+/* ---- static scales ------------------------------------------------------- */
 @theme {
-  /* ---- surfaces -------------------------------------------------------- */
-  /* The bench top: neutral, faintly blue, never warm. Warm off-whites read as
-     paper stock, and this is a screen of live measurements. */
-  --color-paper: #f1f3f7;
-  /* Recessed: table headers, wells, the sunken half of a split view. */
-  --color-paper-sunk: #e5e9f0;
-  /* The sheet a panel is read on. */
-  --color-paper-raised: #ffffff;
-  /* Chart and map ground, one step below raised. */
-  --color-paper-inset: #f8fafc;
-  /* The chassis: navigation bars sit on a cooler layer than the content, so the
-     frame and the readout never read as one undifferentiated field. */
-  --color-rail: #e6eaf1;
-
-  /* ---- rules ----------------------------------------------------------- */
-  --color-rule: #d1d7e0;
-  --color-rule-strong: #a4adbb;
-  --color-rule-faint: #e3e7ee;
-  /* The 12% hairline panels use, so a framed region is not a drawn box. */
-  --color-panel-edge: rgba(10, 15, 22, 0.12);
-  /* Row separators inside a table. */
-  --color-row-rule: #eaeef3;
-
-  /* ---- ink ------------------------------------------------------------- */
-  /* Every step clears WCAG AA 4.5:1 on every surface above; scripts/check-contrast.mjs
-     proves it and fails the build if a change breaks it. */
-  --color-ink: #0a0f16;
-  --color-ink-soft: #39434f;
-  --color-ink-faint: #566170;
-
-  /* ---- signal: healthy, in good standing -------------------------------- */
-  --color-signal: #0a6b52;
-  --color-signal-deep: #06483a;
-  --color-signal-wash: #dcefe8;
-
-  /* ---- live: in flight, queued, moving ---------------------------------- */
-  --color-live: #0b5f8a;
-  --color-live-wash: #ddebf5;
-
-  /* ---- warn: degraded, stale, needs a look ------------------------------ */
-  --color-warn: #7d4a00;
-  --color-warn-wash: #f7ecd5;
-
-  /* ---- alert: risk, failure, blocked ------------------------------------ */
-  --color-alert: #a32313;
-  --color-alert-wash: #f8e4e0;
-
-  /* ---- accent: the interactive hue, and only that ------------------------ */
-  /* Actions, selection and focus. Kept distinct from `signal` so "healthy" and
-     "clickable" never look the same in a dense table. */
-  --color-accent: #0b4fa8;
-  --color-accent-deep: #073a7d;
-  --color-accent-wash: #e2ebf9;
-
-  /* ---- data series ------------------------------------------------------ */
-  /* A categorical sequence for charts. Two constraints shaped it, and both are
-     enforced by scripts/check-contrast.mjs:
-       - a chart line is a graphical object, so WCAG 1.4.11 asks for 3:1 against
-         the ground it is drawn on (not the 4.5:1 that body text needs);
-       - the sequence is spread across the *luminance* axis, not just the hue
-         axis, so the lines stay apart in greyscale — which is what a printed
-         screenshot, a colour-blind reader, and a 3-metre viewing distance all
-         fall back to. Adjacent luminances differ by at least 1.15:1.
-     Hue order is semantic (blue = primary series, teal = healthy, amber = warn,
-     red = alert), so do not reorder these without re-running the gate. */
-  --color-series-1: #0554bb;
-  --color-series-2: #03725c;
-  --color-series-3: #ba6e05;
-  --color-series-4: #dd2206;
-  --color-series-5: #6505d1;
-  --color-series-6: #059bd1;
-  /* Chart furniture. The axis colour is read as text, so it clears 4.5:1. */
-  --color-chart-grid: #e8ecf2;
-  --color-chart-axis: #5d6876;
-
-  /* ---- type ------------------------------------------------------------ */
-  /* One family for the interface, one for measurement. The mono is reserved for
-     values actually read as data — addresses, hashes, counts, latencies — never as
-     a costume for "technical". */
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
 
-  /* Fixed rem scale, not fluid: operators read at a consistent DPI, and a
-     clamp-sized heading that shrinks inside a column looks worse, not better.
-     Every step is at least 1.125 from its neighbour — a step a reader cannot see
-     is not a step, and three sizes inside a two-pixel band doing three different
-     jobs is what makes a dense panel read as flat. */
-  --text-2xs: 0.6875rem; /* 11px — units, indices, column heads */
-  --text-xs: 0.75rem; /* 12px — metadata, secondary lines */
-  --text-sm: 0.875rem; /* 14px — table body, controls */
-  --text-base: 1rem; /* 16px — UI default and prose */
-  --text-lg: 1.125rem; /* 18px — page titles */
-  --text-xl: 1.25rem; /* 20px — panel titles, KPI units */
-  --text-2xl: 1.5rem; /* 24px — the hero numeral */
-  --text-3xl: 1.875rem; /* 30px */
-  --text-4xl: 2.25rem; /* 36px */
+  /* Fixed rem scale, not fluid. Every step is at least 1.125 from its neighbour:
+     a step a reader cannot see is not a step, and three sizes inside a two-pixel
+     band doing three jobs is what makes a dense panel read as flat. */
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
 
-  /* ---- geometry -------------------------------------------------------- */
-  /* The 8px grid the whole console is laid out on, plus the two half steps that
-     dense controls need. */
   --spacing: 0.25rem;
   --radius-control: 4px;
   --radius-panel: 8px;
   --radius-chip: 999px;
 
-  /* Fixed chrome heights, referenced by the shell and by every page so the
-     console stays on one grid instead of drifting page to page. */
+  /* Chrome heights are ONE decision for the whole console, never a per-page one.
+     The rail width is deliberately absent here: it is set below, under a media
+     query, because a 232px rail on a 1200px laptop is 19% of the screen. */
   --shell-rail-w: 232px;
   --shell-rail-w-collapsed: 56px;
   --shell-bar-h: 48px;
@@ -155,22 +228,40 @@
   --tracking-data: -0.01em;
   --tracking-micro: 0.07em;
 
-  /* ---- elevation ------------------------------------------------------- */
-  /* Tabler's ladder. A panel gets xs — enough to lift it off the bench, not
-     enough to read as a shadow. Anything above sm is an overlay, never a peer. */
-  --shadow-xs: 0 1px 2px 0 rgb(10 15 22 / 0.05);
-  --shadow-sm: 0 1px 3px 0 rgb(10 15 22 / 0.1), 0 1px 2px -1px rgb(10 15 22 / 0.06);
-  --shadow-md: 0 2px 4px -1px rgb(10 15 22 / 0.06), 0 4px 6px -1px rgb(10 15 22 / 0.08);
-  --shadow-lg: 0 4px 6px -2px rgb(10 15 22 / 0.05), 0 10px 15px -3px rgb(10 15 22 / 0.08);
-
-  /* ---- motion ---------------------------------------------------------- */
   --ease-instrument: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-fast: 110ms;
   --dur-base: 170ms;
   --dur-slow: 240ms;
-  /* A live numeral rolls to its new value instead of jumping: at a glance the
-     movement itself says "this changed". */
   --dur-count: 800ms;
+}
+
+/* ---- responsive: no viewport is the reference viewport -------------------- */
+/* Nobody's console is one device. These rules are structural — the rail folds, the
+   grid scrolls instead of squeezing, the gutters step up with the room available —
+   rather than tuning font sizes to a screen. */
+:root {
+  --page-gutter: 12px;
+  --data-grid-min: 640px;
+  --shell-rail-w: 200px;
+}
+@media (min-width: 1024px) {
+  :root {
+    --page-gutter: 16px;
+    --shell-rail-w: 216px;
+  }
+}
+@media (min-width: 1440px) {
+  :root {
+    --page-gutter: 20px;
+    --shell-rail-w: 232px;
+    --data-grid-min: 720px;
+  }
+}
+@media (min-width: 2100px) {
+  :root {
+    --page-gutter: 28px;
+    --shell-rail-w: 248px;
+  }
 }
 
 @layer base {
@@ -183,6 +274,11 @@
   html {
     -webkit-text-size-adjust: 100%;
     background-color: var(--color-paper);
+    color-scheme: light;
+  }
+
+  html[data-theme="dark"] {
+    color-scheme: dark;
   }
 
   body {
@@ -213,8 +309,8 @@
     letter-spacing: -0.02em;
   }
 
-  /* Every value the operator compares is tabular: proportional digits make
-     columns of numbers impossible to scan. */
+  /* Every value the operator compares is tabular: proportional digits make columns
+     of numbers impossible to scan. */
   table,
   output,
   time,
@@ -249,17 +345,16 @@
     color: inherit;
   }
 
-  /* A visible focus ring is a quality floor, not a feature. */
   :focus-visible {
     outline: 2px solid var(--color-accent);
     outline-offset: 1px;
   }
 
-  /* Browser surfaces belong to the design system too: they are the cheapest
-     signal that a page was built rather than assembled. */
+  /* Browser surfaces belong to the design system too: the cheapest signal that a
+     page was built rather than assembled. */
   ::selection {
     background: var(--color-accent-wash);
-    color: var(--color-accent-deep);
+    color: var(--color-accent);
   }
 
   input,
@@ -279,7 +374,6 @@
 }
 
 @layer components {
-  /* --- rules: structure carried by lines, not by boxes ------------------ */
   .rule-t {
     border-top: 1px solid var(--color-rule);
   }
@@ -287,9 +381,8 @@
     border-bottom: 1px solid var(--color-rule);
   }
 
-  /* --- the panel: the console's one framing primitive ------------------- */
-  /* A 1px 12% edge plus the smallest elevation. The edge is what makes a panel a
-     region rather than a wash; the shadow is what keeps it off the bench. */
+  /* A panel is the console's one framing primitive: a region with a 1px edge and
+     the smallest step of elevation. A nested panel drops its frame. */
   .panel {
     background-color: var(--color-paper-raised);
     border: 1px solid var(--color-panel-edge);
@@ -297,17 +390,12 @@
     box-shadow: var(--shadow-xs);
   }
 
-  /* A panel nested inside another panel is a sub-region, so it drops the frame
-     entirely and shows only a hairline. Nested cards are the clearest tell of an
-     assembled interface. */
   .panel .panel {
     border-color: var(--color-rule-faint);
     border-radius: var(--radius-control);
     box-shadow: none;
   }
 
-  /* --- type roles ------------------------------------------------------- */
-  /* Secondary text: units, counts of things, helper lines. */
   .label {
     font-size: var(--text-xs);
     font-weight: 500;
@@ -315,9 +403,9 @@
     letter-spacing: 0.005em;
   }
 
-  /* Micro-caps: column heads and section markers. This is the one place small
-     type is tracked and capitalised, which is what lets a 14px data row read as
-     data rather than as a label. */
+  /* Micro-caps: column heads and section markers. The one place small type is
+     tracked and capitalised, which is what lets a 14px data row read as data
+     rather than as a label. */
   .micro {
     font-size: var(--text-2xs);
     font-weight: 600;
@@ -326,14 +414,12 @@
     color: var(--color-ink-faint);
   }
 
-  /* Values that are compared down a column. */
   .readout {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--tracking-data);
   }
 
-  /* --- status chip: the only fully rounded shape ------------------------ */
   .pill {
     display: inline-flex;
     align-items: center;
@@ -347,11 +433,14 @@
     white-space: nowrap;
   }
 
-  /* --- the data grid: fixed row heights, sticky head -------------------- */
-  /* Row height is a token, not a per-page decision: 32 comfortable, 28 compact.
-     A table whose rows are 36px on one page and 80px on another has no grid. */
+  /* ---- the data grid ---- */
+  /* A grid, not a stack of rows: fixed heights on a ladder, a sticky head, and
+     cells that never wrap. `min-width` is what makes a dense table scroll instead
+     of squeezing nine columns into a laptop; a truncated cell absorbs the slack
+     when there is slack. */
   .data-grid {
     width: 100%;
+    min-width: var(--data-grid-min);
     border-collapse: separate;
     border-spacing: 0;
   }
@@ -378,6 +467,7 @@
     padding: 0 12px;
     border-bottom: 1px solid var(--color-row-rule);
     vertical-align: middle;
+    white-space: nowrap;
   }
 
   .data-grid tbody tr:last-child td {
@@ -389,14 +479,14 @@
   }
 
   .data-grid tbody tr:hover {
-    background-color: color-mix(in srgb, var(--color-paper-sunk) 50%, transparent);
+    background-color: color-mix(in srgb, var(--color-paper-sunk) 60%, transparent);
   }
 
   .data-grid tbody tr[data-selected="true"] {
     background-color: var(--color-accent-wash);
   }
 
-  /* The first and last cells carry the panel's own padding so the grid lines up
+  /* The first and last cells carry the panel's own gutter so the grid lines up
      with the panel header instead of stopping short of it. */
   .data-grid thead th:first-child,
   .data-grid tbody td:first-child {
@@ -414,7 +504,6 @@
     height: var(--row-h-comfortable);
   }
 
-  /* A cell whose value is compared: mono, tabular, right-aligned. */
   .cell-num {
     text-align: right;
     font-family: var(--font-mono);
@@ -422,7 +511,6 @@
     letter-spacing: var(--tracking-data);
   }
 
-  /* --- interaction ------------------------------------------------------ */
   .action {
     transition:
       background-color var(--dur-fast) var(--ease-instrument),
@@ -432,14 +520,11 @@
 
   /* Panel actions stay visible. Hiding them at rest is a defect, not a refinement:
      a touch device never hovers, so an opacity-0 control is a control that does not
-     exist there. They are made quiet with the ghost button style instead, which
-     costs nothing and hides nothing. */
+     exist there. They are made quiet with the ghost button style instead. */
   .panel-actions {
     transition: opacity var(--dur-base) var(--ease-instrument);
   }
 
-  /* --- the live numeral ------------------------------------------------- */
-  /* A value that changed rolls to its new value instead of jumping. */
   .numeral {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -449,8 +534,6 @@
   }
 }
 
-/* Respect a stated preference for less motion: fewer and gentler animations,
-   never the removal of feedback that confirms an action. */
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

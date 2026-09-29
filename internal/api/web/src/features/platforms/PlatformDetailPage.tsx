@@ -46,6 +46,7 @@ import {
   toPlatformUpdateInput,
   type PlatformFormValues,
 } from "./formModel";
+import { NodeCriteriaFields } from "./NodeCriteriaFields";
 import { PlatformAccessPanel } from "./PlatformAccessPanel";
 import { PlatformMonitorPanel } from "./PlatformMonitorPanel";
 import type { PlatformLease } from "./types";
@@ -716,38 +717,12 @@ export function PlatformDetailPage() {
                         </Fieldset>
                       ) : null}
 
-                      <Fieldset
-                        label={t("节点名正则过滤规则")}
-                        htmlFor="detail-edit-regex"
-                        className="sm:col-span-2"
-                      >
-                        <Textarea
-                          id="detail-edit-regex"
-                          rows={6}
-                          placeholder={t("每行一条正则表达式，例如：\n\n香港\n日本\n*专线\n!过期\n!失效\n\n表示：选择【香港】或【日本】的【专线】节点，并排除包含【过期】或【失效】的节点。")}
-                          {...editForm.register("regex_filters_text")}
-                        />
-                        <div className="text-xs text-ink-faint">
-                          <div>{t("普通正则表达式表示满足其一，* 开头表示必须包含，! 开头表示排除。")}</div>
-                          <div>{t("技巧：^<订阅名>/ 可筛选来自该订阅的节点。")}</div>
-                        </div>
-                      </Fieldset>
-
-                      <Fieldset
-                        label={t("地区过滤规则")}
-                        htmlFor="detail-edit-region"
-                        className="sm:col-span-2"
-                      >
-                        <Textarea
-                          id="detail-edit-region"
-                          rows={6}
-                          placeholder={t("每行一条，如 hk / us / !hk")}
-                          {...editForm.register("region_filters_text")}
-                        />
-                        <p className="text-xs text-ink-faint">
-                          {t("支持反选：以 ! 开头可排除地区（如 !hk）。可与正选混用，最终结果为“先正选再排除”。")}
-                        </p>
-                      </Fieldset>
+                      {/* Same criteria editor as the create form: AND across
+                          criteria, OR inside one criterion's value list, with the
+                          live "匹配 N 个节点" preview. */}
+                      <div className="sm:col-span-2">
+                        <NodeCriteriaFields form={editForm} idPrefix="detail-edit" />
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 border-t border-rule pt-3">

@@ -307,9 +307,9 @@ func TestImportResinMigratesAndReportsSummary(t *testing.T) {
 	assertMode0600(t, statePath)
 	assertMode0600(t, cachePath)
 
-	// Prism migrations state 000010..000014 / cache 000002 ran during the import.
-	if got := databaseIntValue(t, statePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 14 {
-		t.Fatalf("state schema_migrations version = %d, want 14", got)
+	// Prism migrations state 000010..000015 / cache 000002 ran during the import.
+	if got := databaseIntValue(t, statePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 15 {
+		t.Fatalf("state schema_migrations version = %d, want 15", got)
 	}
 	if got := databaseIntValue(t, cachePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 2 {
 		t.Fatalf("cache schema_migrations version = %d, want 2", got)

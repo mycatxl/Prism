@@ -5,20 +5,35 @@ import type {
   Platform,
   PlatformCreateInput,
   PlatformLease,
+  PlatformNodeFacets,
+  PlatformScopePreview,
+  PlatformScopeSpec,
   PlatformUpdateInput,
 } from "./types";
 
 const basePath = "/api/v1/platforms";
 
-type ApiPlatform = Omit<Platform, "regex_filters" | "region_filters"> & {
+type ApiPlatform = Omit<
+  Platform,
+  "regex_filters" | "region_filters" | "ip_types" | "purity_bands" | "subscription_filters" | "protocols"
+> & {
   regex_filters?: string[] | null;
   region_filters?: string[] | null;
+  ip_types?: string[] | null;
+  purity_bands?: string[] | null;
+  subscription_filters?: string[] | null;
+  protocols?: string[] | null;
   routable_node_count?: number | null;
   reverse_proxy_miss_action?: Platform["reverse_proxy_miss_action"] | null;
   reverse_proxy_empty_account_behavior?: Platform["reverse_proxy_empty_account_behavior"] | null;
   reverse_proxy_fixed_account_header?: string | null;
   passive_circuit_breaker_disabled?: boolean | null;
 };
+
+/** normalizeStringList keeps a missing or null list an empty list. */
+function normalizeStringList(raw: string[] | null | undefined): string[] {
+  return Array.isArray(raw) ? raw.filter((value): value is string => typeof value === "string") : [];
+}
 
 type ApiPlatformLease = Partial<PlatformLease>;
 
@@ -33,8 +48,12 @@ function normalizePlatform(raw: ApiPlatform): Platform {
   return {
     ...raw,
     reverse_proxy_miss_action: parseMissAction(raw.reverse_proxy_miss_action),
-    regex_filters: Array.isArray(raw.regex_filters) ? raw.regex_filters : [],
-    region_filters: Array.isArray(raw.region_filters) ? raw.region_filters : [],
+    regex_filters: normalizeStringList(raw.regex_filters),
+    region_filters: normalizeStringList(raw.region_filters),
+    ip_types: normalizeStringList(raw.ip_types),
+    purity_bands: normalizeStringList(raw.purity_bands),
+    subscription_filters: normalizeStringList(raw.subscription_filters),
+    protocols: normalizeStringList(raw.protocols),
     routable_node_count: typeof raw.routable_node_count === "number" ? raw.routable_node_count : 0,
     reverse_proxy_empty_account_behavior:
       raw.reverse_proxy_empty_account_behavior === "RANDOM" ||
@@ -116,6 +135,51 @@ export async function updatePlatform(id: string, input: PlatformUpdateInput): Pr
     body: input,
   });
   return normalizePlatform(data);
+}
+
+/**
+ * listPlatformNodeFacets returns the option lists of the platform form, derived
+ * from the live node pool (every value is one the pool actually carries).
+ */
+export async function listPlatformNodeFacets(): Promise<PlatformNodeFacets> {
+  const data = await apiRequest<PlatformNodeFacets>(`${basePath}/node-facets`);
+  return {
+    total_nodes: typeof data.total_nodes === "number" ? data.total_nodes : 0,
+    scanned: typeof data.scanned === "number" ? data.scanned : 0,
+    truncated: Boolean(data.truncated),
+    regions: normalizeStringList(data.regions),
+    ip_types: normalizeStringList(data.ip_types),
+    purity_bands: normalizeStringList(data.purity_bands),
+    protocols: normalizeStringList(data.protocols),
+    subscriptions: Array.isArray(data.subscriptions)
+      ? data.subscriptions.map((sub) => ({
+          id: String(sub.id ?? ""),
+          name: String(sub.name ?? ""),
+          enabled: Boolean(sub.enabled),
+          node_count: typeof sub.node_count === "number" ? sub.node_count : 0,
+        }))
+      : [],
+  };
+}
+
+/**
+ * previewPlatformScope asks the backend how many nodes the given criteria would
+ * load. The count comes from the same admission predicate the routable-view
+ * rebuild uses, so it is exactly what the platform would load; `truncated` says
+ * the bounded scan stopped early and the count is a lower bound.
+ */
+export async function previewPlatformScope(spec: PlatformScopeSpec): Promise<PlatformScopePreview> {
+  const data = await apiRequest<PlatformScopePreview>(`${basePath}/preview-scope`, {
+    method: "POST",
+    body: { platform_spec: spec },
+  });
+  return {
+    matched: typeof data.matched === "number" ? data.matched : 0,
+    scanned: typeof data.scanned === "number" ? data.scanned : 0,
+    truncated: Boolean(data.truncated),
+    sample: Array.isArray(data.sample) ? data.sample : [],
+    excluded_by: data.excluded_by ?? {},
+  };
 }
 
 export async function deletePlatform(id: string): Promise<void> {

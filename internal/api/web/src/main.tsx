@@ -1,3 +1,8 @@
+import { initTheme } from "./lib/theme";
+
+// The ground is set before the first paint so a dark console never flashes white.
+initTheme();
+
 import "@fontsource/ibm-plex-sans/latin-400.css";
 import "@fontsource/ibm-plex-sans/latin-500.css";
 import "@fontsource/ibm-plex-sans/latin-600.css";
