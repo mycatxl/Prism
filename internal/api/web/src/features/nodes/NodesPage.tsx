@@ -27,12 +27,19 @@ import {
 import { Badge, type BadgeProps } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import {
+  Panel,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  PanelToolbar,
+  SectionTitle,
+} from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { SectionTitle } from "../../components/ui/Panel";
 import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
-import { TBody, TD, TDNum, TH, THead, TR, Table, TableWrap } from "../../components/ui/Table";
+import { TBody, TD, TDClip, TDNum, TH, THead, TR, Table, TableWrap } from "../../components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
@@ -367,76 +374,92 @@ export function NodesPage() {
       update("page", String(Math.max(0, Math.min(totalPages - 1, value - 1))));
   };
   return (
-    <section className="mx-auto w-full max-w-[1600px] px-4 py-4 lg:px-6">
+    <Page bleed>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      <header className="flex flex-wrap items-start justify-between gap-3 pb-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold">{t("节点池")}</h1>
-          <p className="mt-1 max-w-[80ch] text-sm text-ink-soft">{t("按线路查看健康，按出口查看质量。")}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Button asChild variant="secondary">
-            <Link to="/system-config?category=quality">
-              <ShieldCheck size={15} />
-              {t("数据源与额度")}
-            </Link>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            title={t("刷新")}
-            aria-label={t("刷新")}
-            disabled={view === "nodes" && nodesQuery.isFetching}
-            onClick={refresh}
-          >
-            <RefreshCw
-              size={16}
-              className={nodesQuery.isFetching ? "animate-spin" : undefined}
-            />
-          </Button>
-          <Button asChild variant="secondary">
-            <Link to="/subscriptions?create=1">{t("导入节点")}</Link>
-          </Button>
-        </div>
-      </header>
-
-      <Tabs value={view} onValueChange={(next) => changeView(next === "exits" ? "exits" : "nodes")}>
-        <TabsList>
-          <TabsTrigger value="nodes">
-            <span className="inline-flex items-center gap-1.5">
-              <Network size={14} aria-hidden />
-              {t("节点线路")}
-            </span>
-          </TabsTrigger>
-          <TabsTrigger value="exits">
-            <span className="inline-flex items-center gap-1.5">
-              <Globe2 size={14} aria-hidden />
-              {t("出口记录")}
-            </span>
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="exits" className="pt-3">
-          <ExitRecordsPanel />
-        </TabsContent>
-
-        <TabsContent value="nodes" className="space-y-3 pt-3">
-          <ReadoutStrip className="grid-cols-2">
-            <ReadoutCell>
-              <Readout
+      <Tabs
+        className="flex min-h-full min-w-0 flex-1 flex-col"
+        value={view}
+        onValueChange={(next) => changeView(next === "exits" ? "exits" : "nodes")}
+      >
+        <PageHeader
+          title={t("节点池")}
+          description={t("按线路查看健康，按出口查看质量。")}
+          meta={
+            <>
+              <PageMeta
                 label={t("节点总数")}
                 value={nodesQuery.data ? nodesQuery.data.total.toLocaleString() : "--"}
               />
-            </ReadoutCell>
-            <ReadoutCell>
-              <Readout
+              <PageMeta
                 label={t("独立出口")}
-                value={nodesQuery.data ? nodesQuery.data.unique_egress_ips.toLocaleString() : "--"}
+                value={
+                  nodesQuery.data ? nodesQuery.data.unique_egress_ips.toLocaleString() : "--"
+                }
               />
-            </ReadoutCell>
-          </ReadoutStrip>
+            </>
+          }
+          actions={
+            <>
+              <Button asChild variant="secondary">
+                <Link to="/system-config?category=quality">
+                  <ShieldCheck size={15} />
+                  {t("数据源与额度")}
+                </Link>
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                title={t("刷新")}
+                aria-label={t("刷新")}
+                disabled={view === "nodes" && nodesQuery.isFetching}
+                onClick={refresh}
+              >
+                <RefreshCw
+                  size={16}
+                  className={nodesQuery.isFetching ? "animate-spin" : undefined}
+                />
+              </Button>
+              <Button asChild variant="secondary">
+                <Link to="/subscriptions?create=1">{t("导入节点")}</Link>
+              </Button>
+            </>
+          }
+          tabs={
+            <TabsList>
+              <TabsTrigger value="nodes">
+                <span className="inline-flex items-center gap-1.5">
+                  <Network size={14} aria-hidden />
+                  {t("节点线路")}
+                </span>
+              </TabsTrigger>
+              <TabsTrigger value="exits">
+                <span className="inline-flex items-center gap-1.5">
+                  <Globe2 size={14} aria-hidden />
+                  {t("出口记录")}
+                </span>
+              </TabsTrigger>
+            </TabsList>
+          }
+        />
 
-          <div className="flex flex-wrap items-center gap-2">
+        <TabsContent
+          value="exits"
+          className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5"
+        >
+          <ExitRecordsPanel />
+        </TabsContent>
+
+        <TabsContent
+          value="nodes"
+          className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5"
+        >
+          <PurityGuide />
+
+          {/* 列表自身的筛选与分页都归这个 Panel：工具条在上，表格与
+              空/错误状态在面板体内，分页落在 PanelFooter。 */}
+          <Panel className="flex min-w-0 flex-col">
+            <PanelHeader title={t("节点线路")} />
+            <PanelToolbar>
             <div className="relative w-full min-w-48 sm:w-64">
               <Search
                 size={14}
@@ -518,9 +541,9 @@ export function NodesPage() {
                 <Link to="/jobs">{t("查看检测任务")}</Link>
               </Button>
             ) : null}
-          </div>
+            </PanelToolbar>
 
-          <div className="flex flex-wrap items-center gap-2">
+            <PanelToolbar>
             <Select
               aria-label={t("IP 类型")}
               className={selectClass}
@@ -595,13 +618,11 @@ export function NodesPage() {
               <ShieldCheck size={13} aria-hidden />
               {t("质量按出口 IP 共享")}
             </span>
-          </div>
+            </PanelToolbar>
 
-          <PurityGuide />
-
-          {advanced && (
+            {advanced && (
             <div
-              className="grid grid-cols-1 gap-x-4 gap-y-3 border-t border-rule pt-3 sm:grid-cols-2 lg:grid-cols-4"
+              className="grid grid-cols-1 gap-x-4 gap-y-3 border-b border-rule-faint px-4 py-3 sm:grid-cols-2 lg:grid-cols-4"
               id="node-filters"
             >
               <Fieldset label={t("平台")}>
@@ -789,7 +810,7 @@ export function NodesPage() {
           )}
 
           {!advanced && numberOfFilters > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-rule pt-2 text-xs text-ink-soft">
+            <div className="flex flex-wrap items-center gap-2 border-b border-rule-faint px-4 py-1.5 text-xs text-ink-soft">
               <span>
                 {t("已应用筛选")} <span className="readout">{numberOfFilters}</span>
               </span>
@@ -806,42 +827,51 @@ export function NodesPage() {
             </div>
           )}
 
-          {nodesQuery.isLoading && <LoadingState />}
+          {nodesQuery.isLoading && (
+            <PanelBody>
+              <LoadingState />
+            </PanelBody>
+          )}
           {nodesQuery.isError && (
-            <ErrorState
-              message={t("数据暂时不可用")}
-              onRetry={() => void nodesQuery.refetch()}
-            />
+            <PanelBody>
+              <ErrorState
+                message={t("数据暂时不可用")}
+                onRetry={() => void nodesQuery.refetch()}
+              />
+            </PanelBody>
           )}
           {!nodesQuery.isLoading && !nodesQuery.isError && nodes.length === 0 && (
-            <EmptyState
-              title={t(
-                keyword || mode !== "all" || numberOfFilters
-                  ? "没有匹配的节点"
-                  : "还没有节点",
-              )}
-              action={
-                <div className="flex flex-wrap items-center justify-center gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={() => setParams({}, { replace: true })}
-                  >
-                    {t("清除筛选")}
-                  </Button>
-                  <Button asChild>
-                    <Link to="/subscriptions?create=1">{t("添加订阅")}</Link>
-                  </Button>
-                </div>
-              }
-            />
+            <PanelBody>
+              <EmptyState
+                title={t(
+                  keyword || mode !== "all" || numberOfFilters
+                    ? "没有匹配的节点"
+                    : "还没有节点",
+                )}
+                action={
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <Button
+                      variant="secondary"
+                      onClick={() => setParams({}, { replace: true })}
+                    >
+                      {t("清除筛选")}
+                    </Button>
+                    <Button asChild>
+                      <Link to="/subscriptions?create=1">{t("添加订阅")}</Link>
+                    </Button>
+                  </div>
+                }
+              />
+            </PanelBody>
           )}
 
           {nodes.length > 0 && (
-            <TableWrap className="border-y border-rule" aria-busy={nodesQuery.isFetching}>
+            <TableWrap aria-busy={nodesQuery.isFetching}>
               <Table className="min-w-[920px]">
                 <THead>
                   <TR>
                     {sortableTH("tag", "节点名称")}
+                    <TH>{t("状态")}</TH>
                     {sortableTH("region", "出口 / 类型")}
                     {sortableTH("purity_score", "纯净度", "prism-purity-v2")}
                     <TH className="w-auto">
@@ -856,81 +886,68 @@ export function NodesPage() {
                   {nodes.map((node) => {
                     const state = status(node);
                     const inventory = protocolLabels[node.protocol || ""];
+                    // 每个节点只占一行：协议、来源订阅与短哈希退到 title，状态单独成列，
+                    // 这样再长的标签也撑不高行高。
+                    const subtitle = [
+                      inventory,
+                      node.tags[0]?.subscription_name ?? node.node_hash.slice(0, 12),
+                      node.tags.length > 1 ? `+${node.tags.length - 1}` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    const native = node.quality?.assessment?.native;
+                    const nativeLabel =
+                      native === null || native === undefined
+                        ? ""
+                        : t(native ? "原生 IP" : "广播 IP");
                     return (
                       <TR key={node.node_hash} selected={selected === node.node_hash}>
-                        <TD className="max-w-0">
+                        <TDClip title={subtitle}>
                           <button
                             type="button"
-                            className="flex w-full min-w-0 items-start gap-2 text-left"
+                            className="flex w-full min-w-0 items-center gap-2 text-left"
                             onClick={() => open(node.node_hash)}
                           >
-                            <Network
-                              size={15}
-                              aria-hidden
-                              className="mt-0.5 shrink-0 text-ink-faint"
-                            />
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium text-ink">
-                                {nameOf(node)}
-                              </span>
-                              <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-ink-faint">
-                                <Badge tone={state.tone} dot>
-                                  {t(state.label)}
-                                </Badge>
-                                {inventory && <span>{inventory}</span>}
-                                {node.tags[0]?.subscription_name ? (
-                                  <span>{node.tags[0].subscription_name}</span>
-                                ) : (
-                                  <span className="readout">
-                                    {node.node_hash.slice(0, 12)}
-                                  </span>
-                                )}
-                                {node.tags.length > 1 && (
-                                  <span className="readout">+{node.tags.length - 1}</span>
-                                )}
-                              </span>
-                            </span>
+                            <Network size={14} aria-hidden className="shrink-0 text-ink-faint" />
+                            <span className="truncate font-medium text-ink">{nameOf(node)}</span>
                           </button>
-                        </TD>
+                        </TDClip>
                         <TD>
-                          <div className="flex min-w-0 flex-col items-start gap-1">
-                            <span className="readout font-medium text-ink">
+                          <Badge tone={state.tone} dot>
+                            {t(state.label)}
+                          </Badge>
+                        </TD>
+                        <TDClip title={nativeLabel || undefined}>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span className="readout truncate font-medium text-ink">
                               {node.egress_ip || "—"}
                             </span>
-                            <span className="flex flex-wrap items-center gap-1.5">
-                              <IPTypeBadge summary={node.quality} />
-                              {node.region && (
-                                <span
-                                  className="readout text-2xs text-ink-soft"
-                                  title={getRegionName(node.region.toUpperCase())}
-                                >
-                                  {node.region.toUpperCase()}
-                                </span>
-                              )}
-                            </span>
-                            {node.quality?.assessment?.native !== null &&
-                              node.quality?.assessment?.native !== undefined && (
-                                <span className="text-2xs text-ink-faint">
-                                  {t(node.quality.assessment.native ? "原生 IP" : "广播 IP")}
-                                </span>
-                              )}
-                          </div>
-                        </TD>
-                        <TD>
+                            <IPTypeBadge summary={node.quality} />
+                            {node.region && (
+                              <span
+                                className="readout shrink-0 text-2xs text-ink-soft"
+                                title={getRegionName(node.region.toUpperCase())}
+                              >
+                                {node.region.toUpperCase()}
+                              </span>
+                            )}
+                          </span>
+                        </TDClip>
+                        <TDClip>
                           <NodeIntelCell intel={node.intel} />
-                        </TD>
-                        <TD>
-                          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                        </TDClip>
+                        <TDClip>
+                          {/* 两个徽标组件各自 flex-wrap；这里强制单行，行高才是一个 token。 */}
+                          <span className="flex min-w-0 items-center gap-1.5 [&>span]:flex-nowrap">
                             <NetworkSignals summary={node.quality} />
                             {node.quality?.assessment?.verdict &&
                               node.quality.assessment.verdict !== "pending" && (
                                 <VerdictBadge summary={node.quality} />
                               )}
-                          </div>
-                        </TD>
+                          </span>
+                        </TDClip>
                         <TDNum>
-                          {node.reference_latency_ms !== undefined &&
-                          state.tone === "signal" ? (
+                          {node.reference_latency_ms !== undefined && state.tone === "signal" ? (
                             <span className="readout">
                               {Math.round(node.reference_latency_ms) + " ms"}
                             </span>
@@ -957,7 +974,7 @@ export function NodesPage() {
           )}
 
           {nodesQuery.data && (
-            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule py-2">
+            <PanelFooter className="justify-between">
               <p className="readout text-xs text-ink-soft">
                 {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
                   page: currentPage + 1,
@@ -1023,8 +1040,9 @@ export function NodesPage() {
                   <ChevronRight size={16} />
                 </Button>
               </div>
-            </div>
+            </PanelFooter>
           )}
+          </Panel>
         </TabsContent>
       </Tabs>
 
@@ -1232,6 +1250,6 @@ export function NodesPage() {
           </div>
         </Sheet>
       )}
-    </section>
+    </Page>
   );
 }

@@ -83,46 +83,54 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
   );
 }
 
-/** Compact purity cell of the node list table. */
+/**
+ * Compact purity cell of the node list table.
+ *
+ * 单元格只有一行：主值是纯度 Badge，置信度/评估时间等限定信息跟在后面并被
+ * truncate 截断，不再让一行内容撑高整张表。
+ */
 export function NodeIntelCell({ intel }: { intel?: NodeIntel | null }) {
   const { t } = useI18n();
   const state = intel?.state || "unassessed";
   if (state === "unassessed") {
     return (
-      <div className="flex min-w-0 flex-col items-start gap-1">
+      <span className="flex min-w-0 items-center gap-1.5" title={t("等待纯净度评估")}>
         <Badge tone="neutral" dot>
           {t(stateLabels.unassessed)}
         </Badge>
-        <span className="text-2xs text-ink-faint">{t("等待纯净度评估")}</span>
-      </div>
+      </span>
     );
   }
   if (state === "pending" || state === "unsupported") {
     const pending = state === "pending";
     return (
-      <div className="flex min-w-0 flex-col items-start gap-1">
-        <Badge tone={pending ? "live" : "neutral"} dot={pending}>
-          {t(stateLabels[state])}
-        </Badge>
-      </div>
+      <Badge tone={pending ? "live" : "neutral"} dot={pending}>
+        {t(stateLabels[state])}
+      </Badge>
     );
   }
   const band = purityBands.find((item) => item.id === intel?.purity_band);
   const score = typeof intel?.purity_score === "number" ? intel.purity_score : null;
+  const qualifier = [
+    t(confidenceLabels[intel?.confidence || "none"]),
+    intel?.assessed_at ? formatRelativeTime(intel.assessed_at) : "",
+    state === "stale" ? t(stateLabels.stale) : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
-    <div className="flex min-w-0 flex-col items-start gap-1">
+    <span className="flex min-w-0 items-center gap-1.5">
       <Badge tone={bandTones[band?.variant ?? ""] ?? "neutral"}>
         {score !== null && <span className="readout font-semibold">{score}</span>}
         {t(band?.label || "评级未知")}
       </Badge>
-      <span className="flex flex-wrap items-center gap-1.5 text-2xs text-ink-faint">
-        <span>{t(confidenceLabels[intel?.confidence || "none"])}</span>
-        {intel?.assessed_at && (
-          <span className="readout">{formatRelativeTime(intel.assessed_at)}</span>
-        )}
-        {state === "stale" && <span className="text-warn">{t(stateLabels.stale)}</span>}
+      <span
+        className={`min-w-0 truncate text-2xs ${state === "stale" ? "text-warn" : "text-ink-faint"}`}
+        title={qualifier}
+      >
+        {qualifier}
       </span>
-    </div>
+    </span>
   );
 }
 
@@ -181,7 +189,7 @@ export function NodeIntelPanel({ intel, nodeHash, ready, notify }: {
     return (
       <div className="space-y-3">
         {actions}
-        <p className="max-w-[80ch] text-sm leading-relaxed text-ink-soft">
+        <p className="max-w-[68ch] text-sm leading-relaxed text-ink-soft">
           {t("该节点还没有纯净度评估，运行一次节点检测后即可看到评分。")}
         </p>
       </div>

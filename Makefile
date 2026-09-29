@@ -65,6 +65,7 @@ verify: lint test test-race protocol-matrix test-web
 # test would.
 test-web:
 	$(NPM) --prefix $(WEB_DIR) run test:config
+	$(NPM) --prefix $(WEB_DIR) run check:types
 	$(NPM) --prefix $(WEB_DIR) run check:contrast
 
 # The browser-driven checks. They need Playwright's browser binaries, which no

@@ -6,11 +6,12 @@ import { useForm, useWatch } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
-import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useToast } from "../../hooks/useToast";
@@ -80,7 +81,7 @@ function PageNavigator({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule px-3 py-2">
+    <PanelFooter className="justify-between gap-x-4 gap-y-2">
       <p className="text-xs text-ink-soft">
         {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -147,7 +148,7 @@ function PageNavigator({
           <ChevronRight size={16} />
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -226,179 +227,178 @@ export function PlatformPage() {
 
   return (
     <TooltipProvider>
-      <section className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-6">
-        <header className="pb-3">
-          <h1 className="text-2xl font-semibold">{t("平台管理")}</h1>
-        </header>
+      <Page bleed>
+        <PageHeader
+          title={t("平台管理")}
+          description={t("导入资源，设置筛选规则，查看运行状态。")}
+          meta={<PageMeta label={t("平台")} value={totalPlatforms.toLocaleString()} />}
+          actions={
+            <>
+              <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+                <Plus size={14} />
+                {t("新建")}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => platformsQuery.refetch()}
+                disabled={platformsQuery.isFetching}
+                aria-label={t("刷新")}
+                title={t("刷新")}
+              >
+                <RefreshCw size={15} className={cn(platformsQuery.isFetching && "animate-spin")} />
+              </Button>
+            </>
+          }
+        />
 
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-        <Panel>
-          <PanelHeader
-            title={t("平台列表")}
-            description={t("共 {{count}} 个平台", { count: totalPlatforms })}
-            actions={
-              <>
-                <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                  <Plus size={14} />
-                  {t("新建")}
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => platformsQuery.refetch()}
-                  disabled={platformsQuery.isFetching}
-                  aria-label={t("刷新")}
-                  title={t("刷新")}
-                >
-                  <RefreshCw size={15} className={cn(platformsQuery.isFetching && "animate-spin")} />
-                </Button>
-              </>
-            }
-          />
+        <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+          <Panel className="flex min-w-0 flex-col">
+            <PanelHeader
+              title={t("平台列表")}
+              description={t("共 {{count}} 个平台", { count: totalPlatforms })}
+            />
 
-          <div className="flex flex-wrap items-center gap-2 border-b border-rule px-3 py-2">
-            <div className="relative w-full sm:w-64">
-              <label htmlFor="platform-search" className="sr-only">
-                {t("搜索平台")}
-              </label>
-              <Search
-                size={14}
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+            <PanelToolbar>
+              <div className="relative w-full sm:w-64">
+                <label htmlFor="platform-search" className="sr-only">
+                  {t("搜索平台")}
+                </label>
+                <Search
+                  size={14}
+                  aria-hidden
+                  className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+                />
+                <Input
+                  id="platform-search"
+                  placeholder={t("搜索平台")}
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setPage(0);
+                  }}
+                  className="h-7 pl-7 text-xs"
+                />
+              </div>
+            </PanelToolbar>
+
+            {platformsQuery.isLoading ? (
+              <PanelBody>
+                <LoadingState label={t("正在加载")} />
+              </PanelBody>
+            ) : platformsQuery.isError ? (
+              <PanelBody>
+                <ErrorState
+                  onRetry={() => void platformsQuery.refetch()}
+                  message={
+                    <>
+                      <span className="font-medium">{t("数据暂时不可用")}</span>
+                      <p className="mt-0.5">{t("请检查连接后重试。")}</p>
+                    </>
+                  }
+                />
+              </PanelBody>
+            ) : platforms.length === 0 ? (
+              <PanelBody>
+                <EmptyState
+                  title={t("没有匹配的平台")}
+                  hint={t("共 {{count}} 个平台", { count: totalPlatforms })}
+                  action={
+                    <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+                      <Plus size={14} />
+                      {t("新建")}
+                    </Button>
+                  }
+                />
+              </PanelBody>
+            ) : (
+              <TableWrap>
+                <Table>
+                  <caption className="sr-only">{t("平台列表")}</caption>
+                  <THead>
+                    <TR className="hover:bg-transparent">
+                      <TH>{t("平台")}</TH>
+                      <TH>{t("标签规则")}</TH>
+                      <TH>{t("地区")}</TH>
+                      <TH>{t("策略")}</TH>
+                      <TH className="text-right">{t("可用节点")}</TH>
+                      <TH className="text-right">{t("租约时长")}</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {platforms.map((platform) => {
+                      const open = () => navigate(`/platforms/${platform.id}`);
+                      const policy = t(
+                        platform.id === ZERO_UUID
+                          ? "内置平台"
+                          : allocationPolicyLabel[platform.allocation_policy],
+                      );
+                      const tagRules = platform.regex_filters.join("  ");
+                      const regions = platform.region_filters.join(" / ").toUpperCase();
+                      return (
+                        <TR
+                          key={platform.id}
+                          tabIndex={0}
+                          className="cursor-pointer"
+                          onClick={open}
+                          onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              open();
+                            }
+                          }}
+                        >
+                          <TDClip
+                            className="font-medium text-ink"
+                            title={`${platform.name} · ${policy}`}
+                          >
+                            {platform.name}
+                          </TDClip>
+                          <TDClip
+                            className="font-mono text-2xs text-ink-soft"
+                            title={tagRules || undefined}
+                          >
+                            {tagRules || t("全部标签")}
+                          </TDClip>
+                          <TDClip className="readout text-xs text-ink-soft" title={regions || undefined}>
+                            {regions || t("不限地区")}
+                          </TDClip>
+                          <TDClip className="text-xs text-ink-soft" title={policy}>
+                            {policy}
+                          </TDClip>
+                          <TDNum
+                            className={platform.routable_node_count ? undefined : "text-ink-faint"}
+                          >
+                            {platform.routable_node_count.toLocaleString()}
+                          </TDNum>
+                          <TDNum className="text-xs text-ink-soft">
+                            {formatGoDuration(platform.sticky_ttl, t("默认"))}
+                          </TDNum>
+                        </TR>
+                      );
+                    })}
+                  </TBody>
+                </Table>
+              </TableWrap>
+            )}
+
+            {platformsQuery.data && platforms.length > 0 && (
+              <PageNavigator
+                page={currentPage}
+                totalPages={totalPages}
+                totalItems={totalPlatforms}
+                pageSize={pageSize}
+                pageSizeOptions={PAGE_SIZE_OPTIONS}
+                onPageChange={setPage}
+                onPageSizeChange={changePageSize}
+                disabled={platformsQuery.isFetching}
               />
-              <Input
-                id="platform-search"
-                placeholder={t("搜索平台")}
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPage(0);
-                }}
-                className="pl-7"
-              />
-            </div>
-          </div>
-
-          {platformsQuery.isLoading ? (
-            <LoadingState label={t("正在加载")} />
-          ) : platformsQuery.isError ? (
-            <ErrorState
-              className="m-3"
-              onRetry={() => void platformsQuery.refetch()}
-              message={
-                <>
-                  <span className="font-medium">{t("数据暂时不可用")}</span>
-                  <p className="mt-0.5">{t("请检查连接后重试。")}</p>
-                </>
-              }
-            />
-          ) : platforms.length === 0 ? (
-            <EmptyState
-              title={t("没有匹配的平台")}
-              hint={t("共 {{count}} 个平台", { count: totalPlatforms })}
-              action={
-                <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                  <Plus size={14} />
-                  {t("新建")}
-                </Button>
-              }
-            />
-          ) : (
-            <TableWrap>
-              <Table>
-                <caption className="sr-only">{t("平台列表")}</caption>
-                <THead>
-                  <TR className="hover:bg-transparent">
-                    <TH>{t("平台")}</TH>
-                    <TH>{t("标签规则")}</TH>
-                    <TH>{t("地区")}</TH>
-                    <TH className="text-right">{t("可用节点")}</TH>
-                    <TH className="text-right">{t("租约时长")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {platforms.map((platform) => {
-                    const open = () => navigate(`/platforms/${platform.id}`);
-                    return (
-                      <TR
-                        key={platform.id}
-                        tabIndex={0}
-                        className="cursor-pointer"
-                        onClick={open}
-                        onKeyDown={(event) => {
-                          if (event.target !== event.currentTarget) return;
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            open();
-                          }
-                        }}
-                      >
-                        <TD>
-                          <div className="font-medium text-ink">{platform.name}</div>
-                          <div className="text-xs text-ink-faint">
-                            {t(
-                              platform.id === ZERO_UUID
-                                ? "内置平台"
-                                : allocationPolicyLabel[platform.allocation_policy],
-                            )}
-                          </div>
-                        </TD>
-                        <TD>
-                          {platform.regex_filters.length ? (
-                            <div className="flex flex-wrap gap-1">
-                              {platform.regex_filters.map((rule, index) => (
-                                <code
-                                  key={`${rule}-${index}`}
-                                  className={cn(
-                                    "rounded-control border px-1 py-0.5 font-mono text-2xs",
-                                    rule.startsWith("!")
-                                      ? "border-rule-strong text-ink-faint"
-                                      : "border-rule text-ink-soft",
-                                  )}
-                                >
-                                  {rule}
-                                </code>
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-xs text-ink-faint">{t("全部标签")}</span>
-                          )}
-                        </TD>
-                        <TD className="font-mono text-xs">
-                          {platform.region_filters.length ? (
-                            platform.region_filters.join(" / ").toUpperCase()
-                          ) : (
-                            <span className="font-sans text-ink-faint">{t("不限地区")}</span>
-                          )}
-                        </TD>
-                        <TDNum className={platform.routable_node_count ? undefined : "text-ink-faint"}>
-                          {platform.routable_node_count.toLocaleString()}
-                        </TDNum>
-                        <TDNum className="text-xs text-ink-soft">
-                          {formatGoDuration(platform.sticky_ttl, t("默认"))}
-                        </TDNum>
-                      </TR>
-                    );
-                  })}
-                </TBody>
-              </Table>
-            </TableWrap>
-          )}
-
-          {platformsQuery.data && platforms.length > 0 && (
-            <PageNavigator
-              page={currentPage}
-              totalPages={totalPages}
-              totalItems={totalPlatforms}
-              pageSize={pageSize}
-              pageSizeOptions={PAGE_SIZE_OPTIONS}
-              onPageChange={setPage}
-              onPageSizeChange={changePageSize}
-              disabled={platformsQuery.isFetching}
-            />
-          )}
-        </Panel>
+            )}
+          </Panel>
+        </div>
 
         <Sheet
           open={createModalOpen}
@@ -559,7 +559,7 @@ export function PlatformPage() {
             </Fieldset>
           </form>
         </Sheet>
-      </section>
+      </Page>
     </TooltipProvider>
   );
 }

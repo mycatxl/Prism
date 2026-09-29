@@ -8,12 +8,13 @@ import { cn } from "../../lib/cn";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout } from "../../components/ui/Readout";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
-import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
@@ -1139,7 +1140,7 @@ function PageNavigator({
   };
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule px-3 py-2">
+    <PanelFooter className="justify-between gap-x-4 gap-y-2">
       <p className="text-xs text-ink-soft">
         {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -1204,7 +1205,7 @@ function PageNavigator({
           <ChevronRight size={16} />
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -1452,225 +1453,237 @@ export function ExportsPage() {
   };
 
   return (
-    <section className="mx-auto w-full max-w-[1320px] px-4 py-5 sm:px-6">
-      <header className="flex flex-wrap items-end justify-between gap-3 pb-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold">{t("导出与订阅")}</h1>
-          <p className="mt-1 text-xs text-ink-soft">
-            {t("把节点池导出成客户端配置，或用一次性令牌把配置发布成订阅。")}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setExportTarget({ profile: null })}>
-            <Download size={15} />
-            {t("立即导出节点")}
-          </Button>
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus size={15} />
-            {t("新建导出配置")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => void profilesQuery.refetch()}
-            disabled={profilesQuery.isFetching}
-            title={t("刷新")}
-            aria-label={t("刷新")}
-          >
-            <RefreshCw size={15} className={cn(profilesQuery.isFetching && "animate-spin")} />
-          </Button>
-        </div>
-      </header>
+    <Page bleed>
+      <PageHeader
+        title={t("导出与订阅")}
+        description={t("把节点池导出成客户端配置，或用一次性令牌把配置发布成订阅。")}
+        meta={<PageMeta label={t("导出配置")} value={totalProfiles.toLocaleString()} />}
+        actions={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => setExportTarget({ profile: null })}>
+              <Download size={15} />
+              {t("立即导出节点")}
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus size={15} />
+              {t("新建导出配置")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void profilesQuery.refetch()}
+              disabled={profilesQuery.isFetching}
+              title={t("刷新")}
+              aria-label={t("刷新")}
+            >
+              <RefreshCw size={15} className={cn(profilesQuery.isFetching && "animate-spin")} />
+            </Button>
+          </>
+        }
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="mb-4 flex items-start gap-2 border border-warn/30 bg-warn-wash px-3 py-2 text-xs text-warn">
-        <Info size={14} aria-hidden className="mt-0.5 shrink-0" />
-        <span>
-          {t("订阅令牌只在创建或轮换时显示一次：服务端只保存它的 SHA-256 摘要，离开后就无法再次查看。")}
-        </span>
-      </div>
+      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+        <div className="mb-3 flex items-start gap-2 border border-warn/30 bg-warn-wash px-3 py-2 text-xs text-warn">
+          <Info size={14} aria-hidden className="mt-0.5 shrink-0" />
+          <span className="max-w-[68ch]">
+            {t("订阅令牌只在创建或轮换时显示一次：服务端只保存它的 SHA-256 摘要，离开后就无法再次查看。")}
+          </span>
+        </div>
 
-      <Panel>
-        <PanelHeader
-          title={t("导出配置列表")}
-          description={t("共 {{count}} 个导出配置", { count: totalProfiles })}
-        />
+        <Panel className="flex min-w-0 flex-col">
+          <PanelHeader
+            title={t("导出配置列表")}
+            description={t("共 {{count}} 个导出配置", { count: totalProfiles })}
+          />
 
-        {profilesQuery.isPending ? (
-          <LoadingState />
-        ) : profilesQuery.error ? (
-          <ErrorState
-            className="m-3"
-            message={formatApiErrorMessage(profilesQuery.error, t)}
-            onRetry={() => void profilesQuery.refetch()}
-          />
-        ) : profiles.length === 0 ? (
-          <EmptyState
-            title={t("还没有导出配置。创建一个配置即可获得订阅地址，或直接导出当前节点池。")}
-            action={
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus size={14} />
-                {t("新建导出配置")}
-              </Button>
-            }
-          />
-        ) : (
-          <TableWrap>
-            <Table className="min-w-[880px]">
-              <caption className="sr-only">{t("导出配置列表")}</caption>
-              <THead>
-                <TR className="hover:bg-transparent">
-                  <TH>{t("名称")}</TH>
-                  <TH>{t("格式")}</TH>
-                  <TH>{t("过滤条件")}</TH>
-                  <TH>{t("命名模板")}</TH>
-                  <TH>{t("状态")}</TH>
-                  <TH className="text-right">{t("订阅访问")}</TH>
-                  <TH className="text-right">{t("操作")}</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {profiles.map((profile) => {
-                  const enabled = profile.enabled;
-                  const toggleLabel = enabled
-                    ? t("停用导出配置 {{name}}", { name: profile.name })
-                    : t("启用导出配置 {{name}}", { name: profile.name });
-                  const chips = activeFilterChips(profile.filter);
-                  const lastAccess = nsToIso(profile.last_access_at_ns);
-                  return (
-                    <TR
-                      key={profile.id}
-                      tabIndex={0}
-                      className="cursor-pointer"
-                      onClick={() => openEdit(profile)}
-                      onKeyDown={(event) => {
-                        if (event.target !== event.currentTarget) return;
-                        if (event.key === "Enter" || event.key === " ") {
-                          event.preventDefault();
-                          openEdit(profile);
-                        }
-                      }}
-                    >
-                      <TD>
-                        <div className="font-medium text-ink">{profile.name}</div>
-                        <div className="text-xs text-ink-faint">
-                          {profile.platform_id
-                            ? t("关联平台：{{name}}", {
-                                name:
-                                  platformOptions.find(
-                                    (platform) => platform.id === profile.platform_id,
-                                  )?.name ?? profile.platform_id,
-                              })
-                            : t("未关联平台")}
-                        </div>
-                      </TD>
-                      <TD>
-                        <Badge tone="outline">{t(FORMAT_LABELS[profile.format])}</Badge>
-                      </TD>
-                      <TD>
-                        {chips.length === 0 ? (
-                          <span className="text-xs text-ink-faint">
-                            {t("全部节点（未设置过滤条件）")}
-                          </span>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {chips.map((field) => (
-                              <Badge key={field.key} tone="neutral">
-                                {`${t(field.label)}: ${filterValueText(field, profile.filter)}`}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                      </TD>
-                      <TD>
-                        <code className="font-mono text-xs">{profile.name_template || "{name}"}</code>
-                      </TD>
-                      <TD>
-                        <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
-                          <Switch
-                            checked={enabled}
-                            disabled={pendingEnabledIds.has(profile.id)}
-                            onCheckedChange={(next) => void handleToggleEnabled(profile, next)}
-                            aria-label={toggleLabel}
-                          />
-                          <span className="text-xs text-ink-soft">
-                            {enabled ? t("已启用") : t("已禁用")}
-                          </span>
-                        </div>
-                      </TD>
-                      <TDNum className="text-xs text-ink-soft">
-                        {t("{{count}} 次访问", { count: profile.access_count })}
-                        <div className="text-ink-faint">
-                          {lastAccess
-                            ? t("最近访问 {{time}}", { time: formatRelativeTime(lastAccess) })
-                            : t("从未访问")}
-                        </div>
-                      </TDNum>
-                      <TD className="text-right">
-                        <div
-                          className="flex items-center justify-end gap-1"
-                          onClick={(event) => event.stopPropagation()}
+          {profilesQuery.isPending ? (
+            <PanelBody>
+              <LoadingState />
+            </PanelBody>
+          ) : profilesQuery.error ? (
+            <PanelBody>
+              <ErrorState
+                message={formatApiErrorMessage(profilesQuery.error, t)}
+                onRetry={() => void profilesQuery.refetch()}
+              />
+            </PanelBody>
+          ) : profiles.length === 0 ? (
+            <PanelBody>
+              <EmptyState
+                title={t("还没有导出配置。创建一个配置即可获得订阅地址，或直接导出当前节点池。")}
+                action={
+                  <Button size="sm" onClick={() => setCreateOpen(true)}>
+                    <Plus size={14} />
+                    {t("新建导出配置")}
+                  </Button>
+                }
+              />
+            </PanelBody>
+          ) : (
+            <TableWrap>
+              <Table className="min-w-[960px]">
+                <caption className="sr-only">{t("导出配置列表")}</caption>
+                <THead>
+                  <TR className="hover:bg-transparent">
+                    <TH>{t("名称")}</TH>
+                    <TH>{t("平台")}</TH>
+                    <TH>{t("格式")}</TH>
+                    <TH>{t("过滤条件")}</TH>
+                    <TH>{t("命名模板")}</TH>
+                    <TH>{t("状态")}</TH>
+                    <TH className="text-right">{t("订阅访问")}</TH>
+                    <TH className="text-right">{t("最近访问")}</TH>
+                    <TH className="text-right">{t("操作")}</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {profiles.map((profile) => {
+                    const enabled = profile.enabled;
+                    const toggleLabel = enabled
+                      ? t("停用导出配置 {{name}}", { name: profile.name })
+                      : t("启用导出配置 {{name}}", { name: profile.name });
+                    const chips = activeFilterChips(profile.filter);
+                    const lastAccess = nsToIso(profile.last_access_at_ns);
+                    const platformName = profile.platform_id
+                      ? platformOptions.find((platform) => platform.id === profile.platform_id)?.name ??
+                        profile.platform_id
+                      : "";
+                    const filterSummary = chips.map((field) => t(field.label)).join(" · ");
+                    const filterDetail = chips
+                      .map((field) => `${t(field.label)}: ${filterValueText(field, profile.filter)}`)
+                      .join(" · ");
+                    const template = profile.name_template || "{name}";
+                    return (
+                      <TR
+                        key={profile.id}
+                        tabIndex={0}
+                        className="cursor-pointer"
+                        onClick={() => openEdit(profile)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openEdit(profile);
+                          }
+                        }}
+                      >
+                        <TDClip className="font-medium text-ink" title={profile.name}>
+                          {profile.name}
+                        </TDClip>
+                        <TDClip
+                          className="text-xs text-ink-soft"
+                          title={
+                            platformName
+                              ? t("关联平台：{{name}}", { name: platformName })
+                              : t("未关联平台")
+                          }
                         >
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title={t("立即导出")}
-                            aria-label={t("立即导出")}
-                            onClick={() => setExportTarget({ profile })}
+                          {platformName || t("未关联平台")}
+                        </TDClip>
+                        <TD>
+                          <Badge tone="outline">{t(FORMAT_LABELS[profile.format])}</Badge>
+                        </TD>
+                        <TDClip
+                          className="text-xs text-ink-soft"
+                          title={filterDetail || undefined}
+                        >
+                          {chips.length === 0 ? t("全部节点（未设置过滤条件）") : filterSummary}
+                        </TDClip>
+                        <TDClip className="readout text-xs text-ink-soft" title={template}>
+                          {template}
+                        </TDClip>
+                        <TD className="whitespace-nowrap">
+                          <div
+                            className="flex items-center gap-2"
+                            onClick={(event) => event.stopPropagation()}
                           >
-                            <Download size={14} />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title={t("编辑")}
-                            aria-label={t("编辑")}
-                            onClick={() => openEdit(profile)}
+                            <Switch
+                              checked={enabled}
+                              disabled={pendingEnabledIds.has(profile.id)}
+                              onCheckedChange={(next) => void handleToggleEnabled(profile, next)}
+                              aria-label={toggleLabel}
+                            />
+                            <span className="text-xs text-ink-soft">
+                              {enabled ? t("已启用") : t("已禁用")}
+                            </span>
+                          </div>
+                        </TD>
+                        <TDNum className="text-xs text-ink-soft">
+                          {t("{{count}} 次访问", { count: profile.access_count })}
+                        </TDNum>
+                        <TDNum
+                          className="text-xs text-ink-soft"
+                          title={lastAccess ? formatDateTime(lastAccess) : undefined}
+                        >
+                          {lastAccess ? formatRelativeTime(lastAccess) : t("从未访问")}
+                        </TDNum>
+                        <TD className="text-right">
+                          <div
+                            className="flex items-center justify-end gap-1"
+                            onClick={(event) => event.stopPropagation()}
                           >
-                            <Pencil size={14} />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            title={t("轮换令牌")}
-                            aria-label={t("轮换令牌")}
-                            onClick={() => void handleRotate(profile)}
-                            disabled={rotateMutation.isPending}
-                          >
-                            <KeyRound size={14} />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="text-ink-faint hover:bg-alert-wash hover:text-alert"
-                            title={t("删除")}
-                            aria-label={t("删除")}
-                            onClick={() => void handleDelete(profile)}
-                            disabled={deleteMutation.isPending}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </div>
-                      </TD>
-                    </TR>
-                  );
-                })}
-              </TBody>
-            </Table>
-          </TableWrap>
-        )}
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title={t("立即导出")}
+                              aria-label={t("立即导出")}
+                              onClick={() => setExportTarget({ profile })}
+                            >
+                              <Download size={14} />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title={t("编辑")}
+                              aria-label={t("编辑")}
+                              onClick={() => openEdit(profile)}
+                            >
+                              <Pencil size={14} />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title={t("轮换令牌")}
+                              aria-label={t("轮换令牌")}
+                              onClick={() => void handleRotate(profile)}
+                              disabled={rotateMutation.isPending}
+                            >
+                              <KeyRound size={14} />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                              title={t("删除")}
+                              aria-label={t("删除")}
+                              onClick={() => void handleDelete(profile)}
+                              disabled={deleteMutation.isPending}
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </TD>
+                      </TR>
+                    );
+                  })}
+                </TBody>
+              </Table>
+            </TableWrap>
+          )}
 
-        <PageNavigator
-          page={currentPage}
-          totalPages={totalPages}
-          totalItems={totalProfiles}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          onPageChange={setPage}
-          onPageSizeChange={changePageSize}
-        />
-      </Panel>
+          <PageNavigator
+            page={currentPage}
+            totalPages={totalPages}
+            totalItems={totalProfiles}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
+          />
+        </Panel>
+      </div>
 
       {createOpen ? (
         <Sheet
@@ -1712,28 +1725,36 @@ export function ExportsPage() {
           <div className="space-y-6">
             <section>
               <h2 className="text-sm font-semibold">{t("配置信息")}</h2>
-              <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 border-y border-rule py-3 sm:grid-cols-4">
-                <Readout
-                  label={t("创建时间")}
-                  value={formatDateTime(nsToIso(selectedProfile.created_at_ns))}
-                  size="sm"
-                />
-                <Readout
-                  label={t("更新时间")}
-                  value={formatDateTime(nsToIso(selectedProfile.updated_at_ns))}
-                  size="sm"
-                />
-                <Readout
-                  label={t("访问次数")}
-                  value={selectedProfile.access_count.toLocaleString()}
-                  size="sm"
-                />
-                <Readout
-                  label={t("最近访问")}
-                  value={formatDateTime(nsToIso(selectedProfile.last_access_at_ns))}
-                  size="sm"
-                />
-              </div>
+              <ReadoutStrip className="mt-3 grid grid-cols-2 sm:grid-cols-4">
+                <ReadoutCell>
+                  <Readout
+                    label={t("创建时间")}
+                    value={formatDateTime(nsToIso(selectedProfile.created_at_ns))}
+                    size="sm"
+                  />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout
+                    label={t("更新时间")}
+                    value={formatDateTime(nsToIso(selectedProfile.updated_at_ns))}
+                    size="sm"
+                  />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout
+                    label={t("访问次数")}
+                    value={selectedProfile.access_count.toLocaleString()}
+                    size="sm"
+                  />
+                </ReadoutCell>
+                <ReadoutCell>
+                  <Readout
+                    label={t("最近访问")}
+                    value={formatDateTime(nsToIso(selectedProfile.last_access_at_ns))}
+                    size="sm"
+                  />
+                </ReadoutCell>
+              </ReadoutStrip>
               {!selectedProfile.enabled ? (
                 <p className="mt-3 border border-alert/30 bg-alert-wash px-3 py-2 text-xs text-alert">
                   {t("该配置已停用，订阅地址会返回错误。")}
@@ -1821,6 +1842,6 @@ export function ExportsPage() {
           onMessage={showToast}
         />
       ) : null}
-    </section>
+    </Page>
   );
 }

@@ -4,12 +4,13 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Panel, PanelHeader, SectionTitle } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
-import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -31,7 +32,6 @@ import type {
   CreateIntelJobRequest,
   IntelJob,
   IntelJobDetail,
-  IntelJobItem,
   JobKind,
 } from "./types";
 
@@ -226,66 +226,48 @@ function JobKindBadge({ kind }: { kind: string }) {
 }
 
 /** The progress meter: a counter, a hairline-thin bar, and the failure count when there is one. */
-function ProgressMeter({ job, size = "sm" }: { job: IntelJob; size?: "sm" | "lg" }) {
+function ProgressMeter({
+  job,
+  size = "sm",
+  inline = false,
+}: {
+  job: IntelJob;
+  size?: "sm" | "lg";
+  inline?: boolean;
+}) {
   const { t } = useI18n();
   const settled = settledCount(job);
   const max = Math.max(job.total, settled);
   const percent = max > 0 ? Math.min(100, Math.round((settled / max) * 100)) : 0;
-  return (
-    <div className="min-w-0">
-      <div
-        role="progressbar"
-        aria-label={t("进度")}
-        aria-valuemin={0}
-        aria-valuemax={max}
-        aria-valuenow={settled}
-        className={cn(
-          "w-full overflow-hidden rounded-full bg-paper-sunk",
-          size === "lg" ? "mt-2 h-1" : "mt-1 h-1",
-        )}
-      >
-        <span
-          className={cn("block h-full", PROGRESS_BAR_CLASS[job.status] ?? "bg-ink-faint")}
-          style={{ width: `${percent}%` }}
-        />
-      </div>
-      {job.failed > 0 ? (
-        <p className="mt-1 text-2xs text-alert">{t("失败 {{count}}", { count: job.failed })}</p>
-      ) : null}
+  // 列表行只有一行高：失败计数挤不进单元格，退到 title；详情抽屉里仍然单独成行。
+  const failure = job.failed > 0 ? t("失败 {{count}}", { count: job.failed }) : undefined;
+  const bar = (
+    <div
+      role="progressbar"
+      aria-label={t("进度")}
+      aria-valuemin={0}
+      aria-valuemax={max}
+      aria-valuenow={settled}
+      title={failure}
+      className={cn(
+        "overflow-hidden rounded-full bg-paper-sunk",
+        inline ? "h-1 min-w-0 flex-1" : cn("h-1 w-full", size === "lg" ? "mt-2" : "mt-1"),
+      )}
+    >
+      <span
+        className={cn("block h-full", PROGRESS_BAR_CLASS[job.status] ?? "bg-ink-faint")}
+        style={{ width: `${percent}%` }}
+      />
     </div>
   );
-}
-
-function JobItemRow({ item }: { item: IntelJobItem }) {
-  const { t } = useI18n();
-  const summary = formatResultSummary(item.result_json);
+  if (inline) {
+    return bar;
+  }
   return (
-    <li className="flex flex-col gap-1.5 py-3">
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="readout truncate text-xs" title={item.node_hash}>
-          {item.node_hash}
-        </span>
-        <ItemStatusBadge status={item.status} />
-        <span className="text-xs text-ink-soft">
-          {t("第 {{step}} 步：{{name}}", {
-            step: item.step_index,
-            name: t(textOf(STEP_LABELS, String(item.step_index))),
-          })}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap gap-x-4 text-2xs text-ink-faint">
-        <span>{t("尝试 {{count}} 次", { count: item.attempts })}</span>
-        <span>{t("更新时间 {{time}}", { time: formatNs(item.updated_at_ns) })}</span>
-        {item.error_code ? <span className="text-alert">{t("错误 {{code}}", { code: item.error_code })}</span> : null}
-      </div>
-
-      {summary ? (
-        <pre className="max-h-32 overflow-auto rounded-control border border-rule bg-paper-sunk px-2 py-1.5 text-2xs leading-relaxed break-words whitespace-pre-wrap">
-          {summary}
-        </pre>
-      ) : null}
-    </li>
+    <div className="min-w-0">
+      {bar}
+      {job.failed > 0 ? <p className="mt-1 text-2xs text-alert">{failure}</p> : null}
+    </div>
   );
 }
 
@@ -320,7 +302,7 @@ function JobsPagination({
     if (Number.isInteger(value) && value > 0) onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
   };
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+    <PanelFooter className="justify-between">
       <p className="text-xs text-ink-soft">
         {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -387,7 +369,7 @@ function JobsPagination({
           {t("下一页")}
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -652,52 +634,97 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
             </Button>
           </div>
 
-          <div className="mt-6 flex flex-wrap items-end justify-between gap-2">
-            <SectionTitle className="pb-0" trailing={t("共 {{count}} 个节点", { count: itemTotal })}>
-              {t("节点结果")}
-            </SectionTitle>
-            <select
-              className={CONTROL_CLASS}
-              value={itemStatus}
-              aria-label={t("按节点状态筛选")}
-              onChange={(event) => {
-                setItemStatus(event.target.value);
-                setItemPage(0);
-              }}
-            >
-              {ITEM_STATUS_FILTERS.map((value) => (
-                <option key={value || "all"} value={value}>
-                  {value ? t(textOf(ITEM_STATUS_LABELS, value)) : t("全部结果")}
-                </option>
-              ))}
-            </select>
-          </div>
+          <Panel className="mt-6 flex min-w-0 flex-col">
+            <PanelHeader
+              title={t("节点结果")}
+              meta={t("共 {{count}} 个节点", { count: itemTotal })}
+            />
+            <PanelToolbar>
+              <select
+                className={CONTROL_CLASS}
+                value={itemStatus}
+                aria-label={t("按节点状态筛选")}
+                onChange={(event) => {
+                  setItemStatus(event.target.value);
+                  setItemPage(0);
+                }}
+              >
+                {ITEM_STATUS_FILTERS.map((value) => (
+                  <option key={value || "all"} value={value}>
+                    {value ? t(textOf(ITEM_STATUS_LABELS, value)) : t("全部结果")}
+                  </option>
+                ))}
+              </select>
+            </PanelToolbar>
 
-          {itemsQuery.isLoading && !itemsQuery.data ? <LoadingState /> : null}
+            {itemsQuery.isLoading && !itemsQuery.data ? (
+              <PanelBody>
+                <LoadingState />
+              </PanelBody>
+            ) : null}
 
-          {itemsQuery.error ? (
-            <div className="mt-3">
-              <ErrorState
-                message={formatApiErrorMessage(itemsQuery.error, t)}
-                onRetry={() => void itemsQuery.refetch()}
-              />
-            </div>
-          ) : null}
+            {itemsQuery.error ? (
+              <PanelBody>
+                <ErrorState
+                  message={formatApiErrorMessage(itemsQuery.error, t)}
+                  onRetry={() => void itemsQuery.refetch()}
+                />
+              </PanelBody>
+            ) : null}
 
-          {!itemsQuery.isLoading && !itemsQuery.error && !items.length ? (
-            <EmptyState title={t("暂无节点结果")} />
-          ) : null}
+            {!itemsQuery.isLoading && !itemsQuery.error && !items.length ? (
+              <PanelBody>
+                <EmptyState title={t("暂无节点结果")} />
+              </PanelBody>
+            ) : null}
 
-          {items.length ? (
-            <ul className="mt-1 divide-y divide-rule border-b border-rule">
-              {items.map((item) => (
-                <JobItemRow key={item.node_hash} item={item} />
-              ))}
-            </ul>
-          ) : null}
+            {items.length ? (
+              <TableWrap>
+                <Table>
+                  <THead>
+                    <TR>
+                      <TH>{t("节点")}</TH>
+                      <TH>{t("状态")}</TH>
+                      <TH>{t("进度")}</TH>
+                      <TH>{t("错误")}</TH>
+                      <TH className="text-right">{t("更新时间")}</TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {/* 每个节点一行：尝试次数与步骤结果 JSON 退到 title，行高不再被
+                        服务端截断到 4 KiB 的结果摘要撑开。 */}
+                    {items.map((item) => (
+                      <TR
+                        key={item.node_hash}
+                        title={[
+                          t("尝试 {{count}} 次", { count: item.attempts }),
+                          formatResultSummary(item.result_json),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      >
+                        <TDClip className="readout text-xs">{item.node_hash}</TDClip>
+                        <TD>
+                          <ItemStatusBadge status={item.status} />
+                        </TD>
+                        <TDClip>
+                          {t("第 {{step}} 步：{{name}}", {
+                            step: item.step_index,
+                            name: t(textOf(STEP_LABELS, String(item.step_index))),
+                          })}
+                        </TDClip>
+                        <TDClip className="readout text-xs text-alert">{item.error_code}</TDClip>
+                        <TDNum className="text-xs text-ink-soft">
+                          {formatNs(item.updated_at_ns)}
+                        </TDNum>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
+              </TableWrap>
+            ) : null}
 
-          {itemTotal > 0 ? (
-            <div className="-mx-5">
+            {itemTotal > 0 ? (
               <JobsPagination
                 page={itemPage}
                 totalPages={Math.max(1, Math.ceil(itemTotal / itemPageSize))}
@@ -711,8 +738,8 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
                   setItemPage(0);
                 }}
               />
-            </div>
-          ) : null}
+            ) : null}
+          </Panel>
         </>
       ) : null}
     </Sheet>
@@ -908,157 +935,159 @@ export function JobsPage() {
   const openJob = (job: IntelJob) => setSelectedJobID(job.id);
 
   return (
-    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
+    <Page bleed>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <header className="min-w-0">
-        <h1 className="text-2xl">{t("检测任务")}</h1>
-        <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
-          {t("批量检测任务的排队、进度与逐节点结果。")}
-        </p>
-      </header>
+      <PageHeader
+        title={t("检测任务")}
+        description={t("批量检测任务的排队、进度与逐节点结果。")}
+        meta={<PageMeta label={t("任务")} value={total.toLocaleString()} />}
+        actions={
+          <>
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus size={15} />
+              {t("新建任务")}
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void jobsQuery.refetch()}
+              disabled={jobsQuery.isFetching}
+            >
+              <RefreshCw size={15} className={jobsQuery.isFetching ? "animate-spin" : undefined} />
+              {t("刷新")}
+            </Button>
+          </>
+        }
+      />
 
-      <Panel>
-        <PanelHeader
-          title={t("任务列表")}
-          description={t("共 {{count}} 个任务", { count: total })}
-          actions={
-            <>
-              <select
-                className={CONTROL_CLASS}
-                value={statusFilter}
-                aria-label={t("按状态筛选")}
-                onChange={(event) => {
-                  setStatusFilter(event.target.value);
-                  setPage(0);
-                }}
-              >
-                {JOB_STATUS_FILTERS.map((value) => (
-                  <option key={value || "all"} value={value}>
-                    {value ? t(textOf(JOB_STATUS_LABELS, value)) : t("全部状态")}
-                  </option>
-                ))}
-              </select>
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus size={15} />
-                {t("新建任务")}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => void jobsQuery.refetch()}
-                disabled={jobsQuery.isFetching}
-              >
-                <RefreshCw size={15} className={jobsQuery.isFetching ? "animate-spin" : undefined} />
-                {t("刷新")}
-              </Button>
-            </>
-          }
-        />
+      <div className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+        <Panel className="flex min-w-0 flex-col">
+          <PanelHeader title={t("任务列表")} />
+          <PanelToolbar>
+            <select
+              className={CONTROL_CLASS}
+              value={statusFilter}
+              aria-label={t("按状态筛选")}
+              onChange={(event) => {
+                setStatusFilter(event.target.value);
+                setPage(0);
+              }}
+            >
+              {JOB_STATUS_FILTERS.map((value) => (
+                <option key={value || "all"} value={value}>
+                  {value ? t(textOf(JOB_STATUS_LABELS, value)) : t("全部状态")}
+                </option>
+              ))}
+            </select>
+          </PanelToolbar>
 
-        {jobsQuery.isLoading ? <LoadingState /> : null}
+          {jobsQuery.isLoading ? (
+            <PanelBody>
+              <LoadingState />
+            </PanelBody>
+          ) : null}
 
-        {jobsQuery.isError ? (
-          <div className="p-4">
-            <ErrorState message={formatApiErrorMessage(jobsQuery.error, t)} onRetry={() => void jobsQuery.refetch()} />
-          </div>
-        ) : null}
+          {jobsQuery.isError ? (
+            <PanelBody>
+              <ErrorState
+                message={formatApiErrorMessage(jobsQuery.error, t)}
+                onRetry={() => void jobsQuery.refetch()}
+              />
+            </PanelBody>
+          ) : null}
 
-        {showList && !jobs.length ? (
-          <EmptyState
-            title={t("暂无检测任务，点击“新建任务”开始一次批量检测。")}
-            action={
-              <Button size="sm" onClick={() => setCreateOpen(true)}>
-                <Plus size={15} />
-                {t("新建任务")}
-              </Button>
-            }
-          />
-        ) : null}
+          {showList && !jobs.length ? (
+            <PanelBody>
+              <EmptyState
+                title={t("暂无检测任务，点击“新建任务”开始一次批量检测。")}
+                action={
+                  <Button size="sm" onClick={() => setCreateOpen(true)}>
+                    <Plus size={15} />
+                    {t("新建任务")}
+                  </Button>
+                }
+              />
+            </PanelBody>
+          ) : null}
 
-        {jobs.length ? (
-          <TableWrap>
-            <Table>
-              <THead>
-                <TR>
-                  <TH>{t("任务")}</TH>
-                  <TH>{t("状态")}</TH>
-                  <TH>{t("种类")}</TH>
-                  <TH>{t("创建者")}</TH>
-                  <TH>{t("进度")}</TH>
-                  <TH className="text-right">{t("创建时间")}</TH>
-                  <TH className="text-right">{t("完成时间")}</TH>
-                </TR>
-              </THead>
-              <TBody>
-                {jobs.map((job) => (
-                  <TR
-                    key={job.id}
-                    tabIndex={0}
-                    className="cursor-pointer"
-                    selected={selectedJobID === job.id}
-                    aria-selected={selectedJobID === job.id}
-                    onClick={() => openJob(job)}
-                    onKeyDown={(event) => {
-                      if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-                        event.preventDefault();
-                        openJob(job);
-                      }
-                    }}
-                  >
-                    <TD>
-                      <span className="readout text-xs" title={job.id}>
-                        {job.id.slice(0, 8)}
-                      </span>
-                    </TD>
-                    <TD>
-                      <JobStatusBadge status={job.status} />
-                    </TD>
-                    <TD>
-                      <JobKindBadge kind={job.kind} />
-                    </TD>
-                    <TD>
-                      <span className="block max-w-[18ch] truncate" title={job.created_by}>
-                        {job.created_by}
-                      </span>
-                    </TD>
-                    <TD>
-                      <div className="flex min-w-40 flex-col">
-                        <span className="readout text-xs">
-                          {job.done} / {job.total}
-                        </span>
-                        <ProgressMeter job={job} />
-                      </div>
-                    </TD>
-                    <TDNum>
-                      <span className="text-xs text-ink-soft">{formatNs(job.created_at_ns)}</span>
-                    </TDNum>
-                    <TDNum>
-                      <span className="text-xs text-ink-soft">{formatNs(job.finished_at_ns)}</span>
-                    </TDNum>
+          {/* 每行一个任务且只有一行高：计数与进度条并排，时间不再包内层元素。 */}
+          {jobs.length ? (
+            <TableWrap>
+              <Table>
+                <THead>
+                  <TR>
+                    <TH>{t("任务")}</TH>
+                    <TH>{t("状态")}</TH>
+                    <TH>{t("种类")}</TH>
+                    <TH>{t("创建者")}</TH>
+                    <TH>{t("进度")}</TH>
+                    <TH className="text-right">{t("创建时间")}</TH>
+                    <TH className="text-right">{t("完成时间")}</TH>
                   </TR>
-                ))}
-              </TBody>
-            </Table>
-          </TableWrap>
-        ) : null}
+                </THead>
+                <TBody>
+                  {jobs.map((job) => (
+                    <TR
+                      key={job.id}
+                      tabIndex={0}
+                      className="cursor-pointer"
+                      selected={selectedJobID === job.id}
+                      aria-selected={selectedJobID === job.id}
+                      onClick={() => openJob(job)}
+                      onKeyDown={(event) => {
+                        if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+                          event.preventDefault();
+                          openJob(job);
+                        }
+                      }}
+                    >
+                      <TDClip className="readout text-xs" title={job.id}>
+                        {job.id.slice(0, 8)}
+                      </TDClip>
+                      <TD>
+                        <JobStatusBadge status={job.status} />
+                      </TD>
+                      <TD>
+                        <JobKindBadge kind={job.kind} />
+                      </TD>
+                      <TDClip className="text-xs text-ink-soft" title={job.created_by}>
+                        {job.created_by}
+                      </TDClip>
+                      <TD>
+                        <span className="flex min-w-40 items-center gap-2">
+                          <span className="readout shrink-0 text-xs">
+                            {job.done} / {job.total}
+                          </span>
+                          <ProgressMeter job={job} inline />
+                        </span>
+                      </TD>
+                      <TDNum className="text-xs text-ink-soft">{formatNs(job.created_at_ns)}</TDNum>
+                      <TDNum className="text-xs text-ink-soft">{formatNs(job.finished_at_ns)}</TDNum>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </TableWrap>
+          ) : null}
 
-        {total > 0 ? (
-          <JobsPagination
-            page={page}
-            totalPages={Math.max(1, Math.ceil(total / pageSize))}
-            totalItems={total}
-            pageSize={pageSize}
-            pageSizeOptions={JOB_PAGE_SIZE_OPTIONS}
-            disabled={jobsQuery.isFetching}
-            onPageChange={setPage}
-            onPageSizeChange={(size) => {
-              setPageSize(size);
-              setPage(0);
-            }}
-          />
-        ) : null}
-      </Panel>
+          {total > 0 ? (
+            <JobsPagination
+              page={page}
+              totalPages={Math.max(1, Math.ceil(total / pageSize))}
+              totalItems={total}
+              pageSize={pageSize}
+              pageSizeOptions={JOB_PAGE_SIZE_OPTIONS}
+              disabled={jobsQuery.isFetching}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(0);
+              }}
+            />
+          ) : null}
+        </Panel>
+      </div>
 
       {selectedJobID ? (
         <JobDetailDrawer
@@ -1076,6 +1105,6 @@ export function JobsPage() {
           onCreated={(job) => setSelectedJobID(job.id)}
         />
       ) : null}
-    </section>
+    </Page>
   );
 }

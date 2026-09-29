@@ -1,60 +1,68 @@
 /*
  * Prism design system.
  *
- * Concept: a calibration bench. The subject is network egress — which address
+ * Concept: a calibration console. The subject is network egress — which address
  * traffic actually leaves from, and how clean that address is — so the interface
- * is built like measuring equipment rather than like a website: a bright neutral
- * bench top, graphite ink, hairline rules that carry structure, and one saturated
- * hue that only ever means "this is the live path".
+ * is built like measuring equipment: a bright bench top, graphite ink, and panels
+ * that are clearly framed regions rather than a continuous wash of text.
  *
- * Two consequences worth stating because they are deliberate:
+ * Where the numbers in this file come from (they are not preferences):
  *
- *  - There is no dark mode. The values here are read on a bench, next to a
- *    terminal and a browser, in daylight. A second theme would be a remap, not a
- *    design, and it would double every contrast decision for no reading benefit.
+ *  - the panel / row / control geometry follows the scale Tabler, shadcn-admin and
+ *    Ant Design converge on (panel header 44px, body row 32/28, cell padding 12/8,
+ *    panel radius 8, shadow xs), because those are the only open templates that
+ *    survive a data-dense operator workload;
+ *  - the KPI anatomy follows Grafana's BigValue (value to unit ratio 2.5:1) and
+ *    go-view's animated counter (tabular-nums, 800ms easeOutCubic on change);
+ *  - the depth system is Tabler's elevation ladder, not an invention;
+ *  - the 大屏 vocabulary that was deliberately NOT copied: laser-sweep SVG borders,
+ *    radar decorations, tiled grid backgrounds, neon outer glows, gradient text,
+ *    cyan-on-navy as the whole palette, 3D cone charts. Every production dashboard
+ *    studied avoids them; they are what makes a screen look like a 2019 template.
+ *
+ * Two deliberate positions:
+ *
+ *  - There is no dark theme. The values here are read on a bench, in daylight,
+ *    next to a terminal. A second theme would be a remap and would double every
+ *    contrast decision, so the palette is authored once, for light.
  *  - Colour never communicates alone. Every state also carries a word, a shape or
- *    a position, because the status column is what an operator scans first.
- *
- * The scale is deliberately narrow at the data end (11/12/13px) and wide at the
- * title end (23/28/34px): dense tables need small type, but a page whose every
- * element sits between 11 and 13px has no hierarchy at all, which is exactly what
- * a generic admin template looks like.
+ *    a position, because the status column is the first thing an operator scans.
  */
 
 @import "tailwindcss";
 
 @theme {
   /* ---- surfaces -------------------------------------------------------- */
-  /* A cool bench top: neutral, faintly blue, never warm. Warm off-whites read
-     as paper stock, and this is a screen of live measurements. */
-  --color-paper: #f2f4f7;
+  /* The bench top: neutral, faintly blue, never warm. Warm off-whites read as
+     paper stock, and this is a screen of live measurements. */
+  --color-paper: #f1f3f7;
   /* Recessed: table headers, wells, the sunken half of a split view. */
-  --color-paper-sunk: #e6eaf0;
-  /* Raised: the sheet a region is read on. */
+  --color-paper-sunk: #e5e9f0;
+  /* The sheet a panel is read on. */
   --color-paper-raised: #ffffff;
   /* Chart and map ground, one step below raised. */
   --color-paper-inset: #f8fafc;
-  /* The chassis: navigation and toolbars sit on a cooler layer than the sheet
-     the measurements are read on, so the frame and the content never read as
-     one undifferentiated field. */
-  --color-rail: #e7ebf1;
+  /* The chassis: navigation bars sit on a cooler layer than the content, so the
+     frame and the readout never read as one undifferentiated field. */
+  --color-rail: #e6eaf1;
 
   /* ---- rules ----------------------------------------------------------- */
-  /* Hairlines do the structural work that borders and shadows do elsewhere. */
-  --color-rule: #d2d8e1;
-  --color-rule-strong: #a6afbd;
-  --color-rule-faint: #e4e8ee;
+  --color-rule: #d1d7e0;
+  --color-rule-strong: #a4adbb;
+  --color-rule-faint: #e3e7ee;
+  /* The 12% hairline panels use, so a framed region is not a drawn box. */
+  --color-panel-edge: rgba(10, 15, 22, 0.12);
+  /* Row separators inside a table. */
+  --color-row-rule: #eaeef3;
 
   /* ---- ink ------------------------------------------------------------- */
-  /* Every step clears WCAG AA 4.5:1 on --color-paper, paper-sunk and
-     paper-raised; the audit in scripts/check-contrast.mjs proves it. There is no
-     "faint grey" light enough to fail, because secondary text that fails
-     contrast is the single cheapest way to make a panel look unfinished. */
+  /* Every step clears WCAG AA 4.5:1 on every surface above; scripts/check-contrast.mjs
+     proves it and fails the build if a change breaks it. */
   --color-ink: #0a0f16;
   --color-ink-soft: #39434f;
   --color-ink-faint: #566170;
 
-  /* ---- signal: healthy, primary, in good standing ----------------------- */
+  /* ---- signal: healthy, in good standing -------------------------------- */
   --color-signal: #0a6b52;
   --color-signal-deep: #06483a;
   --color-signal-wash: #dcefe8;
@@ -78,41 +86,91 @@
   --color-accent-deep: #073a7d;
   --color-accent-wash: #e2ebf9;
 
+  /* ---- data series ------------------------------------------------------ */
+  /* A categorical sequence for charts. Two constraints shaped it, and both are
+     enforced by scripts/check-contrast.mjs:
+       - a chart line is a graphical object, so WCAG 1.4.11 asks for 3:1 against
+         the ground it is drawn on (not the 4.5:1 that body text needs);
+       - the sequence is spread across the *luminance* axis, not just the hue
+         axis, so the lines stay apart in greyscale — which is what a printed
+         screenshot, a colour-blind reader, and a 3-metre viewing distance all
+         fall back to. Adjacent luminances differ by at least 1.15:1.
+     Hue order is semantic (blue = primary series, teal = healthy, amber = warn,
+     red = alert), so do not reorder these without re-running the gate. */
+  --color-series-1: #0554bb;
+  --color-series-2: #03725c;
+  --color-series-3: #ba6e05;
+  --color-series-4: #dd2206;
+  --color-series-5: #6505d1;
+  --color-series-6: #059bd1;
+  /* Chart furniture. The axis colour is read as text, so it clears 4.5:1. */
+  --color-chart-grid: #e8ecf2;
+  --color-chart-axis: #5d6876;
+
   /* ---- type ------------------------------------------------------------ */
-  /* One family for the interface, one for measurement. Plex Sans is a grotesque
-     with engineering proportions; the mono is reserved for values that are
-     actually read as data — addresses, hashes, counts, latencies — never as a
-     costume for "technical". */
+  /* One family for the interface, one for measurement. The mono is reserved for
+     values actually read as data — addresses, hashes, counts, latencies — never as
+     a costume for "technical". */
   --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
 
-  /* Fixed rem scale, not fluid: operators read at a consistent DPI and a
-     clamp-sized heading that shrinks inside a column looks worse, not better. */
-  /* Steps are at least 1.125 apart from their neighbour, because a step a reader
-     cannot see is not a step: three sizes inside a two-pixel band doing three
-     different jobs is what makes a dense panel read as flat. */
+  /* Fixed rem scale, not fluid: operators read at a consistent DPI, and a
+     clamp-sized heading that shrinks inside a column looks worse, not better.
+     Every step is at least 1.125 from its neighbour — a step a reader cannot see
+     is not a step, and three sizes inside a two-pixel band doing three different
+     jobs is what makes a dense panel read as flat. */
   --text-2xs: 0.6875rem; /* 11px — units, indices, column heads */
   --text-xs: 0.75rem; /* 12px — metadata, secondary lines */
   --text-sm: 0.875rem; /* 14px — table body, controls */
   --text-base: 1rem; /* 16px — UI default and prose */
-  --text-lg: 1.125rem; /* 18px — section titles */
-  --text-xl: 1.25rem; /* 20px — panel and instrument values */
-  --text-2xl: 1.5rem; /* 24px — page titles */
-  --text-3xl: 1.875rem; /* 30px — page titles on wide layouts */
-  --text-4xl: 2.25rem; /* 36px — the largest instrument numeral */
+  --text-lg: 1.125rem; /* 18px — page titles */
+  --text-xl: 1.25rem; /* 20px — panel titles, KPI units */
+  --text-2xl: 1.5rem; /* 24px — the hero numeral */
+  --text-3xl: 1.875rem; /* 30px */
+  --text-4xl: 2.25rem; /* 36px */
 
   /* ---- geometry -------------------------------------------------------- */
-  --radius-control: 3px;
-  --radius-panel: 5px;
+  /* The 8px grid the whole console is laid out on, plus the two half steps that
+     dense controls need. */
+  --spacing: 0.25rem;
+  --radius-control: 4px;
+  --radius-panel: 8px;
   --radius-chip: 999px;
 
+  /* Fixed chrome heights, referenced by the shell and by every page so the
+     console stays on one grid instead of drifting page to page. */
+  --shell-rail-w: 232px;
+  --shell-rail-w-collapsed: 56px;
+  --shell-bar-h: 48px;
+  --page-header-h: 52px;
+  --panel-header-h: 44px;
+  --toolbar-h: 40px;
+  --control-h-sm: 24px;
+  --control-h: 28px;
+  --control-h-lg: 32px;
+  --row-h: 32px;
+  --row-h-compact: 28px;
+  --row-h-comfortable: 36px;
+
   --tracking-data: -0.01em;
-  --tracking-micro: 0.08em;
+  --tracking-micro: 0.07em;
+
+  /* ---- elevation ------------------------------------------------------- */
+  /* Tabler's ladder. A panel gets xs — enough to lift it off the bench, not
+     enough to read as a shadow. Anything above sm is an overlay, never a peer. */
+  --shadow-xs: 0 1px 2px 0 rgb(10 15 22 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(10 15 22 / 0.1), 0 1px 2px -1px rgb(10 15 22 / 0.06);
+  --shadow-md: 0 2px 4px -1px rgb(10 15 22 / 0.06), 0 4px 6px -1px rgb(10 15 22 / 0.08);
+  --shadow-lg: 0 4px 6px -2px rgb(10 15 22 / 0.05), 0 10px 15px -3px rgb(10 15 22 / 0.08);
 
   /* ---- motion ---------------------------------------------------------- */
-  /* Routine state changes only. There is no page-load choreography: the panel
-     loads into a task. */
   --ease-instrument: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 110ms;
+  --dur-base: 170ms;
+  --dur-slow: 240ms;
+  /* A live numeral rolls to its new value instead of jumping: at a glance the
+     movement itself says "this changed". */
+  --dur-count: 800ms;
 }
 
 @layer base {
@@ -132,15 +190,13 @@
     background-color: var(--color-paper);
     color: var(--color-ink);
     font-family: var(--font-sans);
-    font-size: var(--text-base);
+    font-size: var(--text-sm);
     line-height: 1.45;
     font-feature-settings: "kern" 1, "liga" 1, "cv05" 1;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
   }
 
-  /* Headings take tighter leading and optical tracking so a title reads as a
-     title rather than as bolded body text. */
   h1,
   h2,
   h3,
@@ -153,8 +209,8 @@
   }
 
   h1 {
-    font-size: var(--text-2xl);
-    letter-spacing: -0.022em;
+    font-size: var(--text-lg);
+    letter-spacing: -0.02em;
   }
 
   /* Every value the operator compares is tabular: proportional digits make
@@ -216,7 +272,6 @@
     scrollbar-color: var(--color-rule-strong) transparent;
   }
 
-  /* Wide data tables are still scrollable and still readable. */
   table {
     border-collapse: separate;
     border-spacing: 0;
@@ -224,8 +279,7 @@
 }
 
 @layer components {
-  /* A horizontal hairline. Used instead of a border on a container so that a
-     section boundary is a rule, not a box. */
+  /* --- rules: structure carried by lines, not by boxes ------------------ */
   .rule-t {
     border-top: 1px solid var(--color-rule);
   }
@@ -233,35 +287,37 @@
     border-bottom: 1px solid var(--color-rule);
   }
 
-  /* The one panel treatment. A panel is a region read on a sheet: a 1px edge and
-     no shadow. Depth is not used to separate peers; type weight and rules are. */
+  /* --- the panel: the console's one framing primitive ------------------- */
+  /* A 1px 12% edge plus the smallest elevation. The edge is what makes a panel a
+     region rather than a wash; the shadow is what keeps it off the bench. */
   .panel {
     background-color: var(--color-paper-raised);
-    border: 1px solid var(--color-rule);
+    border: 1px solid var(--color-panel-edge);
     border-radius: var(--radius-panel);
+    box-shadow: var(--shadow-xs);
   }
 
-  /* A panel nested inside another panel does not re-frame itself. Nested cards
-     are the clearest tell of an assembled interface. */
+  /* A panel nested inside another panel is a sub-region, so it drops the frame
+     entirely and shows only a hairline. Nested cards are the clearest tell of an
+     assembled interface. */
   .panel .panel {
     border-color: var(--color-rule-faint);
     border-radius: var(--radius-control);
+    box-shadow: none;
   }
 
-  /* Secondary text: units, counts of things, helper lines. Sentence case and
-     quiet, because the value beside it is what is being read. */
+  /* --- type roles ------------------------------------------------------- */
+  /* Secondary text: units, counts of things, helper lines. */
   .label {
     font-size: var(--text-xs);
-    /* 450 would be synthesised: the face ships 400/500/600, and a synthesised
-       weight renders as a smeared 400 on most systems. */
     font-weight: 500;
     color: var(--color-ink-faint);
     letter-spacing: 0.005em;
   }
 
-  /* Micro-caps: column heads and section markers inside a table. This is the one
-     place small type is tracked and capitalised, which is what lets a 13px data
-     row read as data rather than as a label. */
+  /* Micro-caps: column heads and section markers. This is the one place small
+     type is tracked and capitalised, which is what lets a 14px data row read as
+     data rather than as a label. */
   .micro {
     font-size: var(--text-2xs);
     font-weight: 600;
@@ -270,15 +326,14 @@
     color: var(--color-ink-faint);
   }
 
-  /* Data readouts: values that are compared down a column. */
+  /* Values that are compared down a column. */
   .readout {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     letter-spacing: var(--tracking-data);
   }
 
-  /* Status chips. The only fully rounded shape in the system, so shape alone
-     signals "this is a state". */
+  /* --- status chip: the only fully rounded shape ------------------------ */
   .pill {
     display: inline-flex;
     align-items: center;
@@ -292,12 +347,105 @@
     white-space: nowrap;
   }
 
-  /* The primary action surface. One hue, one shape, in every screen. */
+  /* --- the data grid: fixed row heights, sticky head -------------------- */
+  /* Row height is a token, not a per-page decision: 32 comfortable, 28 compact.
+     A table whose rows are 36px on one page and 80px on another has no grid. */
+  .data-grid {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+
+  .data-grid thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    height: 32px;
+    padding: 0 12px;
+    background-color: var(--color-paper-sunk);
+    border-bottom: 1px solid var(--color-rule);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-micro);
+    text-transform: uppercase;
+    color: var(--color-ink-faint);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  .data-grid tbody td {
+    height: var(--row-h);
+    padding: 0 12px;
+    border-bottom: 1px solid var(--color-row-rule);
+    vertical-align: middle;
+  }
+
+  .data-grid tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .data-grid tbody tr {
+    transition: background-color var(--dur-fast) var(--ease-instrument);
+  }
+
+  .data-grid tbody tr:hover {
+    background-color: color-mix(in srgb, var(--color-paper-sunk) 50%, transparent);
+  }
+
+  .data-grid tbody tr[data-selected="true"] {
+    background-color: var(--color-accent-wash);
+  }
+
+  /* The first and last cells carry the panel's own padding so the grid lines up
+     with the panel header instead of stopping short of it. */
+  .data-grid thead th:first-child,
+  .data-grid tbody td:first-child {
+    padding-left: 16px;
+  }
+  .data-grid thead th:last-child,
+  .data-grid tbody td:last-child {
+    padding-right: 16px;
+  }
+
+  .data-grid--compact tbody td {
+    height: var(--row-h-compact);
+  }
+  .data-grid--comfortable tbody td {
+    height: var(--row-h-comfortable);
+  }
+
+  /* A cell whose value is compared: mono, tabular, right-aligned. */
+  .cell-num {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--tracking-data);
+  }
+
+  /* --- interaction ------------------------------------------------------ */
   .action {
     transition:
-      background-color 110ms var(--ease-instrument),
-      border-color 110ms var(--ease-instrument),
-      color 110ms var(--ease-instrument);
+      background-color var(--dur-fast) var(--ease-instrument),
+      border-color var(--dur-fast) var(--ease-instrument),
+      color var(--dur-fast) var(--ease-instrument);
+  }
+
+  /* Panel actions stay visible. Hiding them at rest is a defect, not a refinement:
+     a touch device never hovers, so an opacity-0 control is a control that does not
+     exist there. They are made quiet with the ghost button style instead, which
+     costs nothing and hides nothing. */
+  .panel-actions {
+    transition: opacity var(--dur-base) var(--ease-instrument);
+  }
+
+  /* --- the live numeral ------------------------------------------------- */
+  /* A value that changed rolls to its new value instead of jumping. */
+  .numeral {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: var(--tracking-data);
+    line-height: 1.05;
+    font-weight: 600;
   }
 }
 

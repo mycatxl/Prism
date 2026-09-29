@@ -4,7 +4,8 @@ import { type FormEvent, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { Panel, PanelHeader, SectionTitle } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelFooter, PanelHeader, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
@@ -341,7 +342,7 @@ function EndpointPagination({
     if (Number.isInteger(value) && value > 0) onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
   };
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+    <PanelFooter className="justify-between">
       <p className="text-xs text-ink-soft">
         {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -408,7 +409,7 @@ function EndpointPagination({
           {t("下一页")}
         </Button>
       </div>
-    </div>
+    </PanelFooter>
   );
 }
 
@@ -576,17 +577,22 @@ export function EndpointsPage() {
   const showList = !endpointsQuery.isLoading && !endpointsQuery.isError;
 
   return (
-    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
-      <header className="min-w-0">
-        <h1 className="text-2xl">{t("接入点")}</h1>
-        <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
-          {t("管理监听端口及其可用的接入能力。")}
-        </p>
-      </header>
+    <Page bleed>
+      <PageHeader
+        title={t("接入点")}
+        description={t("管理监听端口及其可用的接入能力。")}
+        meta={
+          <>
+            <PageMeta label={t("接入点列表")} value={t("共 {{count}} 个接入点", { count: totalEndpoints })} />
+            <PageMeta label={t("每页")} value={pageSize} />
+          </>
+        }
+      />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Panel>
+      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+        <Panel className="flex min-w-0 flex-col">
         <PanelHeader
           title={t("接入点列表")}
           description={t("共 {{count}} 个接入点", { count: totalEndpoints })}
@@ -609,27 +615,33 @@ export function EndpointsPage() {
           }
         />
 
-        {endpointsQuery.isLoading ? <LoadingState label={t("正在加载接入点...")} /> : null}
+        {endpointsQuery.isLoading ? (
+          <PanelBody>
+            <LoadingState label={t("正在加载接入点...")} />
+          </PanelBody>
+        ) : null}
 
         {endpointsQuery.isError ? (
-          <div className="p-4">
+          <PanelBody>
             <ErrorState
               message={formatApiErrorMessage(endpointsQuery.error, t)}
               onRetry={() => void endpointsQuery.refetch()}
             />
-          </div>
+          </PanelBody>
         ) : null}
 
         {showList && !endpoints.length ? (
-          <EmptyState
-            title={t("暂无接入点")}
-            action={
-              <Button variant="secondary" size="sm" onClick={openCreateModal}>
-                <Plus size={15} />
-                {t("新建")}
-              </Button>
-            }
-          />
+          <PanelBody>
+            <EmptyState
+              title={t("暂无接入点")}
+              action={
+                <Button variant="secondary" size="sm" onClick={openCreateModal}>
+                  <Plus size={15} />
+                  {t("新建")}
+                </Button>
+              }
+            />
+          </PanelBody>
         ) : null}
 
         {showList && endpoints.length ? (
@@ -676,19 +688,21 @@ export function EndpointsPage() {
                           ) : null}
                         </span>
                       </TD>
-                      <TD>
-                        <Badge tone={status.tone} dot>
-                          {status.label}
-                        </Badge>
-                        {endpoint.last_error ? (
-                          <p
-                            className="mt-1 max-w-[24ch] text-2xs leading-snug text-alert"
-                            role="alert"
-                            title={t("监听错误：{{message}}", { message: endpoint.last_error })}
-                          >
-                            {t("监听错误：{{message}}", { message: endpoint.last_error })}
-                          </p>
-                        ) : null}
+                      <TD className="whitespace-nowrap">
+                        <span className="flex min-w-0 items-center gap-2 whitespace-nowrap">
+                          <Badge tone={status.tone} dot>
+                            {status.label}
+                          </Badge>
+                          {endpoint.last_error ? (
+                            <span
+                              className="max-w-[24ch] truncate text-2xs text-alert"
+                              role="alert"
+                              title={t("监听错误：{{message}}", { message: endpoint.last_error })}
+                            >
+                              {t("监听错误：{{message}}", { message: endpoint.last_error })}
+                            </span>
+                          ) : null}
+                        </span>
                       </TD>
                       <TD>
                         <CapabilityCell enabled={endpoint.allow_management} />
@@ -761,7 +775,8 @@ export function EndpointsPage() {
           onPageChange={setPage}
           onPageSizeChange={changePageSize}
         />
-      </Panel>
+        </Panel>
+      </div>
 
       <Sheet
         open={Boolean(editingEndpoint)}
@@ -859,6 +874,6 @@ export function EndpointsPage() {
           onSubmit={submitCreateEndpoint}
         />
       </Sheet>
-    </section>
+    </Page>
   );
 }
