@@ -36,7 +36,10 @@ const BrowserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 const DefaultHotReload = 60 * time.Second
 
 // DefaultConcurrencyPerCheck bounds the global concurrency of one rule (§5.3).
-const DefaultConcurrencyPerCheck = 2
+//
+// One rule runs against many nodes at once, each through its own node, so this is
+// a resource bound rather than a vendor one.
+const DefaultConcurrencyPerCheck = 16
 
 // userRuleDirName is the directory below $PRISM_STATE_DIR holding user rules.
 const userRuleDirName = "checks.d"

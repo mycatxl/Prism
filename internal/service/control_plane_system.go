@@ -14,6 +14,7 @@ import (
 
 	"prism/internal/config"
 	"prism/internal/intel"
+	"prism/internal/intel/jobs"
 	"prism/internal/netutil"
 	"prism/internal/proxy"
 	"prism/internal/routing"
@@ -315,8 +316,8 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 
 // validateIntelConfig bounds the intel batch settings of WP08 §3.4.
 func validateIntelConfig(cfg *config.RuntimeConfig) *ServiceError {
-	if cfg.IntelNodeWorkers < 1 || cfg.IntelNodeWorkers > 128 {
-		return invalidArg("intel_node_workers: must be between 1 and 128")
+	if cfg.IntelNodeWorkers < 1 || cfg.IntelNodeWorkers > jobs.MaxNodeWorkers {
+		return invalidArg(fmt.Sprintf("intel_node_workers: must be between 1 and %d", jobs.MaxNodeWorkers))
 	}
 	if cfg.IntelMaxRunningJobs < 1 {
 		return invalidArg("intel_max_running_jobs: must be at least 1")

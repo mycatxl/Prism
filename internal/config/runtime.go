@@ -74,11 +74,11 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 
 		IntelEnabled: true,
 		// With the via-node interval per node, the worker pool is what decides
-		// throughput, so it is set well above the old 16. MaxNodeWorkers (128)
-		// remains the validated ceiling.
-		IntelNodeWorkers:              64,
-		IntelCheckConcurrencyPerCheck: 8,
-		IntelMaxRunningJobs:           8,
+		// throughput: every worker can be talking to a different node at the same
+		// time, which is the point of routing the lookups through the nodes.
+		IntelNodeWorkers:              100,
+		IntelCheckConcurrencyPerCheck: 16,
+		IntelMaxRunningJobs:           16,
 		IntelAutoChecks:               false,
 		IntelRefreshSchedule:          "0 4 * * *",
 	}
