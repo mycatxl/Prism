@@ -235,6 +235,31 @@ scan root must contain `ui/assets/`. Pointed at `dist/` directly, the detector w
 incomplete` and exits 2 — and its colour and custom-property checks silently do not
 run. `make test-slop` builds the correct root for you.
 
+### Installing the detector
+
+```bash
+npx impeccable install --providers=pi --scope=global   # user level: every project sees it
+```
+
+Three traps, all hit while installing it here:
+
+- **Run it from a neutral directory.** The installer detects harnesses from the
+  current directory. Run inside this repository — which has a `.github/` — and it
+  installs a GitHub Copilot skill *and* `hooks/impeccable.json` into the tree. Both
+  were removed again; the tree is meant to stay clean.
+- **Never put it on `PATH` as a symlink.** The launcher resolves its own directory
+  with `dirname "$0"` to find `reference/*.md` and its engine, so through a symlink it
+  searches beside the symlink — and redirecting output into that path **overwrites the
+  launcher itself**. Use a wrapper in `~/.local/bin` that exports
+  `IMPECCABLE_SKILL_DIR` and execs the real path.
+- **The vendored engine can lag the checkout** (the installer ships 0.1.5, the local
+  checkout here is 0.1.6). Keep one engine — replace the vendored copy or set
+  `IMPECCABLE_BIN` — so every launcher reports the same version.
+
+`~/.local/bin` reaches **interactive** shells only. A non-interactive shell — which is
+how an agent runs commands — does not read `~/.bashrc`, so it needs the absolute path
+or an exported `PATH`.
+
 **Never trust a 0.** Confirm the detector can fail first: feed it a page with a
 thick coloured `border-left`, gradient text, a zero-offset glow, a pulsing dot, an
 icon tile above a heading, and a cream background. It must report `side-tab`,
