@@ -72,10 +72,13 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		CacheFlushInterval:       Duration(5 * time.Minute),
 		CacheFlushDirtyThreshold: 1000,
 
-		IntelEnabled:                  true,
-		IntelNodeWorkers:              16,
-		IntelCheckConcurrencyPerCheck: 2,
-		IntelMaxRunningJobs:           2,
+		IntelEnabled: true,
+		// With the via-node interval per node, the worker pool is what decides
+		// throughput, so it is set well above the old 16. MaxNodeWorkers (128)
+		// remains the validated ceiling.
+		IntelNodeWorkers:              64,
+		IntelCheckConcurrencyPerCheck: 8,
+		IntelMaxRunningJobs:           8,
 		IntelAutoChecks:               false,
 		IntelRefreshSchedule:          "0 4 * * *",
 	}
