@@ -122,7 +122,11 @@ const (
 	// unlock check rule.
 	DefaultCheckConcurrencyPerCheck = 2
 	// MaxNodeWorkers is the validated upper bound of intel_node_workers.
-	MaxNodeWorkers = 128
+	//
+	// Each in-flight item works on one node, and the requests leave through that
+	// node, so the pool is bounded by memory and file descriptors rather than by
+	// any vendor rate: a node's own limits still apply to that node alone.
+	MaxNodeWorkers = 512
 	// SSEMaxSubscribers bounds the in-memory SSE fan-out. Over the limit the
 	// subscription request fails with ErrTooManySubscribers (mapped to 429).
 	SSEMaxSubscribers = 64
