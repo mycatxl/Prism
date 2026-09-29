@@ -17,20 +17,23 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Link,
   useLocation,
   useNavigate,
   useSearchParams,
 } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
+import { Badge, type BadgeProps } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { DialogSurface } from "../../components/ui/DialogSurface";
-import { Input } from "../../components/ui/Input";
-import { OffsetPagination } from "../../components/ui/OffsetPagination";
-import { QueryState } from "../../components/ui/QueryState";
+import { Fieldset, Input } from "../../components/ui/Input";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { SectionTitle } from "../../components/ui/Panel";
 import { Select } from "../../components/ui/Select";
+import { Sheet } from "../../components/ui/Sheet";
+import { TBody, TD, TDNum, TH, THead, TR, Table, TableWrap } from "../../components/ui/Table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
@@ -52,18 +55,22 @@ import { PurityGuide } from "../quality/PurityGuide";
 import { purityBands, typeLabels } from "../quality/presentation";
 import { NodeIntelCell, NodeIntelPanel } from "./NodeIntel";
 
-function status(node: NodeSummary): {
-  label: string;
-  variant: "neutral" | "danger" | "warning" | "success";
-} {
-  if (!node.enabled) return { label: "禁用", variant: "neutral" };
-  if (!node.has_outbound) return { label: "错误", variant: "danger" };
+type Tone = NonNullable<BadgeProps["tone"]>;
+
+// The kit's select still carries a pre-Tailwind class name, so each call site
+// supplies the field treatment from the design tokens.
+const selectClass =
+  "h-8 w-auto rounded-control border border-rule bg-paper-raised pr-7 text-sm text-ink";
+
+function status(node: NodeSummary): { label: string; tone: Tone } {
+  if (!node.enabled) return { label: "禁用", tone: "neutral" };
+  if (!node.has_outbound) return { label: "错误", tone: "alert" };
   if (node.circuit_open_since)
     return {
       label: node.failure_count === 0 ? "待测" : "熔断",
-      variant: "warning",
+      tone: "warn",
     };
-  return { label: "健康", variant: "success" };
+  return { label: "健康", tone: "signal" };
 }
 function nameOf(node: NodeSummary) {
   return node.display_tag || node.tags[0]?.tag || node.node_hash.slice(0, 12);
@@ -84,6 +91,18 @@ function optionalInteger(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const n = Number(value);
   return Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+}
+
+/** One fact of the drawer: quiet label left, value right, closed by a hairline. */
+function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b border-rule py-1.5">
+      <dt className="label shrink-0">{label}</dt>
+      <dd className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 text-sm">
+        {children}
+      </dd>
+    </div>
+  );
 }
 
 export function NodesPage() {
@@ -314,609 +333,765 @@ export function NodesPage() {
     "check",
   ].filter((key) => params.get(key)).length;
   const sortButton = (key: NodeSortBy, label: string) => (
-    <button className="table-sort-btn" onClick={() => changeSort(key)}>
+    <button
+      type="button"
+      onClick={() => changeSort(key)}
+      className="inline-flex items-center gap-1 text-xs font-medium text-ink-soft transition-colors hover:text-ink"
+    >
       {t(label)}
       {sort !== key ? (
-        <ArrowUpDown size={12} />
+        <ArrowUpDown size={12} className="text-ink-faint" />
       ) : order === "asc" ? (
-        <ArrowUp size={12} />
+        <ArrowUp size={12} className="text-signal-deep" />
       ) : (
-        <ArrowDown size={12} />
+        <ArrowDown size={12} className="text-signal-deep" />
       )}
     </button>
   );
+  const sortableTH = (key: NodeSortBy, label: string, hint?: string) => (
+    <TH
+      className="w-auto"
+      aria-sort={
+        sort === key ? (order === "asc" ? "ascending" : "descending") : undefined
+      }
+    >
+      {sortButton(key, label)}
+      {hint && <span className="ml-1 text-2xs font-normal text-ink-faint">{hint}</span>}
+    </TH>
+  );
+  const currentPage = Math.min(page, Math.max(0, Math.ceil((nodesQuery.data?.total ?? 0) / pageSize) - 1));
+  const totalPages = Math.max(1, Math.ceil((nodesQuery.data?.total ?? 0) / pageSize));
+  const jumpToPage = (raw: string) => {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0)
+      update("page", String(Math.max(0, Math.min(totalPages - 1, value - 1))));
+  };
   return (
-    <section className="nodes-workspace">
+    <section className="mx-auto w-full max-w-[1600px] px-4 py-4 lg:px-6">
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      <header className="module-header">
-        <div>
-          <h1>
-            {t("节点池")}{" "}
-            {view === "nodes" && <span className="heading-count">
-              {nodesQuery.data ? nodesQuery.data.total.toLocaleString() : "--"}
-            </span>}
-          </h1>
-          <p className="workspace-description">{t("按线路查看健康，按出口查看质量。")}</p>
+      <header className="flex flex-wrap items-start justify-between gap-3 pb-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold">{t("节点池")}</h1>
+          <p className="mt-1 max-w-[80ch] text-sm text-ink-soft">{t("按线路查看健康，按出口查看质量。")}</p>
         </div>
-        <div className="page-actions">
-          <Link className="btn btn-secondary" to="/system-config?category=quality"><ShieldCheck size={15} />{t("数据源与额度")}</Link>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button asChild variant="secondary">
+            <Link to="/system-config?category=quality">
+              <ShieldCheck size={15} />
+              {t("数据源与额度")}
+            </Link>
+          </Button>
           <Button
             variant="ghost"
-            className="icon-button"
+            size="icon"
             title={t("刷新")}
             aria-label={t("刷新")}
             disabled={view === "nodes" && nodesQuery.isFetching}
             onClick={refresh}
           >
             <RefreshCw
-              size={17}
-              className={nodesQuery.isFetching ? "spin" : ""}
+              size={16}
+              className={nodesQuery.isFetching ? "animate-spin" : undefined}
             />
           </Button>
-          <Link className="btn btn-secondary" to="/subscriptions?create=1">
-            <RssImport />
-            {t("导入节点")}
-          </Link>
+          <Button asChild variant="secondary">
+            <Link to="/subscriptions?create=1">{t("导入节点")}</Link>
+          </Button>
         </div>
       </header>
-      <nav className="node-view-switch" aria-label={t("节点池视图")}>
-        <button type="button" aria-pressed={view === "nodes"} aria-controls="node-view-content" onClick={() => changeView("nodes")}><Network size={15} />{t("节点线路")}</button>
-        <button type="button" aria-pressed={view === "exits"} aria-controls="node-view-content" onClick={() => changeView("exits")}><Globe2 size={15} />{t("出口记录")}</button>
-      </nav>
-      <div id="node-view-content">
-      {view === "exits" ? <ExitRecordsPanel /> : <>
-      <div className="node-toolbar">
-        <label className="search-field">
-          <Search size={16} />
-          <Input
-            aria-label={t("搜索节点")}
-            placeholder={t("搜索节点名称或标签")}
-            value={keyword}
-            onChange={(event) => update("tag_keyword", event.target.value)}
-          />
-          {keyword && (
-            <button
-              aria-label={t("清除搜索")}
-              onClick={() => update("tag_keyword", "")}
-            >
-              <X size={14} />
-            </button>
-          )}
-        </label>
-        <Select
-          value={mode}
-          aria-label={t("状态")}
-          onChange={(event) => update("status", event.target.value)}
-        >
-          {[
-            ["all", "全部状态"],
-            ["healthy", "健康"],
-            ["circuit_open", "熔断 / 待测"],
-            ["error", "错误"],
-            ["disabled", "禁用"],
-          ].map(([key, label]) => (
-            <option key={key} value={key}>
-              {t(label)}
-            </option>
-          ))}
-        </Select>
-        <Button
-          variant="secondary"
-          onClick={() => setAdvanced((value) => !value)}
-          aria-expanded={advanced}
-          aria-controls="node-filters"
-        >
-          <SlidersHorizontal size={15} />
-          {t("筛选")}
-          {numberOfFilters ? (
-            <span className="filter-count">{numberOfFilters}</span>
-          ) : null}
-        </Button>
-        <Button
-          variant="secondary"
-          aria-label={t("批量拉取情报")}
-          title={t(bulkScopeBlocked
-            ? "批量拉取只对健康节点生效，请先切换状态筛选。"
-            : "对当前筛选结果中健康的节点批量拉取情报。")}
-          disabled={bulkJob.isPending || bulkScopeBlocked || bulkCount === 0}
-          onClick={() => bulkJob.mutate({ scope: buildBulkIntelScope(params), count: bulkCount })}
-        >
-          {bulkJob.isPending ? <LoaderCircle size={15} className="spin" /> : <Radar size={15} />}
-          {t("批量拉取情报")} · {bulkCount.toLocaleString()}
-        </Button>
-        {bulkScopeWider && !bulkScopeBlocked ? (
-          <span className="node-bulk-warning">
-            {t("部分筛选条件不适用于批量拉取，实际范围可能更大。")}
-          </span>
-        ) : null}
-        {bulkJobID ? (
-          <Link className="btn btn-ghost btn-sm" to="/jobs">{t("查看检测任务")}</Link>
-        ) : null}
-        <span className="node-ip-count">
-          <Globe2 size={15} />
-          {nodesQuery.data
-            ? nodesQuery.data.unique_egress_ips.toLocaleString()
-            : "--"}{" "}
-          {t("独立出口")}
-        </span>
-      </div>
-      <div className="quality-filter-row">
-        <Select aria-label={t("IP 类型")} value={filter.ip_type} onChange={event => update("ip_type", event.target.value)}>
-          <option value="">{t("全部 IP 类型")}</option>
-          {Object.entries(typeLabels).map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
-        </Select>
-        <Select aria-label={t("连接协议")} value={filter.protocol} onChange={event => update("protocol", event.target.value)}>
-          <option value="">{t("全部协议")}</option>
-          {Object.entries(protocolLabels).map(([value,label]) => <option value={value} key={value}>{label}</option>)}
-        </Select>
-        <Select aria-label={t("质量状态")} value={filter.quality_state} onChange={event => update("quality_state", event.target.value)}>
-          {[["", "全部质量状态"], ["valid", "证据齐全"], ["partial", "仅部分证据"], ["pending", "等待检测"], ["unobserved", "未检测"], ["stale", "已过期"], ["conflicting", "来源有分歧"], ["unsupported", "不支持检测"]].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
-        </Select>
-        <Select aria-label={t("纯净度分级")} value={filter.purity_band} onChange={event => update("purity_band", event.target.value)}>
-          <option value="">{t("全部纯净度")}</option>
-          {purityBands.map(band => <option value={band.id} key={band.id}>{band.min}–{band.max} · {t(band.label)}</option>)}
-          <option value="review">{t("需要复核")}</option><option value="unknown">{t("评级未知")}</option>
-        </Select>
-        <Select aria-label={t("排序")} value={sort} onChange={event => update("sort", event.target.value)}>
-          {[
-            ["tag", "节点名称"],
-            ["created_at", "创建时间"],
-            ["failure_count", "连续失败"],
-            ["region", "地区"],
-            ["purity_score", "纯净度评分"],
-            ["latency", "参考延迟"],
-            ["assessed_at", "评估时间"],
-          ].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
-        </Select>
-        <Select aria-label={t("排序方向")} value={order} onChange={event => update("order", event.target.value)}>
-          <option value="asc">{t("升序")}</option>
-          <option value="desc">{t("降序")}</option>
-        </Select>
-        <span><ShieldCheck size={13} />{t("质量按出口 IP 共享")}</span>
-      </div>
-      <PurityGuide />
-      {advanced && (
-        <div className="node-filter-grid" id="node-filters">
-          <label>
-            {t("平台")}
+
+      <Tabs value={view} onValueChange={(next) => changeView(next === "exits" ? "exits" : "nodes")}>
+        <TabsList>
+          <TabsTrigger value="nodes">
+            <span className="inline-flex items-center gap-1.5">
+              <Network size={14} aria-hidden />
+              {t("节点线路")}
+            </span>
+          </TabsTrigger>
+          <TabsTrigger value="exits">
+            <span className="inline-flex items-center gap-1.5">
+              <Globe2 size={14} aria-hidden />
+              {t("出口记录")}
+            </span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="exits" className="pt-3">
+          <ExitRecordsPanel />
+        </TabsContent>
+
+        <TabsContent value="nodes" className="space-y-3 pt-3">
+          <ReadoutStrip className="grid-cols-2">
+            <ReadoutCell>
+              <Readout
+                label={t("节点总数")}
+                value={nodesQuery.data ? nodesQuery.data.total.toLocaleString() : "--"}
+              />
+            </ReadoutCell>
+            <ReadoutCell>
+              <Readout
+                label={t("独立出口")}
+                value={nodesQuery.data ? nodesQuery.data.unique_egress_ips.toLocaleString() : "--"}
+              />
+            </ReadoutCell>
+          </ReadoutStrip>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative w-full min-w-48 sm:w-64">
+              <Search
+                size={14}
+                aria-hidden
+                className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
+              />
+              <Input
+                aria-label={t("搜索节点")}
+                placeholder={t("搜索节点名称或标签")}
+                className="pl-8 pr-8"
+                value={keyword}
+                onChange={(event) => update("tag_keyword", event.target.value)}
+              />
+              {keyword && (
+                <button
+                  type="button"
+                  aria-label={t("清除搜索")}
+                  className="absolute top-1/2 right-1 -translate-y-1/2 rounded-control p-1 text-ink-faint transition-colors hover:text-ink"
+                  onClick={() => update("tag_keyword", "")}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
             <Select
-              aria-label={t("平台")}
-              value={filter.platform_id}
-              onChange={(event) => update("platform_id", event.target.value)}
+              value={mode}
+              aria-label={t("状态")}
+              className={selectClass}
+              onChange={(event) => update("status", event.target.value)}
             >
-              <option value="">{t("全部平台")}</option>
-              {platforms.data?.items.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            {t("订阅")}
-            <Select
-              aria-label={t("订阅")}
-              value={filter.subscription_id}
-              onChange={(event) =>
-                update("subscription_id", event.target.value)
-              }
-            >
-              <option value="">{t("全部订阅")}</option>
-              {subscriptions.data?.items.map((sub) => (
-                <option key={sub.id} value={sub.id}>
-                  {sub.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            {t("地区")}
-            <Select
-              aria-label={t("地区")}
-              value={filter.region}
-              onChange={(event) => update("region", event.target.value)}
-            >
-              <option value="">{t("全部地区")}</option>
-              {getAllRegions().map((region) => (
-                <option key={region.code} value={region.code}>
-                  {region.name}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label>
-            {t("出口 IP")}
-            <Input
-              aria-label={t("出口 IP")}
-              value={filter.egress_ip}
-              onChange={(event) => update("egress_ip", event.target.value)}
-              placeholder={t("精确出口 IP")}
-            />
-          </label>
-          <label>{t("来源风险等级")}<Select aria-label={t("风险等级")} value={filter.risk_grade} onChange={event => update("risk_grade", event.target.value)}>
-            {[["", "全部风险等级"], ["low", "较低风险"], ["moderate", "一般风险"], ["high", "较高风险"], ["severe", "严重风险"], ["review", "有滥用记录"], ["unknown", "评级未知"]].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
-          </Select></label>
-          <label>
-            {t("最低纯净度")}
-            <Input
-              aria-label={t("最低纯净度")}
-              type="number"
-              min={0}
-              max={100}
-              value={filter.purity_min}
-              onChange={(event) => update("purity_min", event.target.value)}
-              placeholder="0"
-            />
-          </label>
-          <label>
-            {t("最高纯净度")}
-            <Input
-              aria-label={t("最高纯净度")}
-              type="number"
-              min={0}
-              max={100}
-              value={filter.purity_max}
-              onChange={(event) => update("purity_max", event.target.value)}
-              placeholder="100"
-            />
-          </label>
-          <label>
-            {t("判定")}
-            <Select aria-label={t("判定")} value={filter.verdict} onChange={event => update("verdict", event.target.value)}>
-              <option value="">{t("全部判定")}</option>
               {[
-                ["favorable", "未见明显风险"],
-                ["caution", "谨慎使用"],
-                ["incomplete", "特征未齐"],
-                ["review", "需要复核"],
-                ["conflicting", "类型有分歧"],
-                ["high_risk", "风险较高"],
-                ["pending", "等待评估"],
-              ].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
+                ["all", "全部状态"],
+                ["healthy", "健康"],
+                ["circuit_open", "熔断 / 待测"],
+                ["error", "错误"],
+                ["disabled", "禁用"],
+              ].map(([key, label]) => (
+                <option key={key} value={key}>
+                  {t(label)}
+                </option>
+              ))}
             </Select>
-          </label>
-          <label>
-            {t("最低置信度")}
-            <Select aria-label={t("最低置信度")} value={filter.confidence_min} onChange={event => update("confidence_min", event.target.value)}>
-              <option value="">{t("全部置信度")}</option>
-              {[["low", "置信度低"], ["medium", "置信度中"], ["high", "置信度高"]].map(([value,label]) => <option value={value} key={value}>{t(label)}</option>)}
-            </Select>
-          </label>
-          <label>
-            {t("原生 IP")}
-            <Select aria-label={t("原生 IP")} value={filter.native} onChange={event => update("native", event.target.value)}>
-              <option value="">{t("全部原生类型")}</option>
-              <option value="true">{t("原生 IP")}</option>
-              <option value="false">{t("广播 IP")}</option>
-            </Select>
-          </label>
-          <label>
-            ASN
-            <Input
-              aria-label="ASN"
-              value={filter.asn}
-              onChange={(event) => update("asn", event.target.value)}
-              placeholder="13335"
-            />
-          </label>
-          <label>
-            {t("国家 / 地区")}
-            <Input
-              aria-label={t("国家 / 地区")}
-              value={filter.country}
-              onChange={(event) => update("country", event.target.value)}
-              placeholder="JP"
-            />
-          </label>
-          <label>
-            {t("检测结果")}
-            <Input
-              aria-label={t("检测结果")}
-              value={filter.check}
-              onChange={(event) => update("check", event.target.value)}
-              placeholder={t("格式 检测项:结果，如 chatgpt:available")}
-            />
-          </label>
-          <Button
-            variant="ghost"
-            onClick={() => setParams({}, { replace: true })}
-          >
-            <X size={14} />
-            {t("清除筛选")}
-          </Button>
-          {(platforms.isError || subscriptions.isError) && (
-            <QueryState
-              error={platforms.error || subscriptions.error}
-              onRetry={() => {
-                void platforms.refetch();
-                void subscriptions.refetch();
-              }}
-            />
-          )}
-        </div>
-      )}
-      {!advanced && numberOfFilters > 0 && (
-        <div className="active-filter-summary">
-          <span>
-            {t("已应用筛选")} {numberOfFilters}
-          </span>
-          <Button variant="ghost" size="sm" onClick={() => setAdvanced(true)}>
-            {t("查看")}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setParams({}, { replace: true })}
-          >
-            {t("清除筛选")}
-          </Button>
-        </div>
-      )}
-      <QueryState
-        loading={nodesQuery.isLoading}
-        error={nodesQuery.error}
-        onRetry={() => void nodesQuery.refetch()}
-      />
-      {!nodesQuery.isLoading && !nodesQuery.isError && nodes.length === 0 && (
-        <div className="workspace-empty">
-          <Network size={30} />
-          <h2>
-            {t(
-              keyword || mode !== "all" || numberOfFilters
-                ? "没有匹配的节点"
-                : "还没有节点",
-            )}
-          </h2>
-          <div className="page-actions">
             <Button
               variant="secondary"
-              onClick={() => setParams({}, { replace: true })}
+              onClick={() => setAdvanced((value) => !value)}
+              aria-expanded={advanced}
+              aria-controls="node-filters"
             >
-              {t("清除筛选")}
+              <SlidersHorizontal size={15} />
+              {t("筛选")}
+              {numberOfFilters ? <Badge tone="outline">{numberOfFilters}</Badge> : null}
             </Button>
-            <Link className="btn btn-primary" to="/subscriptions?create=1">
-              {t("添加订阅")}
-            </Link>
+            <Button
+              variant="secondary"
+              aria-label={t("批量拉取情报")}
+              title={t(bulkScopeBlocked
+                ? "批量拉取只对健康节点生效，请先切换状态筛选。"
+                : "对当前筛选结果中健康的节点批量拉取情报。")}
+              disabled={bulkJob.isPending || bulkScopeBlocked || bulkCount === 0}
+              onClick={() => bulkJob.mutate({ scope: buildBulkIntelScope(params), count: bulkCount })}
+            >
+              {bulkJob.isPending ? (
+                <LoaderCircle size={15} className="animate-spin" />
+              ) : (
+                <Radar size={15} />
+              )}
+              <span>{t("批量拉取情报")}</span>
+              <span className="readout text-2xs text-ink-faint">
+                {bulkCount.toLocaleString()}
+              </span>
+            </Button>
+            {bulkScopeWider && !bulkScopeBlocked ? (
+              <span className="max-w-[40ch] text-xs leading-relaxed text-warn">
+                {t("部分筛选条件不适用于批量拉取，实际范围可能更大。")}
+              </span>
+            ) : null}
+            {bulkJobID ? (
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/jobs">{t("查看检测任务")}</Link>
+              </Button>
+            ) : null}
           </div>
-        </div>
-      )}
-      {nodes.length > 0 && (
-        <div className="node-table-scroll" aria-busy={nodesQuery.isFetching}>
-          <table className="workbench-table node-inventory-table">
-            <colgroup><col className="node-col-identity" /><col className="node-col-exit" /><col className="node-col-purity" /><col className="node-col-signals" /><col className="node-col-latency" /><col className="node-col-actions" /></colgroup>
-            <thead>
-              <tr>
-                <th>{sortButton("tag", "节点名称")}</th>
-                <th>{sortButton("region", "出口 / 类型")}</th>
-                <th>{sortButton("purity_score", "纯净度")}<small>prism-purity-v2</small></th>
-                <th>{t("网络特征")}<small>ProxyCheck</small></th>
-                <th>{sortButton("latency", "参考延迟")}</th>
-                <th>{t("操作")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {nodes.map((node) => {
-                const state = status(node);
-                return (
-                  <tr
-                    key={node.node_hash}
-                    data-selected={selected === node.node_hash}
-                  >
-                    <td>
-                      <button
-                        className="node-name"
-                        onClick={() => open(node.node_hash)}
-                      >
-                        <span className="node-glyph">
-                          <Network size={16} />
-                        </span>
-                        <span>
-                          <strong>{nameOf(node)}</strong>
-                          <small>
-                            <span className={"node-state node-state-" + state.variant}>{t(state.label)}</span>
-                            {node.protocol && <span className="node-protocol">{protocolLabels[node.protocol] || node.protocol}</span>}
-                            {node.tags[0]?.subscription_name ||
-                              node.node_hash.slice(0, 12)}
-                            {node.tags.length > 1 &&
-                              ` +${node.tags.length - 1}`}
-                          </small>
-                        </span>
-                      </button>
-                    </td>
-                    <td><div className="node-exit-cell"><strong>{node.egress_ip || "—"}</strong>
-                      <span className="node-exit-meta"><IPTypeBadge summary={node.quality} />{node.region && <span className="node-region" title={getRegionName(node.region.toUpperCase())}>{node.region.toUpperCase()}</span>}</span>
-                      {node.quality?.assessment?.native !== null && node.quality?.assessment?.native !== undefined && <small>{t(node.quality.assessment.native ? "原生 IP" : "广播 IP")}</small>}
-                    </div></td>
-                    <td><NodeIntelCell intel={node.intel} /></td>
-                    <td><div className="node-network-cell"><NetworkSignals summary={node.quality} />{node.quality?.assessment?.verdict && node.quality.assessment.verdict !== "pending" && <VerdictBadge summary={node.quality} />}</div></td>
-                    <td>
-                      <span
-                        className={
-                          state.variant === "success" ? "latency-value" : ""
-                        }
-                      >
-                        {node.reference_latency_ms !== undefined &&
-                        state.variant === "success"
-                          ? Math.round(node.reference_latency_ms) + " ms"
-                          : "--"}
-                      </span>
-                    </td>
-                    <td>
-                      <div className="row-actions">
-                        <Button variant="ghost" size="sm" onClick={() => open(node.node_hash)} aria-label={t("查看节点详情")}>{t("详情")}<ChevronRight size={14} /></Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {nodesQuery.data && (
-        <OffsetPagination
-          page={page}
-          totalPages={Math.max(1, Math.ceil(nodesQuery.data.total / pageSize))}
-          totalItems={nodesQuery.data.total}
-          pageSize={pageSize}
-          pageSizeOptions={sizes}
-          onPageChange={(n) => update("page", String(n))}
-          onPageSizeChange={(n) => update("size", String(n))}
-          disabled={nodesQuery.isFetching}
-        />
-      )}
-      {selected && (
-        <DialogSurface title={t("节点详情")} onClose={close} variant="drawer">
-          <div className="node-inspector">
-            <header className="inspector-toolbar">
-              <span>{t("节点详情")}</span>
-              <div className="row-actions">
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Select
+              aria-label={t("IP 类型")}
+              className={selectClass}
+              value={filter.ip_type}
+              onChange={event => update("ip_type", event.target.value)}
+            >
+              <option value="">{t("全部 IP 类型")}</option>
+              {Object.entries(typeLabels).map(([value, label]) => (
+                <option value={value} key={value}>{t(label)}</option>
+              ))}
+            </Select>
+            <Select
+              aria-label={t("连接协议")}
+              className={selectClass}
+              value={filter.protocol}
+              onChange={event => update("protocol", event.target.value)}
+            >
+              <option value="">{t("全部协议")}</option>
+              {Object.entries(protocolLabels).map(([value, label]) => (
+                <option value={value} key={value}>{label}</option>
+              ))}
+            </Select>
+            <Select
+              aria-label={t("质量状态")}
+              className={selectClass}
+              value={filter.quality_state}
+              onChange={event => update("quality_state", event.target.value)}
+            >
+              {[["", "全部质量状态"], ["valid", "证据齐全"], ["partial", "仅部分证据"], ["pending", "等待检测"], ["unobserved", "未检测"], ["stale", "已过期"], ["conflicting", "来源有分歧"], ["unsupported", "不支持检测"]].map(([value, label]) => (
+                <option value={value} key={value}>{t(label)}</option>
+              ))}
+            </Select>
+            <Select
+              aria-label={t("纯净度分级")}
+              className={selectClass}
+              value={filter.purity_band}
+              onChange={event => update("purity_band", event.target.value)}
+            >
+              <option value="">{t("全部纯净度")}</option>
+              {purityBands.map(band => (
+                <option value={band.id} key={band.id}>{band.min}–{band.max} {t(band.label)}</option>
+              ))}
+              <option value="review">{t("需要复核")}</option>
+              <option value="unknown">{t("评级未知")}</option>
+            </Select>
+            <Select
+              aria-label={t("排序")}
+              className={selectClass}
+              value={sort}
+              onChange={event => update("sort", event.target.value)}
+            >
+              {[
+                ["tag", "节点名称"],
+                ["created_at", "创建时间"],
+                ["failure_count", "连续失败"],
+                ["region", "地区"],
+                ["purity_score", "纯净度评分"],
+                ["latency", "参考延迟"],
+                ["assessed_at", "评估时间"],
+              ].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
+            </Select>
+            <Select
+              aria-label={t("排序方向")}
+              className={selectClass}
+              value={order}
+              onChange={event => update("order", event.target.value)}
+            >
+              <option value="asc">{t("升序")}</option>
+              <option value="desc">{t("降序")}</option>
+            </Select>
+            <span className="flex items-center gap-1 text-xs text-ink-faint">
+              <ShieldCheck size={13} aria-hidden />
+              {t("质量按出口 IP 共享")}
+            </span>
+          </div>
+
+          <PurityGuide />
+
+          {advanced && (
+            <div
+              className="grid grid-cols-1 gap-x-4 gap-y-3 border-t border-rule pt-3 sm:grid-cols-2 lg:grid-cols-4"
+              id="node-filters"
+            >
+              <Fieldset label={t("平台")}>
+                <Select
+                  aria-label={t("平台")}
+                  className={selectClass + " w-full"}
+                  value={filter.platform_id}
+                  onChange={(event) => update("platform_id", event.target.value)}
+                >
+                  <option value="">{t("全部平台")}</option>
+                  {platforms.data?.items.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              </Fieldset>
+              <Fieldset label={t("订阅")}>
+                <Select
+                  aria-label={t("订阅")}
+                  className={selectClass + " w-full"}
+                  value={filter.subscription_id}
+                  onChange={(event) =>
+                    update("subscription_id", event.target.value)
+                  }
+                >
+                  <option value="">{t("全部订阅")}</option>
+                  {subscriptions.data?.items.map((sub) => (
+                    <option key={sub.id} value={sub.id}>
+                      {sub.name}
+                    </option>
+                  ))}
+                </Select>
+              </Fieldset>
+              <Fieldset label={t("地区")}>
+                <Select
+                  aria-label={t("地区")}
+                  className={selectClass + " w-full"}
+                  value={filter.region}
+                  onChange={(event) => update("region", event.target.value)}
+                >
+                  <option value="">{t("全部地区")}</option>
+                  {getAllRegions().map((region) => (
+                    <option key={region.code} value={region.code}>
+                      {region.name}
+                    </option>
+                  ))}
+                </Select>
+              </Fieldset>
+              <Fieldset label={t("出口 IP")}>
+                <Input
+                  aria-label={t("出口 IP")}
+                  className="readout w-full"
+                  value={filter.egress_ip}
+                  onChange={(event) => update("egress_ip", event.target.value)}
+                  placeholder={t("精确出口 IP")}
+                />
+              </Fieldset>
+              <Fieldset label={t("来源风险等级")}>
+                <Select
+                  aria-label={t("风险等级")}
+                  className={selectClass + " w-full"}
+                  value={filter.risk_grade}
+                  onChange={event => update("risk_grade", event.target.value)}
+                >
+                  {[["", "全部风险等级"], ["low", "较低风险"], ["moderate", "一般风险"], ["high", "较高风险"], ["severe", "严重风险"], ["review", "有滥用记录"], ["unknown", "评级未知"]].map(([value, label]) => (
+                    <option value={value} key={value}>{t(label)}</option>
+                  ))}
+                </Select>
+              </Fieldset>
+              <Fieldset label={t("最低纯净度")}>
+                <Input
+                  aria-label={t("最低纯净度")}
+                  className="readout w-full"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={filter.purity_min}
+                  onChange={(event) => update("purity_min", event.target.value)}
+                  placeholder="0"
+                />
+              </Fieldset>
+              <Fieldset label={t("最高纯净度")}>
+                <Input
+                  aria-label={t("最高纯净度")}
+                  className="readout w-full"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={filter.purity_max}
+                  onChange={(event) => update("purity_max", event.target.value)}
+                  placeholder="100"
+                />
+              </Fieldset>
+              <Fieldset label={t("判定")}>
+                <Select
+                  aria-label={t("判定")}
+                  className={selectClass + " w-full"}
+                  value={filter.verdict}
+                  onChange={event => update("verdict", event.target.value)}
+                >
+                  <option value="">{t("全部判定")}</option>
+                  {[
+                    ["favorable", "未见明显风险"],
+                    ["caution", "谨慎使用"],
+                    ["incomplete", "特征未齐"],
+                    ["review", "需要复核"],
+                    ["conflicting", "类型有分歧"],
+                    ["high_risk", "风险较高"],
+                    ["pending", "等待评估"],
+                  ].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
+                </Select>
+              </Fieldset>
+              <Fieldset label={t("最低置信度")}>
+                <Select
+                  aria-label={t("最低置信度")}
+                  className={selectClass + " w-full"}
+                  value={filter.confidence_min}
+                  onChange={event => update("confidence_min", event.target.value)}
+                >
+                  <option value="">{t("全部置信度")}</option>
+                  {[["low", "置信度低"], ["medium", "置信度中"], ["high", "置信度高"]].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
+                </Select>
+              </Fieldset>
+              <Fieldset label={t("原生 IP")}>
+                <Select
+                  aria-label={t("原生 IP")}
+                  className={selectClass + " w-full"}
+                  value={filter.native}
+                  onChange={event => update("native", event.target.value)}
+                >
+                  <option value="">{t("全部原生类型")}</option>
+                  <option value="true">{t("原生 IP")}</option>
+                  <option value="false">{t("广播 IP")}</option>
+                </Select>
+              </Fieldset>
+              <Fieldset label="ASN">
+                <Input
+                  aria-label="ASN"
+                  className="readout w-full"
+                  value={filter.asn}
+                  onChange={(event) => update("asn", event.target.value)}
+                  placeholder="13335"
+                />
+              </Fieldset>
+              <Fieldset label={t("国家 / 地区")}>
+                <Input
+                  aria-label={t("国家 / 地区")}
+                  className="readout w-full"
+                  value={filter.country}
+                  onChange={(event) => update("country", event.target.value)}
+                  placeholder="JP"
+                />
+              </Fieldset>
+              <Fieldset label={t("检测结果")}>
+                <Input
+                  aria-label={t("检测结果")}
+                  className="w-full"
+                  value={filter.check}
+                  onChange={(event) => update("check", event.target.value)}
+                  placeholder={t("格式 检测项:结果，如 chatgpt:available")}
+                />
+              </Fieldset>
+              <div className="flex items-start">
                 <Button
                   variant="ghost"
-                  className="icon-button"
-                  aria-label={t("上一个节点")}
-                  title={t("上一个节点")}
-                  disabled={selectedIndex <= 0}
-                  onClick={() =>
-                    update("selected", nodes[selectedIndex - 1].node_hash)
-                  }
+                  onClick={() => setParams({}, { replace: true })}
+                >
+                  <X size={14} />
+                  {t("清除筛选")}
+                </Button>
+              </div>
+              {(platforms.isError || subscriptions.isError) && (
+                <div className="sm:col-span-2 lg:col-span-4">
+                  <ErrorState
+                    message={t("数据暂时不可用")}
+                    onRetry={() => {
+                      void platforms.refetch();
+                      void subscriptions.refetch();
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {!advanced && numberOfFilters > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-t border-rule pt-2 text-xs text-ink-soft">
+              <span>
+                {t("已应用筛选")} <span className="readout">{numberOfFilters}</span>
+              </span>
+              <Button variant="quiet" size="sm" onClick={() => setAdvanced(true)}>
+                {t("查看")}
+              </Button>
+              <Button
+                variant="quiet"
+                size="sm"
+                onClick={() => setParams({}, { replace: true })}
+              >
+                {t("清除筛选")}
+              </Button>
+            </div>
+          )}
+
+          {nodesQuery.isLoading && <LoadingState />}
+          {nodesQuery.isError && (
+            <ErrorState
+              message={t("数据暂时不可用")}
+              onRetry={() => void nodesQuery.refetch()}
+            />
+          )}
+          {!nodesQuery.isLoading && !nodesQuery.isError && nodes.length === 0 && (
+            <EmptyState
+              title={t(
+                keyword || mode !== "all" || numberOfFilters
+                  ? "没有匹配的节点"
+                  : "还没有节点",
+              )}
+              action={
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() => setParams({}, { replace: true })}
+                  >
+                    {t("清除筛选")}
+                  </Button>
+                  <Button asChild>
+                    <Link to="/subscriptions?create=1">{t("添加订阅")}</Link>
+                  </Button>
+                </div>
+              }
+            />
+          )}
+
+          {nodes.length > 0 && (
+            <TableWrap className="border-y border-rule" aria-busy={nodesQuery.isFetching}>
+              <Table className="min-w-[920px]">
+                <THead>
+                  <TR>
+                    {sortableTH("tag", "节点名称")}
+                    {sortableTH("region", "出口 / 类型")}
+                    {sortableTH("purity_score", "纯净度", "prism-purity-v2")}
+                    <TH className="w-auto">
+                      {t("网络特征")}
+                      <span className="ml-1 text-2xs font-normal text-ink-faint">ProxyCheck</span>
+                    </TH>
+                    {sortableTH("latency", "参考延迟")}
+                    <TH className="w-24 text-right">{t("操作")}</TH>
+                  </TR>
+                </THead>
+                <TBody>
+                  {nodes.map((node) => {
+                    const state = status(node);
+                    const inventory = protocolLabels[node.protocol || ""];
+                    return (
+                      <TR key={node.node_hash} selected={selected === node.node_hash}>
+                        <TD className="max-w-0">
+                          <button
+                            type="button"
+                            className="flex w-full min-w-0 items-start gap-2 text-left"
+                            onClick={() => open(node.node_hash)}
+                          >
+                            <Network
+                              size={15}
+                              aria-hidden
+                              className="mt-0.5 shrink-0 text-ink-faint"
+                            />
+                            <span className="min-w-0">
+                              <span className="block truncate font-medium text-ink">
+                                {nameOf(node)}
+                              </span>
+                              <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-ink-faint">
+                                <Badge tone={state.tone} dot>
+                                  {t(state.label)}
+                                </Badge>
+                                {inventory && <span>{inventory}</span>}
+                                {node.tags[0]?.subscription_name ? (
+                                  <span>{node.tags[0].subscription_name}</span>
+                                ) : (
+                                  <span className="readout">
+                                    {node.node_hash.slice(0, 12)}
+                                  </span>
+                                )}
+                                {node.tags.length > 1 && (
+                                  <span className="readout">+{node.tags.length - 1}</span>
+                                )}
+                              </span>
+                            </span>
+                          </button>
+                        </TD>
+                        <TD>
+                          <div className="flex min-w-0 flex-col items-start gap-1">
+                            <span className="readout font-medium text-ink">
+                              {node.egress_ip || "—"}
+                            </span>
+                            <span className="flex flex-wrap items-center gap-1.5">
+                              <IPTypeBadge summary={node.quality} />
+                              {node.region && (
+                                <span
+                                  className="readout text-2xs text-ink-soft"
+                                  title={getRegionName(node.region.toUpperCase())}
+                                >
+                                  {node.region.toUpperCase()}
+                                </span>
+                              )}
+                            </span>
+                            {node.quality?.assessment?.native !== null &&
+                              node.quality?.assessment?.native !== undefined && (
+                                <span className="text-2xs text-ink-faint">
+                                  {t(node.quality.assessment.native ? "原生 IP" : "广播 IP")}
+                                </span>
+                              )}
+                          </div>
+                        </TD>
+                        <TD>
+                          <NodeIntelCell intel={node.intel} />
+                        </TD>
+                        <TD>
+                          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                            <NetworkSignals summary={node.quality} />
+                            {node.quality?.assessment?.verdict &&
+                              node.quality.assessment.verdict !== "pending" && (
+                                <VerdictBadge summary={node.quality} />
+                              )}
+                          </div>
+                        </TD>
+                        <TDNum>
+                          {node.reference_latency_ms !== undefined &&
+                          state.tone === "signal" ? (
+                            <span className="readout">
+                              {Math.round(node.reference_latency_ms) + " ms"}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">--</span>
+                          )}
+                        </TDNum>
+                        <TD className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => open(node.node_hash)}
+                            aria-label={t("查看节点详情")}
+                          >
+                            {t("详情")}
+                          </Button>
+                        </TD>
+                      </TR>
+                    );
+                  })}
+                </TBody>
+              </Table>
+            </TableWrap>
+          )}
+
+          {nodesQuery.data && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule py-2">
+              <p className="readout text-xs text-ink-soft">
+                {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+                  page: currentPage + 1,
+                  pages: totalPages,
+                  start: nodesQuery.data.total ? currentPage * pageSize + 1 : 0,
+                  end: Math.min((currentPage + 1) * pageSize, nodesQuery.data.total),
+                  total: nodesQuery.data.total,
+                })}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                  <span>{t("每页")}</span>
+                  <Select
+                    className={selectClass}
+                    value={pageSize}
+                    disabled={nodesQuery.isFetching}
+                    aria-label={t("每页")}
+                    onChange={(event) => update("size", event.target.value)}
+                  >
+                    {sizes.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                  <span>{t("跳至")}</span>
+                  <Input
+                    key={currentPage}
+                    className="readout w-16 text-center"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={totalPages}
+                    defaultValue={currentPage + 1}
+                    aria-label={t("选择页码")}
+                    disabled={nodesQuery.isFetching}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") jumpToPage(event.currentTarget.value);
+                    }}
+                    onBlur={(event) => jumpToPage(event.currentTarget.value)}
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("上一页")}
+                  title={t("上一页")}
+                  disabled={nodesQuery.isFetching || currentPage === 0}
+                  onClick={() => update("page", String(currentPage - 1))}
                 >
                   <ChevronLeft size={16} />
                 </Button>
                 <Button
                   variant="ghost"
-                  className="icon-button"
-                  aria-label={t("下一个节点")}
-                  title={t("下一个节点")}
-                  disabled={
-                    selectedIndex < 0 || selectedIndex >= nodes.length - 1
-                  }
-                  onClick={() =>
-                    update("selected", nodes[selectedIndex + 1].node_hash)
-                  }
+                  size="icon"
+                  aria-label={t("下一页")}
+                  title={t("下一页")}
+                  disabled={nodesQuery.isFetching || currentPage >= totalPages - 1}
+                  onClick={() => update("page", String(currentPage + 1))}
                 >
                   <ChevronRight size={16} />
                 </Button>
-                <Button
-                  variant="ghost"
-                  className="icon-button"
-                  aria-label={t("关闭")}
-                  onClick={close}
-                >
-                  <X size={17} />
-                </Button>
               </div>
-            </header>
-            <QueryState
-              loading={detailQuery.isLoading && !detail}
-              error={detailQuery.error}
-              onRetry={() => void detailQuery.refetch()}
-            />
-            {detail && (
-              <>
-                <div className="inspector-identity">
-                  <span className="object-icon">
-                    <Network size={22} />
-                  </span>
-                  <h2>{nameOf(detail)}</h2>
-                  <Badge variant={status(detail).variant}>
-                    {t(status(detail).label)}
-                  </Badge>
-                  <code>{detail.node_hash}</code>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      {selected && (
+        <Sheet
+          open
+          onOpenChange={(open) => {
+            if (!open) close();
+          }}
+          title={t("节点详情")}
+          description={
+            <span className="readout">
+              {detail ? nameOf(detail) : selected.slice(0, 12)}
+            </span>
+          }
+          width="lg"
+          footer={
+            detail ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t("上一个节点")}
+                    title={t("上一个节点")}
+                    disabled={selectedIndex <= 0}
+                    onClick={() => update("selected", nodes[selectedIndex - 1].node_hash)}
+                  >
+                    <ChevronLeft size={16} />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t("下一个节点")}
+                    title={t("下一个节点")}
+                    disabled={selectedIndex < 0 || selectedIndex >= nodes.length - 1}
+                    onClick={() => update("selected", nodes[selectedIndex + 1].node_hash)}
+                  >
+                    <ChevronRight size={16} />
+                  </Button>
                 </div>
-                <section className="inspector-section">
-                  <h3>{t("出口与健康")}</h3>
-                  <dl className="detail-facts">
-                    <div><dt>{t("连接协议")}</dt><dd>{protocolLabels[detail.protocol || ""] || detail.protocol || t("未知")}</dd></div>
-                    <div>
-                      <dt>{t("出口 IP")}</dt>
-                      <dd>
-                        {detail.egress_ip || "--"}
-                        {detail.egress_ip && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="icon-button"
-                            aria-label={t("复制出口 IP")}
-                            onClick={() => void copy(detail.egress_ip!)}
-                          >
-                            <Copy size={13} />
-                          </Button>
-                        )}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t("地区")}</dt>
-                      <dd>
-                        {detail.region
-                          ? getRegionName(detail.region.toUpperCase())
-                          : "--"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t("参考延迟")}</dt>
-                      <dd>
-                        {detail.reference_latency_ms === undefined
-                          ? "--"
-                          : Math.round(detail.reference_latency_ms) + " ms"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>{t("连续失败")}</dt>
-                      <dd>{detail.failure_count}</dd>
-                    </div>
-                    <div>
-                      <dt>{t("出口更新")}</dt>
-                      <dd>{formatDateTime(detail.last_egress_update || "")}</dd>
-                    </div>
-                    <div>
-                      <dt>{t("创建时间")}</dt>
-                      <dd>{formatDateTime(detail.created_at)}</dd>
-                    </div>
-                  </dl>
-                  {detail.last_error && (
-                    <div className="callout callout-error">
-                      {detail.last_error}
-                    </div>
-                  )}
-                </section>
-                <section className="inspector-section">
-                  <QualityDetails summary={detail.quality} nodeHash={detail.node_hash} nodeIP={detail.egress_ip} nodeReady={detail.has_outbound} />
-                </section>
-                <section className="inspector-section">
-                  <h3>{t("纯净度评估")}</h3>
-                  <NodeIntelPanel
-                    intel={detail.intel}
-                    nodeHash={detail.node_hash}
-                    ready={detail.has_outbound}
-                    notify={showToast}
-                  />
-                </section>
-                <section className="inspector-section">
-                  <h3>{t("来源与标签")}</h3>
-                  {detail.tags.map((tag) => (
-                    <div
-                      className="source-tag"
-                      key={tag.subscription_id + tag.tag}
-                    >
-                      <Link
-                        to={`/subscriptions?selected=${tag.subscription_id}`}
-                      >
-                        {tag.subscription_name}
-                      </Link>
-                      <span>{tag.tag}</span>
-                    </div>
-                  ))}
-                </section>
-                <footer className="inspector-actions">
-                  <Button disabled={qualityProbe.isPending || !detail.has_outbound || qualityStatus.data?.enabled === false}
-                    onClick={() => qualityProbe.mutate(detail.node_hash)}><ShieldCheck size={15} />{t("更新网络特征")}</Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    disabled={
+                      qualityProbe.isPending ||
+                      !detail.has_outbound ||
+                      qualityStatus.data?.enabled === false
+                    }
+                    onClick={() => qualityProbe.mutate(detail.node_hash)}
+                  >
+                    {qualityProbe.isPending ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <ShieldCheck size={15} />
+                    )}
+                    {t("更新网络特征")}
+                  </Button>
                   <Button
                     variant="secondary"
                     disabled={probe.isPending || !detail.has_outbound}
                     onClick={() => runProbe(detail.node_hash, "egress")}
                   >
-                    <Globe2 size={15} />
+                    {probe.isPending && probe.variables?.kind === "egress" ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <Globe2 size={15} />
+                    )}
                     {t("出口探测")}
                   </Button>
                   <Button
@@ -924,20 +1099,139 @@ export function NodesPage() {
                     disabled={probe.isPending || !detail.has_outbound}
                     onClick={() => runProbe(detail.node_hash, "latency")}
                   >
-                    <Zap size={15} />
+                    {probe.isPending && probe.variables?.kind === "latency" ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <Zap size={15} />
+                    )}
                     {t("延迟探测")}
                   </Button>
-                </footer>
+                </div>
+              </div>
+            ) : undefined
+          }
+        >
+          <div className="space-y-4">
+            {detailQuery.isLoading && !detail && <LoadingState />}
+            {detailQuery.isError && (
+              <ErrorState
+                message={t("数据暂时不可用")}
+                onRetry={() => void detailQuery.refetch()}
+              />
+            )}
+            {detail && (
+              <>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-rule pb-3">
+                  <span
+                    aria-hidden
+                    className="grid size-8 shrink-0 place-items-center rounded-control border border-rule text-ink-soft"
+                  >
+                    <Network size={16} />
+                  </span>
+                  <h2 className="text-lg font-semibold">{nameOf(detail)}</h2>
+                  <Badge tone={status(detail).tone} dot>
+                    {t(status(detail).label)}
+                  </Badge>
+                  <code className="readout ml-auto text-2xs text-ink-faint">
+                    {detail.node_hash}
+                  </code>
+                </div>
+
+                <section className="space-y-2">
+                  <SectionTitle>{t("出口与健康")}</SectionTitle>
+                  <dl className="grid gap-x-8 sm:grid-cols-2">
+                    <Fact label={t("连接协议")}>
+                      <span>
+                        {protocolLabels[detail.protocol || ""] ||
+                          detail.protocol ||
+                          t("未知")}
+                      </span>
+                    </Fact>
+                    <Fact label={t("出口 IP")}>
+                      <span className="readout">{detail.egress_ip || "--"}</span>
+                      {detail.egress_ip && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t("复制出口 IP")}
+                          title={t("复制出口 IP")}
+                          onClick={() => void copy(detail.egress_ip!)}
+                        >
+                          <Copy size={13} />
+                        </Button>
+                      )}
+                    </Fact>
+                    <Fact label={t("地区")}>
+                      <span>
+                        {detail.region
+                          ? getRegionName(detail.region.toUpperCase())
+                          : "--"}
+                      </span>
+                    </Fact>
+                    <Fact label={t("参考延迟")}>
+                      <span className="readout">
+                        {detail.reference_latency_ms === undefined
+                          ? "--"
+                          : Math.round(detail.reference_latency_ms) + " ms"}
+                      </span>
+                    </Fact>
+                    <Fact label={t("连续失败")}>
+                      <span className="readout">{detail.failure_count}</span>
+                    </Fact>
+                    <Fact label={t("出口更新")}>
+                      <span className="readout">
+                        {formatDateTime(detail.last_egress_update || "")}
+                      </span>
+                    </Fact>
+                    <Fact label={t("创建时间")}>
+                      <span className="readout">{formatDateTime(detail.created_at)}</span>
+                    </Fact>
+                  </dl>
+                  {detail.last_error && <ErrorState message={detail.last_error} />}
+                </section>
+
+                <section className="border-t border-rule pt-4">
+                  <QualityDetails
+                    summary={detail.quality}
+                    nodeHash={detail.node_hash}
+                    nodeIP={detail.egress_ip}
+                    nodeReady={detail.has_outbound}
+                  />
+                </section>
+
+                <section className="space-y-3 border-t border-rule pt-4">
+                  <SectionTitle>{t("纯净度评估")}</SectionTitle>
+                  <NodeIntelPanel
+                    intel={detail.intel}
+                    nodeHash={detail.node_hash}
+                    ready={detail.has_outbound}
+                    notify={showToast}
+                  />
+                </section>
+
+                <section className="space-y-2 border-t border-rule pt-4">
+                  <SectionTitle>{t("来源与标签")}</SectionTitle>
+                  {detail.tags.length > 0 && (
+                    <div className="divide-y divide-rule border-y border-rule">
+                      {detail.tags.map((tag) => (
+                        <div
+                          className="flex flex-wrap items-center justify-between gap-3 py-2"
+                          key={tag.subscription_id + tag.tag}
+                        >
+                          <Link to={`/subscriptions?selected=${tag.subscription_id}`}>
+                            {tag.subscription_name}
+                          </Link>
+                          <span className="text-sm text-ink-soft">{tag.tag}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
               </>
             )}
           </div>
-        </DialogSurface>
+        </Sheet>
       )}
-      </>}
-      </div>
     </section>
   );
-}
-function RssImport() {
-  return <ArrowDown size={15} />;
 }

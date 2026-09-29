@@ -9,6 +9,7 @@ import type {
   HistoryProbesItem,
   HistoryRequestsItem,
   HistoryTrafficItem,
+  NodeExitFact,
   RealtimeConnectionsItem,
   RealtimeLeasesItem,
   RealtimeLeasesResponse,
@@ -682,4 +683,33 @@ export async function getDashboardPlatformData(platformId: string, window: TimeW
     ...history,
     ...snapshot,
   };
+}
+
+type ApiNodeExitSummary = {
+  region?: string | null;
+  egress_ip?: string | null;
+  enabled?: boolean | null;
+  has_outbound?: boolean | null;
+  circuit_open_since?: string | null;
+};
+
+/**
+ * Every node's exit facts, in one request.
+ *
+ * The exit map aggregates the whole inventory by country, so paging would only
+ * add round trips: the node list caps `limit` at 100000, which is far above any
+ * realistic pool. Only the four fields the map needs are read, and the healthy
+ * rule mirrors the backend aggregate (`service.NodeSummary.IsHealthyAndEnabled`:
+ * enabled, outbound-ready, not circuit-open) so the map and the snapshot agree.
+ */
+export async function listNodeExitFacts(signal?: AbortSignal): Promise<NodeExitFact[]> {
+  const data = await apiRequest<{ items?: ApiNodeExitSummary[] | null }>("/api/v1/nodes?limit=100000", {
+    signal,
+  });
+  const items = Array.isArray(data.items) ? data.items : [];
+  return items.map((node) => ({
+    region: toString(node.region).trim().toUpperCase(),
+    egressIp: toString(node.egress_ip),
+    healthy: node.enabled !== false && node.has_outbound === true && !node.circuit_open_since,
+  }));
 }

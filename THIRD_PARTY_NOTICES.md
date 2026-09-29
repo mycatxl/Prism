@@ -25,3 +25,9 @@ Prism 按 GPL-3.0-or-later 发行，完整条款见 `LICENSE`。派生源码保�
 - 完整依据见 `docs/ENGINE_DECISIONS.md`。`with_mihomo` 构建标签的接缝保留在代码中，但该标签不属于任何默认构建。
 
 前端依赖由 `internal/api/web/package-lock.json` 锁定。此文件记录主要继承来源；发布构建须同时提供对应源码、构建方法及实际构建包含的依赖许可材料。
+
+## world-atlas（世界地图边界，随仓库分发）
+
+- 交付物：`internal/api/web/public/world-110m.geo.json`，由 `npm run prep:world-map`（脚本位于 `internal/api/web/scripts/build-world-map.mjs`）生成并提交；运行时不访问任何 CDN，离线可用。
+- 数据来源：`world-atlas@2.0.2` 的 `countries-110m.json`，许可 ISC，版权归 Mike Bostock；边界数据来自 Natural Earth 1:110m Cultural Vectors，属公有领域。
+- 转换方式：TopoJSON 经 `topojson-client`（ISC，开发依赖）展开为 GeoJSON，按 ISO 3166-1 数字码映射出 `properties.iso`（alpha-2），并写入 `properties.name` / `properties.zh` 供提示框显示。三个无分配数字码的地区（Kosovo、Somaliland、N. Cyprus）沿用 Natural Earth 名称，不参与着色。

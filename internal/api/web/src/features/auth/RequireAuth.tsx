@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactElement } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "./auth-store";
 import { apiRequest } from "../../lib/api-client";
-import { QueryState } from "../../components/ui/QueryState";
+import { LoadingState } from "../../components/ui/QueryState";
 
 type RequireAuthProps = {
   children: ReactElement;
@@ -60,7 +60,11 @@ export function RequireAuth({ children }: RequireAuthProps) {
   }
 
   if (!checked) {
-    return <main className="login-layout"><QueryState loading /></main>;
+    return (
+      <main className="grid min-h-dvh place-items-center bg-paper">
+        <LoadingState />
+      </main>
+    );
   }
 
   const next = `${location.pathname}${location.search}`;

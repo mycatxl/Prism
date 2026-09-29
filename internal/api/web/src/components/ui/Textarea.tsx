@@ -5,6 +5,23 @@ type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
   invalid?: boolean;
 };
 
+/**
+ * Multi-line text field. Matches `Input` so a form reads as one control set.
+ *
+ * `invalid` drives both the border and `aria-invalid`, because a validation error
+ * that is only visible is not reported to a screen reader.
+ */
 export function Textarea({ className, invalid, ...props }: TextareaProps) {
-  return <textarea className={cn("textarea", invalid && "input-invalid", className)} {...props} />;
+  return (
+    <textarea
+      aria-invalid={invalid || undefined}
+      className={cn(
+        "min-h-20 w-full resize-y rounded-control border bg-paper-raised px-2.5 py-1.5 text-sm text-ink",
+        "placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50",
+        invalid ? "border-alert" : "border-rule",
+        className,
+      )}
+      {...props}
+    />
+  );
 }

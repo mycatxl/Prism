@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Clock3, Layers, Link2, ShieldCheck, Waypoints } from "lucide-react";
+import { Link2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "../../components/ui/Badge";
-import { Card } from "../../components/ui/Card";
-import { Select } from "../../components/ui/Select";
+import { Panel, PanelHeader } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { apiRequest } from "../../lib/api-client";
@@ -87,6 +88,9 @@ const EMPTY_REALTIME_ITEMS: RealtimeLeasesResponse["items"] = [];
 const EMPTY_HISTORY_REQUEST_ITEMS: HistoryResponse<HistoryRequestsItem>["items"] = [];
 const EMPTY_ACCESS_LATENCY_ITEMS: HistoryAccessLatencyResponse["items"] = [];
 const EMPTY_LEASE_LIFETIME_ITEMS: HistoryLeaseLifetimeResponse["items"] = [];
+
+const selectClass =
+  "h-7 w-auto rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink";
 
 function toNumber(raw: unknown): number {
   const value = Number(raw);
@@ -477,21 +481,25 @@ function TrendTooltipContent({ active, payload, label, lines, valueFormatter }: 
   }
 
   return (
-    <div className="trend-tooltip">
-      <p className="trend-tooltip-time">{label ?? "--"}</p>
-      <div className="trend-tooltip-list">
+    <div className="rounded-control border border-rule bg-paper-raised px-2.5 py-2 text-xs">
+      <p className="font-mono text-2xs text-ink-faint">{label ?? "--"}</p>
+      <div className="mt-1 space-y-0.5">
         {lines.map((line) => {
           const entry = payload.find((item) => item.dataKey === line.dataKey);
           const value = Number(entry?.value ?? 0);
           const safeValue = Number.isFinite(value) ? value : 0;
 
           return (
-            <p key={line.dataKey} className="trend-tooltip-row">
-              <span>
-                <i style={{ background: line.color }} />
+            <p key={line.dataKey} className="flex items-baseline justify-between gap-3">
+              <span className="flex items-center gap-1.5 text-ink-soft">
+                <i
+                  aria-hidden
+                  className="inline-block size-2 shrink-0 rounded-full"
+                  style={{ background: line.color }}
+                />
                 {line.name}
               </span>
-              <b>{valueFormatter(safeValue)}</b>
+              <b className="readout font-semibold text-ink">{valueFormatter(safeValue)}</b>
             </p>
           );
         })}
@@ -514,20 +522,15 @@ function HistogramTooltipContent({ active, payload }: { active?: boolean; payloa
   const upperBound = typeof point?.upper_ms === "number" && Number.isFinite(point.upper_ms) ? point.upper_ms : 0;
 
   return (
-    <div className="histogram-tooltip">
-      <p className="histogram-tooltip-title">{`${formatCount(lowerBound)}～${formatCount(upperBound)} ms`}</p>
-      <p className="histogram-tooltip-value">{t("节点数 {{count}}", { count: formatCount(safeCount) })}</p>
+    <div className="rounded-control border border-rule bg-paper-raised px-2.5 py-2 text-xs">
+      <p className="readout font-semibold text-ink">{`${formatCount(lowerBound)}～${formatCount(upperBound)} ms`}</p>
+      <p className="mt-0.5 text-ink-soft">{t("节点数 {{count}}", { count: formatCount(safeCount) })}</p>
     </div>
   );
 }
 
 function EmptyChart({ text }: { text: string }) {
-  return (
-    <div className="empty-box dashboard-empty">
-      <AlertTriangle size={14} />
-      <p>{text}</p>
-    </div>
-  );
+  return <EmptyState title={text} className="py-10" />;
 }
 
 function TrendLineChart({ data, lines, yTickFormatter, tooltipValueFormatter, emptyText }: TrendLineChartProps) {
@@ -539,51 +542,49 @@ function TrendLineChart({ data, lines, yTickFormatter, tooltipValueFormatter, em
   const formatTooltip = tooltipValueFormatter ?? formatYAxis;
 
   return (
-    <div className="trend-chart">
-      <div className="trend-svg">
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 6, right: 8, bottom: 4, left: 8 }}>
-            <CartesianGrid stroke="rgba(65, 87, 121, 0.16)" strokeDasharray="2 4" vertical={false} />
-            <XAxis
-              dataKey="label"
-              interval="preserveStartEnd"
-              minTickGap={18}
-              tickMargin={4}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "#607191", fontSize: 11, fontWeight: 600 }}
+    <div className="h-48 w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 6, right: 8, bottom: 4, left: 8 }}>
+          <CartesianGrid stroke="var(--color-rule)" strokeDasharray="2 4" vertical={false} />
+          <XAxis
+            dataKey="label"
+            interval="preserveStartEnd"
+            minTickGap={18}
+            tickMargin={4}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+          />
+          <YAxis
+            width="auto"
+            tickMargin={4}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+            tickFormatter={(value) => formatYAxis(toNumber(value))}
+            domain={[0, "auto"]}
+          />
+          <Tooltip
+            cursor={{ stroke: "var(--color-rule-strong)", strokeWidth: 1 }}
+            wrapperStyle={{ outline: "none" }}
+            content={<TrendTooltipContent lines={lines} valueFormatter={formatTooltip} />}
+          />
+          {lines.map((line) => (
+            <Line
+              key={line.dataKey}
+              type="monotone"
+              dataKey={line.dataKey}
+              name={line.name}
+              stroke={line.color}
+              strokeWidth={1.8}
+              dot={false}
+              activeDot={{ r: 3, stroke: "var(--color-paper-raised)", strokeWidth: 1, fill: line.color }}
+              isAnimationActive={false}
+              connectNulls
             />
-            <YAxis
-              width="auto"
-              tickMargin={4}
-              axisLine={false}
-              tickLine={false}
-              tick={{ fill: "#657691", fontSize: 11, fontWeight: 600 }}
-              tickFormatter={(value) => formatYAxis(toNumber(value))}
-              domain={[0, "auto"]}
-            />
-            <Tooltip
-              cursor={{ stroke: "rgba(15, 94, 216, 0.34)", strokeWidth: 1 }}
-              wrapperStyle={{ outline: "none" }}
-              content={<TrendTooltipContent lines={lines} valueFormatter={formatTooltip} />}
-            />
-            {lines.map((line) => (
-              <Line
-                key={line.dataKey}
-                type="monotone"
-                dataKey={line.dataKey}
-                name={line.name}
-                stroke={line.color}
-                strokeWidth={1.8}
-                dot={false}
-                activeDot={{ r: 3, stroke: "#ffffff", strokeWidth: 1, fill: line.color }}
-                isAnimationActive={false}
-                connectNulls
-              />
-            ))}
-          </ComposedChart>
-        </ResponsiveContainer>
-      </div>
+          ))}
+        </ComposedChart>
+      </ResponsiveContainer>
     </div>
   );
 }
@@ -647,10 +648,10 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
   }
 
   return (
-    <div className="histogram-chart">
+    <div className="h-48 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={data} margin={{ top: 6, right: 8, bottom: 4, left: 8 }}>
-          <CartesianGrid stroke="rgba(65, 87, 121, 0.16)" strokeDasharray="2 4" vertical={false} />
+          <CartesianGrid stroke="var(--color-rule)" strokeDasharray="2 4" vertical={false} />
           <XAxis
             dataKey="label"
             interval="preserveStartEnd"
@@ -658,7 +659,7 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "#607191", fontSize: 11, fontWeight: 600 }}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
             tickFormatter={(value) => formatLatency(toNumber(value))}
           />
           <YAxis
@@ -667,18 +668,18 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "#607191", fontSize: 11, fontWeight: 600 }}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
             tickFormatter={(value) => formatShortNumber(toNumber(value))}
           />
           <Tooltip
-            cursor={{ fill: "rgba(15, 94, 216, 0.08)" }}
+            cursor={{ fill: "var(--color-paper-sunk)" }}
             wrapperStyle={{ outline: "none" }}
             content={<HistogramTooltipContent />}
           />
           <Bar
             dataKey="count"
-            fill="rgba(16, 118, 255, 0.86)"
-            radius={[5, 5, 0, 0]}
+            fill="var(--color-signal)"
+            radius={[2, 2, 0, 0]}
             maxBarSize={28}
             isAnimationActive={false}
           />
@@ -817,17 +818,18 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
   }, [sortedLeaseLifetimeItems]);
 
   return (
-    <section className="platform-drawer-section platform-monitor-section">
-      <div className="platform-drawer-section-head platform-monitor-head">
-        <div>
-          <h4>{t("平台监控")}</h4>
-          <p>{t("查看当前平台的租约、请求成功率、延迟和节点情况。")}</p>
+    <section>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">{t("平台监控")}</h2>
+          <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">{t("查看当前平台的租约、请求成功率、延迟和节点情况。")}</p>
         </div>
 
-        <label className="platform-monitor-range" htmlFor="platform-monitor-range">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft" htmlFor="platform-monitor-range">
           <span>{t("时间范围")}</span>
-          <Select
+          <select
             id="platform-monitor-range"
+            className={selectClass}
             value={rangeKey}
             onChange={(event) => setRangeKey(event.target.value as RangeKey)}
           >
@@ -836,191 +838,209 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
                 {t(option.label)}
               </option>
             ))}
-          </Select>
+          </select>
         </label>
       </div>
 
       {monitorError ? (
-        <div className="callout callout-error">
-          <AlertTriangle size={14} />
-          <span>{formatApiErrorMessage(monitorError, t)}</span>
-        </div>
+        <ErrorState className="mt-3" message={formatApiErrorMessage(monitorError, t)} />
       ) : null}
 
-      <div className="platform-monitor-kpi-grid">
-        <Card className="platform-monitor-kpi-card">
-          <div className="dashboard-kpi-icon lease">
-            <Layers size={18} />
-          </div>
-          <div>
-            <p className="platform-monitor-kpi-label">{t("活跃租约")}</p>
-            <p className="platform-monitor-kpi-value">{formatCount(latestActiveLeases)}</p>
-            <p className="platform-monitor-kpi-sub">{t("当前实时值")}</p>
-          </div>
+      <ReadoutStrip className="mt-3 -mx-4 grid-cols-2 divide-x-0 sm:grid-cols-4 sm:divide-x">
+        <ReadoutCell>
+          <Readout
+            label={t("活跃租约")}
+            value={formatCount(latestActiveLeases)}
+            hint={t("当前实时值")}
+          />
           <Link
             to={`/platforms/${encodeURIComponent(platform.id)}?tab=ops#platform-lease-management`}
-            className="platform-monitor-kpi-link"
+            className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-signal-deep"
           >
-            <Link2 size={14} />
-            <span>{t("租约管理")}</span>
+            <Link2 size={13} aria-hidden />
+            {t("租约管理")}
           </Link>
-        </Card>
+        </ReadoutCell>
 
-        <Card className="platform-monitor-kpi-card">
-          <div className="dashboard-kpi-icon shield">
-            <ShieldCheck size={18} />
-          </div>
-          <div>
-            <p className="platform-monitor-kpi-label">{t("请求成功率")}</p>
-            <p className="platform-monitor-kpi-value">{formatPercent(requestSuccessRatio)}</p>
-            <p className="platform-monitor-kpi-sub">
-              {t("成功")} {formatCount(successRequests)} / {t("总计")} {formatCount(totalRequests)}
-            </p>
-          </div>
-        </Card>
+        <ReadoutCell>
+          <Readout
+            label={t("请求成功率")}
+            value={formatPercent(requestSuccessRatio)}
+            hint={`${t("成功")} ${formatCount(successRequests)} / ${t("总计")} ${formatCount(totalRequests)}`}
+          />
+        </ReadoutCell>
 
-        <Card className="platform-monitor-kpi-card">
-          <div className="dashboard-kpi-icon gauge">
-            <Waypoints size={18} />
-          </div>
-          <div>
-            <p className="platform-monitor-kpi-label">{t("可路由节点")}</p>
-            <p className="platform-monitor-kpi-value">{formatCount(snapshotNodePool?.routable_node_count ?? 0)}</p>
-            <p className="platform-monitor-kpi-sub">{t("出口 IP")} {formatCount(snapshotNodePool?.egress_ip_count ?? 0)}</p>
-          </div>
-          <Link to={`/nodes?platform_id=${encodeURIComponent(platform.id)}`} className="platform-monitor-kpi-link">
-            <Link2 size={14} />
-            <span>{t("可路由节点")}</span>
+        <ReadoutCell>
+          <Readout
+            label={t("可路由节点")}
+            value={formatCount(snapshotNodePool?.routable_node_count ?? 0)}
+            hint={`${t("出口 IP")} ${formatCount(snapshotNodePool?.egress_ip_count ?? 0)}`}
+          />
+          <Link
+            to={`/nodes?platform_id=${encodeURIComponent(platform.id)}`}
+            className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-signal-deep"
+          >
+            <Link2 size={13} aria-hidden />
+            {t("可路由节点")}
           </Link>
-        </Card>
+        </ReadoutCell>
 
-        <Card className="platform-monitor-kpi-card">
-          <div className="dashboard-kpi-icon waves">
-            <Clock3 size={18} />
+        <ReadoutCell>
+          <Readout
+            label={t("租约 P50 存活时长")}
+            value={formatLeaseDuration(latestP50LeaseMs)}
+            hint={t("历史租约时长统计")}
+          />
+        </ReadoutCell>
+      </ReadoutStrip>
+
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <Panel>
+          <PanelHeader title={t("活跃租约趋势")} description={t("平台实时租约数量")} />
+          <div className="px-3 py-3">
+            <TrendLineChart
+              data={leaseTrendData}
+              emptyText={t("暂无租约实时数据")}
+              yTickFormatter={formatShortNumber}
+              lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "var(--color-live)" }]}
+            />
           </div>
-          <div>
-            <p className="platform-monitor-kpi-label">{t("租约 P50 存活时长")}</p>
-            <p className="platform-monitor-kpi-value">{formatLeaseDuration(latestP50LeaseMs)}</p>
-            <p className="platform-monitor-kpi-sub">{t("历史租约时长统计")}</p>
+        </Panel>
+
+        <Panel>
+          <PanelHeader title={t("请求统计")} description={t("总请求数 / 成功请求数")} />
+          <div className="px-3 py-3">
+            <TrendLineChart
+              data={requestTrendData}
+              emptyText={t("暂无请求统计数据")}
+              yTickFormatter={formatShortNumber}
+              lines={[
+                { dataKey: "total_requests", name: t("总请求数"), color: "var(--color-live)" },
+                { dataKey: "success_requests", name: t("成功请求数"), color: "var(--color-signal)" },
+              ]}
+            />
           </div>
-        </Card>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-rule px-3 py-2 text-xs text-ink-soft">
+            <span>
+              {t("总请求")}{" "}
+              <span className="readout font-medium text-ink">{formatCount(totalRequests)}</span>
+            </span>
+            <span>
+              {t("成功请求")}{" "}
+              <span className="readout font-medium text-ink">{formatCount(successRequests)}</span>
+            </span>
+          </div>
+        </Panel>
+
+        <Panel>
+          <PanelHeader title={t("租约存活分位趋势")} description="P1 / P5 / P50" />
+          <div className="px-3 py-3">
+            <TrendLineChart
+              data={leaseLifetimeTrendData}
+              emptyText={t("暂无租约生命周期数据")}
+              yTickFormatter={formatLatency}
+              tooltipValueFormatter={formatLeaseDuration}
+              lines={[
+                { dataKey: "p1_ms", name: "P1", color: "var(--color-ink-faint)" },
+                { dataKey: "p5_ms", name: "P5", color: "var(--color-live)" },
+                { dataKey: "p50_ms", name: "P50", color: "var(--color-signal)" },
+              ]}
+            />
+          </div>
+        </Panel>
+
+        <Panel>
+          <PanelHeader title={t("平台节点快照")} description={t("当前平台节点池与延迟样本")} />
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 px-3 py-3 sm:grid-cols-4">
+            <Readout
+              label={t("可路由节点数")}
+              value={formatCount(snapshotNodePool?.routable_node_count ?? 0)}
+              size="sm"
+            />
+            <Readout
+              label={t("出口 IP 数")}
+              value={formatCount(snapshotNodePool?.egress_ip_count ?? 0)}
+              size="sm"
+            />
+            <Readout
+              label={t("延迟样本数")}
+              value={formatCount(snapshotLatency?.sample_count ?? 0)}
+              size="sm"
+            />
+            <Readout
+              label={t("快照更新时间")}
+              value={snapshotLatency?.generated_at ? formatClock(snapshotLatency.generated_at) : "--"}
+              size="sm"
+            />
+          </div>
+        </Panel>
+
+        <Panel className="lg:col-span-2">
+          <PanelHeader title={t("访问延迟分布（历史最新桶）")} description={t("历史访问延迟分布")} />
+          <div className="px-3 pt-3">
+            <LatencyHistogram
+              buckets={latestAccessLatency?.buckets ?? []}
+              emptyText={t("暂无访问延迟分布数据")}
+            />
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-rule px-3 py-2 text-xs text-ink-soft">
+            <span>
+              {t("时间")}{" "}
+              <span className="readout font-medium text-ink">
+                {latestAccessLatency ? formatClock(latestAccessLatency.bucket_end) : "--"}
+              </span>
+            </span>
+            <span>
+              {t("样本")}{" "}
+              <span className="readout font-medium text-ink">
+                {formatCount(latestAccessLatency?.sample_count ?? 0)}
+              </span>
+            </span>
+            <span>
+              {t("溢出")}{" "}
+              <span className="readout font-medium text-ink">
+                {formatCount(latestAccessLatency?.overflow_count ?? 0)}
+              </span>
+            </span>
+          </div>
+        </Panel>
+
+        <Panel className="lg:col-span-2">
+          <PanelHeader title={t("节点延迟分布（实时快照）")} description={t("实时节点延迟分布快照")} />
+          <div className="px-3 pt-3">
+            <LatencyHistogram
+              buckets={snapshotLatency?.buckets ?? []}
+              emptyText={t("暂无节点延迟快照数据")}
+            />
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-rule px-3 py-2 text-xs text-ink-soft">
+            <span>
+              {t("样本")}{" "}
+              <span className="readout font-medium text-ink">
+                {formatCount(snapshotLatency?.sample_count ?? 0)}
+              </span>
+            </span>
+            <span>
+              {t("溢出")}{" "}
+              <span className="readout font-medium text-ink">
+                {formatCount(snapshotLatency?.overflow_count ?? 0)}
+              </span>
+            </span>
+            <span>
+              {t("分桶")}{" "}
+              <span className="readout font-medium text-ink">
+                {formatCount(snapshotLatency?.bin_width_ms ?? 0)}ms
+              </span>
+            </span>
+          </div>
+        </Panel>
       </div>
 
-      <div className="platform-monitor-grid">
-        <Card className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h3>{t("活跃租约趋势")}</h3>
-            <p>{t("平台实时租约数量")}</p>
-          </div>
-          <TrendLineChart
-            data={leaseTrendData}
-            emptyText={t("暂无租约实时数据")}
-            yTickFormatter={formatShortNumber}
-            lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "#2068f6" }]}
-          />
-        </Card>
-
-        <Card className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h3>{t("请求统计")}</h3>
-            <p>{t("总请求数 / 成功请求数")}</p>
-          </div>
-          <TrendLineChart
-            data={requestTrendData}
-            emptyText={t("暂无请求统计数据")}
-            yTickFormatter={formatShortNumber}
-            lines={[
-              { dataKey: "total_requests", name: t("总请求数"), color: "#2467e4" },
-              { dataKey: "success_requests", name: t("成功请求数"), color: "#0f9d8b" },
-            ]}
-          />
-          <div className="dashboard-summary-inline">
-            <span>{t("总请求")} {formatCount(totalRequests)}</span>
-            <span>{t("成功请求")} {formatCount(successRequests)}</span>
-          </div>
-        </Card>
-
-        <Card className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h3>{t("租约存活分位趋势")}</h3>
-            <p>P1 / P5 / P50</p>
-          </div>
-          <TrendLineChart
-            data={leaseLifetimeTrendData}
-            emptyText={t("暂无租约生命周期数据")}
-            yTickFormatter={formatLatency}
-            tooltipValueFormatter={formatLeaseDuration}
-            lines={[
-              { dataKey: "p1_ms", name: "P1", color: "#2d63d8" },
-              { dataKey: "p5_ms", name: "P5", color: "#0f9d8b" },
-              { dataKey: "p50_ms", name: "P50", color: "#f18f01" },
-            ]}
-          />
-        </Card>
-
-        <Card className="dashboard-panel">
-          <div className="dashboard-panel-header">
-            <h3>{t("平台节点快照")}</h3>
-            <p>{t("当前平台节点池与延迟样本")}</p>
-          </div>
-
-          <div className="platform-monitor-snapshot-list">
-            <div>
-              <span>{t("可路由节点数")}</span>
-              <p>{formatCount(snapshotNodePool?.routable_node_count ?? 0)}</p>
-            </div>
-            <div>
-              <span>{t("出口 IP 数")}</span>
-              <p>{formatCount(snapshotNodePool?.egress_ip_count ?? 0)}</p>
-            </div>
-            <div>
-              <span>{t("延迟样本数")}</span>
-              <p>{formatCount(snapshotLatency?.sample_count ?? 0)}</p>
-            </div>
-            <div>
-              <span>{t("快照更新时间")}</span>
-              <p>{snapshotLatency?.generated_at ? formatClock(snapshotLatency.generated_at) : "--"}</p>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="dashboard-panel platform-monitor-span-2">
-          <div className="dashboard-panel-header">
-            <h3>{t("访问延迟分布（历史最新桶）")}</h3>
-            <p>{t("历史访问延迟分布")}</p>
-          </div>
-          <LatencyHistogram buckets={latestAccessLatency?.buckets ?? []} emptyText={t("暂无访问延迟分布数据")} />
-          <div className="dashboard-summary-inline">
-            <span>{t("时间")} {latestAccessLatency ? formatClock(latestAccessLatency.bucket_end) : "--"}</span>
-            <span>{t("样本")} {formatCount(latestAccessLatency?.sample_count ?? 0)}</span>
-            <span>{t("溢出")} {formatCount(latestAccessLatency?.overflow_count ?? 0)}</span>
-          </div>
-        </Card>
-
-        <Card className="dashboard-panel platform-monitor-span-2">
-          <div className="dashboard-panel-header">
-            <h3>{t("节点延迟分布（实时快照）")}</h3>
-            <p>{t("实时节点延迟分布快照")}</p>
-          </div>
-          <LatencyHistogram buckets={snapshotLatency?.buckets ?? []} emptyText={t("暂无节点延迟快照数据")} />
-          <div className="dashboard-summary-inline">
-            <span>{t("样本")} {formatCount(snapshotLatency?.sample_count ?? 0)}</span>
-            <span>{t("溢出")} {formatCount(snapshotLatency?.overflow_count ?? 0)}</span>
-            <span>{t("分桶")} {formatCount(snapshotLatency?.bin_width_ms ?? 0)}ms</span>
-          </div>
-        </Card>
-      </div>
-
-      {isInitialLoading ? (
-        <div className="callout callout-warning">
-          <Activity size={14} />
-          <span>{t("平台监控数据加载中...")}</span>
-        </div>
-      ) : null}
+      {isInitialLoading ? <LoadingState label={t("平台监控数据加载中...")} /> : null}
 
       {(realtimeQuery.isFetching || historyQuery.isFetching || snapshotQuery.isFetching) && !isInitialLoading ? (
-        <div className="platform-monitor-refreshing">
-          <Badge variant="warning">{t("监控数据刷新中")}</Badge>
+        <div className="mt-4 flex justify-end">
+          <Badge tone="warn">{t("监控数据刷新中")}</Badge>
         </div>
       ) : null}
     </section>

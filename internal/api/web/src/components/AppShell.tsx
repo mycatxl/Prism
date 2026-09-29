@@ -1,27 +1,17 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  AlertTriangle,
-  ArrowLeft,
-  LogOut,
-  Menu,
-  RefreshCw,
-  ShieldCheck,
-  X,
-} from "lucide-react";
+import { LogOut, Menu, PanelLeftClose, PanelLeftOpen, RefreshCw, X } from "lucide-react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState, useSyncExternalStore } from "react";
-import { Button } from "./ui/Button";
+import { ApiError, apiRequest } from "../lib/api-client";
 import { cn } from "../lib/cn";
-import { apiRequest, ApiError } from "../lib/api-client";
+import { navigation } from "../lib/navigation";
 import { useAuthStore } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { useI18n } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { QuickSearch } from "./QuickSearch";
-import { ThemeMenu } from "./ThemeMenu";
-import { navigation } from "../lib/navigation";
-import { DialogSurface } from "./ui/DialogSurface";
+import { Badge } from "./ui/Badge";
+import { Button } from "./ui/Button";
 
 function subscribeOnline(callback: () => void) {
   window.addEventListener("online", callback);
@@ -32,6 +22,17 @@ function subscribeOnline(callback: () => void) {
   };
 }
 
+const RAIL_COLLAPSED_KEY = "prism.rail-collapsed";
+
+/**
+ * The application frame: a left rail of destinations and a top bar that answers
+ * "where am I" and "is this instance healthy".
+ *
+ * The rail is grouped by section with a hairline between groups rather than a
+ * heading above each, so the grouping is visible without spending vertical space
+ * on labels. It collapses to icons only, because the operator knows the icons once
+ * they have used the panel for a day.
+ */
 export function AppShell() {
   const { t } = useI18n();
   const token = useAuthStore((state) => state.token);
@@ -39,12 +40,16 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(
+    () => window.localStorage.getItem(RAIL_COLLAPSED_KEY) === "1",
+  );
   const online = useSyncExternalStore(
     subscribeOnline,
     () => navigator.onLine,
     () => true,
   );
+
   const info = useQuery({
     queryKey: ["system-info", "shell"],
     queryFn: () => apiRequest<{ version: string }>("/api/v1/system/info"),
@@ -56,27 +61,36 @@ export function AppShell() {
     queryFn: getEnvConfig,
     staleTime: 30_000,
   });
+
   const current = navigation.find(
     (item) =>
-      location.pathname === item.path ||
-      location.pathname.startsWith(item.path + "/"),
+      location.pathname === item.path || location.pathname.startsWith(item.path + "/"),
   );
-  const unauthorized =
-    info.error instanceof ApiError && info.error.status === 401;
+
+  const unauthorized = info.error instanceof ApiError && info.error.status === 401;
   const disconnected = !online || info.isError;
-  const securityCount = env.data
-    ? [
-        !env.data.admin_token_set,
-        !env.data.proxy_token_set,
-        env.data.admin_token_weak,
-        env.data.proxy_token_weak,
-      ].filter(Boolean).length
+  const weakTokens = env.data
+    ? [!env.data.admin_token_set, !env.data.proxy_token_set].filter(Boolean).length
     : 0;
 
+  const toggleRail = useCallback(() => {
+    setCollapsed((previous) => {
+      const next = !previous;
+      window.localStorage.setItem(RAIL_COLLAPSED_KEY, next ? "1" : "0");
+      return next;
+    });
+  }, []);
+
+  // Closing the mobile drawer on navigation keeps the destination the only thing
+  // that changed on screen.
   useEffect(() => {
-    const heading = document.querySelector<HTMLElement>(
-      ".content h1, .content h2",
-    );
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
+  // Move focus to the page heading after a navigation so keyboard users land in
+  // the new content instead of at the top of the chrome.
+  useEffect(() => {
+    const heading = document.querySelector<HTMLElement>("main h1");
     heading?.setAttribute("tabindex", "-1");
     heading?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -88,203 +102,201 @@ export function AppShell() {
     navigate("/login?reauth=1", { replace: true });
   };
 
-  const navContent = (
-    <nav className="nav-list" aria-label={t("主导航")}>
-      {["工作区", "观测与配置"].map((section) => (
-        <div className="nav-section" key={section}>
-          <p className="nav-section-label">{t(section)}</p>
-          {navigation
-            .filter((item) => item.section === section)
-            .map((item) => (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                title={t(item.label)}
-                aria-label={t(item.label)}
-                onClick={() => setMenuOpen(false)}
-                className={({ isActive }) =>
-                  cn("nav-item", isActive && "nav-item-active")
-                }
-              >
-                <item.icon size={17} strokeWidth={1.75} />
-                <span>{t(item.label)}</span>
-              </NavLink>
-            ))}
-        </div>
-      ))}
+  const sections = navigation.reduce<Record<string, typeof navigation>>((acc, item) => {
+    (acc[item.section] ??= []).push(item);
+    return acc;
+  }, {});
+
+  const rail = (
+    <nav
+      aria-label={t("主导航")}
+      className={cn(
+        "flex h-full flex-col border-r border-rule bg-paper-raised",
+        collapsed ? "w-14" : "w-56",
+      )}
+    >
+      <div
+        className={cn(
+          "flex h-12 shrink-0 items-center border-b border-rule",
+          collapsed ? "justify-center px-2" : "gap-2 px-3",
+        )}
+      >
+        <span
+          aria-hidden
+          className="grid size-6 shrink-0 place-items-center rounded-control bg-signal text-2xs font-semibold text-white"
+        >
+          P
+        </span>
+        {!collapsed && (
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
+            Prism
+          </span>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleRail}
+          className={cn("hidden shrink-0 lg:inline-flex", collapsed && "hidden")}
+          aria-label={t("收起导航")}
+        >
+          <PanelLeftClose size={15} />
+        </Button>
+      </div>
+
+      {collapsed && (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggleRail}
+          className="mx-auto mt-2 hidden shrink-0 lg:inline-flex"
+          aria-label={t("展开导航")}
+        >
+          <PanelLeftOpen size={15} />
+        </Button>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-y-auto py-2">
+        {Object.entries(sections).map(([section, items], index) => (
+          <div key={section} className={cn(index > 0 && "mt-2 border-t border-rule pt-2")}>
+            {items.map((item) => {
+              const Icon = item.icon;
+              const active =
+                location.pathname === item.path ||
+                location.pathname.startsWith(item.path + "/");
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  title={collapsed ? t(item.label) : undefined}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "relative flex items-center gap-2.5 py-1.5 text-sm transition-colors",
+                    collapsed ? "justify-center px-0" : "px-3",
+                    active
+                      ? "bg-signal-wash/70 font-medium text-signal-deep"
+                      : "text-ink-soft hover:bg-paper-sunk hover:text-ink",
+                  )}
+                >
+                  {active && (
+                    <span
+                      aria-hidden
+                      className="absolute inset-y-0 left-0 w-0.5 bg-signal"
+                    />
+                  )}
+                  <Icon size={15} className="shrink-0" />
+                  {!collapsed && <span className="truncate">{t(item.label)}</span>}
+                </NavLink>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      <div
+        className={cn(
+          "shrink-0 border-t border-rule p-2",
+          collapsed ? "flex flex-col items-center gap-1" : "flex items-center justify-between gap-2",
+        )}
+      >
+        <LanguageSwitcher collapsed={collapsed} />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={logout}
+          aria-label={t("退出登录")}
+          title={t("退出登录")}
+        >
+          <LogOut size={15} />
+        </Button>
+      </div>
     </nav>
   );
 
   return (
-    <div className="app-layout">
-      <a className="skip-link" href="#main-content">
-        {t("跳到内容")}
-      </a>
-      <aside className="sidebar">
-        <NavLink to="/dashboard" className="brand" aria-label="Prism">
-          <img
-            className="brand-mark"
-            src={`${import.meta.env.BASE_URL}prism-mark.png`}
-            alt=""
-            width="34"
-            height="34"
+    <div className="flex h-dvh overflow-hidden bg-paper">
+      <div className="hidden lg:flex">{rail}</div>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 flex lg:hidden">
+          <div className="w-56">{rail}</div>
+          <button
+            type="button"
+            aria-label={t("关闭导航")}
+            className="flex-1 bg-ink/25"
+            onClick={() => setMobileNavOpen(false)}
           />
-          <div className="brand-copy">
-            <p className="brand-title">
-              Prism<span className="brand-period">.</span>
-            </p>
-            <p className="brand-subtitle">{t("网络工作台")}</p>
-          </div>
-        </NavLink>
-        <div className="sidebar-main">{navContent}</div>
-        <div className="sidebar-bottom">
-          <div className="sidebar-admin"><span><ShieldCheck size={18} /></span><div><strong>{t("本地管理员")}</strong><small>{t("私有实例")}</small></div></div>
-          <div className="sidebar-instance">
-            <span
-              className={cn(
-                "status-dot",
-                disconnected
-                  ? "status-dot-error"
-                  : info.isPending
-                    ? "status-dot-pending"
-                    : "status-dot-live",
-              )}
-            />
-            <span>
-              {t(
-                disconnected
-                  ? "连接中断"
-                  : info.isPending
-                    ? "正在连接"
-                    : "服务已连接",
-              )}
-            </span>
-          </div>
-          <div className="sidebar-tools">
-            <LanguageSwitcher compact />
-            {token && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="icon-button"
-                onClick={logout}
-                title={t("退出登录")}
-                aria-label={t("退出登录")}
-              >
-                <LogOut size={16} />
-              </Button>
-            )}
-          </div>
         </div>
-      </aside>
-      {menuOpen && (
-        <DialogSurface
-          title={t("主导航")}
-          variant="navigation"
-          onClose={() => setMenuOpen(false)}
-        >
-          <div className="mobile-nav-head">
-            <strong>Prism</strong>
-            <Button
-              variant="ghost"
-              className="icon-button"
-              aria-label={t("关闭")}
-              onClick={() => setMenuOpen(false)}
-            >
-              <X size={18} />
-            </Button>
-          </div>
-          {navContent}
-          <div className="mobile-nav-footer">
-            <LanguageSwitcher />
-            <ThemeMenu />
-            {token && (
-              <Button variant="secondary" size="sm" onClick={logout}>
-                <LogOut size={15} />
-                {t("退出登录")}
-              </Button>
-            )}
-          </div>
-        </DialogSurface>
       )}
-      <main className="main" id="main-content">
-        <div className="workspace-bar">
-          <div className="workspace-context">
-            <Button
-              variant="ghost"
-              className="icon-button mobile-menu-button"
-              aria-label={t("打开导航")}
-              onClick={() => setMenuOpen(true)}
-            >
-              <Menu size={19} />
-            </Button>
-            <Activity size={15} className="desktop-context-icon" />
-            <span>{t(current?.section ?? "工作区")}</span>
-            <span className="workspace-divider">/</span>
-            <strong>{t(current?.label ?? "总览看板")}</strong>
-            {location.pathname.startsWith("/platforms/") && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="icon-button"
-                title={t("返回平台列表")}
-                aria-label={t("返回平台列表")}
-                onClick={() => navigate("/platforms")}
-              >
-                <ArrowLeft size={15} />
-              </Button>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-rule bg-paper-raised px-3 lg:px-4">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden"
+            onClick={() => setMobileNavOpen((open) => !open)}
+            aria-label={t("打开导航")}
+            aria-expanded={mobileNavOpen}
+          >
+            {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
+          </Button>
+
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="text-sm font-medium text-ink">
+              {t(current?.label ?? "工作区")}
+            </span>
+            {current && current.path !== "/dashboard" && (
+              <span className="hidden truncate text-xs text-ink-faint sm:inline">
+                {t(current.section)}
+              </span>
             )}
           </div>
-          <QuickSearch />
-          <div className="topbar-tools">
-            <ThemeMenu />
-            <span className="backend-version" title={t("服务版本")}>
-              {info.data?.version || "Prism"}
-            </span>
+
+          <div className="ml-auto flex items-center gap-2">
+            <QuickSearch />
+
+            {unauthorized ? (
+              <Badge tone="alert" dot>
+                {t("令牌失效")}
+              </Badge>
+            ) : disconnected ? (
+              <Badge tone="warn" dot pulse>
+                {t("连接中断")}
+              </Badge>
+            ) : weakTokens > 0 ? (
+              <Badge tone="warn" title={t("部分令牌未设置")}>
+                {t("令牌未设置")}
+              </Badge>
+            ) : info.data ? (
+              <Badge tone="signal" dot title={`${info.data.version ?? ""}`}>
+                {t("实例在线")}
+              </Badge>
+            ) : (
+              <Badge tone="neutral" dot pulse>
+                {t("连接中")}
+              </Badge>
+            )}
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => queryClient.invalidateQueries()}
+              aria-label={t("刷新数据")}
+              title={t("刷新数据")}
+            >
+              <RefreshCw size={15} className={cn(info.isFetching && "animate-spin")} />
+            </Button>
           </div>
-        </div>
-        <div className="content">
-          {disconnected && (
-            <div className="connection-banner" role="alert">
-              <AlertTriangle size={17} />
-              <div>
-                <strong>
-                  {t(
-                    unauthorized
-                      ? "登录已失效"
-                      : !online
-                        ? "当前处于离线状态"
-                        : "无法连接服务",
-                  )}
-                </strong>
-                <p>{t("已加载的数据可能不是最新状态。")}</p>
-              </div>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={
-                  unauthorized
-                    ? logout
-                    : () => {
-                        void queryClient.invalidateQueries();
-                      }
-                }
-              >
-                <RefreshCw size={14} />
-                {t(unauthorized ? "重新登录" : "重新连接")}
-              </Button>
-            </div>
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {token ? (
+            <Outlet />
+          ) : (
+            <div className="p-6 text-sm text-ink-soft">{t("需要管理员令牌")}</div>
           )}
-          {securityCount > 0 && (
-            <div className="security-notice">
-              <AlertTriangle size={15} />
-              <span>{t("认证配置需要检查")}</span>
-              <NavLink to="/system-config">{t("查看设置")}</NavLink>
-            </div>
-          )}
-          <Outlet />
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

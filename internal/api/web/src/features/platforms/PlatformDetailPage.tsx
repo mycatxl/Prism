@@ -1,22 +1,23 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ColumnDef } from "@tanstack/react-table";
-import { AlertTriangle, ArrowLeft, Info, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Info, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useForm, useFormState, useWatch } from "react-hook-form";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { DataTable } from "../../components/ui/DataTable";
-import { Input } from "../../components/ui/Input";
-import { OffsetPagination } from "../../components/ui/OffsetPagination";
-import { Select } from "../../components/ui/Select";
+import { Fieldset, Input, Textarea } from "../../components/ui/Input";
+import { Panel } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Readout } from "../../components/ui/Readout";
 import { Switch } from "../../components/ui/Switch";
-import { Textarea } from "../../components/ui/Textarea";
+import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
+import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
 import {
@@ -60,6 +61,110 @@ const DETAIL_TABS: Array<{ key: PlatformDetailTab; label: string; hint: string }
   { key: "config", label: "配置", hint: "过滤规则与分配策略" },
   { key: "ops", label: "运维", hint: "重置、清租约、删除操作" },
 ];
+
+const selectClass =
+  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink";
+
+function PageNavigator({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  pageSizeOptions,
+  disabled,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  pageSizeOptions: readonly number[];
+  disabled: boolean;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
+  const { t } = useI18n();
+  const pages = Math.max(1, totalPages);
+  const current = Math.min(Math.max(0, page), pages - 1);
+  const jump = (raw: string) => {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0) {
+      onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-rule px-4 py-2">
+      <p className="text-xs text-ink-soft">
+        {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+          page: current + 1,
+          pages,
+          start: totalItems ? current * pageSize + 1 : 0,
+          end: Math.min((current + 1) * pageSize, totalItems),
+          total: totalItems,
+        })}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("每页")}</span>
+          <select
+            className={cn(selectClass, "h-7 w-auto px-1.5 text-xs")}
+            value={pageSize}
+            disabled={disabled}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {pageSizeOptions.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("跳至")}</span>
+          <Input
+            key={current}
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={pages}
+            defaultValue={current + 1}
+            aria-label={t("选择页码")}
+            disabled={disabled}
+            className="h-7 w-14 px-1.5 text-xs"
+            onKeyDown={(event) => {
+              if (event.key === "Enter") jump(event.currentTarget.value);
+            }}
+            onBlur={(event) => {
+              jump(event.currentTarget.value);
+            }}
+          />
+        </label>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("上一页")}
+          title={t("上一页")}
+          disabled={disabled || current === 0}
+          onClick={() => onPageChange(current - 1)}
+        >
+          <ChevronLeft size={16} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={t("下一页")}
+          title={t("下一页")}
+          disabled={disabled || current >= pages - 1}
+          onClick={() => onPageChange(current + 1)}
+        >
+          <ChevronRight size={16} />
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export function PlatformDetailPage() {
   const { t } = useI18n();
@@ -129,6 +234,10 @@ export function PlatformDetailPage() {
     defaultValues: defaultPlatformFormValues,
   });
   const detailEmptyAccountBehavior = useWatch({ control: editForm.control, name: "reverse_proxy_empty_account_behavior" });
+  const detailPassiveCircuitBreakerDisabled = useWatch({
+    control: editForm.control,
+    name: "passive_circuit_breaker_disabled",
+  });
   const { dirtyFields } = useFormState({ control: editForm.control });
   const hasUnsavedChanges = Object.keys(dirtyFields).length > 0;
   const lastEditedId = useRef("");
@@ -319,492 +428,505 @@ export function PlatformDetailPage() {
     setLeasePage(0);
   };
 
-  const leaseColumns: ColumnDef<PlatformLease>[] = [
-    {
-      accessorKey: "account",
-      header: t("账号"),
-      cell: ({ row }) => (
-        <span className="lease-account-cell" title={row.original.account}>
-          {row.original.account || "-"}
-        </span>
-      ),
-    },
-    {
-      id: "node",
-      header: t("节点"),
-      cell: ({ row }) => {
-        const lease = row.original;
-        return (
-          <span className="lease-node-cell" title={lease.node_tag || lease.node_hash}>
-            <strong>{lease.node_tag || "-"}</strong>
-            <small>{lease.node_hash || "-"}</small>
-          </span>
-        );
-      },
-    },
-    {
-      accessorKey: "egress_ip",
-      header: t("出口 IP"),
-      cell: ({ row }) => row.original.egress_ip || "-",
-    },
-    {
-      accessorKey: "expiry",
-      header: t("过期时间"),
-      cell: ({ row }) => formatDateTime(row.original.expiry),
-    },
-    {
-      accessorKey: "last_accessed",
-      header: t("最后访问"),
-      cell: ({ row }) => formatDateTime(row.original.last_accessed),
-    },
-    {
-      id: "actions",
-      header: t("操作"),
-      cell: ({ row }) => {
-        const lease = row.original;
-        const releasing = releaseLeaseMutation.isPending && releaseLeaseMutation.variables?.account === lease.account;
-        return (
-          <div className="lease-row-actions" onClick={(event) => event.stopPropagation()}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void handleReleaseLease(lease)}
-              disabled={releasing || clearLeasesMutation.isPending}
-              title={t("释放租约")}
-              aria-label={t("释放账号 {{account}} 的租约", { account: lease.account })}
-              style={{ color: "var(--delete-btn-color, #c27070)" }}
-            >
-              <Trash2 size={14} />
-            </Button>
-          </div>
-        );
-      },
-    },
-  ];
-
   const stickyTTL = platform ? formatGoDuration(platform.sticky_ttl, t("默认")) : t("默认");
   const regionCount = platform?.region_filters.length ?? 0;
   const regexCount = platform?.regex_filters.length ?? 0;
   const deleteDisabled = !platform || platform.id === ZERO_UUID || deleteMutation.isPending;
+  const passiveCircuitBreakerHint = t(
+    "开启后，此平台的代理请求失败不会增加节点熔断计数；主动探测不受影响。",
+  );
+  const fixedAccountHeaderInvalid = Boolean(
+    editForm.formState.errors.reverse_proxy_fixed_account_header,
+  );
 
   return (
-    <section className="platform-page platform-detail-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("平台详情")}</h2>
-          <p className="module-description">{t("调整当前平台策略，并执行维护操作。")}</p>
-        </div>
-        <div className="platform-detail-toolbar">
-          <Button variant="secondary" size="sm" onClick={() => navigate("/platforms")}>
-            <ArrowLeft size={16} />
-            {t("返回列表")}
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => platformQuery.refetch()} disabled={!platformId || platformQuery.isFetching}>
-            <RefreshCw size={16} className={platformQuery.isFetching ? "spin" : undefined} />
-            {t("刷新")}
-          </Button>
-        </div>
-      </header>
+    <TooltipProvider>
+      <section className="mx-auto w-full max-w-[1180px] px-4 py-5 sm:px-6">
+        <header className="flex flex-wrap items-end justify-between gap-3 pb-3">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold">{t("平台详情")}</h1>
+            <p className="mt-1 text-xs text-ink-soft">{t("调整当前平台策略，并执行维护操作。")}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => navigate("/platforms")}>
+              <ArrowLeft size={15} />
+              {t("返回列表")}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => platformQuery.refetch()}
+              disabled={!platformId || platformQuery.isFetching}
+            >
+              <RefreshCw size={15} className={cn(platformQuery.isFetching && "animate-spin")} />
+              {t("刷新")}
+            </Button>
+          </div>
+        </header>
 
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      {!platformId ? (
-        <div className="callout callout-error">
-          <AlertTriangle size={14} />
-          <span>{t("平台 ID 缺失，无法加载详情。")}</span>
-        </div>
-      ) : null}
+        {!platformId ? (
+          <ErrorState className="mb-4" message={t("平台 ID 缺失，无法加载详情。")} />
+        ) : null}
 
-      {platformQuery.isError && !platform ? (
-        <div className="callout callout-error">
-          <AlertTriangle size={14} />
-          <span>{formatApiErrorMessage(platformQuery.error, t)}</span>
-        </div>
-      ) : null}
+        {platformQuery.isError && !platform ? (
+          <ErrorState
+            className="mb-4"
+            message={formatApiErrorMessage(platformQuery.error, t)}
+            onRetry={() => void platformQuery.refetch()}
+          />
+        ) : null}
 
-      {platformQuery.isLoading && !platform ? (
-        <Card className="platform-cards-container">
-          <p className="muted">{t("正在加载平台详情...")}</p>
-        </Card>
-      ) : null}
+        {platformQuery.isLoading && !platform ? (
+          <LoadingState label={t("正在加载平台详情...")} />
+        ) : null}
 
-      {platform ? (
-        <>
-          <Card className="platform-directory-card platform-detail-header-card">
-            <div className="platform-detail-header-main">
-              <div>
-                <h3>{platform.name}</h3>
-                <p>{platform.id}</p>
-              </div>
-              <div className="platform-detail-header-meta">
-                <Badge variant={platform.id === ZERO_UUID ? "warning" : "success"}>
-                  {platform.id === ZERO_UUID ? t("内置平台") : t("自定义平台")}
-                </Badge>
-                <span>{t("更新于 {{time}}", { time: formatRelativeTime(platform.updated_at) })}</span>
-              </div>
-            </div>
-            <div className="platform-detail-header-footer">
-              <div className="platform-tile-facts">
-                <span className="platform-fact">
-                  <span>{t("区域")}</span>
-                  <strong>{regionCount}</strong>
-                </span>
-                <span className="platform-fact">
-                  <span>{t("正则")}</span>
-                  <strong>{regexCount}</strong>
-                </span>
-                <span className="platform-fact">
-                  <span>{t("租约时长")}</span>
-                  <strong>{stickyTTL}</strong>
-                </span>
-                <span className="platform-fact">
-                  <span>{t("策略")}</span>
-                  <strong>{t(allocationPolicyLabel[platform.allocation_policy])}</strong>
-                </span>
-                <span className="platform-fact">
-                  <span>{t("未命中策略")}</span>
-                  <strong>{t(missActionLabel[platform.reverse_proxy_miss_action])}</strong>
-                </span>
-                <span className="platform-fact">
-                  <span>{t("空账号行为")}</span>
-                  <strong>{t(emptyAccountBehaviorLabel[platform.reverse_proxy_empty_account_behavior])}</strong>
-                </span>
-                <span className="platform-fact">
-                  <span>{t("请求失败熔断")}</span>
-                  <strong>{platform.passive_circuit_breaker_disabled ? t("已关闭") : t("已开启")}</strong>
-                </span>
-              </div>
-            </div>
-          </Card>
-
-          <Card className="platform-cards-container platform-detail-main-card">
-            <div className="platform-detail-tabs" role="tablist" aria-label={t("平台详情板块")}>
-              {DETAIL_TABS.map((tab, index) => {
-                const selected = activeTab === tab.key;
-                return (
-                  <button
-                    key={tab.key}
-                    id={`platform-tab-${tab.key}`}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    aria-controls={`platform-tabpanel-${tab.key}`}
-                    tabIndex={selected ? 0 : -1}
-                    className={`platform-detail-tab ${selected ? "platform-detail-tab-active" : ""}`}
-                    title={t(tab.hint)}
-                    onClick={() => setActiveTab(tab.key)}
-                    onKeyDown={(event) => {
-                      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-                      event.preventDefault();
-                      const next = event.key === "Home" ? 0 : event.key === "End" ? DETAIL_TABS.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + DETAIL_TABS.length) % DETAIL_TABS.length;
-                      setActiveTab(DETAIL_TABS[next].key);
-                      document.getElementById(`platform-tab-${DETAIL_TABS[next].key}`)?.focus();
-                    }}
-                  >
-                    <span>{t(tab.label)}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            {activeTab === "monitor" ? (
-              <div
-                id="platform-tabpanel-monitor"
-                role="tabpanel"
-                aria-labelledby="platform-tab-monitor"
-                className="platform-detail-panel"
-              >
-                <PlatformMonitorPanel platform={platform} />
-              </div>
-            ) : null}
-
-            {activeTab === "access" ? (
-              <div
-                id="platform-tabpanel-access"
-                role="tabpanel"
-                aria-labelledby="platform-tab-access"
-                className="platform-detail-panel"
-              >
-                <PlatformAccessPanel platformName={platform.name} />
-              </div>
-            ) : null}
-
-            {activeTab === "config" ? (
-              <section
-                id="platform-tabpanel-config"
-                role="tabpanel"
-                aria-labelledby="platform-tab-config"
-                className="platform-detail-tabpanel"
-              >
-                <div className="platform-drawer-section-head">
-                  <h4>{t("平台配置")}</h4>
-                  <p>{t("修改过滤策略与路由策略后点击保存。")}</p>
+        {platform ? (
+          <>
+            <div>
+              <div className="flex flex-wrap items-start justify-between gap-3 pb-3">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">{platform.name}</h2>
+                  <p className="mt-0.5 font-mono text-xs break-all text-ink-faint">{platform.id}</p>
                 </div>
-
-                {hasUnsavedChanges && <p className="muted">{t("保留未保存的修改")}</p>}
-                <form className="form-grid platform-config-form" onSubmit={onEditSubmit}>
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-name">
-                      {t("名称")}
-                    </label>
-                    <Input id="detail-edit-name" invalid={Boolean(editForm.formState.errors.name)} {...editForm.register("name")} />
-                    {editForm.formState.errors.name?.message ? (
-                      <p className="field-error">{t(editForm.formState.errors.name.message)}</p>
-                    ) : null}
-                    <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                      {t(platformNameRuleHint)}
-                    </p>
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-sticky">
-                      {t("租约保持时长")}
-                    </label>
-                    <Input
-                      id="detail-edit-sticky"
-                      placeholder={t("例如 168h")}
-                      invalid={Boolean(editForm.formState.errors.sticky_ttl)}
-                      {...editForm.register("sticky_ttl")}
-                    />
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-miss-action">
-                      {t("反向代理账号解析出错策略")}
-                    </label>
-                    <Select id="detail-edit-miss-action" {...editForm.register("reverse_proxy_miss_action")}>
-                      {missActions.map((item) => (
-                        <option key={item} value={item}>
-                          {t(missActionLabel[item])}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-policy">
-                      {t("节点分配策略")}
-                    </label>
-                    <Select id="detail-edit-policy" {...editForm.register("allocation_policy")}>
-                      {allocationPolicies.map((item) => (
-                        <option key={item} value={item}>
-                          {t(allocationPolicyLabel[item])}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-passive-circuit-breaker" style={{ visibility: "hidden" }}>
-                      {t("禁用请求失败熔断")}
-                    </label>
-                    <div className="subscription-switch-item">
-                      <label className="subscription-switch-label" htmlFor="detail-edit-passive-circuit-breaker">
-                        <span>{t("禁用请求失败熔断")}</span>
-                        <span
-                          className="subscription-info-icon"
-                          title={t("开启后，此平台的代理请求失败不会增加节点熔断计数；主动探测不受影响。")}
-                          aria-label={t("开启后，此平台的代理请求失败不会增加节点熔断计数；主动探测不受影响。")}
-                          tabIndex={0}
-                        >
-                          <Info size={13} />
-                        </span>
-                      </label>
-                      <Switch id="detail-edit-passive-circuit-breaker" {...editForm.register("passive_circuit_breaker_disabled")} />
-                    </div>
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-empty-account-behavior">
-                      {t("反向代理账号为空行为")}
-                    </label>
-                    <Select id="detail-edit-empty-account-behavior" {...editForm.register("reverse_proxy_empty_account_behavior")}>
-                      {emptyAccountBehaviors.map((item) => (
-                        <option key={item} value={item}>
-                          {t(emptyAccountBehaviorLabel[item])}
-                        </option>
-                      ))}
-                    </Select>
-                  </div>
-
-                  <div
-                    className={`account-headers-collapse ${detailEmptyAccountBehavior === "FIXED_HEADER" ? "account-headers-collapse-open" : ""}`}
-                    aria-hidden={detailEmptyAccountBehavior !== "FIXED_HEADER"}
-                  >
-                    <div className="field-group">
-                      <label className="field-label" htmlFor="detail-edit-fixed-account-header">
-                        {t("用于提取 Account 的 Headers（每行一个）")}
-                      </label>
-                      <Textarea
-                        id="detail-edit-fixed-account-header"
-                        rows={4}
-                        placeholder={t("每行一个，例如 Authorization 或 X-Account-Id")}
-                        {...editForm.register("reverse_proxy_fixed_account_header")}
-                      />
-                      {editForm.formState.errors.reverse_proxy_fixed_account_header?.message ? (
-                        <p className="field-error">{t(editForm.formState.errors.reverse_proxy_fixed_account_header.message)}</p>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-regex">
-                      {t("节点名正则过滤规则")}
-                    </label>
-                    <Textarea
-                      id="detail-edit-regex"
-                      rows={6}
-                      placeholder={t("每行一条正则表达式，例如：\n\n香港\n日本\n*专线\n!过期\n!失效\n\n表示：选择【香港】或【日本】的【专线】节点，并排除包含【过期】或【失效】的节点。")}
-                      {...editForm.register("regex_filters_text")}
-                    />
-                    <div className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                      <div>{t("普通正则表达式表示满足其一，* 开头表示必须包含，! 开头表示排除。")}</div>
-                      <div>{t("技巧：^<订阅名>/ 可筛选来自该订阅的节点。")}</div>
-                    </div>
-                  </div>
-
-                  <div className="field-group">
-                    <label className="field-label" htmlFor="detail-edit-region">
-                      {t("地区过滤规则")}
-                    </label>
-                    <Textarea
-                      id="detail-edit-region"
-                      rows={6}
-                      placeholder={t("每行一条，如 hk / us / !hk")}
-                      {...editForm.register("region_filters_text")}
-                    />
-                    <p className="muted" style={{ marginTop: 4, fontSize: 12 }}>
-                      {t("支持反选：以 ! 开头可排除地区（如 !hk）。可与正选混用，最终结果为“先正选再排除”。")}
-                    </p>
-                  </div>
-
-                  <div className="platform-config-actions">
-                    <Button type="submit" disabled={updateMutation.isPending}>
-                      {updateMutation.isPending ? t("保存中...") : t("保存配置")}
-                    </Button>
-                  </div>
-                </form>
-              </section>
-            ) : null}
-
-            {activeTab === "ops" ? (
-              <div
-                id="platform-tabpanel-ops"
-                role="tabpanel"
-                aria-labelledby="platform-tab-ops"
-                className="platform-detail-tabpanel platform-ops-tabpanel"
-              >
-                <section className="platform-ops-section">
-                  <div className="platform-drawer-section-head">
-                    <h4>{t("运维操作")}</h4>
-                    <p>{t("以下操作会直接作用于当前平台，请谨慎执行。")}</p>
-                  </div>
-
-                  <div className="platform-ops-list">
-                    <div className="platform-op-item">
-                      <div className="platform-op-copy">
-                        <h5>{t("重置为默认配置")}</h5>
-                        <p className="platform-op-hint">{t("恢复默认设置，并覆盖当前修改。")}</p>
-                      </div>
-                      <Button variant="secondary" onClick={() => void resetMutation.mutateAsync()} disabled={resetMutation.isPending}>
-                        {resetMutation.isPending ? t("重置中...") : t("重置为默认配置")}
-                      </Button>
-                    </div>
-
-                    <div className="platform-op-item">
-                      <div className="platform-op-copy">
-                        <h5>{t("清除所有租约")}</h5>
-                        <p className="platform-op-hint">{t("立即清除当前平台的全部租约，下次请求将重新分配出口。")}</p>
-                      </div>
-                      <Button variant="danger" onClick={() => void handleClearAllLeases()} disabled={clearLeasesMutation.isPending}>
-                        {clearLeasesMutation.isPending ? t("清除中...") : t("清除所有租约")}
-                      </Button>
-                    </div>
-
-                    <div className="platform-op-item">
-                      <div className="platform-op-copy">
-                        <h5>{t("删除平台")}</h5>
-                        <p className="platform-op-hint">{t("永久删除当前平台及其配置，操作不可撤销。")}</p>
-                      </div>
-                      <Button variant="danger" onClick={() => void handleDelete()} disabled={deleteDisabled}>
-                        {deleteMutation.isPending ? t("删除中...") : t("删除平台")}
-                      </Button>
-                    </div>
-                  </div>
-                </section>
-
-                <section id={LEASE_MANAGEMENT_ANCHOR} className="platform-lease-section">
-                  <div className="platform-drawer-section-head platform-lease-head">
-                    <div className="platform-lease-heading">
-                      <h4>{t("租约管理")}</h4>
-                      <p>{t("查看当前平台的租约绑定，并按账号释放单个租约。")}</p>
-                    </div>
-                    <div className="platform-lease-toolbar">
-                      <label className="search-box platform-lease-search" htmlFor="platform-lease-search">
-                        <Search size={16} />
-                        <Input
-                          id="platform-lease-search"
-                          type="search"
-                          placeholder={t("搜索账号")}
-                          aria-label={t("搜索账号")}
-                          value={leaseSearch}
-                          onChange={(event) => setLeaseSearch(event.target.value)}
-                        />
-                      </label>
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => void leaseQuery.refetch()}
-                        disabled={leaseQuery.isFetching}
-                      >
-                        <RefreshCw size={16} className={leaseQuery.isFetching ? "spin" : undefined} />
-                        {t("刷新")}
-                      </Button>
-                    </div>
-                  </div>
-
-                  {leaseQuery.isLoading || isLeasePageTransitioning ? <p className="muted">{t("正在加载租约数据...")}</p> : null}
-
-                  {leaseQuery.isError ? (
-                    <div className="callout callout-error">
-                      <AlertTriangle size={14} />
-                      <span>{formatApiErrorMessage(leaseQuery.error, t)}</span>
-                    </div>
-                  ) : null}
-
-                  {!leaseQuery.isLoading && !leaseQuery.isError && !isLeasePageTransitioning && !visibleLeases.length ? (
-                    <div className="empty-box">
-                      <Sparkles size={16} />
-                      <p>{debouncedLeaseSearch ? t("没有匹配的租约") : t("当前平台暂无租约")}</p>
-                    </div>
-                  ) : null}
-
-                  {visibleLeases.length ? (
-                    <DataTable
-                      data={visibleLeases}
-                      columns={leaseColumns}
-                      getRowId={(lease) => lease.account}
-                      className="data-table-leases"
-                      wrapClassName="platform-lease-table-wrap"
-                    />
-                  ) : null}
-
-                  <OffsetPagination
-                    page={leasePage}
-                    totalPages={leaseTotalPages}
-                    totalItems={leasesPage.total}
-                    pageSize={leasePageSize}
-                    pageSizeOptions={LEASE_PAGE_SIZE_OPTIONS}
-                    disabled={isLeasePageTransitioning}
-                    onPageChange={setLeasePage}
-                    onPageSizeChange={changeLeasePageSize}
-                  />
-                </section>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={platform.id === ZERO_UUID ? "neutral" : "signal"}>
+                    {platform.id === ZERO_UUID ? t("内置平台") : t("自定义平台")}
+                  </Badge>
+                  <span className="text-xs text-ink-soft">
+                    {t("更新于 {{time}}", { time: formatRelativeTime(platform.updated_at) })}
+                  </span>
+                </div>
               </div>
-            ) : null}
-          </Card>
-        </>
-      ) : null}
-    </section>
+
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-y border-rule py-3 sm:grid-cols-4 lg:grid-cols-7">
+                <Readout label={t("区域")} value={regionCount} />
+                <Readout label={t("正则")} value={regexCount} />
+                <Readout label={t("租约时长")} value={stickyTTL} size="sm" className="self-end" />
+                <Readout
+                  label={t("策略")}
+                  value={t(allocationPolicyLabel[platform.allocation_policy])}
+                  size="sm"
+                  className="self-end"
+                />
+                <Readout
+                  label={t("未命中策略")}
+                  value={t(missActionLabel[platform.reverse_proxy_miss_action])}
+                  size="sm"
+                  className="self-end"
+                />
+                <Readout
+                  label={t("空账号行为")}
+                  value={t(emptyAccountBehaviorLabel[platform.reverse_proxy_empty_account_behavior])}
+                  size="sm"
+                  className="self-end"
+                />
+                <Readout
+                  label={t("请求失败熔断")}
+                  value={platform.passive_circuit_breaker_disabled ? t("已关闭") : t("已开启")}
+                  tone={platform.passive_circuit_breaker_disabled ? "warn" : "signal"}
+                  size="sm"
+                  className="self-end"
+                />
+              </div>
+            </div>
+
+            <Panel className="mt-4">
+              <Tabs
+                value={activeTab}
+                onValueChange={(value) => setActiveTab(value as PlatformDetailTab)}
+              >
+                <TabsList className="px-4 pt-3" aria-label={t("平台详情板块")}>
+                  {DETAIL_TABS.map((tab) => (
+                    <TabsTrigger key={tab.key} value={tab.key} title={t(tab.hint)}>
+                      {t(tab.label)}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+
+                <TabsContent value="monitor" className="px-4 py-4">
+                  <PlatformMonitorPanel platform={platform} />
+                </TabsContent>
+
+                <TabsContent value="access" className="px-4 py-4">
+                  <PlatformAccessPanel platformName={platform.name} />
+                </TabsContent>
+
+                <TabsContent value="config" className="px-4 py-4">
+                  <div>
+                    <h2 className="text-sm font-semibold">{t("平台配置")}</h2>
+                    <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
+                      {t("修改过滤策略与路由策略后点击保存。")}
+                    </p>
+                  </div>
+
+                  {hasUnsavedChanges ? (
+                    <p className="mt-2">
+                      <Badge tone="warn" dot>
+                        {t("保留未保存的修改")}
+                      </Badge>
+                    </p>
+                  ) : null}
+
+                  <form className="mt-4 space-y-4" onSubmit={onEditSubmit}>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <Fieldset
+                        label={t("名称")}
+                        htmlFor="detail-edit-name"
+                        hint={t(platformNameRuleHint)}
+                      >
+                        <Input
+                          id="detail-edit-name"
+                          aria-invalid={Boolean(editForm.formState.errors.name) || undefined}
+                          className={cn(editForm.formState.errors.name && "border-alert")}
+                          {...editForm.register("name")}
+                        />
+                        {editForm.formState.errors.name?.message ? (
+                          <p className="text-xs text-alert">{t(editForm.formState.errors.name.message)}</p>
+                        ) : null}
+                      </Fieldset>
+
+                      <Fieldset label={t("租约保持时长")} htmlFor="detail-edit-sticky">
+                        <Input
+                          id="detail-edit-sticky"
+                          className={cn(editForm.formState.errors.sticky_ttl && "border-alert")}
+                          aria-invalid={Boolean(editForm.formState.errors.sticky_ttl) || undefined}
+                          placeholder={t("例如 168h")}
+                          {...editForm.register("sticky_ttl")}
+                        />
+                      </Fieldset>
+
+                      <Fieldset
+                        label={t("反向代理账号解析出错策略")}
+                        htmlFor="detail-edit-miss-action"
+                      >
+                        <select
+                          id="detail-edit-miss-action"
+                          className={selectClass}
+                          {...editForm.register("reverse_proxy_miss_action")}
+                        >
+                          {missActions.map((item) => (
+                            <option key={item} value={item}>
+                              {t(missActionLabel[item])}
+                            </option>
+                          ))}
+                        </select>
+                      </Fieldset>
+
+                      <Fieldset label={t("节点分配策略")} htmlFor="detail-edit-policy">
+                        <select
+                          id="detail-edit-policy"
+                          className={selectClass}
+                          {...editForm.register("allocation_policy")}
+                        >
+                          {allocationPolicies.map((item) => (
+                            <option key={item} value={item}>
+                              {t(allocationPolicyLabel[item])}
+                            </option>
+                          ))}
+                        </select>
+                      </Fieldset>
+
+                      <div className="flex items-start justify-between gap-4 sm:col-span-2">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <label
+                            htmlFor="detail-edit-passive-circuit-breaker"
+                            className="text-xs font-medium text-ink-soft"
+                          >
+                            {t("禁用请求失败熔断")}
+                          </label>
+                          <Tooltip content={passiveCircuitBreakerHint}>
+                            <button
+                              type="button"
+                              aria-label={passiveCircuitBreakerHint}
+                              className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+                            >
+                              <Info size={13} />
+                            </button>
+                          </Tooltip>
+                        </div>
+                        <Switch
+                          id="detail-edit-passive-circuit-breaker"
+                          checked={Boolean(detailPassiveCircuitBreakerDisabled)}
+                          onCheckedChange={(checked) =>
+                            editForm.setValue("passive_circuit_breaker_disabled", checked, {
+                              shouldDirty: true,
+                            })
+                          }
+                        />
+                      </div>
+
+                      <Fieldset
+                        label={t("反向代理账号为空行为")}
+                        htmlFor="detail-edit-empty-account-behavior"
+                      >
+                        <select
+                          id="detail-edit-empty-account-behavior"
+                          className={selectClass}
+                          {...editForm.register("reverse_proxy_empty_account_behavior")}
+                        >
+                          {emptyAccountBehaviors.map((item) => (
+                            <option key={item} value={item}>
+                              {t(emptyAccountBehaviorLabel[item])}
+                            </option>
+                          ))}
+                        </select>
+                      </Fieldset>
+
+                      {detailEmptyAccountBehavior === "FIXED_HEADER" ? (
+                        <Fieldset
+                          label={t("用于提取 Account 的 Headers（每行一个）")}
+                          htmlFor="detail-edit-fixed-account-header"
+                          className="sm:col-span-2"
+                        >
+                          <Textarea
+                            id="detail-edit-fixed-account-header"
+                            rows={4}
+                            placeholder={t("每行一个，例如 Authorization 或 X-Account-Id")}
+                            aria-invalid={fixedAccountHeaderInvalid || undefined}
+                            className={cn(fixedAccountHeaderInvalid && "border-alert")}
+                            {...editForm.register("reverse_proxy_fixed_account_header")}
+                          />
+                          {editForm.formState.errors.reverse_proxy_fixed_account_header?.message ? (
+                            <p className="text-xs text-alert">
+                              {t(editForm.formState.errors.reverse_proxy_fixed_account_header.message)}
+                            </p>
+                          ) : null}
+                        </Fieldset>
+                      ) : null}
+
+                      <Fieldset
+                        label={t("节点名正则过滤规则")}
+                        htmlFor="detail-edit-regex"
+                        className="sm:col-span-2"
+                      >
+                        <Textarea
+                          id="detail-edit-regex"
+                          rows={6}
+                          placeholder={t("每行一条正则表达式，例如：\n\n香港\n日本\n*专线\n!过期\n!失效\n\n表示：选择【香港】或【日本】的【专线】节点，并排除包含【过期】或【失效】的节点。")}
+                          {...editForm.register("regex_filters_text")}
+                        />
+                        <div className="text-xs text-ink-faint">
+                          <div>{t("普通正则表达式表示满足其一，* 开头表示必须包含，! 开头表示排除。")}</div>
+                          <div>{t("技巧：^<订阅名>/ 可筛选来自该订阅的节点。")}</div>
+                        </div>
+                      </Fieldset>
+
+                      <Fieldset
+                        label={t("地区过滤规则")}
+                        htmlFor="detail-edit-region"
+                        className="sm:col-span-2"
+                      >
+                        <Textarea
+                          id="detail-edit-region"
+                          rows={6}
+                          placeholder={t("每行一条，如 hk / us / !hk")}
+                          {...editForm.register("region_filters_text")}
+                        />
+                        <p className="text-xs text-ink-faint">
+                          {t("支持反选：以 ! 开头可排除地区（如 !hk）。可与正选混用，最终结果为“先正选再排除”。")}
+                        </p>
+                      </Fieldset>
+                    </div>
+
+                    <div className="flex items-center gap-2 border-t border-rule pt-3">
+                      <Button type="submit" disabled={updateMutation.isPending}>
+                        {updateMutation.isPending ? t("保存中...") : t("保存配置")}
+                      </Button>
+                    </div>
+                  </form>
+                </TabsContent>
+
+                <TabsContent value="ops" className="px-4 py-4">
+                  <section>
+                    <div>
+                      <h2 className="text-sm font-semibold">{t("运维操作")}</h2>
+                      <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
+                        {t("以下操作会直接作用于当前平台，请谨慎执行。")}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 divide-y divide-rule border-y border-rule">
+                      <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-medium">{t("重置为默认配置")}</h3>
+                          <p className="mt-0.5 text-xs text-ink-soft">
+                            {t("恢复默认设置，并覆盖当前修改。")}
+                          </p>
+                        </div>
+                        <Button
+                          variant="secondary"
+                          onClick={() => void resetMutation.mutateAsync()}
+                          disabled={resetMutation.isPending}
+                        >
+                          {resetMutation.isPending ? t("重置中...") : t("重置为默认配置")}
+                        </Button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-medium">{t("清除所有租约")}</h3>
+                          <p className="mt-0.5 text-xs text-ink-soft">
+                            {t("立即清除当前平台的全部租约，下次请求将重新分配出口。")}
+                          </p>
+                        </div>
+                        <Button
+                          variant="danger"
+                          onClick={() => void handleClearAllLeases()}
+                          disabled={clearLeasesMutation.isPending}
+                        >
+                          {clearLeasesMutation.isPending ? t("清除中...") : t("清除所有租约")}
+                        </Button>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3 py-3">
+                        <div className="min-w-0">
+                          <h3 className="text-sm font-medium">{t("删除平台")}</h3>
+                          <p className="mt-0.5 text-xs text-ink-soft">
+                            {t("永久删除当前平台及其配置，操作不可撤销。")}
+                          </p>
+                        </div>
+                        <Button
+                          variant="danger"
+                          onClick={() => void handleDelete()}
+                          disabled={deleteDisabled}
+                        >
+                          {deleteMutation.isPending ? t("删除中...") : t("删除平台")}
+                        </Button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section id={LEASE_MANAGEMENT_ANCHOR} className="mt-6">
+                    <div className="flex flex-wrap items-end justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="text-sm font-semibold">{t("租约管理")}</h2>
+                        <p className="mt-0.5 text-xs leading-relaxed text-ink-soft">
+                          {t("查看当前平台的租约绑定，并按账号释放单个租约。")}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="relative w-full sm:w-56">
+                          <label htmlFor="platform-lease-search" className="sr-only">
+                            {t("搜索账号")}
+                          </label>
+                          <Search
+                            size={14}
+                            aria-hidden
+                            className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+                          />
+                          <Input
+                            id="platform-lease-search"
+                            type="search"
+                            placeholder={t("搜索账号")}
+                            aria-label={t("搜索账号")}
+                            value={leaseSearch}
+                            onChange={(event) => setLeaseSearch(event.target.value)}
+                            className="pl-7"
+                          />
+                        </div>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void leaseQuery.refetch()}
+                          disabled={leaseQuery.isFetching}
+                        >
+                          <RefreshCw size={15} className={cn(leaseQuery.isFetching && "animate-spin")} />
+                          {t("刷新")}
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 border-y border-rule">
+                      {leaseQuery.isLoading || isLeasePageTransitioning ? (
+                        <LoadingState label={t("正在加载租约数据...")} />
+                      ) : leaseQuery.isError ? (
+                        <ErrorState
+                          className="m-3"
+                          message={formatApiErrorMessage(leaseQuery.error, t)}
+                          onRetry={() => void leaseQuery.refetch()}
+                        />
+                      ) : !visibleLeases.length ? (
+                        <EmptyState
+                          title={debouncedLeaseSearch ? t("没有匹配的租约") : t("当前平台暂无租约")}
+                        />
+                      ) : (
+                        <TableWrap>
+                          <Table className="min-w-[760px]">
+                            <caption className="sr-only">{t("租约管理")}</caption>
+                            <THead>
+                              <TR className="hover:bg-transparent">
+                                <TH>{t("账号")}</TH>
+                                <TH>{t("节点")}</TH>
+                                <TH>{t("出口 IP")}</TH>
+                                <TH className="text-right">{t("过期时间")}</TH>
+                                <TH className="text-right">{t("最后访问")}</TH>
+                                <TH className="text-right">{t("操作")}</TH>
+                              </TR>
+                            </THead>
+                            <TBody>
+                              {visibleLeases.map((lease) => {
+                                const releasing =
+                                  releaseLeaseMutation.isPending &&
+                                  releaseLeaseMutation.variables?.account === lease.account;
+                                return (
+                                  <TR key={lease.account}>
+                                    <TD className="font-mono text-xs" title={lease.account}>
+                                      {lease.account || "-"}
+                                    </TD>
+                                    <TD className="font-mono text-xs" title={lease.node_tag || lease.node_hash}>
+                                      <div className="text-ink">{lease.node_tag || "-"}</div>
+                                      <div className="text-ink-faint">{lease.node_hash || "-"}</div>
+                                    </TD>
+                                    <TD className="font-mono text-xs">{lease.egress_ip || "-"}</TD>
+                                    <TDNum className="text-xs text-ink-soft">
+                                      {formatDateTime(lease.expiry)}
+                                    </TDNum>
+                                    <TDNum className="text-xs text-ink-soft">
+                                      {formatDateTime(lease.last_accessed)}
+                                    </TDNum>
+                                    <TD className="text-right">
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        onClick={() => void handleReleaseLease(lease)}
+                                        disabled={releasing || clearLeasesMutation.isPending}
+                                        title={t("释放租约")}
+                                        aria-label={t("释放账号 {{account}} 的租约", {
+                                          account: lease.account,
+                                        })}
+                                        className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                                      >
+                                        <Trash2 size={14} />
+                                      </Button>
+                                    </TD>
+                                  </TR>
+                                );
+                              })}
+                            </TBody>
+                          </Table>
+                        </TableWrap>
+                      )}
+                    </div>
+
+                    <PageNavigator
+                      page={leasePage}
+                      totalPages={leaseTotalPages}
+                      totalItems={leasesPage.total}
+                      pageSize={leasePageSize}
+                      pageSizeOptions={LEASE_PAGE_SIZE_OPTIONS}
+                      disabled={isLeasePageTransitioning}
+                      onPageChange={setLeasePage}
+                      onPageSizeChange={changeLeasePageSize}
+                    />
+                  </section>
+                </TabsContent>
+              </Tabs>
+            </Panel>
+          </>
+        ) : null}
+      </section>
+    </TooltipProvider>
   );
 }

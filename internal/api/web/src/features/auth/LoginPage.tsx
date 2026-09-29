@@ -1,14 +1,14 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, Eye, EyeOff, Check } from "lucide-react";
+import { Check, Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
-import { Card } from "../../components/ui/Card";
-import { Input } from "../../components/ui/Input";
 import { Button } from "../../components/ui/Button";
+import { Fieldset, Input } from "../../components/ui/Input";
+import { ErrorState } from "../../components/ui/QueryState";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
-import { ThemeMenu } from "../../components/ThemeMenu";
+import { cn } from "../../lib/cn";
 import { useAuthStore } from "./auth-store";
 import { apiRequest, ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n";
@@ -24,6 +24,14 @@ function destination(search: string) {
   return next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/dashboard";
 }
 
+/**
+ * The entry door.
+ *
+ * Two columns on a wide screen: what Prism is on the paper, and the single field
+ * that opens it on a raised sheet. The token is a credential, so it is typed in
+ * mono, masked until the operator asks to see it, and its error is stated under
+ * the field rather than colouring the whole column.
+ */
 export function LoginPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
@@ -103,76 +111,94 @@ export function LoginPage() {
     navigate(next, { replace: true });
   });
 
+  const fieldErrorId = "token-error";
+
   return (
-    <main className="login-layout">
-      <section className="login-introduction" aria-label="Prism">
-        <div className="login-wordmark">
-          <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" />
-          <span>Prism</span>
+    <main className="flex min-h-dvh flex-col bg-paper lg:flex-row">
+      <section
+        aria-label="Prism"
+        className="flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14"
+      >
+        <div className="flex items-center gap-2.5">
+          <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" className="size-10" />
+          <span className="text-lg font-semibold tracking-tight">Prism</span>
         </div>
-        <div className="prism-glass-art" aria-hidden="true">
-          <span className="glass-pane glass-pane-back" />
-          <span className="glass-pane glass-pane-middle" />
-          <span className="glass-pane glass-pane-front" />
-          <span className="glass-beam" />
-        </div>
-        <div className="login-message">
-          <h1>{t("管理你的节点，读懂每个出口。")}</h1>
-          <ul className="login-features">
-            {["订阅与节点", "出口类型与风险记录", "路由与请求日志"].map(label =>
-              <li key={label}><Check size={14} />{t(label)}</li>)}
+
+        <div className="max-w-[46ch]">
+          <h1 className="text-2xl">{t("管理你的节点，读懂每个出口。")}</h1>
+          <ul className="mt-5 space-y-2">
+            {["订阅与节点", "出口类型与风险记录", "路由与请求日志"].map(label => (
+              <li key={label} className="flex items-center gap-2 text-sm text-ink-soft">
+                <Check size={14} className="shrink-0 text-signal" aria-hidden />
+                {t(label)}
+              </li>
+            ))}
           </ul>
         </div>
-        <p className="login-brand-note">{t("节点、出口与质量，一处掌握。")}</p>
+
+        <p className="text-xs text-ink-faint">{t("节点、出口与质量，一处掌握。")}</p>
       </section>
-      <Card className="login-card">
-        <div className="login-header">
-          <div className="login-heading-copy">
-            <h2 className="login-title">{t("欢迎回来")}</h2>
-            <p className="login-note">{t("使用部署时设置的管理员令牌。")}</p>
-          </div>
-          <div className="login-tools">
-            <ThemeMenu />
-            <LanguageSwitcher className="login-locale" />
-          </div>
-        </div>
 
-        <form className="login-form" onSubmit={onSubmit}>
-          <label className="field-label field-label-with-info login-token-label" htmlFor="token">
-            <span>{t("管理员令牌")}</span>
-          </label>
-          <div className="login-input-wrap">
-            <Input
-              id="token"
-              className="login-token-input"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              type={isPasswordVisible ? "text" : "password"}
-              invalid={Boolean(errors.token)}
-              {...register("token")}
-            />
-            <Button
-              variant="ghost"
-              size="sm"
-              className="password-visibility-toggle"
-              aria-label={isPasswordVisible ? t("隐藏管理员令牌") : t("显示管理员令牌")}
-              title={isPasswordVisible ? t("隐藏管理员令牌") : t("显示管理员令牌")}
-              onClick={() => setIsPasswordVisible((visible) => !visible)}
-            >
-              {isPasswordVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+      <section className="flex w-full shrink-0 items-center border-t border-rule bg-paper-raised px-6 py-10 lg:w-[420px] lg:border-t-0 lg:border-l lg:px-8">
+        <div className="mx-auto w-full max-w-xs">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg">{t("欢迎回来")}</h2>
+              <p className="mt-1 text-sm leading-relaxed text-ink-soft">{t("使用部署时设置的管理员令牌。")}</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <LanguageSwitcher />
+            </div>
+          </div>
+
+          <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
+            <Fieldset label={t("管理员令牌")} htmlFor="token">
+              <div className="flex items-start gap-1.5">
+                <Input
+                  id="token"
+                  className={cn(
+                    "min-w-0 flex-1 font-mono",
+                    errors.token && "border-alert ring-1 ring-alert/40",
+                  )}
+                  aria-invalid={errors.token ? true : undefined}
+                  aria-describedby={errors.token?.message ? fieldErrorId : undefined}
+                  autoComplete="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  type={isPasswordVisible ? "text" : "password"}
+                  {...register("token")}
+                />
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="icon"
+                  className="shrink-0 text-ink-faint hover:text-ink"
+                  aria-label={isPasswordVisible ? t("隐藏管理员令牌") : t("显示管理员令牌")}
+                  title={isPasswordVisible ? t("隐藏管理员令牌") : t("显示管理员令牌")}
+                  onClick={() => setIsPasswordVisible((visible) => !visible)}
+                >
+                  {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
+                </Button>
+              </div>
+              {errors.token?.message ? (
+                <p id={fieldErrorId} role="alert" className="text-xs text-alert">
+                  {t(errors.token.message)}
+                </p>
+              ) : null}
+            </Fieldset>
+
+            {submitError ? <ErrorState message={submitError} /> : null}
+
+            <Button type="submit" variant="primary" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? t("校验中...") : t("进入工作台")}
             </Button>
-          </div>
+          </form>
 
-          {errors.token?.message ? <p className="field-error">{t(errors.token.message)}</p> : null}
-          {submitError ? <p className="field-error" role="alert">{submitError}</p> : null}
-
-          <Button type="submit" className="w-full login-submit" disabled={isSubmitting}>
-            {isSubmitting ? t("校验中...") : t("进入工作台")}<ArrowRight size={16} />
-          </Button>
-        </form>
-        <p className="login-session-note">{t("令牌仅保留在当前标签页，关闭后需要重新登录。")}</p>
-      </Card>
+          <p className="mt-5 border-t border-rule pt-3 text-xs leading-relaxed text-ink-faint">
+            {t("令牌仅保留在当前标签页，关闭后需要重新登录。")}
+          </p>
+        </div>
+      </section>
     </main>
   );
 }

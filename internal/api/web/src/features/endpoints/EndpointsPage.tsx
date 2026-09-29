@@ -1,24 +1,16 @@
-import { DialogSurface } from "../../components/ui/DialogSurface";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle,
-  Info,
-  LockKeyhole,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Sparkles,
-  Trash2,
-  X,
-} from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { AlertTriangle, Info, LockKeyhole, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { type FormEvent, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { Input } from "../../components/ui/Input";
-import { OffsetPagination } from "../../components/ui/OffsetPagination";
+import { Fieldset, Input } from "../../components/ui/Input";
+import { Panel, PanelHeader, SectionTitle } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
+import { Table, TableWrap, TBody, TD, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
+import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
@@ -40,6 +32,8 @@ type TranslateFn = (text: string, options?: Record<string, unknown>) => string;
 const EMPTY_ENDPOINTS: Endpoint[] = [];
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const REQUIRE_PROXY_AUTH_LABEL = "强制客户端认证";
+const CONTROL_CLASS =
+  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
 const REQUIRE_PROXY_AUTH_HINT = `一些应用（例如浏览器）只有在代理服务器强制要求认证的时候，才会发送认证信息。
 因此，当 Prism 没有设置代理令牌时，这些应用不会向 Prism 发送认证字段，导致平台与账号信息缺失。
 如果你的 Prism 部署没有设置代理令牌，同时又需要兼容这些应用，可以开启此选项。
@@ -106,16 +100,18 @@ function parseEndpointForm(
   };
 }
 
-function statusPresentation(status: string, t: TranslateFn) {
+type StatusTone = "neutral" | "signal" | "warn" | "alert";
+
+function statusPresentation(status: string, t: TranslateFn): { label: string; tone: StatusTone } {
   switch (status) {
     case "active":
-      return { label: t("运行中"), variant: "success" as const };
+      return { label: t("运行中"), tone: "signal" };
     case "starting":
-      return { label: t("启动中"), variant: "warning" as const };
+      return { label: t("启动中"), tone: "warn" };
     case "error":
-      return { label: t("异常"), variant: "danger" as const };
+      return { label: t("异常"), tone: "alert" };
     default:
-      return { label: t("未运行"), variant: "neutral" as const };
+      return { label: t("未运行"), tone: "neutral" };
   }
 }
 
@@ -127,6 +123,11 @@ type EndpointFormProps = {
   onSubmit: (input: EndpointInput) => Promise<void>;
 };
 
+/**
+ * The edit/create body is one form: the switch rows are grouped in fieldsets so a
+ * screen reader hears "接入能力" before each toggle, and the submit button lives in
+ * the sheet footer, tied back to this form by id.
+ */
 function EndpointForm({ endpoint, endpoints, pending, onClose, onSubmit }: EndpointFormProps) {
   const { t } = useI18n();
   const [form, setForm] = useState<EndpointFormState>(() => endpointToForm(endpoint));
@@ -134,16 +135,7 @@ function EndpointForm({ endpoint, endpoints, pending, onClose, onSubmit }: Endpo
   const isEditing = Boolean(endpoint);
   const readOnly = endpoint?.read_only ?? false;
   const authPolicyAvailable = form.allow_http_forward || form.allow_socks5;
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !pending) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose, pending]);
+  const formID = isEditing ? "endpoint-edit-form" : "endpoint-create-form";
 
   const setProtocol = (
     field: "allow_http_forward" | "allow_http_reverse" | "allow_socks5",
@@ -176,28 +168,26 @@ function EndpointForm({ endpoint, endpoints, pending, onClose, onSubmit }: Endpo
   };
 
   return (
-    <form className="form-grid" onSubmit={handleSubmit}>
-      <div className="subscription-switch-item field-span-2">
-        <label className="subscription-switch-label" htmlFor="endpoint-enabled">
+    <form id={formID} className="flex flex-col gap-4" onSubmit={handleSubmit}>
+      <div className="flex items-center justify-between gap-4 border-b border-rule pb-2">
+        <label className="text-sm" htmlFor="endpoint-enabled">
           {t("启用")}
         </label>
         <Switch
           id="endpoint-enabled"
           checked={form.enabled}
           disabled={readOnly}
-          onChange={(event) => {
-            setForm((current) => ({ ...current, enabled: event.target.checked }));
+          onCheckedChange={(checked: boolean) => {
+            setForm((current) => ({ ...current, enabled: checked }));
             setFormError("");
           }}
         />
       </div>
 
-      <div className="field-group field-span-2">
-        <label className="field-label" htmlFor="endpoint-port">
-          {t("监听端口")}
-        </label>
+      <Fieldset label={t("监听端口")} htmlFor="endpoint-port">
         <Input
           id="endpoint-port"
+          className="readout w-32"
           type="number"
           min={1}
           max={65535}
@@ -211,105 +201,104 @@ function EndpointForm({ endpoint, endpoints, pending, onClose, onSubmit }: Endpo
             setFormError("");
           }}
         />
-      </div>
+      </Fieldset>
 
-      <div className="field-group field-span-2">
-        <label className="field-label">{t("接入能力")}</label>
-        <div className="subscription-switch-group">
-          <div className="subscription-switch-item">
-            <label className="subscription-switch-label" htmlFor="endpoint-management">
+      <fieldset className="min-w-0">
+        <legend className="label px-0">{t("接入能力")}</legend>
+        <div className="mt-1 divide-y divide-rule border-y border-rule">
+          <div className="flex items-center justify-between gap-4 py-1.5">
+            <label className="text-sm" htmlFor="endpoint-management">
               {t("登录管理页面")}
             </label>
             <Switch
               id="endpoint-management"
               checked={form.allow_management}
               disabled={readOnly}
-              onChange={(event) => {
-                setForm((current) => ({ ...current, allow_management: event.target.checked }));
+              onCheckedChange={(checked: boolean) => {
+                setForm((current) => ({ ...current, allow_management: checked }));
                 setFormError("");
               }}
             />
           </div>
 
-          <div className="subscription-switch-item">
-            <label className="subscription-switch-label" htmlFor="endpoint-http-forward">
+          <div className="flex items-center justify-between gap-4 py-1.5">
+            <label className="text-sm" htmlFor="endpoint-http-forward">
               {t("HTTP 正向代理")}
             </label>
             <Switch
               id="endpoint-http-forward"
               checked={form.allow_http_forward}
               disabled={readOnly}
-              onChange={(event) => setProtocol("allow_http_forward", event.target.checked)}
+              onCheckedChange={(checked: boolean) => setProtocol("allow_http_forward", checked)}
             />
           </div>
 
-          <div className="subscription-switch-item">
-            <label className="subscription-switch-label" htmlFor="endpoint-http-reverse">
+          <div className="flex items-center justify-between gap-4 py-1.5">
+            <label className="text-sm" htmlFor="endpoint-http-reverse">
               {t("HTTP 反向代理")}
             </label>
             <Switch
               id="endpoint-http-reverse"
               checked={form.allow_http_reverse}
               disabled={readOnly}
-              onChange={(event) => setProtocol("allow_http_reverse", event.target.checked)}
+              onCheckedChange={(checked: boolean) => setProtocol("allow_http_reverse", checked)}
             />
           </div>
 
-          <div className="subscription-switch-item">
-            <label className="subscription-switch-label" htmlFor="endpoint-socks5">
+          <div className="flex items-center justify-between gap-4 py-1.5">
+            <label className="text-sm" htmlFor="endpoint-socks5">
               {t("SOCKS5 代理")}
             </label>
             <Switch
               id="endpoint-socks5"
               checked={form.allow_socks5}
               disabled={readOnly}
-              onChange={(event) => setProtocol("allow_socks5", event.target.checked)}
+              onCheckedChange={(checked: boolean) => setProtocol("allow_socks5", checked)}
             />
           </div>
         </div>
-      </div>
+      </fieldset>
 
-      <div className="field-group field-span-2">
-        <label className="field-label">{t("认证策略")}</label>
-        <div className="subscription-switch-item">
-          <label className="subscription-switch-label" htmlFor="endpoint-require-auth-info">
-            <span>{t(REQUIRE_PROXY_AUTH_LABEL)}</span>
-            <span
-              className="subscription-info-icon"
-              title={t(REQUIRE_PROXY_AUTH_HINT)}
-              aria-label={t(REQUIRE_PROXY_AUTH_HINT)}
-              tabIndex={0}
-            >
-              <Info size={13} />
-            </span>
-          </label>
+      <fieldset className="min-w-0">
+        <legend className="label px-0">{t("认证策略")}</legend>
+        <div className="mt-1 flex items-center justify-between gap-4 border-y border-rule py-1.5">
+          <span className="flex items-center gap-1.5">
+            <label className="text-sm" htmlFor="endpoint-require-auth-info">
+              {t(REQUIRE_PROXY_AUTH_LABEL)}
+            </label>
+            <TooltipProvider>
+              <Tooltip content={t(REQUIRE_PROXY_AUTH_HINT)}>
+                <span
+                  className="text-ink-faint"
+                  tabIndex={0}
+                  aria-label={t(REQUIRE_PROXY_AUTH_LABEL)}
+                >
+                  <Info size={13} />
+                </span>
+              </Tooltip>
+            </TooltipProvider>
+          </span>
           <Switch
             id="endpoint-require-auth-info"
             checked={form.require_proxy_auth_info}
             disabled={readOnly || !authPolicyAvailable}
-            onChange={(event) =>
-              setForm((current) => ({ ...current, require_proxy_auth_info: event.target.checked }))
+            onCheckedChange={(checked: boolean) =>
+              setForm((current) => ({ ...current, require_proxy_auth_info: checked }))
             }
           />
         </div>
-      </div>
+      </fieldset>
 
       {formError ? (
-        <div className="callout callout-error field-span-2" role="alert">
-          <AlertTriangle size={14} />
+        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-alert" role="alert">
+          <AlertTriangle size={13} className="mt-px shrink-0" />
           <span>{formError}</span>
-        </div>
+        </p>
       ) : null}
 
-      {isEditing && !readOnly ? (
-        <div className="platform-config-actions">
-          <Button type="submit" disabled={pending}>
-            {pending ? t("保存中...") : t("保存配置")}
-          </Button>
-        </div>
-      ) : !isEditing ? (
-        <div className="detail-actions" style={{ justifyContent: "flex-end" }}>
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+      {!isEditing ? (
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="secondary" type="button" onClick={onClose} disabled={pending}>
             {t("取消")}
           </Button>
           <Button type="submit" disabled={pending}>
@@ -318,6 +307,118 @@ function EndpointForm({ endpoint, endpoints, pending, onClose, onSubmit }: Endpo
         </div>
       ) : null}
     </form>
+  );
+}
+
+/**
+ * Offset pagination over the endpoint list.
+ *
+ * The page/count readout and the jump box stay together so the operator can read
+ * the range and move to a page in one glance.
+ */
+function EndpointPagination({
+  page,
+  totalPages,
+  totalItems,
+  pageSize,
+  disabled,
+  onPageChange,
+  onPageSizeChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  pageSize: number;
+  disabled?: boolean;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+}) {
+  const { t } = useI18n();
+  const pages = Math.max(1, totalPages);
+  const current = Math.min(Math.max(0, page), pages - 1);
+  const jump = (raw: string) => {
+    const value = Number(raw);
+    if (Number.isInteger(value) && value > 0) onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
+  };
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+      <p className="text-xs text-ink-soft">
+        {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+          page: current + 1,
+          pages,
+          start: totalItems ? current * pageSize + 1 : 0,
+          end: Math.min((current + 1) * pageSize, totalItems),
+          total: totalItems,
+        })}
+      </p>
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("每页")}</span>
+          <select
+            className={CONTROL_CLASS}
+            value={pageSize}
+            disabled={disabled}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("跳至")}</span>
+          <Input
+            key={current}
+            className="readout h-7 w-14 px-1.5 text-xs"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={pages}
+            defaultValue={current + 1}
+            aria-label={t("选择页码")}
+            disabled={disabled}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") jump(event.currentTarget.value);
+            }}
+            onBlur={(event) => {
+              jump(event.currentTarget.value);
+            }}
+          />
+        </label>
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={t("上一页")}
+          title={t("上一页")}
+          disabled={disabled || current === 0}
+          onClick={() => onPageChange(current - 1)}
+        >
+          {t("上一页")}
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          aria-label={t("下一页")}
+          title={t("下一页")}
+          disabled={disabled || current >= pages - 1}
+          onClick={() => onPageChange(current + 1)}
+        >
+          {t("下一页")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** A capability column: on/off read as a word, because these are compared down the column. */
+function CapabilityCell({ enabled }: { enabled: boolean }) {
+  const { t } = useI18n();
+  return (
+    <span className={enabled ? "text-xs text-signal-deep" : "text-xs text-ink-faint"}>
+      {enabled ? t("已开启") : t("已关闭")}
+    </span>
   );
 }
 
@@ -472,223 +573,228 @@ export function EndpointsPage() {
     }
   };
 
+  const showList = !endpointsQuery.isLoading && !endpointsQuery.isError;
+
   return (
-    <section className="platform-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("接入点")}</h2>
-          <p className="module-description">{t("管理监听端口及其可用的接入能力。")}</p>
-        </div>
+    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
+      <header className="min-w-0">
+        <h1 className="text-2xl">{t("接入点")}</h1>
+        <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
+          {t("管理监听端口及其可用的接入能力。")}
+        </p>
       </header>
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <Card className="platform-list-card platform-directory-card endpoint-toolbar-card">
-        <div className="list-card-header">
-          <div>
-            <h3>{t("接入点列表")}</h3>
-            <p>{t("共 {{count}} 个接入点", { count: totalEndpoints })}</p>
-          </div>
-          <div className="endpoint-toolbar-actions">
-            <Button variant="secondary" size="sm" onClick={openCreateModal}>
-              <Plus size={16} />
-              {t("新建")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void endpointsQuery.refetch()}
-              disabled={endpointsQuery.isFetching}
-            >
-              <RefreshCw size={16} className={endpointsQuery.isFetching ? "spin" : undefined} />
-              {t("刷新")}
-            </Button>
-          </div>
-        </div>
-      </Card>
+      <Panel>
+        <PanelHeader
+          title={t("接入点列表")}
+          description={t("共 {{count}} 个接入点", { count: totalEndpoints })}
+          actions={
+            <>
+              <Button variant="secondary" size="sm" onClick={openCreateModal}>
+                <Plus size={15} />
+                {t("新建")}
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void endpointsQuery.refetch()}
+                disabled={endpointsQuery.isFetching}
+              >
+                <RefreshCw size={15} className={endpointsQuery.isFetching ? "animate-spin" : undefined} />
+                {t("刷新")}
+              </Button>
+            </>
+          }
+        />
 
-      <Card className="platform-cards-container">
-        {endpointsQuery.isLoading ? <p className="muted">{t("正在加载接入点...")}</p> : null}
+        {endpointsQuery.isLoading ? <LoadingState label={t("正在加载接入点...")} /> : null}
 
         {endpointsQuery.isError ? (
-          <div className="callout callout-error">
-            <AlertTriangle size={14} />
-            <span>{formatApiErrorMessage(endpointsQuery.error, t)}</span>
+          <div className="p-4">
+            <ErrorState
+              message={formatApiErrorMessage(endpointsQuery.error, t)}
+              onRetry={() => void endpointsQuery.refetch()}
+            />
           </div>
         ) : null}
 
-        {!endpointsQuery.isLoading && !endpointsQuery.isError && endpoints.length === 0 ? (
-          <div className="empty-box">
-            <Sparkles size={16} />
-            <p>{t("暂无接入点")}</p>
-          </div>
+        {showList && !endpoints.length ? (
+          <EmptyState
+            title={t("暂无接入点")}
+            action={
+              <Button variant="secondary" size="sm" onClick={openCreateModal}>
+                <Plus size={15} />
+                {t("新建")}
+              </Button>
+            }
+          />
         ) : null}
 
-        <div className="endpoint-list">
-          {endpoints.map((endpoint) => {
-            const status = statusPresentation(endpoint.status, t);
-            const displayedEnabled = pendingEnabledStates.get(endpoint.id) ?? endpoint.enabled;
-            const enabledToggleLabel = endpoint.read_only
-              ? t("默认接入点由环境端口定义，不可修改或删除")
-              : displayedEnabled
-                ? t("禁用接入点 :{{port}}", { port: endpoint.port })
-                : t("启用接入点 :{{port}}", { port: endpoint.port });
-            const capabilities = [
-              { label: t("登录管理页面"), enabled: endpoint.allow_management },
-              { label: t("HTTP 正向代理"), enabled: endpoint.allow_http_forward },
-              { label: t("HTTP 反向代理"), enabled: endpoint.allow_http_reverse },
-              { label: t("SOCKS5 代理"), enabled: endpoint.allow_socks5 },
-              {
-                label: t("强制客户端认证"),
-                enabled: endpoint.require_proxy_auth_info,
-              },
-            ];
+        {showList && endpoints.length ? (
+          <TableWrap>
+            <Table>
+              <THead>
+                <TR>
+                  <TH>{t("监听端口")}</TH>
+                  <TH>{t("状态")}</TH>
+                  <TH>{t("登录管理页面")}</TH>
+                  <TH>{t("HTTP 正向代理")}</TH>
+                  <TH>{t("HTTP 反向代理")}</TH>
+                  <TH>{t("SOCKS5 代理")}</TH>
+                  <TH>{t(REQUIRE_PROXY_AUTH_LABEL)}</TH>
+                  <TH>{t("启用")}</TH>
+                  <TH className="text-right">{t("操作")}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {endpoints.map((endpoint) => {
+                  const status = statusPresentation(endpoint.status, t);
+                  const displayedEnabled = pendingEnabledStates.get(endpoint.id) ?? endpoint.enabled;
+                  const enabledToggleLabel = endpoint.read_only
+                    ? t("默认接入点由环境端口定义，不可修改或删除")
+                    : displayedEnabled
+                      ? t("禁用接入点 :{{port}}", { port: endpoint.port })
+                      : t("启用接入点 :{{port}}", { port: endpoint.port });
 
-            return (
-              <article
-                className={`platform-tile endpoint-tile${endpoint.read_only ? " is-read-only" : ""}`}
-                key={endpoint.id}
-                onClick={endpoint.read_only ? undefined : () => openEditDrawer(endpoint)}
-              >
-                <div className="platform-tile-head">
-                  <div className="endpoint-tile-heading">
-                    <span
-                      className={`endpoint-status-dot is-${status.variant}`}
-                      title={status.label}
-                      role="img"
-                      aria-label={status.label}
-                    />
-                    <p>{endpoint.port}</p>
-                    {endpoint.read_only ? (
-                      <div className="endpoint-tile-badges">
-                        <Badge
-                          variant="info"
-                          title={t("默认接入点由环境端口定义，不可修改或删除")}
-                        >
-                          <LockKeyhole size={10} />
-                          {t("默认 · 只读")}
-                        </Badge>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <span
-                    className="endpoint-enabled-toggle"
-                    title={enabledToggleLabel}
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <Switch
-                      checked={displayedEnabled}
-                      disabled={endpoint.read_only || pendingEnabledStates.has(endpoint.id)}
-                      onChange={(event) =>
-                        void handleEnabledChange(endpoint, event.target.checked)
-                      }
-                      aria-label={enabledToggleLabel}
-                    />
-                  </span>
-                </div>
-
-                {endpoint.last_error ? (
-                  <div className="callout callout-error" role="alert">
-                    <AlertTriangle size={14} />
-                    <span>{t("监听错误：{{message}}", { message: endpoint.last_error })}</span>
-                  </div>
-                ) : null}
-
-                <div className="endpoint-tile-bottom">
-                  <div className="platform-tile-facts endpoint-capabilities" aria-label={t("接入能力")}>
-                    {capabilities.map((capability) => (
-                      <span
-                        className="endpoint-capability"
-                        key={capability.label}
-                        aria-label={`${capability.label} · ${capability.enabled ? t("已开启") : t("已关闭")}`}
-                      >
-                        <span
-                          className={`endpoint-capability-indicator ${capability.enabled ? "is-enabled" : "is-disabled"}`}
-                          aria-hidden="true"
-                        />
-                        <span>{capability.label}</span>
-                        <span className="endpoint-capability-state">
-                          {capability.enabled ? t("已开启") : t("已关闭")}
+                  return (
+                    <TR
+                      key={endpoint.id}
+                      selected={editingEndpoint?.id === endpoint.id}
+                      className={endpoint.read_only ? undefined : "cursor-pointer"}
+                      onClick={endpoint.read_only ? undefined : () => openEditDrawer(endpoint)}
+                    >
+                      <TD className="whitespace-nowrap">
+                        <span className="flex items-center gap-2">
+                          <span className="readout text-base font-medium">:{endpoint.port}</span>
+                          {endpoint.read_only ? (
+                            <Badge tone="outline" title={t("默认接入点由环境端口定义，不可修改或删除")}>
+                              <LockKeyhole size={10} />
+                              {t("默认 · 只读")}
+                            </Badge>
+                          ) : null}
                         </span>
-                      </span>
-                    ))}
-                  </div>
+                      </TD>
+                      <TD>
+                        <Badge tone={status.tone} dot>
+                          {status.label}
+                        </Badge>
+                        {endpoint.last_error ? (
+                          <p
+                            className="mt-1 max-w-[24ch] text-2xs leading-snug text-alert"
+                            role="alert"
+                            title={t("监听错误：{{message}}", { message: endpoint.last_error })}
+                          >
+                            {t("监听错误：{{message}}", { message: endpoint.last_error })}
+                          </p>
+                        ) : null}
+                      </TD>
+                      <TD>
+                        <CapabilityCell enabled={endpoint.allow_management} />
+                      </TD>
+                      <TD>
+                        <CapabilityCell enabled={endpoint.allow_http_forward} />
+                      </TD>
+                      <TD>
+                        <CapabilityCell enabled={endpoint.allow_http_reverse} />
+                      </TD>
+                      <TD>
+                        <CapabilityCell enabled={endpoint.allow_socks5} />
+                      </TD>
+                      <TD>
+                        <CapabilityCell enabled={endpoint.require_proxy_auth_info} />
+                      </TD>
+                      <TD>
+                        {/* The row itself opens the drawer, so the toggle must not bubble its click. */}
+                        <div className="flex" onClick={(event) => event.stopPropagation()}>
+                          <Switch
+                            checked={displayedEnabled}
+                            disabled={endpoint.read_only || pendingEnabledStates.has(endpoint.id)}
+                            onCheckedChange={(checked: boolean) => void handleEnabledChange(endpoint, checked)}
+                            title={enabledToggleLabel}
+                            aria-label={enabledToggleLabel}
+                          />
+                        </div>
+                      </TD>
+                      <TD>
+                        <div
+                          className="flex items-center justify-end gap-1"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditDrawer(endpoint)}
+                            disabled={endpoint.read_only}
+                            title={endpoint.read_only ? t("默认接入点由环境端口定义，不可修改或删除") : t("编辑接入点")}
+                            aria-label={t("编辑接入点 :{{port}}", { port: endpoint.port })}
+                          >
+                            <Pencil size={14} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                            onClick={() => void handleDelete(endpoint)}
+                            disabled={endpoint.read_only || deleteMutation.isPending}
+                            title={endpoint.read_only ? t("默认接入点由环境端口定义，不可修改或删除") : t("删除接入点")}
+                            aria-label={t("删除接入点 :{{port}}", { port: endpoint.port })}
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                        </div>
+                      </TD>
+                    </TR>
+                  );
+                })}
+              </TBody>
+            </Table>
+          </TableWrap>
+        ) : null}
 
-                  <div
-                    className="subscriptions-row-actions"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => openEditDrawer(endpoint)}
-                      disabled={endpoint.read_only}
-                      title={endpoint.read_only ? t("默认接入点由环境端口定义，不可修改或删除") : t("编辑接入点")}
-                      aria-label={t("编辑接入点 :{{port}}", { port: endpoint.port })}
-                    >
-                      <Pencil size={14} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void handleDelete(endpoint)}
-                      disabled={endpoint.read_only || deleteMutation.isPending}
-                      title={endpoint.read_only ? t("默认接入点由环境端口定义，不可修改或删除") : t("删除接入点")}
-                      aria-label={t("删除接入点 :{{port}}", { port: endpoint.port })}
-                      style={{ color: "var(--delete-btn-color, #c27070)" }}
-                    >
-                      <Trash2 size={14} />
-                    </Button>
-                  </div>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-
-        <OffsetPagination
+        <EndpointPagination
           page={currentPage}
           totalPages={totalPages}
           totalItems={totalEndpoints}
           pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
           onPageChange={setPage}
           onPageSizeChange={changePageSize}
         />
-      </Card>
+      </Panel>
 
-      {editingEndpoint ? (
-        <DialogSurface title={editingEndpoint.read_only ? t("接入点详情") : t("编辑接入点")} variant="drawer" onClose={closeEditDrawer}>
-          <Card className="drawer-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="drawer-header">
-              <div>
-                <h3>{editingEndpoint.port}</h3>
-                <p>{editingEndpoint.id}</p>
-              </div>
-              <div className="drawer-header-actions">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label={t("关闭编辑面板")}
-                  onClick={closeEditDrawer}
-                  disabled={updateMutation.isPending}
-                >
-                  <X size={16} />
-                </Button>
-              </div>
+      <Sheet
+        open={Boolean(editingEndpoint)}
+        onOpenChange={(open) => {
+          if (!open && !updateMutation.isPending) {
+            closeEditDrawer();
+          }
+        }}
+        title={editingEndpoint ? `:${editingEndpoint.port}` : ""}
+        description={
+          editingEndpoint ? <span className="readout text-xs text-ink-faint">{editingEndpoint.id}</span> : undefined
+        }
+        width="md"
+        footer={
+          editingEndpoint && !editingEndpoint.read_only ? (
+            <div className="flex items-center justify-end gap-2">
+              <Button type="submit" form="endpoint-edit-form" disabled={updateMutation.isPending}>
+                {updateMutation.isPending ? t("保存中...") : t("保存配置")}
+              </Button>
             </div>
-
-            <div className="platform-drawer-layout">
-              <section className="platform-drawer-section">
-                <div className="platform-drawer-section-head">
-                  <h4>{t("接入点配置")}</h4>
-                  <p>
-                    {editingEndpoint.read_only
-                      ? t("默认接入点由环境端口定义，不可修改或删除")
-                      : t("修改监听端口和接入能力后保存。")}
-                  </p>
-                </div>
+          ) : undefined
+        }
+      >
+        {editingEndpoint ? (
+          <div className="flex flex-col gap-5">
+            <section>
+              <SectionTitle>{t("接入点配置")}</SectionTitle>
+              <p className="text-xs leading-relaxed text-ink-soft">
+                {editingEndpoint.read_only
+                  ? t("默认接入点由环境端口定义，不可修改或删除")
+                  : t("修改监听端口和接入能力后保存。")}
+              </p>
+              <div className="mt-3">
                 <EndpointForm
                   key={editingEndpoint.id}
                   endpoint={editingEndpoint}
@@ -697,62 +803,62 @@ export function EndpointsPage() {
                   onClose={closeEditDrawer}
                   onSubmit={submitUpdateEndpoint}
                 />
+              </div>
+            </section>
+
+            {!editingEndpoint.read_only ? (
+              <section className="border-t border-rule pt-4">
+                <SectionTitle>{t("运维操作")}</SectionTitle>
+                <div className="mt-2 flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium">{t("删除接入点")}</h3>
+                    <p className="mt-0.5 max-w-[60ch] text-xs leading-relaxed text-ink-soft">
+                      {t("删除接入点并停止监听，操作不可撤销。")}
+                    </p>
+                  </div>
+                  <Button
+                    variant="danger"
+                    onClick={() => void handleDelete(editingEndpoint)}
+                    disabled={deleteMutation.isPending}
+                  >
+                    {deleteMutation.isPending ? t("删除中...") : t("删除")}
+                  </Button>
+                </div>
               </section>
+            ) : null}
+          </div>
+        ) : null}
+      </Sheet>
 
-              {!editingEndpoint.read_only ? (
-                <section className="platform-drawer-section platform-ops-section">
-                  <div className="platform-drawer-section-head">
-                    <h4>{t("运维操作")}</h4>
-                  </div>
-                  <div className="platform-ops-list">
-                    <div className="platform-op-item">
-                      <div className="platform-op-copy">
-                        <h5>{t("删除接入点")}</h5>
-                        <p className="platform-op-hint">{t("删除接入点并停止监听，操作不可撤销。")}</p>
-                      </div>
-                      <Button
-                        variant="danger"
-                        onClick={() => void handleDelete(editingEndpoint)}
-                        disabled={deleteMutation.isPending}
-                      >
-                        {deleteMutation.isPending ? t("删除中...") : t("删除")}
-                      </Button>
-                    </div>
-                  </div>
-                </section>
-              ) : null}
-            </div>
-          </Card>
-        </DialogSurface>
-      ) : null}
-
-      {createModalOpen ? (
-        <DialogSurface title={t("编辑")} variant="modal" onClose={closeCreateModal}>
-          <Card className="modal-card">
-            <div className="modal-header">
-              <h3 id="endpoint-create-title">{t("新建接入点")}</h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={closeCreateModal}
-                disabled={createMutation.isPending}
-                title={t("关闭")}
-                aria-label={t("关闭")}
-              >
-                <X size={16} />
-              </Button>
-            </div>
-            <EndpointForm
-              key="create"
-              endpoint={null}
-              endpoints={endpoints}
-              pending={createMutation.isPending}
-              onClose={closeCreateModal}
-              onSubmit={submitCreateEndpoint}
-            />
-          </Card>
-        </DialogSurface>
-      ) : null}
+      <Sheet
+        open={createModalOpen}
+        onOpenChange={(open) => {
+          if (!open && !createMutation.isPending) {
+            closeCreateModal();
+          }
+        }}
+        title={t("新建接入点")}
+        width="sm"
+        footer={
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="secondary" onClick={closeCreateModal} disabled={createMutation.isPending}>
+              {t("取消")}
+            </Button>
+            <Button type="submit" form="endpoint-create-form" disabled={createMutation.isPending}>
+              {createMutation.isPending ? t("创建中...") : t("确认创建")}
+            </Button>
+          </div>
+        }
+      >
+        <EndpointForm
+          key="create"
+          endpoint={null}
+          endpoints={endpoints}
+          pending={createMutation.isPending}
+          onClose={closeCreateModal}
+          onSubmit={submitCreateEndpoint}
+        />
+      </Sheet>
     </section>
   );
 }

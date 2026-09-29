@@ -1,3 +1,4 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { loadServerEnv, readServerConfig } from "./server/config.mjs";
@@ -9,7 +10,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: "/ui/",
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
     build: {
       chunkSizeWarningLimit: 1200,
     },

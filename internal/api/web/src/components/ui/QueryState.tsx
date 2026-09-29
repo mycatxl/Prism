@@ -1,53 +1,73 @@
-import { AlertCircle, Inbox, RefreshCw } from "lucide-react";
-import { useI18n } from "../../i18n";
+import { AlertTriangle, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "../../lib/cn";
 import { Button } from "./Button";
 
-type QueryStateProps = {
-  loading?: boolean;
-  error?: unknown;
-  empty?: boolean;
-  emptyText?: string;
-  onRetry?: () => void;
-};
+/**
+ * The three states every data region passes through, in one component so they look
+ * the same everywhere: loading, failed, and empty.
+ *
+ * An empty screen is an invitation to act, so `empty` takes an optional action
+ * rather than only a message.
+ */
+export function LoadingState({ label = "读取中", className }: { label?: string; className?: string }) {
+  return (
+    <div
+      className={cn("flex items-center justify-center gap-2 py-10 text-sm text-ink-soft", className)}
+      role="status"
+    >
+      <Loader2 size={15} className="animate-spin" />
+      {label}
+    </div>
+  );
+}
 
-export function QueryState({
-  loading,
-  error,
-  empty,
-  emptyText,
+export function ErrorState({
+  message,
   onRetry,
-}: QueryStateProps) {
-  const { t } = useI18n();
-  if (loading)
-    return (
-      <div className="query-skeleton" role="status" aria-label={t("正在加载")}>
-        {[1, 2, 3].map((i) => (
-          <span key={i} />
-        ))}
+  className,
+}: {
+  message: ReactNode;
+  onRetry?: () => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col items-start gap-2 border border-alert/30 bg-alert-wash px-4 py-3 text-sm text-alert",
+        className,
+      )}
+      role="alert"
+    >
+      <div className="flex items-start gap-2">
+        <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+        <div className="min-w-0">{message}</div>
       </div>
-    );
-  if (error)
-    return (
-      <div className="query-state query-error" role="alert">
-        <AlertCircle size={20} />
-        <div>
-          <strong>{t("数据暂时不可用")}</strong>
-          <p>{t("请检查连接后重试。")}</p>
-        </div>
-        {onRetry && (
-          <Button variant="secondary" onClick={onRetry}>
-            <RefreshCw size={14} />
-            {t("重试")}
-          </Button>
-        )}
-      </div>
-    );
-  if (empty)
-    return (
-      <div className="query-state">
-        <Inbox size={22} />
-        <span>{emptyText ?? t("暂无记录")}</span>
-      </div>
-    );
-  return null;
+      {onRetry && (
+        <Button size="sm" variant="secondary" onClick={onRetry} className="border-alert/40">
+          重试
+        </Button>
+      )}
+    </div>
+  );
+}
+
+export function EmptyState({
+  title,
+  hint,
+  action,
+  className,
+}: {
+  title: ReactNode;
+  hint?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex flex-col items-center gap-2 py-12 text-center", className)}>
+      <p className="text-sm font-medium text-ink">{title}</p>
+      {hint && <p className="max-w-sm text-xs leading-relaxed text-ink-soft">{hint}</p>}
+      {action && <div className="mt-1">{action}</div>}
+    </div>
+  );
 }

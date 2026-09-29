@@ -1,20 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { createColumnHelper } from "@tanstack/react-table";
-import { AlertTriangle, RefreshCw } from "lucide-react";
-import { useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Card } from "../../components/ui/Card";
-import { CursorPagination } from "../../components/ui/CursorPagination";
-import { DataTable } from "../../components/ui/DataTable";
-import { QueryState } from "../../components/ui/QueryState";
+import { Panel } from "../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Table, TableWrap, TBody, TD, TH, THead, TR } from "../../components/ui/Table";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
+import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { listAuditLogs } from "./api";
 import type { AuditLogEntry } from "./types";
-
-type BadgeVariantName = "neutral" | "success" | "warning" | "danger" | "info" | "accent" | "muted";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const;
 const DEFAULT_PAGE_SIZE = 50;
@@ -22,20 +19,8 @@ const NANOS_PER_MILLI = 1_000_000;
 const MAX_VISIBLE_DETAIL_KEYS = 3;
 const EMPTY_ENTRIES: AuditLogEntry[] = [];
 
-function methodBadgeVariant(method: string): BadgeVariantName {
-  switch (method) {
-    case "POST":
-      return "success";
-    case "PUT":
-      return "info";
-    case "PATCH":
-      return "warning";
-    case "DELETE":
-      return "danger";
-    default:
-      return "neutral";
-  }
-}
+const CONTROL_CLASS =
+  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
 
 // action is "<METHOD> <route pattern>", e.g. "PATCH /api/v1/platforms/{id}".
 function splitAuditAction(action: string): { method: string; route: string } {
@@ -96,12 +81,73 @@ function auditDetailKeys(detail: string): string[] {
 function AuditValue({ value, mono = false }: { value: string; mono?: boolean }) {
   const text = value.trim();
   if (!text) {
-    return <span>-</span>;
+    return <span className="text-ink-faint">-</span>;
   }
   return (
-    <span className={mono ? "audit-log-value audit-log-value-mono" : "audit-log-value"} title={text}>
+    <span
+      className={cn("block max-w-[28ch] truncate", mono ? "readout text-xs" : "text-sm text-ink-soft")}
+      title={text}
+    >
       {text}
     </span>
+  );
+}
+
+/**
+ * Cursor pagination for the audit trail.
+ *
+ * The server pages by `before_id`, so the control is a page cursor rather than a
+ * numbered range: the operator moves forward into older records and back again.
+ */
+function AuditPagination({
+  pageIndex,
+  hasMore,
+  pageSize,
+  disabled,
+  onPageSizeChange,
+  onPrev,
+  onNext,
+}: {
+  pageIndex: number;
+  hasMore: boolean;
+  pageSize: number;
+  disabled: boolean;
+  onPageSizeChange: (pageSize: number) => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-rule bg-paper-sunk/50 px-4 py-2">
+      <p className="text-xs text-ink-soft">
+        {hasMore
+          ? t("第 {{page}} 页 · 有更多数据", { page: pageIndex + 1 })
+          : t("第 {{page}} 页 · 无更多数据", { page: pageIndex + 1 })}
+      </p>
+      <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>{t("每页")}</span>
+          <select
+            className={CONTROL_CLASS}
+            value={String(pageSize)}
+            disabled={disabled}
+            onChange={(event) => onPageSizeChange(Number(event.target.value))}
+          >
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <option key={size} value={size}>
+                {size}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button variant="secondary" size="sm" onClick={onPrev} disabled={disabled || pageIndex <= 0}>
+          {t("上一页")}
+        </Button>
+        <Button variant="secondary" size="sm" onClick={onNext} disabled={disabled || !hasMore}>
+          {t("下一页")}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -150,81 +196,14 @@ export function AuditLogsPage() {
     setPageIndex((previous) => Math.max(0, previous - 1));
   };
 
-  const col = useMemo(() => createColumnHelper<AuditLogEntry>(), []);
-
-  const auditColumns = useMemo(
-    () => [
-      col.accessor("at_ns", {
-        header: t("时间"),
-        cell: (info) => {
-          const parts = splitAuditTime(info.getValue());
-          return (
-            <div className="logs-cell-stack logs-time-cell">
-              <span>{parts.time}</span>
-              <small>{parts.date}</small>
-            </div>
-          );
-        },
-      }),
-      col.accessor("action", {
-        header: t("动作"),
-        cell: (info) => {
-          const { method, route } = splitAuditAction(info.getValue());
-          return (
-            <div className="audit-log-action">
-              {method ? <Badge variant={methodBadgeVariant(method)}>{method}</Badge> : <span>-</span>}
-              <code title={route}>{route || "-"}</code>
-            </div>
-          );
-        },
-      }),
-      col.accessor("target", {
-        header: t("目标"),
-        cell: (info) => <AuditValue value={info.getValue()} mono />,
-      }),
-      col.accessor("detail", {
-        header: t("变更字段"),
-        cell: (info) => {
-          const keys = auditDetailKeys(info.getValue());
-          if (!keys.length) {
-            return <span>-</span>;
-          }
-          const hidden = keys.length - MAX_VISIBLE_DETAIL_KEYS;
-          return (
-            <span title={keys.join(", ")}>
-              {keys.slice(0, MAX_VISIBLE_DETAIL_KEYS).join(", ")}
-              {hidden > 0 ? ` +${hidden}` : ""}
-            </span>
-          );
-        },
-      }),
-      col.display({
-        id: "result",
-        header: t("结果"),
-        cell: () => (
-          <Badge variant="success" title={t("仅记录成功的写操作")}>
-            {t("成功")}
-          </Badge>
-        ),
-      }),
-      col.accessor("actor", {
-        header: () => <span title={t("管理员令牌的指纹前缀（不含令牌本身）")}>{t("操作者")}</span>,
-        cell: (info) => <AuditValue value={info.getValue()} mono />,
-      }),
-      col.accessor("remote_addr", {
-        header: () => <span title={t("请求的客户端地址")}>{t("来源")}</span>,
-        cell: (info) => <AuditValue value={info.getValue()} mono />,
-      }),
-    ],
-    [col, t]
-  );
+  const showTable = !entriesQuery.isLoading && !isPageTransitioning && !entriesQuery.isError && visibleEntries.length > 0;
 
   return (
-    <section className="logs-page">
-      <header className="module-header">
-        <div>
-          <h2>{t("审计日志")}</h2>
-          <p className="module-description">
+    <section className="flex flex-col gap-4 px-4 py-5 lg:px-6">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl">{t("审计日志")}</h1>
+          <p className="mt-1 max-w-[80ch] text-sm leading-relaxed text-ink-soft">
             {t("记录管理员对配置的写操作，仅成功的写操作会被记录（保留 90 天，最多 100000 条）。")}
           </p>
         </div>
@@ -235,42 +214,99 @@ export function AuditLogsPage() {
           disabled={refreshBusy}
           title={t("刷新")}
         >
-          <RefreshCw size={14} className={refreshBusy ? "spin" : undefined} />
+          <RefreshCw size={14} className={refreshBusy ? "animate-spin" : undefined} />
           {t("刷新")}
         </Button>
       </header>
 
-      <Card className="logs-table-card">
-        {entriesQuery.isLoading || isPageTransitioning ? <QueryState loading /> : null}
+      <Panel>
+        {entriesQuery.isLoading || isPageTransitioning ? <LoadingState /> : null}
 
         {entriesQuery.isError && !entriesQuery.isLoading ? (
-          <>
-            <QueryState error={entriesQuery.error} onRetry={() => void entriesQuery.refetch()} />
-            <div className="callout callout-error">
-              <AlertTriangle size={14} />
-              <span>{formatApiErrorMessage(entriesQuery.error, t)}</span>
-            </div>
-          </>
+          <div className="p-4">
+            <ErrorState
+              message={formatApiErrorMessage(entriesQuery.error, t)}
+              onRetry={() => void entriesQuery.refetch()}
+            />
+          </div>
         ) : null}
 
         {!entriesQuery.isLoading && !isPageTransitioning && !entriesQuery.isError && !visibleEntries.length ? (
-          <QueryState empty emptyText={t("暂无审计记录")} />
+          <EmptyState title={t("暂无审计记录")} />
         ) : null}
 
-        {visibleEntries.length ? (
-          <DataTable
-            data={visibleEntries}
-            columns={auditColumns}
-            getRowId={(entry) => String(entry.id)}
-            className="data-table-audit"
-          />
+        {showTable ? (
+          <TableWrap>
+            <Table>
+              <THead>
+                <TR>
+                  <TH>{t("时间")}</TH>
+                  <TH>{t("动作")}</TH>
+                  <TH>{t("目标")}</TH>
+                  <TH>{t("变更字段")}</TH>
+                  <TH title={t("管理员令牌的指纹前缀（不含令牌本身）")}>{t("操作者")}</TH>
+                  <TH title={t("请求的客户端地址")}>{t("来源")}</TH>
+                  <TH>{t("结果")}</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {visibleEntries.map((entry) => {
+                  const parts = splitAuditTime(entry.at_ns);
+                  const { method, route } = splitAuditAction(entry.action);
+                  const keys = auditDetailKeys(entry.detail);
+                  const hidden = keys.length - MAX_VISIBLE_DETAIL_KEYS;
+                  return (
+                    <TR key={entry.id}>
+                      <TD className="whitespace-nowrap">
+                        <div className="flex flex-col leading-tight">
+                          <span className="readout text-xs">{parts.time}</span>
+                          <span className="readout text-2xs text-ink-faint">{parts.date}</span>
+                        </div>
+                      </TD>
+                      <TD>
+                        <div className="flex min-w-0 items-center gap-2">
+                          {method ? <Badge tone="outline">{method}</Badge> : <span className="text-ink-faint">-</span>}
+                          <code className="truncate text-xs text-ink-soft" title={route}>
+                            {route || "-"}
+                          </code>
+                        </div>
+                      </TD>
+                      <TD>
+                        <AuditValue value={entry.target} mono />
+                      </TD>
+                      <TD>
+                        {keys.length ? (
+                          <span className="text-sm" title={keys.join(", ")}>
+                            {keys.slice(0, MAX_VISIBLE_DETAIL_KEYS).join(", ")}
+                            {hidden > 0 ? ` +${hidden}` : ""}
+                          </span>
+                        ) : (
+                          <span className="text-ink-faint">-</span>
+                        )}
+                      </TD>
+                      <TD>
+                        <AuditValue value={entry.actor} mono />
+                      </TD>
+                      <TD>
+                        <AuditValue value={entry.remote_addr} mono />
+                      </TD>
+                      <TD>
+                        <Badge tone="signal" dot title={t("仅记录成功的写操作")}>
+                          {t("成功")}
+                        </Badge>
+                      </TD>
+                    </TR>
+                  );
+                })}
+              </TBody>
+            </Table>
+          </TableWrap>
         ) : null}
 
-        <CursorPagination
+        <AuditPagination
           pageIndex={pageIndex}
           hasMore={hasMore}
           pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
           disabled={isPageTransitioning || entriesQuery.isError}
           onPageSizeChange={(nextPageSize) => {
             setPageSize(nextPageSize);
@@ -279,7 +315,7 @@ export function AuditLogsPage() {
           onPrev={movePrev}
           onNext={moveNext}
         />
-      </Card>
+      </Panel>
     </section>
   );
 }
