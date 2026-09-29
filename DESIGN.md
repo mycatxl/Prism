@@ -238,10 +238,19 @@ run. `make test-slop` builds the correct root for you.
 ### Installing the detector
 
 ```bash
-npx impeccable install --providers=pi --scope=global   # user level: every project sees it
+npx impeccable install --providers=pi --scope=global   # lands in ~/.pi/agent/skills
+cp -a ~/.pi/agent/skills/impeccable ~/.agents/skills/  # where this console actually looks
 ```
 
-Three traps, all hit while installing it here:
+The install that matters is a **directory-style skill under `~/.agents/skills/`**:
+`SKILL.md`, `reference/`, and `scripts/` holding the engine for the platform. That is the
+path this console scans — its settings page calls `listUserSkills({ level: "global" })`
+and the bundle resolves the global root as `~/.agents/skills`, with
+`<project-root>/.agents/skills` for the project level. It rescans on demand, so a
+directory appearing there needs no registry entry. Both shapes are read:
+`frontend-design.md` sits there as a flat file, and a directory with `SKILL.md` beside it.
+
+Four traps, all hit while installing it here:
 
 - **Run it from a neutral directory.** The installer detects harnesses from the
   current directory. Run inside this repository — which has a `.github/` — and it
@@ -255,6 +264,11 @@ Three traps, all hit while installing it here:
 - **The vendored engine can lag the checkout** (the installer ships 0.1.5, the local
   checkout here is 0.1.6). Keep one engine — replace the vendored copy or set
   `IMPECCABLE_BIN` — so every launcher reports the same version.
+
+- **The installer's Pi provider does not put the skill where this console reads it.** It
+  writes `~/.pi/agent/skills/impeccable`; this console scans `~/.agents/skills`. It looks
+  like the right place because the console *does* read `~/.pi/agent/AGENTS.md` for its
+  instructions — but not for skills. Verified in the app bundle, not guessed.
 
 `~/.local/bin` reaches **interactive** shells only. A non-interactive shell — which is
 how an agent runs commands — does not read `~/.bashrc`, so it needs the absolute path
