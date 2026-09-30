@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend test test-race test-web test-slop test-ui capacity lint protocol-matrix verify init start clean
+.PHONY: build web backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix verify smoke init start clean
 
 build: web backend
 
@@ -50,6 +50,20 @@ protocol-matrix:
 lint:
 	$(GO) vet -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
 	$(NPM) --prefix $(WEB_DIR) run lint
+
+# The stricter Go linter set (.golangci.yml). It is a separate target rather
+# than part of `lint` because golangci-lint is not in the base toolchain: CI
+# installs it, a workstation has to. It fails closed with an install hint
+# instead of skipping, so a green run always means the check ran.
+lint-go:
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo 'golangci-lint is not installed. Install the pinned version:'; \
+		echo '  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0'; \
+		echo 'then make sure $$(go env GOPATH)/bin is on PATH.'; \
+		exit 1; \
+	}
+	golangci-lint run --build-tags '$(BUILD_TAGS)' --timeout 10m ./cmd/... ./internal/...
+
 capacity:
 	# In-process capacity figures for the platform view, the routing table and the
 	# node pool. Honours testing.Short(), so `go test -short` skips these cases and
@@ -57,6 +71,17 @@ capacity:
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
 verify: lint test test-race protocol-matrix test-web
+
+# End-to-end smoke test: boots the built binary against a throw-away
+# environment (temporary state/cache/log directories, freshly generated tokens,
+# a loopback egress probe) and exercises health, the UI, API auth, the
+# management listener, HTTP and SOCKS5 forwarding, the reverse-proxy path,
+# online backup, check-config and restart persistence. 23 checks, about two
+# seconds, and it never reaches the network. It needs bin/prism, so it runs
+# after `make backend`; CI runs it as its own step rather than folding it into
+# `verify`, which stays free of build artifacts.
+smoke:
+	bash scripts/smoke.sh
 
 # Frontend checks that need no browser: the panel's server modules, the kit's own
 # invariants, the design system's contrast gate (which reads the tokens in

@@ -1,0 +1,93 @@
+# golangci-lint configuration.
+#
+# Scope: the linters that find real defects in this tree today, with every
+# exclusion named and justified. A configuration that reports 84 style
+# preferences nobody intends to fix is worse than none: the next real finding
+# gets lost in the noise. Re-enabling an exclusion below should be a decision,
+# not a discovery.
+#
+# Verified against golangci-lint v2.14.0 with the release tag set:
+#   make lint-go
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - govet        # the same vet pass `make lint` already runs
+    - staticcheck  # correctness checks, minus the classes listed below
+    - ineffassign  # a value written and never read: always a mistake
+    # `unused` is deliberately absent. It reports 11 real dead symbols, listed
+    # at the bottom of this file. Removing them needs a decision per symbol
+    # (two touch the SSRF policy seam and one has a comment that drifted from
+    # its implementation), so they are recorded rather than silently excluded.
+    # Enable `unused` once that list is cleared.
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        # --- Style and simplification: not defects. ------------------------
+        # ST* are naming conventions. This codebase names things after the
+        # domain (WP numbers, decision IDs), and these flag established names
+        # without improving anything.
+        - -ST1000   # package comment on every package
+        - -ST1003   # initialism casing (ID vs Id)
+        - -ST1016   # consistent receiver names across methods
+        - -ST1020   # comment on exported function
+        - -ST1021   # comment on exported type
+        - -ST1022   # comment on exported variable
+        - -ST1023   # omit type from declaration
+        # QF* are "could be written differently" suggestions. Each is a
+        # behaviour-preserving rewrite; none is a bug.
+        - -QF1001   # could apply De Morgan's law
+        - -QF1003   # could use a tagged switch
+        - -QF1008   # could remove embedded field from selector
+        - -QF1011   # could omit the type in a declaration
+        - -QF1012   # use fmt.Fprintf instead of WriteString(fmt.Sprintf(...))
+        - -S1008    # could return the condition directly
+        - -S1009    # nil check before len() is redundant
+        - -S1016    # use a type conversion instead of a struct literal
+        # --- Deprecated third-party APIs, not deprecated usage. -----------
+        # SA1019 flags calls into APIs that upstream has superseded. Six sites,
+        # each deliberate today:
+        #   * httputil.ReverseProxy.Director (internal/proxy/reverse.go) --
+        #     moving to Rewrite changes how the request URL and headers are
+        #     assembled, which is the path the reverse-proxy contract tests pin.
+        #     A separate, tested change.
+        #   * net.Error.Temporary (cmd/prism/inbound_demux.go) -- the accept
+        #     retry loop; replacing it needs a considered error classification,
+        #     not a rename.
+        #   * archive/tar.TypeRegA (internal/intel/providers/geo_db.go) --
+        #     accepting the legacy flag is the point: old archives use it.
+        #   * http2.Transport.TLSClientConfig and CloseIdleConnections in a test
+        #     that deliberately exercises the x/net/http2 client.
+        # Re-enable this check when those are migrated, not before.
+        - -SA1019
+
+formatters:
+  enable: []
+
+issues:
+  # Report every occurrence: the point of this gate is to be exhaustive, and a
+  # truncated list hides the shape of a problem.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+# ---------------------------------------------------------------------------
+# Dead symbols reported by `unused` (11). None is reachable today; each needs a
+# per-symbol decision before deletion, so none is deleted here.
+#
+#   cmd/prism/app_runtime.go               formatListenURL         superseded by formatListenAddress, which is live
+#   internal/e2e/protocols_test.go         field udp               test fixture field, never set
+#   internal/intel/egress/egress_test.go   field failV6            test fixture field, never set
+#   internal/intel/egress/egress_test.go   field lastUA            test fixture field, never set
+#   internal/intel/jobs/jobs.go            itemStatusIsTerminal    no caller; terminality is decided inline in provider.go
+#   internal/publicsource/collector.go     isForbiddenHostname     SUPERSEDED by validHost; the two-gate comment above it
+#                                                                  documents an agreement invariant -- verify before deleting
+#   internal/service/control_plane_node_intel.go  intelFilterEgressIP its comment claims a response-builder caller that does not exist
+#   internal/subscription/chains.go        stripDanglingDetour     doc comment above it describes stripDetourUnsupported, a
+#                                                                  different name -- the comment and the code have drifted
+#   internal/subscription/parser.go        subscriptionResponse    superseded by an inline document parse
+#   internal/subscription/parser.go        parseSingboxOutbounds   superseded: parser.go calls parseSingboxDocument directly
+#   internal/subscription/parser.go        parseSingboxEndpoints   superseded: same
+# ---------------------------------------------------------------------------

@@ -290,7 +290,8 @@ func qualityRules(policy model.QualityPolicy, facts qualityFacts, now time.Time)
 
 	// 11. Assessment (evidence) age, measured against the stored computed_at.
 	if maxAge, ok := parsePolicyDuration(policy.MaxAssessmentAge); ok && maxAge > 0 {
-		passed := true
+		// Both branches below assign passed; fail closed when unprovable.
+		var passed bool
 		detail := "computed_at=unknown"
 		if !facts.ComputedAt.IsZero() {
 			age := now.Sub(facts.ComputedAt)
@@ -305,7 +306,8 @@ func qualityRules(policy model.QualityPolicy, facts qualityFacts, now time.Time)
 
 	// 12. Egress observation age.
 	if maxAge, ok := parsePolicyDuration(policy.MaxEgressAge); ok && maxAge > 0 {
-		passed := true
+		// Both branches below assign passed; fail closed when unprovable.
+		var passed bool
 		detail := "egress_observed_at=unknown"
 		if !facts.EgressAt.IsZero() {
 			age := now.Sub(facts.EgressAt)

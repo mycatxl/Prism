@@ -252,7 +252,8 @@ func (p *providerPool) applyOutcome(ctx context.Context, provider string, items 
 // providerSleepMax by the caller. The queue rows are untouched: a closed gate is
 // not a failure (§3.3).
 func budgetWait(state store.ProviderState, nowNs int64) time.Duration {
-	wait := providerIdleSleep
+	// Every branch below either returns or assigns wait, so it starts unset.
+	var wait time.Duration
 	switch {
 	case state.Paused:
 		return providerSleepMax

@@ -33,8 +33,23 @@ jobs:
       - name: Build WebUI
         run: make web
 
+      # Pinned to the version .golangci.yml was written and verified against.
+      # `make lint-go` fails closed if the binary is missing, so this step
+      # cannot silently become a no-op.
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+
       - name: Verify (lint + tests + race + protocol matrix)
         run: make verify
 
+      - name: Lint (golangci-lint, stricter set)
+        run: make lint-go
+
       - name: Build backend
         run: make backend
+
+      # Runs the binary that was just built against a throw-away environment.
+      # It needs curl and python3 (both present on the runner) and stays on the
+      # loopback interface, so it adds about two seconds and no network access.
+      - name: Smoke test (end-to-end against the built binary)
+        run: make smoke
