@@ -14,8 +14,11 @@ services:
       context: .
       dockerfile: Dockerfile
     # Published by the release workflow on a v* tag. Comment out `build:` above to
-    # use it, and pin a version rather than moving `latest` for a real deployment.
-    image: ghcr.io/mycatxl/prism:latest
+    # use it, and pin the release you intend: `latest` is only published for a
+    # non-prerelease, so while every release is an `-rc` the version tag is the
+    # only one that exists. Bump this line with each release you deploy.
+    # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
+    image: ghcr.io/mycatxl/prism:0.1.0-rc3
     container_name: prism
     restart: unless-stopped
     environment:

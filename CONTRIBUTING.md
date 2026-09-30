@@ -103,6 +103,41 @@ number**: line numbers move, and a stale one is worse than none.
 - New behaviour needs a test that fails without it. If a check is meant to catch
   a class of mistake, prove it can catch one before trusting it.
 
+## Releasing
+
+A release is a tag. Pushing `v*` starts
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which builds the
+five platform archives, publishes the container image on `ghcr.io`, and turns
+`docs/release-notes/<tag>.md` into the release body — so the notes file belongs
+in the release commit, not in a follow-up.
+
+```bash
+git tag -a v0.1.0-rc3 -m "Prism v0.1.0-rc3"
+git push origin v0.1.0-rc3
+```
+
+Rehearse first whenever the workflow, the Dockerfile or the tag set changed:
+
+```bash
+gh workflow run release.yml     # every build + the image build; publishes nothing
+```
+
+Two properties of this repository decide the order of the steps:
+
+- **Releases are immutable.** GitHub only accepts asset uploads while a release
+  is a draft, which is why the workflow creates a draft, attaches the archives
+  and `SHA256SUMS.txt`, and only then publishes. A published release cannot be
+  amended in place — its tag has to be deleted and re-cut.
+- **A tag name is spent even by a failed run.** `v0.1.0-rc1` could not be reused
+  after its run failed on that rule, which is why the first public build is rc2.
+
+After the run, check three things: the release is marked Pre-release, it carries
+the five archives plus `SHA256SUMS.txt`, and a downloaded binary reports the tag
+(`./prism version`). Then bump the pinned image tag wherever it is quoted, which
+is three files: [`docker-compose.yml.example`](docker-compose.yml.example),
+[`docs/deployment.md`](docs/deployment.md#container-files-in-this-repository) and
+the `docker run` example in [`docs/MIGRATION_FROM_RESIN.md`](docs/MIGRATION_FROM_RESIN.md).
+
 ## License
 
 Prism is released under GPL-3.0-or-later; see [LICENSE](LICENSE). By

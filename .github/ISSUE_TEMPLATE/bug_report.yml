@@ -31,7 +31,7 @@ body:
     attributes:
       label: Version
       description: "Output of `./bin/prism version` (includes git commit and build tags)."
-      placeholder: "v0.1.0-rc2, commit abc1234, tags with_quic,..."
+      placeholder: "v0.1.0-rc3, commit abc1234, tags with_quic,..."
     validations:
       required: true
 

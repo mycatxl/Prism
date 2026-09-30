@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to stamp into the binaries (e.g. v0.1.0-rc2). Empty = the ref name.'
+        description: 'Version to stamp into the binaries (e.g. v0.1.0-rc3). Empty = the ref name.'
         required: false
         default: ''
         type: string
@@ -185,6 +185,18 @@ jobs:
           pattern: release-*
           path: build
           merge-multiple: true
+
+      # Checksums for the archives, so a downloaded release can be verified
+      # before it is put in front of traffic. The file is written into build/,
+      # which the upload step below globs, and it has to go up in the same
+      # draft: this repository publishes immutable releases, so nothing can be
+      # attached after publication.
+      - name: Write checksums
+        run: |
+          set -euo pipefail
+          cd build
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Check if Pre-release
         id: check_prerelease

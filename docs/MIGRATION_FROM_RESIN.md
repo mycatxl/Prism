@@ -31,7 +31,8 @@ docker run --rm \
     -v prism-cache:/var/cache/prism \
     -e PRISM_STATE_DIR=/var/lib/prism \
     -e PRISM_CACHE_DIR=/var/cache/prism \
-    prism:latest import-resin --from-state /var/lib/resin --from-cache /var/cache/resin
+    ghcr.io/mycatxl/prism:0.1.0-rc3 import-resin \
+      --from-state /var/lib/resin --from-cache /var/cache/resin
 ```
 
 宿主机上的等价写法（例如把 Resin 的目录挂载到了 `./resin`）：

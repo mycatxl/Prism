@@ -57,10 +57,14 @@ no separate build). The same tag publishes a container image on `ghcr.io`, so
 | `prism-windows-amd64.zip` | Windows x86-64 |
 
 ```bash
+sha256sum -c --ignore-missing SHA256SUMS.txt   # verify the archives you downloaded
 tar -xzf prism-linux-amd64.tar.gz
 ./prism version        # version, git commit, build time and the exact tag set
 ./prism init           # writes ./.env with fresh tokens
 ```
+
+Every release carries a `SHA256SUMS.txt` next to the archives, so a download can
+be verified before it is deployed.
 
 Every archive is built from the same tag set (`release.yml`'s `TAGS`), because mihomo
 was rejected as a kernel (`docs/ENGINE_DECISIONS.md` D-1): no release artifact is ever
@@ -213,7 +217,7 @@ deployment small:
 | `Dockerfile` | Full multi-stage build: `node:24-alpine` builds the web UI, `golang:1.27-alpine` compiles `cmd/prism` with the full tag set, and the runtime stage (`alpine:3.24`) installs `ca-certificates`, `tzdata` and `su-exec` and places the binary at `/usr/local/bin/prism`. |
 | `.github/Dockerfile.release` | Runtime-only image used by the release workflow: it copies the pre-built `linux/amd64` and `linux/arm64` binaries, which already embed the web UI, onto the same runtime stage. |
 | `docker/entrypoint.sh` | Container entrypoint: prepares and chowns the data directories, then drops privileges to the `prism` user. |
-| `docker-compose.yml.example` | Example service: `ghcr.io/mycatxl/prism:latest`, port `2260:2260`, three named volumes and a `/healthz` healthcheck. |
+| `docker-compose.yml.example` | Example service pinned to a release (`ghcr.io/mycatxl/prism:0.1.0-rc3`; `latest` is published only for a non-prerelease, so it does not exist while every release is an `-rc`), port `2260:2260`, three named volumes and a `/healthz` healthcheck. |
 
 ### Compose quick start
 
@@ -330,9 +334,11 @@ docker compose ps
 
 Images are published as `ghcr.io/mycatxl/prism` for `linux/amd64` and
 `linux/arm64` by the release workflow (`release.yml` builds
-`.github/Dockerfile.release` and tags `v<version>`, `<major>.<minor>` and
-`latest` for non-prereleases). Pin a version tag instead of `latest` so an
-upgrade is a deliberate step; the databases are migrated on start.
+`.github/Dockerfile.release` and tags the release itself, e.g. `0.1.0-rc3`;
+`latest` is added only for a non-prerelease, so it does not exist while every
+release is an `-rc`). Pin a version tag instead of `latest` so an upgrade is a
+deliberate step, and bump that pin when you deploy a new version: the databases
+are migrated on start.
 
 `prism backup --out DIR` copies `state.db`, `cache.db` and `intel.db` with
 `VACUUM INTO` over read-only connections, so it needs no maintenance window, and
