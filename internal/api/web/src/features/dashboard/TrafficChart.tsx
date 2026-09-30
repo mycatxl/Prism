@@ -91,14 +91,14 @@ export default function TrafficChart({
   }, [egress, ingress, connections, t, reducedMotion]);
 
   return (
-    <div className="flex h-full min-h-[220px] flex-col">
+    <div className="flex h-full min-h-[220px] flex-col 2xl:min-h-0">
       <div
         ref={containerRef}
         className="min-h-0 flex-1"
         role="img"
         aria-label={`${t("流量")} ${t("实时连接数")}`}
       />
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 text-xs text-ink-soft">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-2 text-xs text-ink-soft 2xl:hidden">
         <span className="inline-flex items-center gap-1.5">
           <span aria-hidden className="h-0.5 w-3.5 bg-signal" />
           {t("上传流量")}
@@ -140,7 +140,7 @@ function buildOption({
     animationDuration: 420,
     animationEasing: "cubicOut",
     textStyle: { fontFamily: CHART_FONT_SANS, color: CHART_INK },
-    grid: { left: 4, right: 4, top: 12, bottom: 2, containLabel: true },
+    grid: { left: 6, right: 6, top: 18, bottom: 2, containLabel: true },
     tooltip: {
       trigger: "axis",
       // A hairline crosshair instead of ECharts' shaded band: the cursor should
@@ -194,7 +194,7 @@ function buildOption({
       {
         type: "value",
         min: 0,
-        splitLine: { lineStyle: { color: CHART_RULE, width: 1 } },
+        splitLine: { lineStyle: { color: "#162549", width: 1 } },
         axisLine: { show: false },
         axisTick: { show: false },
         axisLabel: { color: CHART_INK_FAINT, fontSize: 11, formatter: (value: number) => formatShortBytes(value) },

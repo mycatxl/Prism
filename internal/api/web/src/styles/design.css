@@ -598,6 +598,583 @@
   }
 }
 
+
+/* ---- 1536x1024 workbench precision layout & dark console surfaces -------- */
+.wb-search-pill {
+  border-radius: 999px;
+}
+
+@media (min-width: 1536px) {
+  /* Pixel-exact at 1536x1024, still sane when the window is wider: only the rail and the
+     board keep their measured width; the shell itself never locks the canvas. */
+  .wb-shell-root:has(.wb-board) .wb-shell-root {
+    position: relative;
+    min-width: 1536px;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-shell-root {
+    background-image:
+      linear-gradient(
+        90deg,
+        #0a152e 0px,
+        #0a152e 248px,
+        #071025 248px,
+        #071025 1536px
+      );
+  }
+
+  .wb-rail-zone {
+    position: relative;
+    width: 248px;
+    height: 1024px;
+    flex-shrink: 0;
+  }
+
+  html[data-theme="dark"] .wb-rail-zone {
+    background-image:
+      linear-gradient(
+        180deg,
+        #0c1938 0px,
+        #0c1938 90px,
+        #0a152e 500px,
+        #081228 1024px
+      );
+  }
+
+  .wb-rail-nav {
+    position: relative;
+    width: 248px;
+    height: 1024px;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .wb-brand-mark {
+    position: absolute;
+    left: 50px;
+    top: 34px;
+    width: 13px;
+    height: 13px;
+    border-radius: 3px;
+    background: linear-gradient(135deg, #4060f4 0%, #489df1 100%);
+    color: transparent;
+    font-size: 0;
+    box-shadow: none;
+  }
+
+  .wb-brand-title {
+    position: absolute;
+    left: 75px;
+    top: 33px;
+    height: 14px;
+    line-height: 14px;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: #f1f3f7;
+  }
+
+  .wb-rail-top-links {
+    position: absolute;
+    left: 20px;
+    top: 68px;
+    width: 215px;
+    height: 112px;
+  }
+
+  .wb-rail-top-item {
+    position: absolute;
+    left: 8px;
+    width: 199px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    border-radius: 9px;
+    font-size: 12px;
+    line-height: 12px;
+    color: #aeb9cb;
+    text-decoration: none;
+  }
+
+  .wb-rail-top-item[data-idx="0"] {
+    top: 0px;
+  }
+
+  .wb-rail-top-item[data-idx="1"] {
+    top: 74px;
+  }
+
+  html[data-theme="dark"] .wb-rail-top-item[aria-current="page"] {
+    background-color: #212f5d;
+    border: 1px solid #314584;
+    color: #f1f3f7;
+    font-weight: 600;
+  }
+
+  .wb-rail-card {
+    position: absolute;
+    left: 20px;
+    top: 188px;
+    width: 215px;
+    height: 835px;
+    border-radius: 11px;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-rail-card {
+    background: linear-gradient(180deg, #0b152d 0px, #0b152e 120px, #0b152e 835px);
+    border: 1px solid #101d3b;
+  }
+
+  .wb-rail-card-item {
+    position: absolute;
+    left: 18px;
+    height: 13px;
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 13px;
+    line-height: 13px;
+    font-weight: 500;
+    color: #aeb9cb;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  html[data-theme="dark"] .wb-rail-card-item[aria-current="page"] {
+    color: #f1f3f7;
+    font-weight: 600;
+  }
+
+  .wb-rail-status {
+    position: absolute;
+    left: 37px;
+    top: 637px;
+    width: 146px;
+    height: 102px;
+    border-radius: 8px;
+    padding: 4px 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  html[data-theme="dark"] .wb-rail-status {
+    background-color: #0b152e;
+    border: 2px solid #283e74;
+  }
+
+  .wb-rail-footer {
+    position: absolute;
+    left: 18px;
+    top: 762px;
+    width: 100px;
+    height: 25px;
+    border-radius: 6px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2px;
+  }
+
+  html[data-theme="dark"] .wb-rail-footer {
+    background-color: #152449;
+    border: 1px solid #23386b;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-main-zone {
+    position: relative;
+    flex: 1 1 0;
+    width: auto;
+    min-width: 1288px;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-main-zone {
+    background-image:
+      linear-gradient(
+        180deg,
+        #081229 0px,
+        #071025 500px,
+        #061023 1000px,
+        #061023 1024px
+      );
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-topbar {
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    width: 1288px;
+    height: 76px !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-topbar > * {
+    pointer-events: auto;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-search-btn {
+    position: absolute !important;
+    left: 11px;
+    top: 18px;
+    width: 481px !important;
+    height: 32px !important;
+    min-height: 32px !important;
+    border-radius: 999px !important;
+    padding: 0 14px 0 34px !important;
+    box-shadow: none !important;
+  }
+
+  html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-search-btn {
+    background: linear-gradient(90deg, #1d2b52 0%, #1c294b 45%, #1c294b 100%) !important;
+    border: 1px solid #223158 !important;
+    color: #9fb0cc !important;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-topbar-actions {
+    position: absolute;
+    left: 1000px;
+    top: 6px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-main-scroll {
+    position: absolute;
+    left: 0;
+    top: 0;
+    right: 0;
+    width: auto;
+    height: 100%;
+    overflow-x: hidden !important;
+    /* the board measures exactly 1024 tall, so at 1024 there is nothing to scroll;
+       on a shorter window the last rows stay reachable instead of being clipped */
+    overflow-y: auto !important;
+  }
+
+  /* Canvas coordinates inside wb-main-scroll:
+     global_x = 248 + local_x, global_y = local_y.
+     So global x=257 -> local left=9px;
+     global x=1054 -> local right=806px;
+     global x=1070 -> local left=822px;
+     global x=1237 -> local left=989px;
+     global x=1512 -> local right=1264px. */
+  .wb-board {
+    position: relative;
+    width: 1288px;
+    height: 1024px;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Slot A: Hero (global 257,0 -> 1512,233 => local left:9, top:0, w:1255, h:233) */
+  .wb-slot-a {
+    position: absolute;
+    left: 9px;
+    top: 0px;
+    width: 1255px;
+    height: 233px;
+    border-radius: 0 0 12px 12px;
+    border: 0 !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-a {
+    background-color: #111b3a;
+    background-image:
+      radial-gradient(120px 60px at 3px 5px, #0b1631 0%, transparent 100%),
+      radial-gradient(180px 60px at 1193px 40px, #0d1834 0%, transparent 100%),
+      radial-gradient(180px 45px at 443px 70px, #0e1a36 0%, transparent 100%),
+      radial-gradient(240px 36px at 443px 105px, #192649 0%, transparent 100%),
+      radial-gradient(160px 34px at 943px 120px, #1d2d59 0%, transparent 100%),
+      radial-gradient(120px 50px at 973px 200px, #0c1835 0%, transparent 100%),
+      linear-gradient(
+        180deg,
+        #101a38 0px,
+        #111b3a 76px,
+        #131e3f 125px,
+        #111b3a 165px,
+        #101a38 233px
+      );
+  }
+
+  /* Slot B: Quick Actions (global 1237,163 -> 1512,361 => local left:989, top:163, w:275, h:198) */
+  .wb-slot-b {
+    position: absolute;
+    left: 989px;
+    top: 163px;
+    width: 275px;
+    height: 198px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    z-index: 10;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-b {
+    background: linear-gradient(180deg, #121c3a 0%, #121c3a 55%, #111a3a 100%) !important;
+    border: 1px solid #1a2749 !important;
+  }
+
+  /* Slot D: Traffic Overview (global 257,250 -> 1054,562 => local left:9, top:250, w:797, h:312) */
+  .wb-slot-d {
+    position: absolute;
+    left: 9px;
+    top: 250px;
+    width: 797px;
+    height: 312px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-d {
+    background: #121f40 !important;
+    border: 1px solid #1f3052 !important;
+  }
+
+  /* Slot E: Egress Tile (global 1070,250 -> 1221,361 => local left:822, top:250, w:151, h:111) */
+  .wb-slot-e {
+    position: absolute;
+    left: 822px;
+    top: 250px;
+    width: 151px;
+    height: 111px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-e {
+    background: #15284c !important;
+    border: 1px solid #1f3560 !important;
+  }
+
+  /* Slot F: Latency Profile (global 1070,378 -> 1512,579 => local left:822, top:378, w:442, h:201) */
+  .wb-slot-f {
+    position: absolute;
+    left: 822px;
+    top: 378px;
+    width: 442px;
+    height: 201px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-f {
+    background: #0d1a35 !important;
+    border: 1px solid #172746 !important;
+  }
+
+  /* Slots G1..G4: KPI Row (global y: 579..688, h: 109) */
+  .wb-slot-g1,
+  .wb-slot-g2,
+  .wb-slot-g3,
+  .wb-slot-g4 {
+    position: absolute;
+    top: 579px;
+    height: 109px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  /* G1: 257..462 (w=206) => local left: 9px */
+  .wb-slot-g1 {
+    left: 9px;
+    width: 206px;
+  }
+  /* G2: 478..665 (w=188) => local left: 230px */
+  .wb-slot-g2 {
+    left: 230px;
+    width: 188px;
+  }
+  /* G3: 681..866 (w=186) => local left: 433px */
+  .wb-slot-g3 {
+    left: 433px;
+    width: 186px;
+  }
+  /* G4: 882..1054 (w=173) => local left: 634px */
+  .wb-slot-g4 {
+    left: 634px;
+    width: 173px;
+  }
+
+  html[data-theme="dark"] .wb-slot-g1,
+  html[data-theme="dark"] .wb-slot-g2,
+  html[data-theme="dark"] .wb-slot-g3,
+  html[data-theme="dark"] .wb-slot-g4 {
+    background: #0f1b37 !important;
+    border-top: 1px solid #182849 !important;
+    border-bottom: 1px solid #142240 !important;
+    border-left: 1px solid #101c38 !important;
+    border-right: 1px solid #101c38 !important;
+  }
+
+  /* Slot H: Recent Changes (global 1070,600 -> 1512,934 => local left:822, top:600, w:442, h:334) */
+  .wb-slot-h {
+    position: absolute;
+    left: 822px;
+    top: 600px;
+    width: 442px;
+    height: 334px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-h {
+    background: #0f1b35 !important;
+    border: 1px solid #182848 !important;
+  }
+
+  /* Slot K: Nested Region Share (global 1136,704 -> 1237,855 => inside H at left:66, top:104, w:101, h:151) */
+  .wb-slot-k {
+    position: absolute;
+    left: 66px;
+    top: 104px;
+    width: 101px;
+    height: 151px;
+    border-radius: 8px;
+    z-index: 5;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-k {
+    background: #0c1836 !important;
+    border: 1px solid #132242 !important;
+  }
+
+  /* Slot I: Recently Added Nodes (global 257,704 -> 727,987 => local left:9, top:704, w:470, h:283) */
+  .wb-slot-i {
+    position: absolute;
+    left: 9px;
+    top: 704px;
+    width: 470px;
+    height: 283px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-i {
+    background: #0c1731 !important;
+    border: 1px solid #162544 !important;
+  }
+
+  /* Slot J: Platform Distribution (global 743,704 -> 1054,987 => local left:495, top:704, w:311, h:283) */
+  .wb-slot-j {
+    position: absolute;
+    left: 495px;
+    top: 704px;
+    width: 311px;
+    height: 283px;
+    border-radius: 11px !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    overflow: hidden;
+  }
+
+  html[data-theme="dark"] .wb-slot-j {
+    background: #0d1730 !important;
+    border: 1px solid #162544 !important;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-j-donut svg {
+    width: 96px !important;
+    height: 96px !important;
+  }
+  /* --- board scaffolding: every slot is positioned against .wb-board ------------------ */
+  .wb-board-stack {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    gap: 0 !important;
+  }
+
+  /* the four KPI tiles are board children, not cells of a nested grid */
+  .wb-kpi-row {
+    display: contents !important;
+  }
+
+  /* The reference board has nine content slots and this console has eleven blocks, so
+     two fold away at this breakpoint: instance health (its figures live in the rail
+     status block) and the latency profile (the hero carries window latency). The data
+     is not dropped - both panels render in full below 1536. See DESIGN.md. */
+  .wb-folded {
+    display: none !important;
+  }
+
+  .wb-slot-a,
+  .wb-slot-b,
+  .wb-slot-d,
+  .wb-slot-e,
+  .wb-slot-f,
+  .wb-slot-g1,
+  .wb-slot-g2,
+  .wb-slot-g3,
+  .wb-slot-g4,
+  .wb-slot-h,
+  .wb-slot-i,
+  .wb-slot-j {
+    display: flex;
+    flex-direction: column;
+  }
+  /* The console keeps the top band bare at this breakpoint: the reference band carries
+     only the brand and the search field. Refresh lives on the hero, theme/language/session
+     and the instance state live in the rail, so nothing is unreachable. */
+  .wb-topbar-actions {
+    display: none !important;
+  }
+
+  /* the traffic timeline is the hero chart of the right column: give it the band */
+  .wb-slot-f .panel-body {
+    min-height: 0;
+  }
+  /* Slot A carries the reference hero: the title's glyph box sits at y110..145 (measured
+     36 px tall, left edge 281 = band left + 24) and the readout row closes the band. */
+  .wb-slot-a h1 {
+    font-size: 34px !important;
+    line-height: 1.06 !important;
+    letter-spacing: -0.02em !important;
+  }
+
+  .wb-slot-a > div:first-child {
+    padding: 86px 24px 0 24px !important;
+  }
+
+  .wb-slot-a > div:nth-child(2) {
+    margin-top: auto !important;
+    padding: 8px 24px 10px !important;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,
