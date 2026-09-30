@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -91,9 +92,31 @@ func (s *inboundDemuxServer) Serve(ln net.Listener) error {
 	}
 }
 
-func inboundDemuxAcceptRetryDelay(err error, prev time.Duration) (time.Duration, bool) {
+// inboundDemuxAcceptRetryable reports whether an Accept error is worth retrying.
+//
+// net.Error.Temporary is deprecated because "temporary" was never well defined.
+// This is the classification it stood for, written out: a timeout, or one of the
+// transient errnos a listener returns while the process is healthy -- a signal
+// interrupting accept, exhausted file descriptors, or a connection that died
+// before it reached the accept queue. A closed listener and every other error
+// end the accept loop.
+func inboundDemuxAcceptRetryable(err error) bool {
+	if errors.Is(err, net.ErrClosed) {
+		return false
+	}
 	var netErr net.Error
-	if !errors.As(err, &netErr) || !netErr.Temporary() {
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return errors.Is(err, syscall.EINTR) ||
+		errors.Is(err, syscall.EMFILE) ||
+		errors.Is(err, syscall.ENFILE) ||
+		errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.ECONNRESET)
+}
+
+func inboundDemuxAcceptRetryDelay(err error, prev time.Duration) (time.Duration, bool) {
+	if !inboundDemuxAcceptRetryable(err) {
 		return 0, false
 	}
 	if prev <= 0 {

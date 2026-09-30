@@ -237,8 +237,16 @@ func gzipBody(t *testing.T, payload []byte) []byte {
 	return buffer.Bytes()
 }
 
-// tarGzipBody packs one database into a MaxMind-style release archive.
-func tarGzipBody(t *testing.T, member string, payload []byte) []byte {
+// Byte offsets inside a 512-byte ustar header block.
+const (
+	tarHeaderSize     = 512
+	tarChecksumOffset = 148
+	tarChecksumSize   = 8
+	tarTypeflagOffset = 156
+)
+
+// tarArchiveBody packs one database into an uncompressed MaxMind-style archive.
+func tarArchiveBody(t *testing.T, member string, payload []byte) []byte {
 	t.Helper()
 	var archive bytes.Buffer
 	writer := tar.NewWriter(&archive)
@@ -252,7 +260,52 @@ func tarGzipBody(t *testing.T, member string, payload []byte) []byte {
 	if err := writer.Close(); err != nil {
 		t.Fatalf("tar fixture: %v", err)
 	}
-	return gzipBody(t, archive.Bytes())
+	return archive.Bytes()
+}
+
+// tarGzipBody packs one database into a MaxMind-style release archive.
+func tarGzipBody(t *testing.T, member string, payload []byte) []byte {
+	t.Helper()
+	return gzipBody(t, tarArchiveBody(t, member, payload))
+}
+
+// legacyTarGzipBody is tarGzipBody with the historical NUL typeflag: the header
+// marks the member with TypeRegA the way archives written before Go 1.11 did.
+// tar.Writer always promotes the flag to TypeReg, so the byte is patched in
+// place and the header checksum recomputed over the patched block.
+func legacyTarGzipBody(t *testing.T, member string, payload []byte) []byte {
+	t.Helper()
+	archive := tarArchiveBody(t, member, payload)
+	if len(archive) < tarHeaderSize || archive[tarTypeflagOffset] != tar.TypeReg {
+		t.Fatalf("tar fixture: expected a regular-file header, got %q", archive[tarTypeflagOffset])
+	}
+	archive[tarTypeflagOffset] = 0x00
+	for i := tarChecksumOffset; i < tarChecksumOffset+tarChecksumSize; i++ {
+		archive[i] = ' '
+	}
+	var sum int64
+	for _, b := range archive[:tarHeaderSize] {
+		sum += int64(b)
+	}
+	copy(archive[tarChecksumOffset:tarChecksumOffset+tarChecksumSize], fmt.Sprintf("%06o\x00 ", sum))
+	return gzipBody(t, archive)
+}
+
+// A MaxMind archive written before Go 1.11 carries the NUL typeflag. The tar
+// reader normalizes it to TypeReg while reading, and extraction must keep
+// accepting such a member.
+func TestGeoArchiveWithLegacyRegularFileTypeflagIsAccepted(t *testing.T) {
+	const payload = "legacy-mmdb-bytes"
+	body := legacyTarGzipBody(t, MaxMindCityFile, []byte(payload))
+
+	var extracted bytes.Buffer
+	written, err := unwrapDatabase(&extracted, body, GeoDBSource{FileName: MaxMindCityFile, Kind: GeoDBTarGzip}, 1<<20)
+	if err != nil {
+		t.Fatalf("unwrap legacy archive: %v", err)
+	}
+	if written != int64(len(payload)) || extracted.String() != payload {
+		t.Fatalf("extracted %q (%d bytes), want %q (%d bytes)", extracted.String(), written, payload, len(payload))
+	}
 }
 
 // geoRegistry builds the built-in data sources with their effective settings,
@@ -761,7 +814,7 @@ func TestGeoMaxMindUsesBasicAuthAndExtractsTheArchive(t *testing.T) {
 	manager := newGeoTestManager(t, dir, server, registry,
 		func(opts *GeoManagerOptions) {
 			opts.Sources = onlySource(t, geoBaseURLs(server), MaxMindCityFile)
-			opts.Logf = func(format string, args ...any) { logged.WriteString(fmt.Sprintf(format, args...)) }
+			opts.Logf = func(format string, args ...any) { _, _ = fmt.Fprintf(&logged, format, args...) }
 		})
 	result, err := manager.RequestRefresh(context.Background(), "maxmind_geolite2")
 	if err != nil {
@@ -844,7 +897,7 @@ func TestGeoIPInfoSendsTheTokenAndInstallsTheDatabase(t *testing.T) {
 	manager := newGeoTestManager(t, dir, server, registry,
 		func(opts *GeoManagerOptions) {
 			opts.Sources = onlySource(t, geoBaseURLs(server), IPInfoLiteDBFile)
-			opts.Logf = func(format string, args ...any) { logged.WriteString(fmt.Sprintf(format, args...)) }
+			opts.Logf = func(format string, args ...any) { _, _ = fmt.Fprintf(&logged, format, args...) }
 		})
 	result, err := manager.RequestRefresh(context.Background(), "ipinfo_lite")
 	if err != nil {
@@ -940,7 +993,7 @@ func TestGeoStartDoesNotBlockAndProvidersPickTheDatabaseUp(t *testing.T) {
 		ASNPath:  filepath.Join(dir, DBIPASNFile),
 		Now:      func() time.Time { return testNow },
 	})
-	expectCode(t, provider.Lookup(testIP), CodeUnavailable)
+	_ = expectCode(t, provider.Lookup(testIP), CodeUnavailable)
 
 	started := time.Now()
 	manager.Start()
@@ -954,7 +1007,7 @@ func TestGeoStartDoesNotBlockAndProvidersPickTheDatabaseUp(t *testing.T) {
 		t.Fatalf("the download did not start in the background: %v", err)
 	}
 	// The download is still held open: the provider keeps its explained failure.
-	expectCode(t, provider.Lookup(testIP), CodeUnavailable)
+	_ = expectCode(t, provider.Lookup(testIP), CodeUnavailable)
 
 	release()
 	if err := waitForCondition(t, 5*time.Second, func() bool {

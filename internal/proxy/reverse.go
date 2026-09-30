@@ -150,9 +150,6 @@ func stripForwardingIdentityHeaders(header http.Header) {
 	for _, h := range forwardingIdentityHeaders {
 		header.Del(h)
 	}
-	// net/http/httputil.ReverseProxy with Director auto-populates X-Forwarded-For
-	// unless the header key exists with a nil value.
-	header["X-Forwarded-For"] = nil
 }
 
 // decodePathSegmentV1 decodes one escaped URL path segment for V1 parsing.
@@ -368,22 +365,30 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxy := &httputil.ReverseProxy{
-		Director: func(req *http.Request) {
-			req.URL = target
-			req.Host = parsed.Host
-			stripForwardingIdentityHeaders(req.Header)
-			pendingEgressHeaderBytes = headerWireLen(req.Header)
+		// Rewrite, not the deprecated Director: it runs after the hop-by-hop
+		// headers and the client-supplied forwarding headers are gone, and it
+		// never re-adds X-Forwarded-For, so the stripping below is the only
+		// thing that decides what upstream sees.
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			// Assign the target URL directly rather than through SetURL: SetURL
+			// joins the inbound path with the target path and merges the two
+			// queries, which would double the path of an already complete
+			// target.
+			pr.Out.URL = target
+			pr.Out.Host = parsed.Host
+			stripForwardingIdentityHeaders(pr.Out.Header)
+			pendingEgressHeaderBytes = headerWireLen(pr.Out.Header)
 
 			// Compose request-progress trace first so egress commit logic can
 			// observe whether the upstream request was actually written.
-			reqCtx := httptrace.WithClientTrace(req.Context(), upstreamTrace.clientTrace())
+			reqCtx := httptrace.WithClientTrace(pr.Out.Context(), upstreamTrace.clientTrace())
 
 			// Add httptrace for TLS latency measurement on HTTPS.
 			if parsed.Protocol == "https" && hasRoute && p.health != nil {
 				reporter := newReverseLatencyReporter(p.health, nodeHashRaw, domain)
 				reqCtx = httptrace.WithClientTrace(reqCtx, reporter.clientTrace())
 			}
-			*req = *req.WithContext(reqCtx)
+			pr.Out = pr.Out.WithContext(reqCtx)
 		},
 		Transport: transport,
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {

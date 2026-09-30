@@ -486,7 +486,7 @@ func TestForwardProxy_AuthAndSetup(t *testing.T) {
 		}
 		w.Header().Set("X-Upstream", "ok")
 		w.WriteHeader(200)
-		w.Write([]byte("upstream-response"))
+		_, _ = w.Write([]byte("upstream-response"))
 	}))
 	defer upstream.Close()
 
@@ -1248,7 +1248,7 @@ func TestTLSLatencyConn_WriteReadFlow(t *testing.T) {
 		}
 		// Small delay to ensure measurable latency.
 		time.Sleep(5 * time.Millisecond)
-		server.Write([]byte("server hello"))
+		_, _ = server.Write([]byte("server hello"))
 	}()
 
 	// Client side: write Client Hello (triggers state 0→1).
@@ -1470,21 +1470,20 @@ func TestStripForwardingIdentityHeaders(t *testing.T) {
 	stripForwardingIdentityHeaders(header)
 
 	for _, h := range []string{
-		"X-Prism-Account", "Forwarded", "X-Forwarded-Host", "X-Forwarded-Proto",
-		"X-Forwarded-Port", "X-Forwarded-Server", "Via",
+		"X-Prism-Account", "Forwarded", "X-Forwarded-For", "X-Forwarded-Host",
+		"X-Forwarded-Proto", "X-Forwarded-Port", "X-Forwarded-Server", "Via",
 		"X-Real-IP", "X-Client-IP", "True-Client-IP",
 		"CF-Connecting-IP", "X-ProxyUser-Ip",
 	} {
 		if got := header.Get(h); got != "" {
 			t.Fatalf("header %q should be removed, got %q", h, got)
 		}
+		if vals, ok := header[http.CanonicalHeaderKey(h)]; ok {
+			t.Fatalf("header %q should be absent, got %v", h, vals)
+		}
 	}
 	if got := header.Get("X-Public"); got != "keep-me" {
 		t.Fatalf("expected X-Public to remain, got %q", got)
-	}
-	vals, ok := header["X-Forwarded-For"]
-	if !ok || vals != nil {
-		t.Fatalf("X-Forwarded-For should be present with nil value, got ok=%v vals=%v", ok, vals)
 	}
 }
 
