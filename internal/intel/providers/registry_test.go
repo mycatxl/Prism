@@ -33,13 +33,13 @@ func TestGeoCountryOffline(t *testing.T) {
 	}
 
 	missing := NewGeoCountryProvider(GeoCountryOptions{Now: func() time.Time { return testNow }})
-	expectCode(t, missing.Lookup(testIP), CodeUnavailable)
+	_ = expectCode(t, missing.Lookup(testIP), CodeUnavailable)
 
 	// A database without a record for the address is an explainable failure too.
 	empty := NewGeoCountryProvider(GeoCountryOptions{
 		Lookup: fakeCountry{code: ""}, Now: func() time.Time { return testNow },
 	})
-	expectCode(t, empty.Lookup(testIP), CodeUnavailable)
+	_ = expectCode(t, empty.Lookup(testIP), CodeUnavailable)
 }
 
 func TestMMDBProviderWithoutDatabaseIsExplainable(t *testing.T) {
@@ -49,11 +49,11 @@ func TestMMDBProviderWithoutDatabaseIsExplainable(t *testing.T) {
 		Now: func() time.Time { return testNow },
 	})
 	result := provider.Lookup(testIP)
-	expectCode(t, result, CodeUnavailable)
+	_ = expectCode(t, result, CodeUnavailable)
 	if !strings.Contains(result.Err.Message, "DB-IP Lite") {
 		t.Fatalf("message should name the database: %q", result.Err.Message)
 	}
-	expectCode(t, provider.Lookup(netip.MustParseAddr("10.0.0.1")), CodeUnsupported)
+	_ = expectCode(t, provider.Lookup(netip.MustParseAddr("10.0.0.1")), CodeUnsupported)
 }
 
 func TestDecodeTorRegistry(t *testing.T) {
@@ -97,7 +97,7 @@ func TestTorProviderRoles(t *testing.T) {
 		t.Fatal("source updated at missing")
 	}
 	// An address without a registry entry produces no evidence, not a clean bill.
-	expectCode(t, provider.Lookup(netip.MustParseAddr("9.9.9.9")), CodeUnavailable)
+	_ = expectCode(t, provider.Lookup(netip.MustParseAddr("9.9.9.9")), CodeUnavailable)
 	if status := registry.Status(); !status.Ready || status.Entries != 1 {
 		t.Fatalf("status: %+v", status)
 	}
@@ -175,7 +175,7 @@ func TestDNSBLRefusedIsNotAListing(t *testing.T) {
 		Resolver: localResolver(addr), Now: func() time.Time { return testNow },
 	})
 	result := provider.Lookup(context.Background(), []netip.Addr{testIP})[testIP]
-	expectCode(t, result, CodeDNSBLRefused)
+	_ = expectCode(t, result, CodeDNSBLRefused)
 }
 
 func TestDNSBLUnsupportedIPv6AndQueryFailure(t *testing.T) {
@@ -184,11 +184,11 @@ func TestDNSBLUnsupportedIPv6AndQueryFailure(t *testing.T) {
 		Resolver: localResolver("127.0.0.1:1"), Now: func() time.Time { return testNow },
 	})
 	v6 := netip.MustParseAddr("2606:4700:4700::1111")
-	expectCode(t, provider.Lookup(context.Background(), []netip.Addr{v6})[v6], CodeUnsupported)
+	_ = expectCode(t, provider.Lookup(context.Background(), []netip.Addr{v6})[v6], CodeUnsupported)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 	defer cancel()
-	expectCode(t, provider.Lookup(ctx, []netip.Addr{testIP})[testIP], CodeUnavailable)
+	_ = expectCode(t, provider.Lookup(ctx, []netip.Addr{testIP})[testIP], CodeUnavailable)
 }
 
 func TestResolverFromURL(t *testing.T) {

@@ -232,7 +232,7 @@ func TestProxyCheckSendsKeyAndDecodes(t *testing.T) {
 func TestProxyCheckUnsupportedIP(t *testing.T) {
 	provider := NewProxyCheckProvider(ProxyCheckOptions{Now: func() time.Time { return testNow }})
 	results := provider.Lookup(context.Background(), []netip.Addr{netip.MustParseAddr("10.0.0.1")})
-	expectCode(t, results[netip.MustParseAddr("10.0.0.1")], CodeUnsupported)
+	_ = expectCode(t, results[netip.MustParseAddr("10.0.0.1")], CodeUnsupported)
 }
 
 func TestProxyCheckSpecDefaults(t *testing.T) {
@@ -376,7 +376,7 @@ func TestIPPureEgressMismatchIsNotEvidence(t *testing.T) {
 
 	provider := NewIPPureProvider(IPPureOptions{URL: server.URL, Now: func() time.Time { return testNow }})
 	result := provider.Lookup(context.Background(), directOutbound{}, testIP)
-	expectCode(t, result, CodeEgressMismat)
+	_ = expectCode(t, result, CodeEgressMismat)
 }
 
 func TestDecodeIPPureRules(t *testing.T) {
@@ -509,7 +509,7 @@ func TestIPAPIRejectsMismatchAndLimits(t *testing.T) {
 func TestViaNodeRequiresOutbound(t *testing.T) {
 	provider := NewIPAPIProvider(IPAPIOptions{URL: "http://127.0.0.1:1/", Now: func() time.Time { return testNow }})
 	result := provider.Lookup(context.Background(), nil, testIP)
-	expectCode(t, result, CodeUnavailable)
+	_ = expectCode(t, result, CodeUnavailable)
 }
 
 // --- proxycheck.io (via-node) ---------------------------------------------

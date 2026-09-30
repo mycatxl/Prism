@@ -117,19 +117,19 @@ func fakeProviderHandler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/trace/v4"):
-			io.WriteString(w, "fl=1f2\nh=1.1.1.1\nip="+e2eEgressIP+"\nloc=JP\ncolo=NRT\n")
+			_, _ = io.WriteString(w, "fl=1f2\nh=1.1.1.1\nip="+e2eEgressIP+"\nloc=JP\ncolo=NRT\n")
 		case strings.HasPrefix(r.URL.Path, "/trace/v6"):
 			// No ip= line: the node has no usable IPv6 egress (§3.2).
-			io.WriteString(w, "fl=1f2\nh=1.1.1.1\n")
+			_, _ = io.WriteString(w, "fl=1f2\nh=1.1.1.1\n")
 		case strings.HasPrefix(r.URL.Path, "/proxycheck/"):
-			io.WriteString(w, proxyCheck)
+			_, _ = io.WriteString(w, proxyCheck)
 		case strings.HasPrefix(r.URL.Path, "/ip-api"):
-			io.WriteString(w, ipAPI)
+			_, _ = io.WriteString(w, ipAPI)
 		case strings.HasPrefix(r.URL.Path, "/ippure"):
-			io.WriteString(w, ipPure)
+			_, _ = io.WriteString(w, ipPure)
 		case strings.HasPrefix(r.URL.Path, "/check/home"):
 			w.Header().Set("Content-Type", "text/html")
-			io.WriteString(w, "<html>prism e2e</html>")
+			_, _ = io.WriteString(w, "<html>prism e2e</html>")
 		default:
 			http.NotFound(w, r)
 		}

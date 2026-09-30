@@ -109,17 +109,17 @@ func TestEngine_WeakPersist_CacheDataSurvivesRestart(t *testing.T) {
 	}
 
 	// Create required state references for consistency repair to keep our data.
-	engine1.UpsertSubscription(model.Subscription{
+	mustWrite(t, engine1.UpsertSubscription(model.Subscription{
 		ID: "s1", Name: "Sub1", URL: "https://example.com",
 		UpdateIntervalNs: 30_000_000_000, Enabled: true, Ephemeral: false,
 		EphemeralNodeEvictDelayNs: int64(72 * time.Hour), CreatedAtNs: 1, UpdatedAtNs: 1,
-	})
-	engine1.UpsertPlatform(model.Platform{
+	}))
+	mustWrite(t, engine1.UpsertPlatform(model.Platform{
 		ID: "p1", Name: "P1", StickyTTLNs: 1000,
 		RegexFilters: []string{}, RegionFilters: []string{},
 		ReverseProxyMissAction: "TREAT_AS_EMPTY", AllocationPolicy: "BALANCED",
 		UpdatedAtNs: 1,
-	})
+	}))
 
 	// In-memory stores.
 	nodeStore := map[string]*model.NodeStatic{
@@ -151,7 +151,7 @@ func TestEngine_WeakPersist_CacheDataSurvivesRestart(t *testing.T) {
 	engine1.MarkNodeDynamic("n1")
 	engine1.MarkNodeLatency("n1", "google.com")
 	engine1.MarkLease("p1", "user1")
-	engine1.FlushDirtySets(readers)
+	mustWrite(t, engine1.FlushDirtySets(readers))
 	closer1.Close()
 
 	// Second boot: data should survive restart + consistency repair.
@@ -268,7 +268,7 @@ func TestEngine_WeakPersist_DeleteFlush(t *testing.T) {
 
 	// Insert first.
 	engine.MarkNodeStatic("hash-a")
-	engine.FlushDirtySets(readers)
+	mustWrite(t, engine.FlushDirtySets(readers))
 
 	nodes, _ := engine.LoadAllNodesStatic()
 	if len(nodes) != 1 {
@@ -278,7 +278,7 @@ func TestEngine_WeakPersist_DeleteFlush(t *testing.T) {
 	// Now delete.
 	delete(nodeStore, "hash-a")
 	engine.MarkNodeStaticDelete("hash-a")
-	engine.FlushDirtySets(readers)
+	mustWrite(t, engine.FlushDirtySets(readers))
 
 	nodes, _ = engine.LoadAllNodesStatic()
 	if len(nodes) != 0 {
@@ -302,12 +302,12 @@ func TestEngine_WeakPersist_UpsertMissTreatedAsDelete(t *testing.T) {
 	}
 
 	engine.MarkNodeStatic("hash-a")
-	engine.FlushDirtySets(readers)
+	mustWrite(t, engine.FlushDirtySets(readers))
 
 	// Mark upsert but reader returns nil (object deleted from memory between mark and flush).
 	delete(nodeStore, "hash-a")
 	engine.MarkNodeStatic("hash-a")
-	engine.FlushDirtySets(readers)
+	mustWrite(t, engine.FlushDirtySets(readers))
 
 	nodes, _ := engine.LoadAllNodesStatic()
 	if len(nodes) != 0 {
@@ -358,7 +358,10 @@ func TestEngine_ConcurrentMarkAndFlush(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 5; j++ {
-				engine.FlushDirtySets(readers)
+				if err := engine.FlushDirtySets(readers); err != nil {
+					// t.Fatal must not be called from this goroutine.
+					t.Error(err)
+				}
 			}
 		}()
 	}
@@ -366,7 +369,7 @@ func TestEngine_ConcurrentMarkAndFlush(t *testing.T) {
 	wg.Wait()
 
 	// Final flush.
-	engine.FlushDirtySets(readers)
+	mustWrite(t, engine.FlushDirtySets(readers))
 
 	// Verify no data loss: all 100 nodes should be in DB.
 	nodes, _ := engine.LoadAllNodesStatic()

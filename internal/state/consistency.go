@@ -23,13 +23,15 @@ func RepairConsistency(stateDBPath string, cacheDB *sql.DB) error {
 	if _, err := cacheDB.Exec(attachSQL); err != nil {
 		return fmt.Errorf("attach state_db: %w", err)
 	}
-	defer cacheDB.Exec("DETACH DATABASE state_db")
+	defer func() { _, _ = cacheDB.Exec("DETACH DATABASE state_db") }()
 
 	tx, err := cacheDB.Begin()
 	if err != nil {
 		return fmt.Errorf("begin repair tx: %w", err)
 	}
-	defer tx.Rollback()
+	// The commit below ends the transaction on success; this rollback only fires
+	// when an earlier return left it open.
+	defer func() { _ = tx.Rollback() }()
 
 	stmts := []string{
 		// 1. subscription_nodes: orphan subscription or orphan node

@@ -9,6 +9,16 @@ import (
 	"prism/internal/model"
 )
 
+// mustWrite fails the test when a fixture write returns an error. Without it a
+// failed setup would leave the database short of rows and the assertions below
+// could pass for the wrong reason.
+func mustWrite(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRepairConsistency_RemovesOrphans(t *testing.T) {
 	stateDir := t.TempDir()
 	cacheDir := t.TempDir()
@@ -27,17 +37,17 @@ func TestRepairConsistency_RemovesOrphans(t *testing.T) {
 	}
 
 	stateRepo := newStateRepo(sdb)
-	stateRepo.UpsertPlatform(model.Platform{
+	mustWrite(t, stateRepo.UpsertPlatform(model.Platform{
 		ID: "p1", Name: "P1", StickyTTLNs: 1000,
 		RegexFilters: []string{}, RegionFilters: []string{},
 		ReverseProxyMissAction: "TREAT_AS_EMPTY", AllocationPolicy: "BALANCED",
 		UpdatedAtNs: 1,
-	})
-	stateRepo.UpsertSubscription(model.Subscription{
+	}))
+	mustWrite(t, stateRepo.UpsertSubscription(model.Subscription{
 		ID: "s1", Name: "S1", URL: "https://example.com",
 		UpdateIntervalNs: 30_000_000_000, Enabled: true, Ephemeral: false,
 		EphemeralNodeEvictDelayNs: int64(72 * time.Hour), CreatedAtNs: 1, UpdatedAtNs: 1,
-	})
+	}))
 
 	// Set up cache.db with valid + orphan records.
 	cdb, err := OpenDB(cacheDBPath)
@@ -52,31 +62,31 @@ func TestRepairConsistency_RemovesOrphans(t *testing.T) {
 	cacheRepo := newCacheRepo(cdb)
 
 	// Valid node (referenced by valid subscription_node).
-	cacheRepo.BulkUpsertNodesStatic([]model.NodeStatic{
+	mustWrite(t, cacheRepo.BulkUpsertNodesStatic([]model.NodeStatic{
 		{Hash: "valid-node", RawOptions: json.RawMessage(`{}`), CreatedAtNs: 1},
 		{Hash: "orphan-node", RawOptions: json.RawMessage(`{}`), CreatedAtNs: 2}, // no subscription_node ref
 		{Hash: "evicted-only-node", RawOptions: json.RawMessage(`{}`), CreatedAtNs: 3},
-	})
-	cacheRepo.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{
 		{SubscriptionID: "s1", NodeHash: "valid-node", Tags: []string{}},               // valid
 		{SubscriptionID: "s-missing", NodeHash: "valid-node", Tags: []string{}},        // orphan: sub doesn't exist
 		{SubscriptionID: "s1", NodeHash: "node-missing-from-static", Tags: []string{}}, // orphan: node doesn't exist in static
 		{SubscriptionID: "s1", NodeHash: "evicted-only-node", Tags: []string{"x"}, Evicted: true},
 		{SubscriptionID: "s1", NodeHash: "evicted-missing-static", Tags: []string{"y"}, Evicted: true},
-	})
-	cacheRepo.BulkUpsertNodesDynamic([]model.NodeDynamic{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertNodesDynamic([]model.NodeDynamic{
 		{Hash: "valid-node"},
 		{Hash: "orphan-dynamic"}, // no static ref
-	})
-	cacheRepo.BulkUpsertNodeLatency([]model.NodeLatency{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertNodeLatency([]model.NodeLatency{
 		{NodeHash: "valid-node", Domain: "google.com", EwmaNs: 100, LastUpdatedNs: 1},
 		{NodeHash: "orphan-latency-node", Domain: "google.com", EwmaNs: 200, LastUpdatedNs: 1}, // no static ref
-	})
-	cacheRepo.BulkUpsertLeases([]model.Lease{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertLeases([]model.Lease{
 		{PlatformID: "p1", Account: "user1", NodeHash: "valid-node", ExpiryNs: 9999, LastAccessedNs: 1},        // valid
 		{PlatformID: "p-missing", Account: "user2", NodeHash: "valid-node", ExpiryNs: 9999, LastAccessedNs: 1}, // orphan: platform missing
 		{PlatformID: "p1", Account: "user3", NodeHash: "node-gone", ExpiryNs: 9999, LastAccessedNs: 1},         // orphan: node missing
-	})
+	}))
 
 	// Run repair.
 	if err := RepairConsistency(stateDBPath, cdb); err != nil {
@@ -144,17 +154,17 @@ func TestRepairConsistency_ValidRecordsSurvive(t *testing.T) {
 	}
 
 	stateRepo := newStateRepo(sdb)
-	stateRepo.UpsertPlatform(model.Platform{
+	mustWrite(t, stateRepo.UpsertPlatform(model.Platform{
 		ID: "p1", Name: "P1", StickyTTLNs: 1000,
 		RegexFilters: []string{}, RegionFilters: []string{},
 		ReverseProxyMissAction: "TREAT_AS_EMPTY", AllocationPolicy: "BALANCED",
 		UpdatedAtNs: 1,
-	})
-	stateRepo.UpsertSubscription(model.Subscription{
+	}))
+	mustWrite(t, stateRepo.UpsertSubscription(model.Subscription{
 		ID: "s1", Name: "S1", URL: "https://example.com",
 		UpdateIntervalNs: 30_000_000_000, Enabled: true, Ephemeral: false,
 		EphemeralNodeEvictDelayNs: int64(72 * time.Hour), CreatedAtNs: 1, UpdatedAtNs: 1,
-	})
+	}))
 
 	cdb, _ := OpenDB(cacheDBPath)
 	defer cdb.Close()
@@ -163,24 +173,24 @@ func TestRepairConsistency_ValidRecordsSurvive(t *testing.T) {
 	}
 
 	cacheRepo := newCacheRepo(cdb)
-	cacheRepo.BulkUpsertNodesStatic([]model.NodeStatic{
+	mustWrite(t, cacheRepo.BulkUpsertNodesStatic([]model.NodeStatic{
 		{Hash: "n1", RawOptions: json.RawMessage(`{}`), CreatedAtNs: 1},
-	})
-	cacheRepo.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{
 		{SubscriptionID: "s1", NodeHash: "n1", Tags: []string{"t1"}},
-	})
-	cacheRepo.BulkUpsertNodesDynamic([]model.NodeDynamic{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertNodesDynamic([]model.NodeDynamic{
 		{Hash: "n1", FailureCount: 1},
-	})
-	cacheRepo.BulkUpsertNodeLatency([]model.NodeLatency{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertNodeLatency([]model.NodeLatency{
 		{NodeHash: "n1", Domain: "example.com", EwmaNs: 500, LastUpdatedNs: 1},
-	})
-	cacheRepo.BulkUpsertLeases([]model.Lease{
+	}))
+	mustWrite(t, cacheRepo.BulkUpsertLeases([]model.Lease{
 		{PlatformID: "p1", Account: "a1", NodeHash: "n1", ExpiryNs: 9999, LastAccessedNs: 1},
-	})
+	}))
 
 	// Run repair — nothing should be deleted.
-	RepairConsistency(stateDBPath, cdb)
+	mustWrite(t, RepairConsistency(stateDBPath, cdb))
 
 	nodes, _ := cacheRepo.LoadAllNodesStatic()
 	sns, _ := cacheRepo.LoadAllSubscriptionNodes()

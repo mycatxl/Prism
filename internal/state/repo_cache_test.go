@@ -63,7 +63,7 @@ func TestCacheRepo_NodesStatic_BulkDelete(t *testing.T) {
 		{Hash: "aaa", RawOptions: json.RawMessage(`{}`), CreatedAtNs: 100},
 		{Hash: "bbb", RawOptions: json.RawMessage(`{}`), CreatedAtNs: 200},
 	}
-	repo.BulkUpsertNodesStatic(nodes)
+	mustWrite(t, repo.BulkUpsertNodesStatic(nodes))
 
 	if err := repo.BulkDeleteNodesStatic([]string{"aaa"}); err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestCacheRepo_NodesDynamic_BulkUpsertAndLoad(t *testing.T) {
 
 	// Update.
 	nodes[0].FailureCount = 0
-	repo.BulkUpsertNodesDynamic(nodes)
+	mustWrite(t, repo.BulkUpsertNodesDynamic(nodes))
 	loaded, _ = repo.LoadAllNodesDynamic()
 	if loaded[0].FailureCount != 0 {
 		t.Fatalf("expected 0 failures after reset, got %d", loaded[0].FailureCount)
@@ -124,8 +124,8 @@ func TestCacheRepo_NodesDynamic_BulkUpsertAndLoad(t *testing.T) {
 func TestCacheRepo_NodesDynamic_BulkDelete(t *testing.T) {
 	repo := newTestCacheRepo(t)
 
-	repo.BulkUpsertNodesDynamic([]model.NodeDynamic{{Hash: "aaa"}, {Hash: "bbb"}})
-	repo.BulkDeleteNodesDynamic([]string{"bbb"})
+	mustWrite(t, repo.BulkUpsertNodesDynamic([]model.NodeDynamic{{Hash: "aaa"}, {Hash: "bbb"}}))
+	mustWrite(t, repo.BulkDeleteNodesDynamic([]string{"bbb"}))
 
 	loaded, _ := repo.LoadAllNodesDynamic()
 	if len(loaded) != 1 || loaded[0].Hash != "aaa" {
@@ -158,12 +158,12 @@ func TestCacheRepo_NodeLatency_BulkUpsertAndLoad(t *testing.T) {
 func TestCacheRepo_NodeLatency_BulkDelete(t *testing.T) {
 	repo := newTestCacheRepo(t)
 
-	repo.BulkUpsertNodeLatency([]model.NodeLatency{
+	mustWrite(t, repo.BulkUpsertNodeLatency([]model.NodeLatency{
 		{NodeHash: "aaa", Domain: "google.com", EwmaNs: 5000, LastUpdatedNs: 100},
 		{NodeHash: "aaa", Domain: "github.com", EwmaNs: 8000, LastUpdatedNs: 200},
-	})
+	}))
 
-	repo.BulkDeleteNodeLatency([]model.NodeLatencyKey{{NodeHash: "aaa", Domain: "google.com"}})
+	mustWrite(t, repo.BulkDeleteNodeLatency([]model.NodeLatencyKey{{NodeHash: "aaa", Domain: "google.com"}}))
 	loaded, _ := repo.LoadAllNodeLatency()
 	if len(loaded) != 1 || loaded[0].Domain != "github.com" {
 		t.Fatalf("expected only github.com, got %+v", loaded)
@@ -197,11 +197,11 @@ func TestCacheRepo_Leases_BulkUpsertAndLoad(t *testing.T) {
 func TestCacheRepo_Leases_BulkDelete(t *testing.T) {
 	repo := newTestCacheRepo(t)
 
-	repo.BulkUpsertLeases([]model.Lease{
+	mustWrite(t, repo.BulkUpsertLeases([]model.Lease{
 		{PlatformID: "p1", Account: "user1", NodeHash: "n1", CreatedAtNs: 10, ExpiryNs: 9999, LastAccessedNs: 100},
 		{PlatformID: "p1", Account: "user2", NodeHash: "n2", CreatedAtNs: 20, ExpiryNs: 9999, LastAccessedNs: 100},
-	})
-	repo.BulkDeleteLeases([]model.LeaseKey{{PlatformID: "p1", Account: "user1"}})
+	}))
+	mustWrite(t, repo.BulkDeleteLeases([]model.LeaseKey{{PlatformID: "p1", Account: "user1"}}))
 
 	loaded, _ := repo.LoadAllLeases()
 	if len(loaded) != 1 || loaded[0].Account != "user2" {
@@ -233,7 +233,7 @@ func TestCacheRepo_SubscriptionNodes_BulkUpsertAndLoad(t *testing.T) {
 	// Idempotent upsert: update tags.
 	sns[0].Tags = []string{"tag1-updated"}
 	sns[0].Evicted = false
-	repo.BulkUpsertSubscriptionNodes(sns[:1])
+	mustWrite(t, repo.BulkUpsertSubscriptionNodes(sns[:1]))
 	loaded, _ = repo.LoadAllSubscriptionNodes()
 	for _, sn := range loaded {
 		if sn.NodeHash == "n1" {
@@ -250,11 +250,11 @@ func TestCacheRepo_SubscriptionNodes_BulkUpsertAndLoad(t *testing.T) {
 func TestCacheRepo_SubscriptionNodes_BulkDelete(t *testing.T) {
 	repo := newTestCacheRepo(t)
 
-	repo.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{
+	mustWrite(t, repo.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{
 		{SubscriptionID: "s1", NodeHash: "n1", Tags: []string{}},
 		{SubscriptionID: "s1", NodeHash: "n2", Tags: []string{}},
-	})
-	repo.BulkDeleteSubscriptionNodes([]model.SubscriptionNodeKey{{SubscriptionID: "s1", NodeHash: "n1"}})
+	}))
+	mustWrite(t, repo.BulkDeleteSubscriptionNodes([]model.SubscriptionNodeKey{{SubscriptionID: "s1", NodeHash: "n1"}}))
 
 	loaded, _ := repo.LoadAllSubscriptionNodes()
 	if len(loaded) != 1 || loaded[0].NodeHash != "n2" {
