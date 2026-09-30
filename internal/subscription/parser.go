@@ -47,11 +47,6 @@ type ParsedNode struct {
 	Detail string
 }
 
-// subscriptionResponse is the top-level structure of a sing-box subscription.
-type subscriptionResponse struct {
-	Outbounds []json.RawMessage `json:"outbounds"`
-}
-
 // outboundHeader extracts just the type and tag from an outbound entry.
 type outboundHeader struct {
 	Type string `json:"type"`
@@ -227,28 +222,6 @@ func parseJSONSubscription(data []byte, report *parseReport) ([]ParsedNode, bool
 	}
 
 	return nil, true, fmt.Errorf("subscription: unmarshal json: %w", objErr)
-}
-
-func parseSingboxOutbounds(raw json.RawMessage, report *parseReport) ([]ParsedNode, error) {
-	var outbounds []json.RawMessage
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &outbounds); err != nil {
-			return nil, fmt.Errorf("subscription: unmarshal outbounds: %w", err)
-		}
-	}
-	return parseSingboxDocument(outbounds, nil, report), nil
-}
-
-// parseSingboxEndpoints imports a top-level sing-box "endpoints" array
-// (WP06 §5): wireguard entries are normalized into endpoint envelopes,
-// openvpn-client/openconnect entries are carried verbatim, and tailscale is
-// reported as ENGINE_NOT_BUILT.
-func parseSingboxEndpoints(raw json.RawMessage, report *parseReport) ([]ParsedNode, error) {
-	var endpoints []json.RawMessage
-	if err := json.Unmarshal(raw, &endpoints); err != nil {
-		return nil, fmt.Errorf("subscription: unmarshal endpoints: %w", err)
-	}
-	return parseSingboxDocument(nil, endpoints, report), nil
 }
 
 // wrapEndpointObject carries a sing-box endpoint object into a form B envelope
@@ -1288,9 +1261,10 @@ func splitCommaRespectQuotes(input string) []string {
 	for _, r := range input {
 		switch r {
 		case '"', '\'':
-			if quote == 0 {
+			switch quote {
+			case 0:
 				quote = r
-			} else if quote == r {
+			case r:
 				quote = 0
 			}
 			token.WriteRune(r)

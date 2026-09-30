@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"prism/internal/intel/store"
 	"prism/internal/model"
 )
 
@@ -266,7 +265,8 @@ func (c Config) Normalize() Config {
 // ConfigProvider returns the current configuration snapshot.
 type ConfigProvider func() Config
 
-// CreatedBy records who asked for a job (jobs.created_by).
+// CreatedByAdmin is the created_by value of a job a human asked for
+// (jobs.created_by).
 func CreatedByAdmin() string { return "admin" }
 
 // CreatedBySubscription is the created_by value of an automatic subscription job.
@@ -288,16 +288,6 @@ func backoff(attempts int) time.Duration {
 	return delay
 }
 
-// itemStatusIsTerminal reports whether an item status ends the item's life.
-func itemStatusIsTerminal(status string) bool {
-	switch status {
-	case store.ItemDone, store.ItemFailed, store.ItemSkipped, store.ItemCanceled:
-		return true
-	default:
-		return false
-	}
-}
-
 // SubscriptionKindOf maps an intel job request to the job kind recorded for a
 // subscription or refresh trigger (§3.6).
 func SubscriptionKindOf(autoChecks bool) Kind {
@@ -306,10 +296,6 @@ func SubscriptionKindOf(autoChecks bool) Kind {
 	}
 	return KindIntel
 }
-
-// RefreshedNodeFilter is the subset of the node list query parameters the
-// scheduled refresh job maps onto model quality filters (WP10 §4).
-const RefreshedNodeFilterKey = "filter"
 
 // Ensure model stays referenced for WP09/WP10 callers that build scopes from
 // node models.

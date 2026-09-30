@@ -16,12 +16,10 @@ import (
 
 // fakeFetcher serves canned trace bodies per URL and records the call order.
 type fakeFetcher struct {
-	mu     sync.Mutex
-	byURL  map[string][]byte
-	errs   map[string]error
-	calls  []string
-	failV6 bool
-	lastUA string
+	mu    sync.Mutex
+	byURL map[string][]byte
+	errs  map[string]error
+	calls []string
 }
 
 func (f *fakeFetcher) FetchWithOptions(_ context.Context, _ node.Hash, url string, _ netutil.OutboundHTTPOptions) ([]byte, time.Duration, error) {

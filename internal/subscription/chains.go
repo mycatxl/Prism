@@ -97,14 +97,6 @@ func decodeObject(raw json.RawMessage) (map[string]any, bool) {
 	return object, true
 }
 
-// stripDetourUnsupported removes a dangling detour reference. Sing-box would
-// otherwise fail every dial with "outbound detour not found" (fact F7).
-func stripDanglingDetour(object map[string]any) {
-	delete(object, "detour")
-}
-
-// resolveDetourChainOrdered walks the detour graph and returns the referenced
-// objects ordered nearest-first, each renamed to d<i>. The returned bool is
 // resolveDetourChainOrdered walks the detour graph and returns the referenced
 // objects ordered nearest-first, each renamed to d<i> and linked to the next
 // hop. The bool is false when a cycle is found (the node is refused).
