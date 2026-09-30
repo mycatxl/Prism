@@ -211,9 +211,15 @@ func exportFilterFromQuery(r *http.Request) (exportProfileFilter, error) {
 }
 
 // exportRequest is the resolved form of one export request.
+//
+// PlatformID is the profile-level platform of §4.2, stored in a column of its
+// own next to the filter JSON. It travels separately here and is merged with
+// filter.platform_id by exportPlatformFilter, so the profile column and the
+// filter key can never disagree silently.
 type exportRequest struct {
 	Format       string
 	NameTemplate string
+	PlatformID   string
 	Filter       exportProfileFilter
 	HealthyOnly  bool
 	Limit        int
@@ -316,12 +322,52 @@ func HandleExportNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+// exportPlatformFilter merges the profile-level platform_id of §4.2 with the
+// platform_id key of the stored filter. The column is the profile's scope and
+// the filter key is the node-list vocabulary; keeping them in sync here is what
+// stops them from becoming two answers to one question, where a profile whose
+// column names platform A exports the nodes of platform B because its filter
+// JSON happens to say so.
+//
+// An empty column leaves the filter key in charge, so a profile that only uses
+// the filter vocabulary keeps working unchanged.
+func exportPlatformFilter(req exportRequest) (exportProfileFilter, error) {
+	filter := req.Filter
+	column := strings.TrimSpace(req.PlatformID)
+	if column == "" {
+		return filter, nil
+	}
+	if err := checkExportProfilePlatformConflict(column, filter); err != nil {
+		return filter, err
+	}
+	filter.PlatformID = column
+	return filter, nil
+}
+
+// checkExportProfilePlatformConflict reports the one combination that has no
+// correct reading: a profile-level platform and a filter-level platform that
+// name different platforms. It runs when a profile is written (400) and again
+// when it is read, because a row stored before the column was enforced can
+// still hold the contradiction.
+func checkExportProfilePlatformConflict(platformID string, filter exportProfileFilter) error {
+	column := strings.TrimSpace(platformID)
+	inFilter := strings.TrimSpace(filter.PlatformID)
+	if column == "" || inFilter == "" || column == inFilter {
+		return nil
+	}
+	return fmt.Errorf("platform_id: filter platform_id %q conflicts with the profile platform_id %q", inFilter, column)
+}
+
 // runNodeExport selects the nodes, renders the items and calls export.Export.
 // offset is the paging cursor: the selection is ordered by node hash and
 // sliced to [offset, offset+limit), then the remainder is counted as truncated
 // so the caller can see that more nodes exist.
 func runNodeExport(cp *service.ControlPlaneService, req exportRequest, offset int) ([]byte, string, export.Report, error) {
-	filters, err := req.Filter.toNodeFilters()
+	filter, err := exportPlatformFilter(req)
+	if err != nil {
+		return nil, "", export.Report{}, invalidArgumentError(err.Error())
+	}
+	filters, err := filter.toNodeFilters()
 	if err != nil {
 		return nil, "", export.Report{}, invalidArgumentError("filter: " + err.Error())
 	}
@@ -447,6 +493,22 @@ func exportProfileSubscriptionURL(r *http.Request, token string) string {
 	return scheme + "://" + host + "/sub/" + token
 }
 
+// validateStoredExportProfilePlatform rejects the one profile row that would
+// store two different platforms for one export: the column says one platform
+// and the filter JSON says another. It runs on the row about to be written, not
+// on the request fragment, so a PATCH that only moves the column is judged
+// against the filter already in the row.
+func validateStoredExportProfilePlatform(profile model.ExportProfile) error {
+	var filter exportProfileFilter
+	raw := strings.TrimSpace(profile.FilterJSON)
+	if raw != "" && raw != "{}" {
+		if err := json.Unmarshal([]byte(raw), &filter); err != nil {
+			return fmt.Errorf("filter: %w", err)
+		}
+	}
+	return checkExportProfilePlatformConflict(profile.PlatformID, filter)
+}
+
 // validateExportProfileRequest validates the mutable fields.
 func validateExportProfileRequest(req exportProfileRequest, requireName bool) error {
 	if req.Name != nil {
@@ -562,6 +624,10 @@ func HandleCreateExportProfile(cp *service.ControlPlaneService) http.HandlerFunc
 			}
 			profile.FilterJSON = string(encoded)
 		}
+		if err := validateStoredExportProfilePlatform(profile); err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
+		}
 		if err := cp.Engine.UpsertExportProfile(profile); err != nil {
 			writeServiceError(w, exportProfileStateError("create export profile", err))
 			return
@@ -612,6 +678,10 @@ func HandleUpdateExportProfile(cp *service.ControlPlaneService) http.HandlerFunc
 				return
 			}
 			next.FilterJSON = string(encoded)
+		}
+		if err := validateStoredExportProfilePlatform(next); err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
 		}
 		next.UpdatedAtNs = exportNowNs()
 		if err := cp.Engine.UpsertExportProfile(next); err != nil {

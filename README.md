@@ -29,7 +29,7 @@ embedded web UI on the same listener.
 
 ### Requirements
 
-- Go 1.26 or later (`go.mod` declares `go 1.26.0`).
+- Go 1.27 or later (`go.mod` declares `go 1.27.0`).
 - Linux with systemd for the service installer (optional).
 - Node.js and npm to build the web UI (`make web`).
 

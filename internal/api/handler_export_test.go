@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -59,7 +60,19 @@ func newExportTestControlPlane(t *testing.T) *service.ControlPlaneService {
 		Engine: engine,
 		Pool:   pool,
 		SubMgr: subMgr,
-		EnvCfg: &config.EnvConfig{ProxyPort: 2260},
+		// The platform defaults are part of the fixture because creating a
+		// platform through the API validates them: without them the platform
+		// endpoints answer 500 and no test can scope an export to a platform.
+		EnvCfg: &config.EnvConfig{
+			ProxyPort:                                       2260,
+			DefaultPlatformStickyTTL:                        30 * time.Minute,
+			DefaultPlatformRegexFilters:                     []string{},
+			DefaultPlatformRegionFilters:                    []string{},
+			DefaultPlatformReverseProxyMissAction:           "TREAT_AS_EMPTY",
+			DefaultPlatformReverseProxyEmptyAccountBehavior: "ACCOUNT_HEADER_RULE",
+			DefaultPlatformReverseProxyFixedAccountHeader:   "Authorization",
+			DefaultPlatformAllocationPolicy:                 "BALANCED",
+		},
 	}
 }
 
@@ -455,4 +468,176 @@ func fetchExportProfile(t *testing.T, server *httptest.Server, id string) export
 		t.Fatalf("decode export profile: %v", err)
 	}
 	return profile
+}
+
+// newExportTestPlatform creates a platform whose routable view is empty: the
+// export test nodes have no egress IP, no latency record and no quality
+// assessment, so MatchNodeCriteria rejects every one of them. That makes the
+// platform a precise probe for the profile-level platform_id: a profile scoped
+// to it must export nothing, while the same profile without the scope exports
+// the whole pool.
+func newExportTestPlatform(t *testing.T, server *httptest.Server, name string) string {
+	t.Helper()
+	raw, _ := json.Marshal(map[string]any{"name": name})
+	resp := doExportAuthedRequest(t, http.MethodPost, server.URL+"/api/v1/platforms", bytes.NewReader(raw))
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create platform %q: status %d (%s)", name, resp.StatusCode, body)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode platform response: %v", err)
+	}
+	if created.ID == "" {
+		t.Fatalf("platform %q has no id: %s", name, body)
+	}
+	return created.ID
+}
+
+// TestExportProfilePlatformScopeReachesTheSubscription is the regression test
+// for the profile-level platform_id of §4.2. The column used to be stored and
+// echoed back but never consulted, so a profile scoped to one platform exported
+// the whole pool. The check is deliberately a count of exported nodes: the bug
+// was invisible in the profile response, which always carried the column back.
+func TestExportProfilePlatformScopeReachesTheSubscription(t *testing.T) {
+	_, server := newExportTestServer(t)
+	platformID := newExportTestPlatform(t, server, "scope-target")
+
+	// A profile with the platform scope and nothing else.
+	scoped := createExportProfile(t, server, map[string]any{
+		"name":        "scoped",
+		"format":      "uri",
+		"platform_id": platformID,
+	})
+	if scoped.PlatformID != platformID {
+		t.Fatalf("profile platform_id = %q, want %q", scoped.PlatformID, platformID)
+	}
+	if got := exportedCount(t, server, subscriptionToken(t, scoped)); got != 0 {
+		t.Fatalf("scoped subscription exported %d nodes, want 0: the platform scope was ignored", got)
+	}
+
+	// The same profile without the scope still exports the pool, so the count
+	// above measures the scope and not a broken subscription.
+	unscoped := createExportProfile(t, server, map[string]any{
+		"name":   "unscoped",
+		"format": "uri",
+	})
+	if got := exportedCount(t, server, subscriptionToken(t, unscoped)); got != 2 {
+		t.Fatalf("unscoped subscription exported %d nodes, want 2", got)
+	}
+
+	// A filter-only platform keeps working: the column is empty, so the filter
+	// key stays in charge.
+	filterOnly := createExportProfile(t, server, map[string]any{
+		"name":   "filter-only",
+		"format": "uri",
+		"filter": map[string]any{"platform_id": platformID},
+	})
+	if got := exportedCount(t, server, subscriptionToken(t, filterOnly)); got != 0 {
+		t.Fatalf("filter-only subscription exported %d nodes, want 0", got)
+	}
+}
+
+// TestExportProfilePlatformConflictIsRejected covers the other half of the
+// contract: two different platforms for one export is a 400 on create and on
+// patch, and it is judged against the row being written rather than the request
+// fragment, so moving only the column is caught too.
+func TestExportProfilePlatformConflictIsRejected(t *testing.T) {
+	_, server := newExportTestServer(t)
+	first := newExportTestPlatform(t, server, "conflict-first")
+	second := newExportTestPlatform(t, server, "conflict-second")
+
+	raw, _ := json.Marshal(map[string]any{
+		"name":        "conflict",
+		"format":      "uri",
+		"platform_id": first,
+		"filter":      map[string]any{"platform_id": second},
+	})
+	resp := doExportAuthedRequest(t, http.MethodPost, server.URL+"/api/v1/export-profiles", bytes.NewReader(raw))
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create with conflicting platforms: status %d (%s)", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "platform_id") {
+		t.Fatalf("create conflict body does not name the field: %s", body)
+	}
+
+	// The filter-only profile is valid; patching its column onto a different
+	// platform makes the stored row contradictory and must fail.
+	profile := createExportProfile(t, server, map[string]any{
+		"name":   "patch-conflict",
+		"format": "uri",
+		"filter": map[string]any{"platform_id": first},
+	})
+	patch, _ := json.Marshal(map[string]any{"platform_id": second})
+	patchResp := doExportAuthedRequest(t, http.MethodPatch, server.URL+"/api/v1/export-profiles/"+profile.ID, bytes.NewReader(patch))
+	patchBody, _ := io.ReadAll(patchResp.Body)
+	patchResp.Body.Close()
+	if patchResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("patch onto a conflicting platform: status %d (%s)", patchResp.StatusCode, patchBody)
+	}
+
+	// Patching the column to the platform the filter already names is the
+	// consistent case and must succeed.
+	ok, _ := json.Marshal(map[string]any{"platform_id": first})
+	okResp := doExportAuthedRequest(t, http.MethodPatch, server.URL+"/api/v1/export-profiles/"+profile.ID, bytes.NewReader(ok))
+	okBody, _ := io.ReadAll(okResp.Body)
+	okResp.Body.Close()
+	if okResp.StatusCode != http.StatusOK {
+		t.Fatalf("patch onto the matching platform: status %d (%s)", okResp.StatusCode, okBody)
+	}
+}
+
+// createExportProfile posts one profile and returns the created row.
+func createExportProfile(t *testing.T, server *httptest.Server, payload map[string]any) exportProfileResponse {
+	t.Helper()
+	raw, _ := json.Marshal(payload)
+	resp := doExportAuthedRequest(t, http.MethodPost, server.URL+"/api/v1/export-profiles", bytes.NewReader(raw))
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create profile %v: status %d (%s)", payload, resp.StatusCode, body)
+	}
+	var created exportProfileResponse
+	if err := json.Unmarshal(body, &created); err != nil {
+		t.Fatalf("decode profile response: %v", err)
+	}
+	if created.URL == "" {
+		t.Fatalf("create response has no subscription url: %s", body)
+	}
+	return created
+}
+
+// subscriptionToken extracts the token from the one response that carries it.
+func subscriptionToken(t *testing.T, profile exportProfileResponse) string {
+	t.Helper()
+	token := profile.URL[strings.LastIndex(profile.URL, "/")+1:]
+	if token == "" {
+		t.Fatalf("subscription url %q has no token", profile.URL)
+	}
+	return token
+}
+
+// exportedCount fetches the public subscription and reads the export counter
+// header, so the assertion never depends on the shape of any one format.
+func exportedCount(t *testing.T, server *httptest.Server, token string) int {
+	t.Helper()
+	resp, err := http.Get(server.URL + "/sub/" + token)
+	if err != nil {
+		t.Fatalf("get subscription: %v", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("subscription status = %d", resp.StatusCode)
+	}
+	count, err := strconv.Atoi(resp.Header.Get("X-Prism-Export-Exported"))
+	if err != nil {
+		t.Fatalf("X-Prism-Export-Exported = %q: %v", resp.Header.Get("X-Prism-Export-Exported"), err)
+	}
+	return count
 }
