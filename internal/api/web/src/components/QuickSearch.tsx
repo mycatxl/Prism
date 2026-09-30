@@ -11,18 +11,14 @@ import { useI18n } from "../i18n";
 /**
  * Command palette for jumping between destinations.
  *
- * Radix Dialog supplies focus trapping, Escape and scroll lock; cmdk supplies the
- * filtering and keyboard navigation. Only the appearance is ours.
- *
- * The trigger carries the keyboard shortcut, because a palette nobody knows about
- * is a palette nobody uses.
+ * Restyled in the top bar as a wide, rounded glass search field with a `⌘K` hint chip.
  */
 export function QuickSearch() {
   const navigate = useNavigate();
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const shortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘ K" : "Ctrl K";
+  const shortcut = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘K" : "Ctrl K";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -46,21 +42,22 @@ export function QuickSearch() {
       <Button
         type="button"
         variant="secondary"
+        size="xl"
         onClick={() => setOpen(true)}
         aria-label={t("快速定位")}
         title={t("快速定位")}
-        className="hidden w-56 justify-start gap-2 px-2.5 text-xs font-normal text-ink-faint hover:text-ink-soft sm:flex"
+        className="hidden w-64 justify-start gap-2.5 rounded-control border border-glass-edge bg-glass px-3 text-xs font-normal text-ink-faint hover:border-glass-edge-strong hover:bg-glass-strong hover:text-ink-soft sm:flex lg:w-80"
       >
-        <Search size={13} aria-hidden className="shrink-0" />
-        <span className="min-w-0 flex-1 truncate">{t("搜索节点或工作区")}</span>
-        <kbd className="shrink-0 rounded-[2px] border border-rule px-1 font-mono text-2xs text-ink-faint">
+        <Search size={14} aria-hidden className="shrink-0 text-ink-faint" />
+        <span className="min-w-0 flex-1 truncate text-left">{t("搜索节点或工作区")}</span>
+        <kbd className="shrink-0 rounded-[6px] border border-glass-edge bg-paper-inset px-1.5 py-0.5 font-mono text-2xs text-ink-faint">
           {shortcut}
         </kbd>
       </Button>
 
       <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
         <DialogPrimitive.Portal>
-          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink/25" />
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink/35 backdrop-blur-xs" />
           <DialogPrimitive.Content
             className="fixed top-[12vh] left-1/2 z-50 w-[min(40rem,calc(100vw-2rem))] -translate-x-1/2 focus:outline-none"
             aria-label={t("快速定位")}
@@ -68,20 +65,20 @@ export function QuickSearch() {
             <DialogPrimitive.Title className="sr-only">{t("快速定位")}</DialogPrimitive.Title>
             <Command
               loop
-              className="overflow-hidden rounded-panel border border-rule bg-paper-raised"
+              className="glass-elevated overflow-hidden rounded-panel border border-glass-edge-strong bg-paper-elevated"
             >
-              <div className="flex items-center gap-2 border-b border-rule px-3">
+              <div className="flex items-center gap-2.5 border-b border-rule-faint px-3.5">
                 <Search size={15} className="shrink-0 text-ink-faint" />
                 <Command.Input
                   value={search}
                   onValueChange={setSearch}
                   placeholder={t("搜索节点或工作区")}
                   autoFocus
-                  className="h-10 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-ink-faint"
+                  className="h-[var(--toolbar-h)] min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-ink-faint"
                 />
               </div>
 
-              <Command.List className="max-h-72 overflow-y-auto py-1">
+              <Command.List className="max-h-72 overflow-y-auto p-1.5">
                 <Command.Empty className="px-3 py-8 text-center text-xs text-ink-soft">
                   {t("没有匹配的工作区")}
                 </Command.Empty>
@@ -93,8 +90,8 @@ export function QuickSearch() {
                       go("/nodes?tag_keyword=" + encodeURIComponent(search.trim()))
                     }
                     className={cn(
-                      "flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm text-ink-soft",
-                      "data-[selected=true]:bg-signal-wash data-[selected=true]:text-signal-deep",
+                      "flex cursor-pointer items-center gap-2.5 rounded-control px-3 py-2 text-sm text-ink-soft",
+                      "data-[selected=true]:bg-accent-wash data-[selected=true]:text-accent-deep",
                     )}
                   >
                     <Search size={14} className="shrink-0" />
@@ -113,8 +110,8 @@ export function QuickSearch() {
                       value={`${t(item.label)} ${item.path} ${t(item.section)}`}
                       onSelect={() => go(item.path)}
                       className={cn(
-                        "flex cursor-pointer items-center gap-2.5 px-3 py-1.5 text-sm text-ink-soft",
-                        "data-[selected=true]:bg-signal-wash data-[selected=true]:text-signal-deep",
+                        "flex cursor-pointer items-center gap-2.5 rounded-control px-3 py-2 text-sm text-ink-soft",
+                        "data-[selected=true]:bg-accent-wash data-[selected=true]:text-accent-deep",
                       )}
                     >
                       <Icon size={14} className="shrink-0" />

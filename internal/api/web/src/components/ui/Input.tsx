@@ -3,7 +3,7 @@ import { forwardRef } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Text field.
+ * Text field: glass well with `--radius-control` and token height.
  *
  * `invalid` drives both the border and `aria-invalid`, because a validation error
  * that is only visible is not reported to a screen reader.
@@ -17,14 +17,11 @@ export const Input = forwardRef<
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        "h-[var(--control-h)] w-full rounded-control border bg-paper-raised px-2.5 text-sm text-ink",
-        "placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50",
-        // Hover and active are the two states a field can have that a border can
-        // express without moving anything. They are on the valid branch only: an
-        // invalid field keeps the alert edge, which is the more important signal.
+        "action h-[var(--control-h)] w-full rounded-control border bg-glass px-2.5 text-sm text-ink shadow-[inset_0_1px_0_0_var(--color-glass-highlight)]",
+        "placeholder:text-ink-faint focus:border-accent focus:bg-glass-strong disabled:cursor-not-allowed disabled:opacity-50",
         invalid
           ? "border-alert"
-          : "border-rule hover:border-rule-strong active:border-ink-faint",
+          : "border-glass-edge hover:border-glass-edge-strong active:border-accent",
         className,
       )}
       {...rest}
@@ -32,8 +29,7 @@ export const Input = forwardRef<
   );
 });
 
-// One implementation, two import paths: this was duplicated during the migration
-// and the two copies had already drifted apart.
+// One implementation, two import paths.
 export { Textarea } from "./Textarea";
 
 export function Fieldset({
@@ -50,7 +46,7 @@ export function Fieldset({
   className?: string;
 }) {
   return (
-    <div className={cn("space-y-1", className)}>
+    <div className={cn("space-y-1.5", className)}>
       <label htmlFor={htmlFor} className="block text-xs font-medium text-ink-soft">
         {label}
       </label>

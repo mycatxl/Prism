@@ -146,4 +146,98 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   立体地球: "3D globe",
   平面地图: "Flat map",
   地球视图: "Globe view",
+
+  // The redesigned shell and dashboard.
+  "实例在线":
+    "Instance online",
+  "令牌失效":
+    "Token rejected",
+  "令牌未设置":
+    "Token not set",
+  "部分令牌未设置":
+    "Some tokens are not set",
+  "连接中":
+    "Connecting",
+  "需要管理员令牌":
+    "Administrator token required",
+  "关闭导航":
+    "Close navigation",
+  "收起导航":
+    "Collapse navigation",
+  "展开导航":
+    "Expand navigation",
+  "刷新数据":
+    "Refresh data",
+  "控制台":
+    "Console",
+  "切换到浅色":
+    "Switch to light",
+  "切换到深色":
+    "Switch to dark",
+  "快捷操作":
+    "Quick actions",
+  "新建平台":
+    "New platform",
+  "检测任务":
+    "Check jobs",
+  "查看全部":
+    "View all",
+  "节点总数":
+    "Total nodes",
+  "健康节点":
+    "Healthy nodes",
+  "成功率":
+    "Success rate",
+  "平均延迟":
+    "Average latency",
+  "错误率":
+    "Error rate",
+  "活跃租约":
+    "Active leases",
+  "总请求数":
+    "Total requests",
+  "较前半段":
+    "vs first half",
+  "较上一采样":
+    "vs previous sample",
+  "按直方图分箱上界估算":
+    "Estimated from the histogram's bin upper bounds",
+  "流量概览":
+    "Traffic overview",
+  "窗口累计":
+    "Window total",
+  "入口流量":
+    "Ingress",
+  "出口流量":
+    "Egress",
+  "出口":
+    "Exits",
+  "最近加入节点":
+    "Recently added nodes",
+  "延迟":
+    "Latency",
+  "失败次数":
+    "Failures",
+  "无出口":
+    "No outbound",
+  "订阅状态":
+    "Subscription status",
+  "订阅":
+    "Subscriptions",
+  "还没有订阅":
+    "No subscriptions yet",
+  "平台分布":
+    "Platform distribution",
+  "无平台":
+    "No platforms",
+  "创建平台":
+    "Create platform",
+  "创建平台以聚合节点":
+    "Create a platform to group nodes",
+  "其他":
+    "Others",
+  "最近变更":
+    "Recent changes",
+  "暂无变更记录":
+    "No changes recorded",
 };

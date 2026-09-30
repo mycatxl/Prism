@@ -2,17 +2,10 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * The KPI anatomy, taken from Grafana's BigValue and go-view's animated counter:
- *
- *   - the value is 2.5x the unit and 2.5x the label, because that ratio is what
- *     lets a number be read from across a room without the label disappearing;
- *   - the numerals are mono and tabular, so a value that changes every few seconds
- *     does not shift its own layout;
- *   - a value that changed rolls to the new value instead of jumping, so the
- *     movement itself says "this is live" without a pulsing dot.
- *
- * The earlier panel had the opposite shape: four 28px tiles with a trend glyph
- * each, which spends a whole band on numbers nobody reads twice.
+ * KPI readout voice:
+ *   - numeral at `--text-2xl`/`--text-3xl` weight 600 tabular mono;
+ *   - label in micro-caps (`--color-ink-faint`);
+ *   - optional delta chip slot (`delta`) and qualifier (`hint`).
  */
 
 const COUNT_MS = 800;
@@ -50,13 +43,7 @@ function formatNumber(value: number, decimals: number, grouped: boolean): string
 }
 
 /**
- * A numeral that rolls to its new value. The first render is authoritative and
- * never animates: the panel loads into a task, and an entrance animation on a
- * number the operator is about to read is a delay, not a signal.
- *
- * Every state write goes through a frame. That is not ceremony: a synchronous write
- * inside the effect would re-render, re-run the effect, and leave the value racing
- * its own animation on the first poll.
+ * A numeral that rolls to its new value when updated, respecting reduced motion.
  */
 export function Numeral({
   value,
@@ -85,7 +72,6 @@ export function Numeral({
       from !== value &&
       parsedFrom !== null &&
       parsedTo !== null &&
-      // A prefix or suffix that changed is not a roll, it is a different unit: swap.
       parsedFrom.prefix === parsedTo.prefix &&
       parsedFrom.suffix === parsedTo.suffix;
 
@@ -93,7 +79,6 @@ export function Numeral({
       const swap = requestAnimationFrame(() => setShown(value));
       return () => cancelAnimationFrame(swap);
     }
-    // Narrowed for the type checker, which cannot see through the guard above.
     if (parsedFrom === null || parsedTo === null) {
       return;
     }
@@ -103,7 +88,6 @@ export function Numeral({
     let frame = 0;
     const tick = (now: number) => {
       const t = Math.min(1, (now - started) / COUNT_MS);
-      // easeOutCubic: quick to the new value, settles without overshoot.
       const eased = 1 - Math.pow(1 - t, 3);
       const current = parsedFrom.number + (parsedTo.number - parsedFrom.number) * eased;
       setShown(
@@ -123,14 +107,15 @@ export function Numeral({
 }
 
 /**
- * One measured value: number, unit, label, and an optional detail line that carries
- * the fact's own qualifier (a share of a total, a window name).
+ * One measured KPI value: number, unit, micro-caps label, optional delta chip slot,
+ * and optional qualifier hint.
  */
 export function Readout({
   value,
   unit,
   label,
   hint,
+  delta,
   tone = "ink",
   size = "md",
   className,
@@ -140,6 +125,7 @@ export function Readout({
   unit?: ReactNode;
   label?: ReactNode;
   hint?: ReactNode;
+  delta?: ReactNode;
   tone?: "ink" | "signal" | "live" | "warn" | "alert" | "muted";
   size?: "sm" | "md" | "lg" | "xl";
   className?: string;
@@ -154,24 +140,24 @@ export function Readout({
     muted: "text-ink-faint",
   }[tone];
 
-  // 2.5 : 1 between the number and its unit, and between the number and the label.
   const sizeClass = {
-    sm: "text-base",
-    md: "text-xl",
-    lg: "text-2xl",
+    sm: "text-lg",
+    md: "text-2xl",
+    lg: "text-3xl",
     xl: "text-4xl",
   }[size];
 
   return (
     <div className={cn("min-w-0", className)}>
       {label && <div className="micro truncate">{label}</div>}
-      <div className="mt-1 flex items-baseline gap-1.5">
+      <div className="mt-1.5 flex items-baseline gap-1.5">
         {typeof value === "string" || typeof value === "number" ? (
           <Numeral value={String(value)} animate={animate} className={cn(sizeClass, toneClass)} />
         ) : (
           <span className={cn("numeral", sizeClass, toneClass)}>{value}</span>
         )}
         {unit && <span className="label readout">{unit}</span>}
+        {delta && <span className="ml-auto shrink-0">{delta}</span>}
       </div>
       {hint && <div className="mt-1 truncate text-xs text-ink-faint">{hint}</div>}
     </div>
@@ -179,18 +165,16 @@ export function Readout({
 }
 
 /**
- * Several readouts on one baseline, separated by hairlines rather than boxed into
- * cards. A strip of instrument values, not a row of KPI tiles: tiles only become
- * wrong when the band is nothing but tiles.
+ * Several readouts on one glass strip, separated by soft hairlines.
  */
 export function ReadoutStrip({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("panel flex flex-wrap divide-x divide-rule overflow-hidden", className)}>
+    <div className={cn("panel flex flex-wrap divide-x divide-rule-faint overflow-hidden", className)}>
       {children}
     </div>
   );
 }
 
 export function ReadoutCell({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("min-w-[9.5rem] flex-1 px-4 py-3", className)}>{children}</div>;
+  return <div className={cn("min-w-[9.5rem] flex-1 px-4 py-3.5", className)}>{children}</div>;
 }

@@ -1,27 +1,19 @@
 /*
- * Prism design system.
+ * Prism design system — Phase D1 visual foundation.
  *
- * Concept: an operations console for network egress. The subject is measurement —
- * which address traffic leaves from and how clean that address is — so the surface
- * is built like a control room instrument rather than like a document: a dark
- * ground, one accent hue, data that carries the light, and structure carried by
- * panel frames and hairline rules.
+ * Concept: a deep-navy console where every region is a soft glass card on a
+ * subtly glowing ground, with generous radii, an indigo-to-violet accent, and
+ * Bento-grade information density.
  *
  * Two themes, one token set. Every colour is a *primitive* (`--p-*`) defined twice,
  * for `:root` (light) and `[data-theme="dark"]`, and the Tailwind utilities are
- * bound to those primitives through `@theme inline`. That is the only reason a
- * runtime theme switch costs one attribute instead of a second stylesheet.
+ * bound to those primitives through `@theme inline`.
  *
- * Neither theme is an inversion of the other. On a dark ground the ink has to clear
- * 4.5:1 against a *near-black* panel, the washes have to sit between the panel and
- * the state colour instead of above it, and a filled button needs dark text rather
- * than white — white on a bright accent is 2.9:1 and fails. All three are measured
- * by `scripts/check-contrast.mjs`, which checks both themes and fails the build.
- *
- * The 大屏 vocabulary that was studied and deliberately NOT copied: laser-sweep SVG
- * borders, radar decorations, tiled grid backgrounds, neon outer glows, gradient
- * text, 3D cone charts, stretched nine-slice frames. The structure is what was worth
- * taking; the chrome is what makes a board look like a 2019 template.
+ * Contrast truth rule: `--p-canvas`, `--p-sunk`, `--p-raised`, `--p-inset`,
+ * `--p-rail`, and `--p-elevated` remain opaque hex equal to the composited glass
+ * over the canvas (`fill_alpha * fill_color + (1 - fill_alpha) * canvas`, rounded
+ * to `#rrggbb`) so the WCAG gate in `scripts/check-contrast.mjs` keeps measuring
+ * what users actually see.
  */
 
 @import "tailwindcss";
@@ -32,7 +24,14 @@
   --color-paper-sunk: var(--p-sunk);
   --color-paper-raised: var(--p-raised);
   --color-paper-inset: var(--p-inset);
+  --color-paper-elevated: var(--p-elevated);
   --color-rail: var(--p-rail);
+
+  --color-glass: var(--p-glass);
+  --color-glass-strong: var(--p-glass-strong);
+  --color-glass-edge: var(--p-glass-edge);
+  --color-glass-edge-strong: var(--p-glass-edge-strong);
+  --color-glass-highlight: var(--p-glass-highlight);
 
   --color-rule: var(--p-rule);
   --color-rule-strong: var(--p-rule-strong);
@@ -56,6 +55,7 @@
   --color-accent: var(--p-accent);
   --color-accent-deep: var(--p-accent-deep);
   --color-accent-wash: var(--p-accent-wash);
+  --color-accent-lift: var(--p-accent-lift);
 
   /* Text that sits ON a filled state colour. It is a token, not a constant,
      because a bright accent takes dark ink and a dark accent takes white. */
@@ -80,120 +80,157 @@
 }
 
 /* ---- the light theme ----------------------------------------------------- */
+/* Contrast truth rule: `--p-canvas/sunk/raised/inset/rail/elevated` are opaque hex
+   equal to the composited glass over `#f4f6fb` (`fill_alpha * fill + (1 - fill_alpha) * canvas`). */
 :root {
-  --p-canvas: #f1f3f7;
-  --p-sunk: #e5e9f0;
-  --p-raised: #ffffff;
-  --p-inset: #f8fafc;
-  --p-rail: #e6eaf1;
+  --p-canvas: #f4f6fb;
+  --p-sunk: #eceef4;
+  --p-raised: #fcfcfe;
+  --p-inset: #fafbfd;
+  --p-rail: #fbfcfd;
+  --p-elevated: #fefeff;
 
-  --p-rule: #d1d7e0;
-  --p-rule-strong: #a4adbb;
-  --p-rule-faint: #e3e7ee;
-  --p-panel-edge: rgba(10, 15, 22, 0.12);
-  --p-row-rule: #eaeef3;
+  --p-glass: rgba(255, 255, 255, 0.72);
+  --p-glass-strong: rgba(255, 255, 255, 0.88);
+  --p-glass-edge: rgba(16, 24, 40, 0.08);
+  --p-glass-edge-strong: rgba(16, 24, 40, 0.15);
+  --p-glass-highlight: rgba(255, 255, 255, 0.86);
+  --p-glass-blur: blur(14px) saturate(120%);
 
-  --p-ink: #0a0f16;
-  --p-ink-soft: #39434f;
-  --p-ink-faint: #566170;
+  --p-ground-glow:
+    radial-gradient(64rem 40rem at 10% -6%, rgba(79, 70, 229, 0.055), transparent 68%),
+    radial-gradient(56rem 38rem at 90% -4%, rgba(124, 58, 237, 0.05), transparent 66%),
+    radial-gradient(88rem 52rem at 50% 38%, rgba(99, 102, 241, 0.035), transparent 74%);
 
-  --p-signal: #0a6b52;
-  --p-signal-deep: #06483a;
-  --p-signal-wash: #dcefe8;
-  --p-live: #0b5f8a;
-  --p-live-wash: #ddebf5;
-  --p-warn: #7d4a00;
-  --p-warn-wash: #f7ecd5;
-  --p-alert: #a32313;
-  --p-alert-wash: #f8e4e0;
-  --p-accent: #0b4fa8;
-  --p-accent-deep: #073a7d;
-  --p-accent-wash: #e2ebf9;
+  --p-rule: #d5dbe6;
+  --p-rule-strong: #9fa9ba;
+  --p-rule-faint: #e4e8f1;
+  --p-panel-edge: rgba(16, 24, 40, 0.08);
+  --p-row-rule: #e9edf5;
+
+  --p-ink: #0b111e;
+  --p-ink-soft: #364152;
+  --p-ink-faint: #526075;
+
+  --p-signal: #086a50;
+  --p-signal-deep: #054937;
+  --p-signal-wash: #dbf0e8;
+  --p-live: #0a5d88;
+  --p-live-wash: #dcecf6;
+  --p-warn: #7c4900;
+  --p-warn-wash: #f7ecd4;
+  --p-alert: #a42214;
+  --p-alert-wash: #f9e3df;
+  --p-accent: #4338ca;
+  --p-accent-deep: #312e81;
+  --p-accent-wash: #e6e8fc;
+  --p-accent-lift: #6d28d9;
+
+  /* The hero pane's two gradient stops, as the composited result of mixing the accent
+     into the glass over the canvas. They are opaque primitives rather than a
+     `color-mix` in the class because the pane is a surface, and a surface the gate
+     cannot read is a contrast failure nobody measures. */
+  --p-hero: #d5d2f3;
+  --p-hero-lift: #e2d6f7;
 
   --p-on-accent: #ffffff;
   --p-on-signal: #ffffff;
   --p-on-alert: #ffffff;
   --p-on-live: #ffffff;
 
-  --p-series-1: #0554bb;
-  --p-series-2: #03725c;
-  --p-series-3: #ba6e05;
-  --p-series-4: #dd2206;
-  --p-series-5: #6505d1;
-  --p-series-6: #059bd1;
-  --p-chart-grid: #e8ecf2;
-  --p-chart-axis: #5d6876;
+  --p-series-1: #2b2470;
+  --p-series-2: #04745c;
+  --p-series-3: #b86c04;
+  --p-series-4: #dd2408;
+  --p-series-5: #6d1eb5;
+  --p-series-6: #0393c9;
+  --p-chart-grid: #e6eaf2;
+  --p-chart-axis: #556274;
 
-  --p-shadow-xs: 0 1px 2px 0 rgb(10 15 22 / 0.05);
-  --p-shadow-sm: 0 1px 3px 0 rgb(10 15 22 / 0.1), 0 1px 2px -1px rgb(10 15 22 / 0.06);
-  --p-shadow-md: 0 2px 4px -1px rgb(10 15 22 / 0.06), 0 4px 6px -1px rgb(10 15 22 / 0.08);
-  --p-shadow-lg: 0 4px 6px -2px rgb(10 15 22 / 0.05), 0 10px 15px -3px rgb(10 15 22 / 0.08);
+  --p-shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.04);
+  --p-shadow-sm: 0 2px 8px -2px rgb(16 24 40 / 0.07), 0 1px 3px -1px rgb(16 24 40 / 0.05);
+  --p-shadow-md: 0 8px 24px -6px rgb(16 24 40 / 0.08), 0 2px 6px -2px rgb(16 24 40 / 0.05);
+  --p-shadow-lg: 0 16px 40px -8px rgb(16 24 40 / 0.12), 0 4px 12px -4px rgb(16 24 40 / 0.06);
 }
 
 /* ---- the dark theme ------------------------------------------------------ */
-/* Not an inversion: each value was solved for its own target contrast against
-   these exact surfaces. See scripts/check-contrast.mjs, which checks both. */
+/* Contrast truth rule: `--p-canvas/sunk/raised/inset/rail/elevated` are opaque hex
+   equal to the composited glass over `#070d1a` (`fill_alpha * fill + (1 - fill_alpha) * canvas`). */
 [data-theme="dark"] {
-  --p-canvas: #0b1220;
-  --p-sunk: #0f1828;
-  --p-raised: #131d2f;
-  --p-inset: #0d1626;
-  --p-rail: #0a101c;
+  --p-canvas: #070d1a;
+  --p-sunk: #161c28;
+  --p-raised: #121824;
+  --p-inset: #0e1420;
+  --p-rail: #101522;
+  --p-elevated: #1a1f2b;
 
-  --p-rule: #374455;
-  --p-rule-strong: #4d5f78;
-  --p-rule-faint: #2b3544;
-  --p-panel-edge: rgba(255, 255, 255, 0.1);
-  --p-row-rule: #28313e;
+  --p-glass: rgba(255, 255, 255, 0.045);
+  --p-glass-strong: rgba(255, 255, 255, 0.075);
+  --p-glass-edge: rgba(255, 255, 255, 0.09);
+  --p-glass-edge-strong: rgba(255, 255, 255, 0.16);
+  --p-glass-highlight: rgba(255, 255, 255, 0.06);
+  --p-glass-blur: blur(14px) saturate(140%);
+
+  --p-ground-glow:
+    radial-gradient(64rem 40rem at 10% -6%, rgba(99, 102, 241, 0.078), transparent 68%),
+    radial-gradient(56rem 38rem at 90% -4%, rgba(139, 92, 246, 0.072), transparent 66%),
+    radial-gradient(88rem 52rem at 50% 38%, rgba(79, 70, 229, 0.045), transparent 74%);
+
+  --p-rule: #2a3447;
+  --p-rule-strong: #46556e;
+  --p-rule-faint: #1f2737;
+  --p-panel-edge: rgba(255, 255, 255, 0.09);
+  --p-row-rule: #1d2535;
 
   --p-ink: #f1f3f7;
-  --p-ink-soft: #a5b2c3;
-  --p-ink-faint: #788aa1;
+  --p-ink-soft: #aeb9cb;
+  --p-ink-faint: #8494ad;
 
-  --p-signal: #2daa7d;
-  --p-signal-deep: #27926a;
-  --p-signal-wash: #0d3023;
-  --p-live: #36a1d6;
-  --p-live-wash: #0d2f3f;
-  --p-warn: #c88b23;
-  --p-warn-wash: #39270a;
-  --p-alert: #de7c71;
-  --p-alert-wash: #4f1912;
-  --p-accent: #6399e1;
-  --p-accent-deep: #3e82da;
-  --p-accent-wash: #0f2b4f;
+  --p-signal: #34b888;
+  --p-signal-deep: #299e73;
+  --p-signal-wash: #0d2f23;
+  --p-live: #38a8df;
+  --p-live-wash: #0d2e3f;
+  --p-warn: #d49426;
+  --p-warn-wash: #382609;
+  --p-alert: #e68277;
+  --p-alert-wash: #491812;
+  --p-accent: #818cf8;
+  --p-accent-deep: #6875f5;
+  --p-accent-wash: #191f45;
+  --p-accent-lift: #a78bfa;
 
-  /* Bright accent, dark text: white on these is 2.9:1. */
-  --p-on-accent: #08101c;
-  --p-on-signal: #08101c;
-  --p-on-alert: #08101c;
-  --p-on-live: #08101c;
+  /* The hero pane's two gradient stops; see the light theme for why they are hex. */
+  --p-hero: #303758;
+  --p-hero-lift: #2d2d4b;
 
-  --p-series-1: #236ec4;
-  --p-series-2: #238b72;
-  --p-series-3: #b9801e;
-  --p-series-4: #e67f6f;
-  --p-series-5: #c49ee7;
-  --p-series-6: #6ed2ea;
-  --p-chart-grid: #313c4d;
-  --p-chart-axis: #7a8ba2;
+  /* Bright accent, dark text: white on these fails 4.5:1. */
+  --p-on-accent: #070d1a;
+  --p-on-signal: #070d1a;
+  --p-on-alert: #070d1a;
+  --p-on-live: #070d1a;
 
-  /* On a dark ground an edge separates a panel, not a shadow: a drop shadow
-     under a near-black surface is invisible at best and muddy at worst. */
-  --p-shadow-xs: none;
-  --p-shadow-sm: none;
-  --p-shadow-md: 0 8px 24px -8px rgb(0 0 0 / 0.6);
-  --p-shadow-lg: 0 16px 48px -12px rgb(0 0 0 / 0.7);
+  --p-series-1: #4f5de2;
+  --p-series-2: #248f75;
+  --p-series-3: #bf841f;
+  --p-series-4: #e88272;
+  --p-series-5: #c6a0eb;
+  --p-series-6: #70d4ec;
+  --p-chart-grid: #253042;
+  --p-chart-axis: #8596af;
+
+  --p-shadow-xs: 0 2px 8px -2px rgb(0 0 0 / 0.28);
+  --p-shadow-sm: 0 4px 16px -4px rgb(0 0 0 / 0.32);
+  --p-shadow-md: 0 8px 32px rgb(0 0 0 / 0.35);
+  --p-shadow-lg: 0 18px 48px -8px rgb(0 0 0 / 0.52);
 }
 
 /* ---- static scales ------------------------------------------------------- */
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Manrope", "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
 
-  /* Fixed rem scale, not fluid. Every step is at least 1.125 from its neighbour:
-     a step a reader cannot see is not a step, and three sizes inside a two-pixel
-     band doing three jobs is what makes a dense panel read as flat. */
+  /* Fixed rem scale, not fluid. */
   --text-2xs: 0.6875rem;
   --text-xs: 0.75rem;
   --text-sm: 0.875rem;
@@ -205,25 +242,22 @@
   --text-4xl: 2.25rem;
 
   --spacing: 0.25rem;
-  --radius-control: 4px;
-  --radius-panel: 8px;
+  --radius-control: 10px;
+  --radius-card-sm: 12px;
+  --radius-panel: 16px;
   --radius-chip: 999px;
 
-  /* Chrome heights are ONE decision for the whole console, never a per-page one.
-     `--page-header-h` is a floor rather than a fixed height: the page header keeps
-     a description line and a tab strip inside the same band, so the token is
-     applied as a minimum and the band may grow. The rail width is deliberately
-     absent here: it is set below, under a media query, because a 232px rail on a
-     1200px laptop is 19% of the screen. */
-  --shell-rail-w: 232px;
-  --shell-rail-w-collapsed: 56px;
-  --shell-bar-h: 48px;
+  /* Chrome heights and geometry tokens. */
+  --shell-rail-w: 248px;
+  --shell-rail-w-collapsed: 64px;
+  --shell-bar-h: 56px;
   --page-header-h: 52px;
   --panel-header-h: 44px;
   --toolbar-h: 40px;
   --control-h-sm: 24px;
   --control-h: 28px;
   --control-h-lg: 32px;
+  --control-h-xl: 36px;
   --row-h: 32px;
   --row-h-compact: 28px;
   --row-h-comfortable: 36px;
@@ -239,24 +273,21 @@
 }
 
 /* ---- responsive: no viewport is the reference viewport -------------------- */
-/* Nobody's console is one device. These rules are structural — the rail folds, the
-   grid scrolls instead of squeezing, the gutters step up with the room available —
-   rather than tuning font sizes to a screen. */
 :root {
   --page-gutter: 12px;
   --data-grid-min: 640px;
-  --shell-rail-w: 200px;
+  --shell-rail-w: 248px;
 }
 @media (min-width: 1024px) {
   :root {
     --page-gutter: 16px;
-    --shell-rail-w: 216px;
+    --shell-rail-w: 248px;
   }
 }
 @media (min-width: 1440px) {
   :root {
     --page-gutter: 20px;
-    --shell-rail-w: 232px;
+    --shell-rail-w: 248px;
     --data-grid-min: 720px;
   }
 }
@@ -287,6 +318,9 @@
   body {
     margin: 0;
     background-color: var(--color-paper);
+    background-image: var(--p-ground-glow);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
     color: var(--color-ink);
     font-family: var(--font-sans);
     font-size: var(--text-sm);
@@ -350,11 +384,9 @@
 
   :focus-visible {
     outline: 2px solid var(--color-accent);
-    outline-offset: 1px;
+    outline-offset: 2px;
   }
 
-  /* Browser surfaces belong to the design system too: the cheapest signal that a
-     page was built rather than assembled. */
   ::selection {
     background: var(--color-accent-wash);
     color: var(--color-accent);
@@ -377,26 +409,64 @@
 }
 
 @layer components {
-  .rule-t {
-    border-top: 1px solid var(--color-rule);
-  }
-  .rule-b {
-    border-bottom: 1px solid var(--color-rule);
+  .ground {
+    background-color: var(--color-paper);
+    background-image: var(--p-ground-glow);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
   }
 
-  /* A panel is the console's one framing primitive: a region with a 1px edge and
-     the smallest step of elevation. A nested panel drops its frame. */
+  /* The one gradient fill in the console, on the dashboard's hero pane. The stops are
+     tokens, and `check-contrast.mjs` measures the ink that sits on them. */
+  .hero-gradient {
+    background-image: linear-gradient(135deg, var(--p-hero), var(--p-hero-lift));
+  }
+
+  .rule-t {
+    border-top: 1px solid var(--color-rule-faint);
+  }
+  .rule-b {
+    border-bottom: 1px solid var(--color-rule-faint);
+  }
+
+  /* A panel is the console's glass framing primitive: radius `--radius-panel`,
+     1px glass edge, inner top highlight, backdrop blur, and soft elevation. */
   .panel {
-    background-color: var(--color-paper-raised);
-    border: 1px solid var(--color-panel-edge);
+    background-color: var(--color-glass);
+    border: 1px solid var(--color-glass-edge);
     border-radius: var(--radius-panel);
-    box-shadow: var(--shadow-xs);
+    box-shadow:
+      inset 0 1px 0 0 var(--color-glass-highlight),
+      var(--shadow-md);
+    backdrop-filter: var(--p-glass-blur);
   }
 
   .panel .panel {
+    background-color: var(--color-paper-inset);
     border-color: var(--color-rule-faint);
-    border-radius: var(--radius-control);
-    box-shadow: none;
+    border-radius: var(--radius-card-sm);
+    box-shadow: inset 0 1px 0 0 var(--color-glass-highlight);
+    backdrop-filter: none;
+  }
+
+  .glass-rail {
+    background-color: var(--color-glass);
+    backdrop-filter: var(--p-glass-blur);
+    box-shadow: inset -1px 0 0 0 var(--color-glass-edge);
+  }
+
+  .glass-bar {
+    background-color: var(--color-glass-strong);
+    backdrop-filter: var(--p-glass-blur);
+    box-shadow: inset 0 -1px 0 0 var(--color-glass-edge);
+  }
+
+  .glass-elevated {
+    background-color: var(--color-paper-elevated);
+    backdrop-filter: var(--p-glass-blur);
+    box-shadow:
+      inset 0 1px 0 0 var(--color-glass-highlight),
+      var(--shadow-lg);
   }
 
   .label {
@@ -406,9 +476,7 @@
     letter-spacing: 0.005em;
   }
 
-  /* Micro-caps: column heads and section markers. The one place small type is
-     tracked and capitalised, which is what lets a 14px data row read as data
-     rather than as a label. */
+  /* Micro-caps: column heads and section markers. */
   .micro {
     font-size: var(--text-2xs);
     font-weight: 600;
@@ -428,7 +496,7 @@
     align-items: center;
     gap: 0.3125rem;
     border-radius: var(--radius-chip);
-    padding: 0.0625rem 0.5rem 0.125rem;
+    padding: 0.0625rem 0.5625rem 0.125rem;
     font-size: var(--text-2xs);
     font-weight: 600;
     line-height: 1.5;
@@ -437,10 +505,6 @@
   }
 
   /* ---- the data grid ---- */
-  /* A grid, not a stack of rows: fixed heights on a ladder, a sticky head, and
-     cells that never wrap. `min-width` is what makes a dense table scroll instead
-     of squeezing nine columns into a laptop; a truncated cell absorbs the slack
-     when there is slack. */
   .data-grid {
     width: 100%;
     min-width: var(--data-grid-min);
@@ -452,10 +516,11 @@
     position: sticky;
     top: 0;
     z-index: 1;
-    height: 32px;
+    height: 36px;
     padding: 0 12px;
-    background-color: var(--color-paper-sunk);
-    border-bottom: 1px solid var(--color-rule);
+    background-color: var(--color-glass-strong);
+    backdrop-filter: var(--p-glass-blur);
+    border-bottom: 1px solid var(--color-rule-faint);
     font-size: var(--text-2xs);
     font-weight: 600;
     letter-spacing: var(--tracking-micro);
@@ -482,15 +547,13 @@
   }
 
   .data-grid tbody tr:hover {
-    background-color: color-mix(in srgb, var(--color-paper-sunk) 60%, transparent);
+    background-color: color-mix(in srgb, var(--color-accent-wash) 45%, var(--color-glass));
   }
 
   .data-grid tbody tr[data-selected="true"] {
     background-color: var(--color-accent-wash);
   }
 
-  /* The first and last cells carry the panel's own gutter so the grid lines up
-     with the panel header instead of stopping short of it. */
   .data-grid thead th:first-child,
   .data-grid tbody td:first-child {
     padding-left: 16px;
@@ -518,12 +581,10 @@
     transition:
       background-color var(--dur-fast) var(--ease-instrument),
       border-color var(--dur-fast) var(--ease-instrument),
-      color var(--dur-fast) var(--ease-instrument);
+      color var(--dur-fast) var(--ease-instrument),
+      box-shadow var(--dur-fast) var(--ease-instrument);
   }
 
-  /* Panel actions stay visible. Hiding them at rest is a defect, not a refinement:
-     a touch device never hovers, so an opacity-0 control is a control that does not
-     exist there. They are made quiet with the ghost button style instead. */
   .panel-actions {
     transition: opacity var(--dur-base) var(--ease-instrument);
   }

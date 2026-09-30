@@ -2,9 +2,8 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { cn } from "../../lib/cn";
 
 /**
- * Tabs are ruled, not boxed: the active tab is marked by a 2px underline sitting
- * on the shared hairline, so a tab set reads as part of the page rather than as
- * another container.
+ * Segmented control inside a glass trough; the active segment is a raised glass
+ * pill with identical Radix ARIA/keyboard behaviour.
  */
 export const Tabs = TabsPrimitive.Root;
 
@@ -14,7 +13,10 @@ export function TabsList({
 }: React.ComponentProps<typeof TabsPrimitive.List>) {
   return (
     <TabsPrimitive.List
-      className={cn("flex items-center gap-4 border-b border-rule", className)}
+      className={cn(
+        "inline-flex min-h-[var(--control-h-lg)] flex-wrap items-center gap-1 rounded-control border border-glass-edge bg-glass p-1 shadow-[inset_0_1px_0_0_var(--color-glass-highlight)]",
+        className,
+      )}
       {...rest}
     />
   );
@@ -27,9 +29,9 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        "-mb-px border-b-2 border-transparent px-0.5 pb-2 text-sm font-medium text-ink-soft transition-colors",
+        "action inline-flex h-[var(--control-h-sm)] items-center justify-center rounded-[calc(var(--radius-control)-3px)] px-3 text-xs font-medium text-ink-soft select-none",
         "hover:text-ink",
-        "data-[state=active]:border-signal data-[state=active]:text-ink",
+        "data-[state=active]:border data-[state=active]:border-glass-edge data-[state=active]:bg-glass-strong data-[state=active]:font-semibold data-[state=active]:text-ink data-[state=active]:shadow-xs",
         className,
       )}
       {...rest}
