@@ -37,14 +37,16 @@ func (f *fakeFetcher) FetchWithOptions(_ context.Context, _ node.Hash, url strin
 	return nil, 0, errors.New("no fixture for " + url)
 }
 
-func newTestProbe(t *testing.T, fetcher Fetcher, now time.Time) *Probe {
+// newTestProbe returns a probe whose clock reads through now, so a test can
+// advance time between runs by assigning to the variable it passed in.
+func newTestProbe(t *testing.T, fetcher Fetcher, now *time.Time) *Probe {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state", store.FileName))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	return &Probe{Fetcher: fetcher, Store: st, Now: func() time.Time { return now }}
+	return &Probe{Fetcher: fetcher, Store: st, Now: func() time.Time { return *now }}
 }
 
 func TestParseTrace(t *testing.T) {
@@ -79,7 +81,7 @@ func TestProbe_RunRecordsBothFamiliesAndHistory(t *testing.T) {
 		DefaultTraceURLv4: []byte("ip=198.51.100.10\nloc=JP\ncolo=NRT\n"),
 		DefaultTraceURLv6: []byte("ip=2001:db8::10\nloc=JP\ncolo=NRT\n"),
 	}}
-	probe := newTestProbe(t, fetcher, now)
+	probe := newTestProbe(t, fetcher, &now)
 
 	hash, err := node.ParseHex("0123456789abcdef0123456789abcdef")
 	if err != nil {
@@ -128,7 +130,7 @@ func TestProbe_IPv6FailureIsNotFatal(t *testing.T) {
 			DefaultTraceURLv6: []byte("ip=198.51.100.20\n"),
 		},
 	}
-	probe := newTestProbe(t, fetcher, now)
+	probe := newTestProbe(t, fetcher, &now)
 	hash, _ := node.ParseHex("ffffffffffffffffffffffffffffffff")
 
 	result, err := probe.Run(context.Background(), hash)
@@ -154,9 +156,10 @@ func TestProbe_IPv6FailureIsNotFatal(t *testing.T) {
 }
 
 func TestProbe_IPv4FailureIsFatal(t *testing.T) {
+	now := time.Now()
 	probe := newTestProbe(t, &fakeFetcher{
 		errs: map[string]error{DefaultTraceURLv4: errors.New("connection refused")},
-	}, time.Now())
+	}, &now)
 	hash, _ := node.ParseHex("00000000000000000000000000000001")
 
 	if _, err := probe.Run(context.Background(), hash); !errors.Is(err, ErrNoIPv4) {
@@ -169,7 +172,7 @@ func TestProbe_IPv4ChangeAppendsHistory(t *testing.T) {
 	fetcher := &fakeFetcher{byURL: map[string][]byte{
 		DefaultTraceURLv4: []byte("ip=198.51.100.30\nloc=JP\ncolo=NRT\n"),
 	}, errs: map[string]error{DefaultTraceURLv6: errors.New("no v6")}}
-	probe := newTestProbe(t, fetcher, now)
+	probe := newTestProbe(t, fetcher, &now)
 	hash, _ := node.ParseHex("00000000000000000000000000000002")
 	if _, err := probe.Run(context.Background(), hash); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -201,7 +204,7 @@ func TestProbe_SyncProbeFailureDoesNotFailTheWrite(t *testing.T) {
 	probe := newTestProbe(t, &fakeFetcher{
 		byURL: map[string][]byte{DefaultTraceURLv4: []byte("ip=198.51.100.40\n")},
 		errs:  map[string]error{DefaultTraceURLv6: errors.New("no v6")},
-	}, now)
+	}, &now)
 	probe.ProbeEgressSync = func(context.Context, node.Hash) error { return errors.New("cache.db write failed") }
 	hash, _ := node.ParseHex("00000000000000000000000000000003")
 
