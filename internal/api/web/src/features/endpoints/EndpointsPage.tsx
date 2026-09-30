@@ -7,6 +7,7 @@ import { Fieldset, Input } from "../../components/ui/Input";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TD, TH, THead, TR } from "../../components/ui/Table";
@@ -33,8 +34,6 @@ type TranslateFn = (text: string, options?: Record<string, unknown>) => string;
 const EMPTY_ENDPOINTS: Endpoint[] = [];
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 const REQUIRE_PROXY_AUTH_LABEL = "强制客户端认证";
-const CONTROL_CLASS =
-  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
 const REQUIRE_PROXY_AUTH_HINT = `一些应用（例如浏览器）只有在代理服务器强制要求认证的时候，才会发送认证信息。
 因此，当 Prism 没有设置代理令牌时，这些应用不会向 Prism 发送认证字段，导致平台与账号信息缺失。
 如果你的 Prism 部署没有设置代理令牌，同时又需要兼容这些应用，可以开启此选项。
@@ -302,8 +301,8 @@ function EndpointForm({ endpoint, endpoints, pending, onClose, onSubmit }: Endpo
           <Button variant="secondary" type="button" onClick={onClose} disabled={pending}>
             {t("取消")}
           </Button>
-          <Button type="submit" disabled={pending}>
-            {pending ? t("创建中...") : t("确认创建")}
+          <Button type="submit" disabled={pending} loading={pending}>
+            {t("确认创建")}
           </Button>
         </div>
       ) : null}
@@ -355,8 +354,8 @@ function EndpointPagination({
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={CONTROL_CLASS}
+          <Select
+            className="w-auto"
             value={pageSize}
             disabled={disabled}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
@@ -366,7 +365,7 @@ function EndpointPagination({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("跳至")}</span>
@@ -793,8 +792,8 @@ export function EndpointsPage() {
         footer={
           editingEndpoint && !editingEndpoint.read_only ? (
             <div className="flex items-center justify-end gap-2">
-              <Button type="submit" form="endpoint-edit-form" disabled={updateMutation.isPending}>
-                {updateMutation.isPending ? t("保存中...") : t("保存配置")}
+              <Button type="submit" form="endpoint-edit-form" disabled={updateMutation.isPending} loading={updateMutation.isPending}>
+                {t("保存配置")}
               </Button>
             </div>
           ) : undefined
@@ -835,8 +834,9 @@ export function EndpointsPage() {
                     variant="danger"
                     onClick={() => void handleDelete(editingEndpoint)}
                     disabled={deleteMutation.isPending}
+                    loading={deleteMutation.isPending}
                   >
-                    {deleteMutation.isPending ? t("删除中...") : t("删除")}
+                    {t("删除")}
                   </Button>
                 </div>
               </section>
@@ -859,8 +859,8 @@ export function EndpointsPage() {
             <Button variant="secondary" onClick={closeCreateModal} disabled={createMutation.isPending}>
               {t("取消")}
             </Button>
-            <Button type="submit" form="endpoint-create-form" disabled={createMutation.isPending}>
-              {createMutation.isPending ? t("创建中...") : t("确认创建")}
+            <Button type="submit" form="endpoint-create-form" disabled={createMutation.isPending} loading={createMutation.isPending}>
+              {t("确认创建")}
             </Button>
           </div>
         }

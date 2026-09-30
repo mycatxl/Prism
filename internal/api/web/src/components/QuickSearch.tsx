@@ -3,6 +3,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Button } from "./ui/Button";
 import { cn } from "../lib/cn";
 import { navigation } from "../lib/navigation";
 import { useI18n } from "../i18n";
@@ -42,19 +43,20 @@ export function QuickSearch() {
 
   return (
     <>
-      <button
+      <Button
         type="button"
+        variant="secondary"
         onClick={() => setOpen(true)}
         aria-label={t("快速定位")}
         title={t("快速定位")}
-        className="hidden h-8 w-56 items-center gap-2 rounded-control border border-rule bg-paper px-2.5 text-left text-xs text-ink-faint transition-colors hover:border-rule-strong hover:text-ink-soft sm:flex"
+        className="hidden w-56 justify-start gap-2 px-2.5 text-xs font-normal text-ink-faint hover:text-ink-soft sm:flex"
       >
-        <Search size={13} className="shrink-0" />
+        <Search size={13} aria-hidden className="shrink-0" />
         <span className="min-w-0 flex-1 truncate">{t("搜索节点或工作区")}</span>
         <kbd className="shrink-0 rounded-[2px] border border-rule px-1 font-mono text-2xs text-ink-faint">
           {shortcut}
         </kbd>
-      </button>
+      </Button>
 
       <DialogPrimitive.Root open={open} onOpenChange={setOpen}>
         <DialogPrimitive.Portal>

@@ -1,4 +1,5 @@
 import { Languages } from "lucide-react";
+import { Button } from "./ui/Button";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
@@ -21,18 +22,17 @@ export function LanguageSwitcher({
   if (collapsed) {
     const next = locale === "zh-CN" ? "en-US" : "zh-CN";
     return (
-      <button
+      <Button
         type="button"
-        className={cn(
-          "grid size-8 place-items-center rounded-control text-ink-soft transition-colors hover:bg-paper-sunk hover:text-ink",
-          className,
-        )}
+        variant="ghost"
+        size="icon"
+        className={cn("text-ink-soft", className)}
         onClick={() => setLocale(next)}
         aria-label={t("切换语言")}
         title={t("切换语言")}
       >
-        <Languages size={14} />
-      </button>
+        <Languages size={14} aria-hidden />
+      </Button>
     );
   }
 
@@ -50,20 +50,22 @@ export function LanguageSwitcher({
       ).map(([value, label]) => {
         const active = locale === value;
         return (
-          <button
+          <Button
             key={value}
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => setLocale(value)}
             aria-pressed={active}
             className={cn(
-              "rounded-[1px] px-1.5 py-0.5 text-xs transition-colors",
+              "rounded-[1px] px-1.5",
               active
-                ? "bg-signal-wash font-medium text-signal-deep"
-                : "text-ink-faint hover:text-ink",
+                ? "bg-signal-wash font-medium text-signal-deep hover:bg-signal-wash hover:text-signal-deep"
+                : "text-ink-faint",
             )}
           >
             {label}
-          </button>
+          </Button>
         );
       })}
     </div>

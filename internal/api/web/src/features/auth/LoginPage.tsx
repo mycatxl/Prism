@@ -189,8 +189,8 @@ export function LoginPage() {
 
             {submitError ? <ErrorState message={submitError} /> : null}
 
-            <Button type="submit" variant="primary" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? t("校验中...") : t("进入工作台")}
+            <Button type="submit" variant="primary" className="w-full" disabled={isSubmitting} loading={isSubmitting}>
+              {t("进入工作台")}
             </Button>
           </form>
 

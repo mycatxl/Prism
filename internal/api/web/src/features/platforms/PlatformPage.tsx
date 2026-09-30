@@ -9,6 +9,7 @@ import { Fieldset, Input, Textarea } from "../../components/ui/Input";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
@@ -41,9 +42,6 @@ import type { Platform } from "./types";
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 const EMPTY_PLATFORMS: Platform[] = [];
 const PAGE_SIZE_OPTIONS = [12, 24, 48, 96] as const;
-
-const selectClass =
-  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink";
 
 /**
  * Offset pagination for this page's table footer.
@@ -95,8 +93,8 @@ function PageNavigator({
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={cn(selectClass, "h-7 w-auto px-1.5 text-xs")}
+          <Select
+            className="w-auto px-1.5 text-xs"
             value={pageSize}
             disabled={disabled}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
@@ -106,7 +104,7 @@ function PageNavigator({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("跳至")}</span>
@@ -411,8 +409,8 @@ export function PlatformPage() {
               <Button variant="secondary" onClick={() => setCreateModalOpen(false)}>
                 {t("取消")}
               </Button>
-              <Button type="submit" form="platform-create-form" disabled={createMutation.isPending}>
-                {createMutation.isPending ? t("创建中...") : t("确认创建")}
+              <Button type="submit" form="platform-create-form" disabled={createMutation.isPending} loading={createMutation.isPending}>
+                {t("确认创建")}
               </Button>
             </div>
           }
@@ -439,9 +437,8 @@ export function PlatformPage() {
             </Fieldset>
 
             <Fieldset label={t("反向代理账号解析出错策略")} htmlFor="create-miss-action">
-              <select
+              <Select
                 id="create-miss-action"
-                className={selectClass}
                 {...createForm.register("reverse_proxy_miss_action")}
               >
                 {missActions.map((item) => (
@@ -449,13 +446,12 @@ export function PlatformPage() {
                     {t(missActionLabel[item])}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Fieldset>
 
             <Fieldset label={t("节点分配策略")} htmlFor="create-policy">
-              <select
+              <Select
                 id="create-policy"
-                className={selectClass}
                 {...createForm.register("allocation_policy")}
               >
                 {allocationPolicies.map((item) => (
@@ -463,7 +459,7 @@ export function PlatformPage() {
                     {t(allocationPolicyLabel[item])}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Fieldset>
 
             <div className="flex items-start justify-between gap-4 border-t border-rule pt-3">
@@ -475,13 +471,15 @@ export function PlatformPage() {
                   {t("禁用请求失败熔断")}
                 </label>
                 <Tooltip content={passiveCircuitBreakerHint}>
-                  <button
+                  <Button
                     type="button"
+                    variant="quiet"
+                    size="icon"
                     aria-label={passiveCircuitBreakerHint}
-                    className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+                    className="text-ink-faint"
                   >
-                    <Info size={13} />
-                  </button>
+                    <Info size={13} aria-hidden />
+                  </Button>
                 </Tooltip>
               </div>
               <Switch
@@ -496,9 +494,8 @@ export function PlatformPage() {
             </div>
 
             <Fieldset label={t("反向代理账号为空行为")} htmlFor="create-empty-account-behavior">
-              <select
+              <Select
                 id="create-empty-account-behavior"
-                className={selectClass}
                 {...createForm.register("reverse_proxy_empty_account_behavior")}
               >
                 {emptyAccountBehaviors.map((item) => (
@@ -506,7 +503,7 @@ export function PlatformPage() {
                     {t(emptyAccountBehaviorLabel[item])}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Fieldset>
 
             {createEmptyAccountBehavior === "FIXED_HEADER" ? (

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Ban, LoaderCircle, Plus, RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
+import { AlertTriangle, Ban, Plus, RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -8,6 +8,7 @@ import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
@@ -128,11 +129,6 @@ const JOB_STATUS_FILTERS = ["", "queued", "running", "succeeded", "partial", "fa
 const ITEM_STATUS_FILTERS = ["", "queued", "running", "done", "failed", "skipped", "canceled"];
 const JOB_KIND_OPTIONS: JobKind[] = ["intel", "full"];
 
-const CONTROL_CLASS =
-  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
-const FORM_CONTROL_CLASS =
-  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink disabled:cursor-not-allowed disabled:opacity-60";
-
 function textOf(map: Record<string, string>, value: string): string {
   return map[value] ?? value;
 }
@@ -250,7 +246,9 @@ function ProgressMeter({
       aria-valuenow={settled}
       title={failure}
       className={cn(
-        "overflow-hidden rounded-full bg-paper-sunk",
+        // A 4px bar, so 2px reads as a soft cap without claiming the pill shape
+        // that is reserved for status (DESIGN.md:126-127).
+        "overflow-hidden rounded-[2px] bg-paper-sunk",
         inline ? "h-1 min-w-0 flex-1" : cn("h-1 w-full", size === "lg" ? "mt-2" : "mt-1"),
       )}
     >
@@ -315,8 +313,8 @@ function JobsPagination({
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={CONTROL_CLASS}
+          <Select
+            className="w-auto"
             value={pageSize}
             disabled={disabled}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
@@ -326,7 +324,7 @@ function JobsPagination({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("跳至")}</span>
@@ -618,9 +616,15 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
               <RefreshCw size={13} className={detailQuery.isFetching ? "animate-spin" : undefined} />
               {t("刷新")}
             </Button>
-            <Button variant="danger" size="sm" onClick={handleCancel} disabled={!running || busy}>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleCancel}
+              disabled={!running || busy}
+              loading={cancelMutation.isPending}
+            >
               <Ban size={13} />
-              {cancelMutation.isPending ? t("取消中...") : t("取消任务")}
+              {t("取消任务")}
             </Button>
             <Button
               variant="secondary"
@@ -628,9 +632,10 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
               onClick={() => retryMutation.mutate()}
               disabled={failedCount <= 0 || retryMutation.isPending}
               title={failedCount <= 0 ? t("没有可重试的失败项") : t("重试失败项")}
+              loading={retryMutation.isPending}
             >
               <RotateCcw size={13} />
-              {retryMutation.isPending ? t("重试中...") : t("重试失败项")}
+              {t("重试失败项")}
             </Button>
           </div>
 
@@ -640,8 +645,8 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
               meta={t("共 {{count}} 个节点", { count: itemTotal })}
             />
             <PanelToolbar>
-              <select
-                className={CONTROL_CLASS}
+              <Select
+                className="w-auto"
                 value={itemStatus}
                 aria-label={t("按节点状态筛选")}
                 onChange={(event) => {
@@ -654,7 +659,7 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
                     {value ? t(textOf(ITEM_STATUS_LABELS, value)) : t("全部结果")}
                   </option>
                 ))}
-              </select>
+              </Select>
             </PanelToolbar>
 
             {itemsQuery.isLoading && !itemsQuery.data ? (
@@ -805,9 +810,9 @@ function CreateJobDialog({
           <Button type="button" variant="secondary" onClick={onClose} disabled={createMutation.isPending}>
             {t("取消")}
           </Button>
-          <Button type="submit" form="create-job-form" disabled={createMutation.isPending}>
-            {createMutation.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}
-            {createMutation.isPending ? t("创建中...") : t("创建任务")}
+          <Button type="submit" form="create-job-form" disabled={createMutation.isPending} loading={createMutation.isPending}>
+            <Plus size={14} aria-hidden />
+            {t("创建任务")}
           </Button>
         </div>
       }
@@ -818,9 +823,8 @@ function CreateJobDialog({
           htmlFor="job-kind"
           hint={t("情报检测覆盖出口与风险评估；完整检测会额外运行解锁检测规则。")}
         >
-          <select
+          <Select
             id="job-kind"
-            className={FORM_CONTROL_CLASS}
             value={kind}
             onChange={(event) => setKind(event.target.value as JobKind)}
           >
@@ -829,7 +833,7 @@ function CreateJobDialog({
                 {t(textOf(JOB_KIND_LABELS, option))} ({option})
               </option>
             ))}
-          </select>
+          </Select>
         </Fieldset>
 
         <Fieldset
@@ -840,11 +844,11 @@ function CreateJobDialog({
           {/* 优先级由服务端固定：POST /intel/jobs 的请求体不接受 priority
               字段（internal/service/control_plane_intel.go:113 固定为手动 100），
               解码器还启用了 DisallowUnknownFields。 */}
-          <select id="job-priority" className={FORM_CONTROL_CLASS} value="manual" disabled>
+          <Select id="job-priority" value="manual" disabled>
             <option value="manual">{t("手动 (100)")}</option>
             <option value="subscription">{t("订阅 (50)")}</option>
             <option value="refresh">{t("定时刷新 (10)")}</option>
-          </select>
+          </Select>
         </Fieldset>
 
         <fieldset className="min-w-0">
@@ -965,8 +969,8 @@ export function JobsPage() {
         <Panel className="flex min-w-0 flex-col">
           <PanelHeader title={t("任务列表")} />
           <PanelToolbar>
-            <select
-              className={CONTROL_CLASS}
+            <Select
+              className="w-auto"
               value={statusFilter}
               aria-label={t("按状态筛选")}
               onChange={(event) => {
@@ -979,7 +983,7 @@ export function JobsPage() {
                   {value ? t(textOf(JOB_STATUS_LABELS, value)) : t("全部状态")}
                 </option>
               ))}
-            </select>
+            </Select>
           </PanelToolbar>
 
           {jobsQuery.isLoading ? (

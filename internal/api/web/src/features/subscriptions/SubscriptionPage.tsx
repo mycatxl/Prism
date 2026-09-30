@@ -15,6 +15,7 @@ import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { Switch } from "../../components/ui/Switch";
@@ -246,9 +247,6 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
   );
 }
 
-const selectClass =
-  "h-7 w-auto rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink";
-
 /**
  * A hint attached to a label.
  *
@@ -258,13 +256,15 @@ const selectClass =
 function InfoHint({ text }: { text: string }) {
   return (
     <Tooltip content={text}>
-      <button
+      <Button
         type="button"
+        variant="quiet"
+        size="icon"
         aria-label={text}
-        className="grid size-5 shrink-0 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+        className="text-ink-faint"
       >
-        <Info size={13} />
-      </button>
+        <Info size={13} aria-hidden />
+      </Button>
     </Tooltip>
   );
 }
@@ -340,8 +340,8 @@ function PageNavigator({
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={cn(selectClass, "h-7 w-auto px-1.5 text-xs")}
+          <Select
+            className="w-auto px-1.5 text-xs"
             value={pageSize}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
           >
@@ -350,7 +350,7 @@ function PageNavigator({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("跳至")}</span>
@@ -821,9 +821,9 @@ export function SubscriptionPage() {
           <PanelToolbar>
             <div className="flex items-center gap-1.5">
               <Filter size={14} aria-hidden className="text-ink-faint" />
-              <select
+              <Select
                 id="sub-status-filter"
-                className={selectClass}
+                className="w-auto"
                 aria-label={t("刷新状态")}
                 value={enabledFilter}
                 onChange={(event) => {
@@ -834,7 +834,7 @@ export function SubscriptionPage() {
                 <option value="all">{t("全部")}</option>
                 <option value="enabled">{t("仅启用")}</option>
                 <option value="disabled">{t("仅禁用")}</option>
-              </select>
+              </Select>
             </div>
             <div className="relative w-full sm:w-64">
               <label htmlFor="subscription-search" className="sr-only">
@@ -1283,8 +1283,8 @@ export function SubscriptionPage() {
                   </Fieldset>
 
                   <div className="flex items-center gap-2 border-t border-rule pt-3">
-                    <Button type="submit" disabled={updateMutation.isPending}>
-                      {updateMutation.isPending ? t("保存中...") : t("保存配置")}
+                    <Button type="submit" disabled={updateMutation.isPending} loading={updateMutation.isPending}>
+                      {t("保存配置")}
                     </Button>
                   </div>
                 </form>
@@ -1305,8 +1305,9 @@ export function SubscriptionPage() {
                       variant="secondary"
                       onClick={() => void handleRefresh(selectedSubscription)}
                       disabled={isRefreshPending(selectedSubscription.id)}
+                      loading={isRefreshPending(selectedSubscription.id)}
                     >
-                      {isRefreshPending(selectedSubscription.id) ? t("刷新中...") : t("立即刷新")}
+                      {t("立即刷新")}
                     </Button>
                   </div>
 
@@ -1339,8 +1340,9 @@ export function SubscriptionPage() {
                       variant="danger"
                       onClick={() => void handleDelete(selectedSubscription)}
                       disabled={deleteMutation.isPending}
+                      loading={deleteMutation.isPending}
                     >
-                      {deleteMutation.isPending ? t("删除中...") : t("删除订阅")}
+                      {t("删除订阅")}
                     </Button>
                   </div>
                 </div>
@@ -1367,8 +1369,9 @@ export function SubscriptionPage() {
                 type="submit"
                 form="subscription-create-form"
                 disabled={createMutation.isPending}
+                loading={createMutation.isPending}
               >
-                {createMutation.isPending ? t("创建中...") : t("确认创建")}
+                {t("确认创建")}
               </Button>
             </div>
           }

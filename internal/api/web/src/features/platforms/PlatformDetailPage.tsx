@@ -11,6 +11,7 @@ import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
@@ -64,9 +65,6 @@ const DETAIL_TABS: Array<{ key: PlatformDetailTab; label: string; hint: string }
   { key: "ops", label: "运维", hint: "重置、清租约、删除操作" },
 ];
 
-const selectClass =
-  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink";
-
 function PageNavigator({
   page,
   totalPages,
@@ -110,8 +108,8 @@ function PageNavigator({
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={cn(selectClass, "h-7 w-auto px-1.5 text-xs")}
+          <Select
+            className="w-auto px-1.5 text-xs"
             value={pageSize}
             disabled={disabled}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
@@ -121,7 +119,7 @@ function PageNavigator({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("跳至")}</span>
@@ -622,9 +620,8 @@ export function PlatformDetailPage() {
                         label={t("反向代理账号解析出错策略")}
                         htmlFor="detail-edit-miss-action"
                       >
-                        <select
+                        <Select
                           id="detail-edit-miss-action"
-                          className={selectClass}
                           {...editForm.register("reverse_proxy_miss_action")}
                         >
                           {missActions.map((item) => (
@@ -632,13 +629,12 @@ export function PlatformDetailPage() {
                               {t(missActionLabel[item])}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </Fieldset>
 
                       <Fieldset label={t("节点分配策略")} htmlFor="detail-edit-policy">
-                        <select
+                        <Select
                           id="detail-edit-policy"
-                          className={selectClass}
                           {...editForm.register("allocation_policy")}
                         >
                           {allocationPolicies.map((item) => (
@@ -646,7 +642,7 @@ export function PlatformDetailPage() {
                               {t(allocationPolicyLabel[item])}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </Fieldset>
 
                       <div className="flex items-start justify-between gap-4 sm:col-span-2">
@@ -658,13 +654,15 @@ export function PlatformDetailPage() {
                             {t("禁用请求失败熔断")}
                           </label>
                           <Tooltip content={passiveCircuitBreakerHint}>
-                            <button
+                            <Button
                               type="button"
+                              variant="quiet"
+                              size="icon"
                               aria-label={passiveCircuitBreakerHint}
-                              className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+                              className="text-ink-faint"
                             >
-                              <Info size={13} />
-                            </button>
+                              <Info size={13} aria-hidden />
+                            </Button>
                           </Tooltip>
                         </div>
                         <Switch
@@ -682,9 +680,8 @@ export function PlatformDetailPage() {
                         label={t("反向代理账号为空行为")}
                         htmlFor="detail-edit-empty-account-behavior"
                       >
-                        <select
+                        <Select
                           id="detail-edit-empty-account-behavior"
-                          className={selectClass}
                           {...editForm.register("reverse_proxy_empty_account_behavior")}
                         >
                           {emptyAccountBehaviors.map((item) => (
@@ -692,7 +689,7 @@ export function PlatformDetailPage() {
                               {t(emptyAccountBehaviorLabel[item])}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </Fieldset>
 
                       {detailEmptyAccountBehavior === "FIXED_HEADER" ? (
@@ -726,8 +723,8 @@ export function PlatformDetailPage() {
                     </div>
 
                     <div className="flex items-center gap-2 border-t border-rule pt-3">
-                      <Button type="submit" disabled={updateMutation.isPending}>
-                        {updateMutation.isPending ? t("保存中...") : t("保存配置")}
+                      <Button type="submit" disabled={updateMutation.isPending} loading={updateMutation.isPending}>
+                        {t("保存配置")}
                       </Button>
                     </div>
                   </form>
@@ -752,8 +749,9 @@ export function PlatformDetailPage() {
                           variant="secondary"
                           onClick={() => void resetMutation.mutateAsync()}
                           disabled={resetMutation.isPending}
+                          loading={resetMutation.isPending}
                         >
-                          {resetMutation.isPending ? t("重置中...") : t("重置为默认配置")}
+                          {t("重置为默认配置")}
                         </Button>
                       </div>
 
@@ -768,8 +766,9 @@ export function PlatformDetailPage() {
                           variant="danger"
                           onClick={() => void handleClearAllLeases()}
                           disabled={clearLeasesMutation.isPending}
+                          loading={clearLeasesMutation.isPending}
                         >
-                          {clearLeasesMutation.isPending ? t("清除中...") : t("清除所有租约")}
+                          {t("清除所有租约")}
                         </Button>
                       </div>
 
@@ -784,8 +783,9 @@ export function PlatformDetailPage() {
                           variant="danger"
                           onClick={() => void handleDelete()}
                           disabled={deleteDisabled}
+                          loading={deleteMutation.isPending}
                         >
-                          {deleteMutation.isPending ? t("删除中...") : t("删除平台")}
+                          {t("删除平台")}
                         </Button>
                       </div>
                     </div>

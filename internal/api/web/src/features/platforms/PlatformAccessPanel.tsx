@@ -320,13 +320,15 @@ export function PlatformAccessPanel({
                   {t("代理 token")}
                 </label>
                 <Tooltip content={tokenHint}>
-                  <button
+                  <Button
                     type="button"
+                    variant="quiet"
+                    size="icon"
                     aria-label={tokenHint}
-                    className="grid size-5 place-items-center rounded-control text-ink-faint transition-colors hover:text-ink"
+                    className="text-ink-faint"
                   >
-                    <Info size={13} />
-                  </button>
+                    <Info size={13} aria-hidden />
+                  </Button>
                 </Tooltip>
               </div>
               <Input

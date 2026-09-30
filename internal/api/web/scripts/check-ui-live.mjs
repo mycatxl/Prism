@@ -288,12 +288,14 @@ check("the design tokens are the ones actually applied", async ({ origin, page }
   assert.equal(body.background, PAPER, "body must sit on the canvas token");
   assert.equal(body.color, INK, "body must be written in the ink token");
 
-  // A data cell is mono by construction (Table.tsx TDNum + design.css .readout).
+  // A data cell is mono by construction (Table.tsx TDNum + design.css .cell-num).
+  // The class the cell actually carries is the one in Table.tsx; reading it from
+  // there would couple this file to the source, so it is spelled out here.
   await page.goto(origin + "/ui/subscriptions");
   await rendered(page);
-  await page.locator("td.readout").first().waitFor({ state: "attached", timeout: 15000 });
+  await page.locator("td.cell-num").first().waitFor({ state: "attached", timeout: 15000 });
   const cell = await page.evaluate(() => {
-    for (const element of document.querySelectorAll("td.readout")) {
+    for (const element of document.querySelectorAll("td.cell-num")) {
       const text = (element.textContent || "").trim();
       if (/\d/.test(text)) return { text, family: getComputedStyle(element).fontFamily };
     }
@@ -384,24 +386,31 @@ check("the dashboard hero renders", async ({ origin, page }) => {
   await page.goto(origin + DASHBOARD);
   await rendered(page);
 
-  // The exit map is the only ECharts surface labelled with its own section.
-  const map = page.locator('main [role="img"][aria-label="出口 / 区域"]');
+  // The exit view is one of two ECharts surfaces, and which one mounts is the
+  // reader's choice (the globe is the default). Asserting on either label keeps
+  // the check about "the hero drew something" rather than about which tab is
+  // selected; the dashboard's default view has changed once already.
+  const map = page
+    .locator('main [role="img"][aria-label="出口 / 区域"]')
+    .or(page.locator('main [role="img"][aria-label="地球视图"]'))
+    .first();
   await map.waitFor({ state: "visible", timeout: 20000 });
   const canvas = map.locator("canvas").first();
   await canvas.waitFor({ state: "attached", timeout: 20000 });
   const box = await canvas.boundingBox();
   assert(box && box.width > 0 && box.height > 0, "the exit map must draw a canvas with a real size");
 
-  // The instrument strip is the ReadoutStrip: a grid whose children are divided
-  // by hairlines. Measuring it by its readouts keeps the assertion about content.
-  // The dashboard's composition has changed more than once; anchor on the panel
-  // the hero lives in rather than on the layout classes it happened to use.
+  // The instrument strip is the ReadoutStrip: a row of cells divided by hairlines.
+  // Each cell's number is a `Numeral`, which is the class that carries the value
+  // (`.readout` is only on a unit suffix, and these cells have no unit). Measuring
+  // by the value keeps the assertion about content rather than about the layout
+  // classes the strip happened to use, which have already changed once.
   const strip = page
     .locator("main div.grid.divide-x")
     .or(page.locator("main .panel"))
     .first();
   await strip.waitFor({ state: "visible", timeout: 15000 });
-  const readouts = await strip.locator(".readout").count();
+  const readouts = await strip.locator(".numeral").count();
   assert(readouts >= 4, `the instrument strip must show at least four readouts (found ${readouts})`);
 });
 

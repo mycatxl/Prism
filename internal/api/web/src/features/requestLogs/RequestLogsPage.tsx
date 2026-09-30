@@ -9,6 +9,7 @@ import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
@@ -63,11 +64,6 @@ const BASE64_DECODE_FAILED = "[Base64 解码失败]";
 const UNSUPPORTED_CONTENT_ENCODING_PREFIX = "暂不支持的 Content-Encoding: ";
 const CONTENT_ENCODING_DECODE_FAILED_PREFIX = "Content-Encoding=";
 const CONTENT_ENCODING_DECODE_FAILED_SUFFIX = " 解压失败";
-
-const CONTROL_CLASS =
-  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
-const FILTER_CONTROL_CLASS =
-  "h-8 w-full rounded-control border border-rule bg-paper-raised px-2 text-sm text-ink placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50";
 
 function toRFC3339(localDateTime: string): string {
   if (!localDateTime) {
@@ -418,8 +414,8 @@ function LogsPagination({
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={CONTROL_CLASS}
+          <Select
+            className="w-auto"
             value={String(pageSize)}
             disabled={disabled}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
@@ -429,7 +425,7 @@ function LogsPagination({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Button variant="secondary" size="sm" onClick={onPrev} disabled={disabled || pageIndex <= 0}>
           {t("上一页")}
@@ -761,9 +757,8 @@ export function RequestLogsPage() {
             </FilterField>
 
             <FilterField id="logs-proxy-type" label={t("代理类型")}>
-              <select
+              <Select
                 id="logs-proxy-type"
-                className={FILTER_CONTROL_CLASS}
                 value={filters.proxy_type}
                 onChange={(event) => updateFilter("proxy_type", event.target.value as ProxyTypeFilter)}
               >
@@ -771,20 +766,19 @@ export function RequestLogsPage() {
                 <option value="1">{t("HTTP 正向代理")}</option>
                 <option value="2">{t("HTTP 反向代理")}</option>
                 <option value="3">{t("SOCKS5 正向代理")}</option>
-              </select>
+              </Select>
             </FilterField>
 
             <FilterField id="logs-net-ok" label={t("网络状态")}>
-              <select
+              <Select
                 id="logs-net-ok"
-                className={FILTER_CONTROL_CLASS}
                 value={filters.net_ok}
                 onChange={(event) => updateFilter("net_ok", event.target.value as BoolFilter)}
               >
                 <option value="all">{t("全部")}</option>
                 <option value="true">{t("成功")}</option>
                 <option value="false">{t("失败")}</option>
-              </select>
+              </Select>
             </FilterField>
 
             <FilterField
@@ -1049,10 +1043,11 @@ export function RequestLogsPage() {
               ) : null}
 
               {!detailLog.prism_error && !detailLog.upstream_stage && !detailLog.upstream_err_kind && !detailLog.upstream_err_msg ? (
-                <p className="mt-3 flex items-center gap-2 text-xs text-signal-deep">
-                  <span aria-hidden className="size-2 shrink-0 rounded-full bg-signal" />
-                  {t("当前请求未产生异常诊断信息")}
-                </p>
+                <div className="mt-3">
+                  <Badge tone="signal" dot>
+                    {t("当前请求未产生异常诊断信息")}
+                  </Badge>
+                </div>
               ) : null}
             </section>
 

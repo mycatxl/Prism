@@ -18,7 +18,11 @@ export function Textarea({ className, invalid, ...props }: TextareaProps) {
       className={cn(
         "min-h-20 w-full resize-y rounded-control border bg-paper-raised px-2.5 py-1.5 text-sm text-ink",
         "placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50",
-        invalid ? "border-alert" : "border-rule",
+        // A field's hover is a border step; active is a step further. Invalid keeps
+        // the alert edge, which matters more than either.
+        invalid
+          ? "border-alert"
+          : "border-rule hover:border-rule-strong active:border-ink-faint",
         className,
       )}
       {...props}

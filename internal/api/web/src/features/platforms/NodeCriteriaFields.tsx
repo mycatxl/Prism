@@ -3,6 +3,8 @@ import { ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useWatch, type UseFormReturn } from "react-hook-form";
 import { Badge } from "../../components/ui/Badge";
+import { Button } from "../../components/ui/Button";
+import { Checkbox } from "../../components/ui/Checkbox";
 import { Fieldset, Textarea } from "../../components/ui/Input";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
@@ -156,10 +158,8 @@ function CheckboxList({
                     checked ? "bg-signal-wash text-signal-deep" : "text-ink-soft hover:bg-paper-sunk",
                   )}
                 >
-                  <input
+                  <Checkbox
                     id={id}
-                    type="checkbox"
-                    className="size-3.5 accent-[var(--color-signal)]"
                     checked={checked}
                     onChange={() => toggle(option.value)}
                   />
@@ -450,10 +450,12 @@ export function NodeCriteriaFields({
           {regionValues
             .filter((value) => value.startsWith("!"))
             .map((value) => (
-              <button
+              <Button
                 key={value}
                 type="button"
-                className="rounded-control border border-rule px-1.5 py-0.5 hover:border-alert hover:text-alert"
+                variant="secondary"
+                size="sm"
+                className="text-2xs hover:border-alert hover:text-alert"
                 onClick={() =>
                   form.setValue(
                     "region_filters_text",
@@ -465,7 +467,7 @@ export function NodeCriteriaFields({
                 }
               >
                 {`${t("排除")} ${value.slice(1).toUpperCase()} ×`}
-              </button>
+              </Button>
             ))}
         </div>
       ) : null}

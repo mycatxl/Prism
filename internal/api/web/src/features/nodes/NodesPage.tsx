@@ -55,19 +55,17 @@ import { getNode, listNodes, probeEgress, probeLatency } from "./api";
 import { buildBulkIntelScope, hasUnsupportedFilters } from "./intelScope";
 import { getAllRegions, getRegionName } from "./regions";
 import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
-import { getQualityStatus, inspectNode, qualityPollingInterval } from "../quality/api";
-import { NetworkSignals, QualityDetails, VerdictBadge } from "../quality/QualityDetails";
-import { ExitRecordsPanel } from "../quality/QualityPage";
-import { PurityGuide } from "../quality/PurityGuide";
-import { purityBands, typeLabels } from "../quality/presentation";
+import { getQualityStatus, inspectNode, qualityPollingInterval } from "./quality/api";
+import { NetworkSignals, QualityDetails, VerdictBadge } from "./quality/QualityDetails";
+import { ExitRecordsPanel } from "./quality/ExitRecordsPanel";
+import { PurityGuide } from "./quality/PurityGuide";
+import { purityBands, typeLabels } from "./quality/presentation";
 import { NodeIntelCell, NodeIntelPanel, NodeLabels } from "./NodeIntel";
 
 type Tone = NonNullable<BadgeProps["tone"]>;
 
 // The kit's select still carries a pre-Tailwind class name, so each call site
 // supplies the field treatment from the design tokens.
-const selectClass =
-  "h-8 w-auto rounded-control border border-rule bg-paper-raised pr-7 text-sm text-ink";
 
 function status(node: NodeSummary): { label: string; tone: Tone } {
   if (!node.enabled) return { label: "禁用", tone: "neutral" };
@@ -340,20 +338,22 @@ export function NodesPage() {
     "check",
   ].filter((key) => params.get(key)).length;
   const sortButton = (key: NodeSortBy, label: string) => (
-    <button
+    <Button
       type="button"
+      variant="quiet"
+      size="sm"
       onClick={() => changeSort(key)}
-      className="inline-flex items-center gap-1 text-xs font-medium text-ink-soft transition-colors hover:text-ink"
+      className="px-0 text-xs font-medium text-ink-soft"
     >
       {t(label)}
       {sort !== key ? (
-        <ArrowUpDown size={12} className="text-ink-faint" />
+        <ArrowUpDown size={12} aria-hidden className="text-ink-faint" />
       ) : order === "asc" ? (
-        <ArrowUp size={12} className="text-signal-deep" />
+        <ArrowUp size={12} aria-hidden className="text-signal-deep" />
       ) : (
-        <ArrowDown size={12} className="text-signal-deep" />
+        <ArrowDown size={12} aria-hidden className="text-signal-deep" />
       )}
-    </button>
+    </Button>
   );
   const sortableTH = (key: NodeSortBy, label: string, hint?: string) => (
     <TH
@@ -468,20 +468,21 @@ export function NodesPage() {
                 onChange={(event) => update("tag_keyword", event.target.value)}
               />
               {keyword && (
-                <button
+                <Button
                   type="button"
+                  variant="quiet"
+                  size="icon"
                   aria-label={t("清除搜索")}
-                  className="absolute top-1/2 right-1 -translate-y-1/2 rounded-control p-1 text-ink-faint transition-colors hover:text-ink"
+                  className="absolute top-1/2 right-1 -translate-y-1/2 text-ink-faint"
                   onClick={() => update("tag_keyword", "")}
                 >
-                  <X size={14} />
-                </button>
+                  <X size={14} aria-hidden />
+                </Button>
               )}
             </div>
             <Select
               value={mode}
               aria-label={t("状态")}
-              className={selectClass}
               onChange={(event) => update("status", event.target.value)}
             >
               {[
@@ -540,7 +541,6 @@ export function NodesPage() {
             <PanelToolbar>
             <Select
               aria-label={t("IP 类型")}
-              className={selectClass}
               value={filter.ip_type}
               onChange={event => update("ip_type", event.target.value)}
             >
@@ -551,7 +551,6 @@ export function NodesPage() {
             </Select>
             <Select
               aria-label={t("连接协议")}
-              className={selectClass}
               value={filter.protocol}
               onChange={event => update("protocol", event.target.value)}
             >
@@ -562,7 +561,6 @@ export function NodesPage() {
             </Select>
             <Select
               aria-label={t("质量状态")}
-              className={selectClass}
               value={filter.quality_state}
               onChange={event => update("quality_state", event.target.value)}
             >
@@ -572,7 +570,6 @@ export function NodesPage() {
             </Select>
             <Select
               aria-label={t("纯净度分级")}
-              className={selectClass}
               value={filter.purity_band}
               onChange={event => update("purity_band", event.target.value)}
             >
@@ -585,7 +582,6 @@ export function NodesPage() {
             </Select>
             <Select
               aria-label={t("排序")}
-              className={selectClass}
               value={sort}
               onChange={event => update("sort", event.target.value)}
             >
@@ -601,7 +597,6 @@ export function NodesPage() {
             </Select>
             <Select
               aria-label={t("排序方向")}
-              className={selectClass}
               value={order}
               onChange={event => update("order", event.target.value)}
             >
@@ -622,7 +617,6 @@ export function NodesPage() {
               <Fieldset label={t("平台")}>
                 <Select
                   aria-label={t("平台")}
-                  className={selectClass + " w-full"}
                   value={filter.platform_id}
                   onChange={(event) => update("platform_id", event.target.value)}
                 >
@@ -637,7 +631,6 @@ export function NodesPage() {
               <Fieldset label={t("订阅")}>
                 <Select
                   aria-label={t("订阅")}
-                  className={selectClass + " w-full"}
                   value={filter.subscription_id}
                   onChange={(event) =>
                     update("subscription_id", event.target.value)
@@ -654,7 +647,6 @@ export function NodesPage() {
               <Fieldset label={t("地区")}>
                 <Select
                   aria-label={t("地区")}
-                  className={selectClass + " w-full"}
                   value={filter.region}
                   onChange={(event) => update("region", event.target.value)}
                 >
@@ -678,7 +670,6 @@ export function NodesPage() {
               <Fieldset label={t("来源风险等级")}>
                 <Select
                   aria-label={t("风险等级")}
-                  className={selectClass + " w-full"}
                   value={filter.risk_grade}
                   onChange={event => update("risk_grade", event.target.value)}
                 >
@@ -714,7 +705,6 @@ export function NodesPage() {
               <Fieldset label={t("判定")}>
                 <Select
                   aria-label={t("判定")}
-                  className={selectClass + " w-full"}
                   value={filter.verdict}
                   onChange={event => update("verdict", event.target.value)}
                 >
@@ -733,7 +723,6 @@ export function NodesPage() {
               <Fieldset label={t("最低置信度")}>
                 <Select
                   aria-label={t("最低置信度")}
-                  className={selectClass + " w-full"}
                   value={filter.confidence_min}
                   onChange={event => update("confidence_min", event.target.value)}
                 >
@@ -744,7 +733,6 @@ export function NodesPage() {
               <Fieldset label={t("原生 IP")}>
                 <Select
                   aria-label={t("原生 IP")}
-                  className={selectClass + " w-full"}
                   value={filter.native}
                   onChange={event => update("native", event.target.value)}
                 >
@@ -898,14 +886,15 @@ export function NodesPage() {
                     return (
                       <TR key={node.node_hash} selected={selected === node.node_hash}>
                         <TDClip title={subtitle}>
-                          <button
+                          <Button
                             type="button"
-                            className="flex w-full min-w-0 items-center gap-2 text-left"
+                            variant="quiet"
+                            className="h-auto w-full min-w-0 justify-start gap-2 p-0 text-left"
                             onClick={() => open(node.node_hash)}
                           >
                             <Network size={14} aria-hidden className="shrink-0 text-ink-faint" />
                             <span className="truncate font-medium text-ink">{nameOf(node)}</span>
-                          </button>
+                          </Button>
                         </TDClip>
                         <TD>
                           <Badge tone={state.tone} dot>
@@ -981,7 +970,6 @@ export function NodesPage() {
                 <label className="flex items-center gap-1.5 text-xs text-ink-soft">
                   <span>{t("每页")}</span>
                   <Select
-                    className={selectClass}
                     value={pageSize}
                     disabled={nodesQuery.isFetching}
                     aria-label={t("每页")}
