@@ -613,16 +613,3 @@ func isForbiddenIP(host string) bool {
 	}
 	return addrpolicy.AddrIsForbidden(addr)
 }
-
-func isForbiddenHostname(host string) bool {
-	normalized := addrpolicy.NormalizeHost(host)
-	if normalized == "" {
-		return true
-	}
-	// A name is forbidden when the shared policy refuses it and it is not an
-	// address literal (that case belongs to isForbiddenIP).
-	if _, err := netip.ParseAddr(normalized); err == nil {
-		return false
-	}
-	return addrpolicy.HostIsForbiddenLexically(normalized)
-}

@@ -756,10 +756,6 @@ func formatListenAddress(listenAddress string, port int) string {
 	return net.JoinHostPort(listenAddress, strconv.Itoa(port))
 }
 
-func formatListenURL(listenAddress string, port int) string {
-	return "http://" + formatListenAddress(listenAddress, port)
-}
-
 // shutdownStepTimeout bounds a single shutdown step; the whole sequence has a
 // 30s budget (WP03 §4).
 const shutdownStepTimeout = 10 * time.Second

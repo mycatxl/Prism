@@ -278,9 +278,6 @@ type offlineCase struct {
 	// helper server, or an endpoint instead of an inbound. It exists because
 	// such a case only learns its ports while the test runs.
 	setup func(t *testing.T) peerFixture
-	// udp marks a protocol that carries datagrams: the TCP-through-tunnel
-	// assertion does not apply, so the case asserts the handshake instead.
-	udp bool
 }
 
 func offlineCases(t *testing.T) []offlineCase {

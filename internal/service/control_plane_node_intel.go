@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -311,13 +310,4 @@ func intelFilterContains(values []string, want string) bool {
 		}
 	}
 	return false
-}
-
-// intelFilterEgressIP exposes the egress IP a node's assessment is keyed by. It
-// is only used by tests and by the response builder.
-func intelFilterEgressIP(entry *node.NodeEntry) netip.Addr {
-	if entry == nil {
-		return netip.Addr{}
-	}
-	return entry.GetEgressIP()
 }
