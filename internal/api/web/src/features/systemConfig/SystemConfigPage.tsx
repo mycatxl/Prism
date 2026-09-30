@@ -643,9 +643,10 @@ export function SystemConfigPage() {
                       const dirty = changedKeys.filter(field => (item.fields as readonly string[]).includes(field)).length;
                       return (
                         <li key={item.id}>
-                          <button
+                          <Button
                             type="button"
-                            className="flex w-full min-w-0 items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-paper-sunk/60"
+                            variant="quiet"
+                            className="h-auto w-full min-w-0 justify-start gap-3 rounded-none px-4 py-2 text-left"
                             onClick={() => selectCategory(item.id)}
                             aria-label={t(item.title)}
                           >
@@ -660,7 +661,7 @@ export function SystemConfigPage() {
                               </span>
                             )}
                             <ChevronRight size={15} aria-hidden className="shrink-0 text-ink-faint" />
-                          </button>
+                          </Button>
                         </li>
                       );
                     })}

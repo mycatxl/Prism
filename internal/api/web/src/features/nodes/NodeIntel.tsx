@@ -8,9 +8,9 @@ import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatRelativeTime } from "../../lib/time";
 import { createIntelJob } from "../jobs/api";
-import { IPTypeBadge } from "../quality/QualityDetails";
-import { purityBands, typeLabels } from "../quality/presentation";
-import type { QualitySummary } from "../quality/types";
+import { IPTypeBadge } from "./quality/QualityDetails";
+import { purityBands, typeLabels } from "./quality/presentation";
+import type { QualitySummary } from "./quality/types";
 import { getRegionName } from "./regions";
 import type { NodeIntel } from "./types";
 

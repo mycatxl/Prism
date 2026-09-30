@@ -1,12 +1,12 @@
 import { AlertCircle, ArrowUpRight, Building2, Check, Clock3, Home, LoaderCircle, Server, ShieldCheck, Smartphone, Wifi } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Badge, type BadgeProps } from "../../components/ui/Badge";
-import { Button } from "../../components/ui/Button";
-import { Panel, PanelBody, PanelHeader, SectionTitle } from "../../components/ui/Panel";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { useI18n } from "../../i18n";
-import { formatDateTime, formatRelativeTime } from "../../lib/time";
+import { Badge, type BadgeProps } from "../../../components/ui/Badge";
+import { Button } from "../../../components/ui/Button";
+import { Panel, PanelBody, PanelHeader, SectionTitle } from "../../../components/ui/Panel";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
+import { useI18n } from "../../../i18n";
+import { formatDateTime, formatRelativeTime } from "../../../lib/time";
 import type { QualityEvidence, QualitySummary } from "./types";
 import { assessmentReasons, evidenceFor, inspectionErrorLabel, providerName, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, useQualityTime, verdictLabels } from "./presentation";
 import { PurityGuide } from "./PurityGuide";

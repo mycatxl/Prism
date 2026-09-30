@@ -1,9 +1,9 @@
 import { ShieldCheck } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
-import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { useI18n } from "../../i18n";
+import { Badge } from "../../../components/ui/Badge";
+import { Panel, PanelBody, PanelHeader } from "../../../components/ui/Panel";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
+import { useI18n } from "../../../i18n";
 import type { QualityStatus } from "./types";
 
 /**

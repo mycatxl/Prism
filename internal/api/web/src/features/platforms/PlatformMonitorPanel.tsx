@@ -6,6 +6,7 @@ import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer,
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { apiRequest } from "../../lib/api-client";
@@ -87,9 +88,6 @@ const EMPTY_REALTIME_ITEMS: RealtimeLeasesResponse["items"] = [];
 const EMPTY_HISTORY_REQUEST_ITEMS: HistoryResponse<HistoryRequestsItem>["items"] = [];
 const EMPTY_ACCESS_LATENCY_ITEMS: HistoryAccessLatencyResponse["items"] = [];
 const EMPTY_LEASE_LIFETIME_ITEMS: HistoryLeaseLifetimeResponse["items"] = [];
-
-const selectClass =
-  "h-7 w-auto rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink";
 
 function toNumber(raw: unknown): number {
   const value = Number(raw);
@@ -493,7 +491,7 @@ function TrendTooltipContent({ active, payload, label, lines, valueFormatter }: 
               <span className="flex items-center gap-1.5 text-ink-soft">
                 <i
                   aria-hidden
-                  className="inline-block size-2 shrink-0 rounded-full"
+                  className="inline-block size-2 shrink-0 rounded-[2px]"
                   style={{ background: line.color }}
                 />
                 {line.name}
@@ -829,9 +827,9 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
 
         <label className="flex items-center gap-1.5 text-xs text-ink-soft" htmlFor="platform-monitor-range">
           <span>{t("时间范围")}</span>
-          <select
+          <Select
             id="platform-monitor-range"
-            className={selectClass}
+            className="w-auto"
             value={rangeKey}
             onChange={(event) => setRangeKey(event.target.value as RangeKey)}
           >
@@ -840,7 +838,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
                 {t(option.label)}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
       </div>
 

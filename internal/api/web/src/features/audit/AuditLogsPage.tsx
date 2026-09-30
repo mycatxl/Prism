@@ -6,6 +6,7 @@ import { Button } from "../../components/ui/Button";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { Select } from "../../components/ui/Select";
 import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../components/ui/Table";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -19,8 +20,6 @@ const NANOS_PER_MILLI = 1_000_000;
 const MAX_VISIBLE_DETAIL_KEYS = 3;
 const EMPTY_ENTRIES: AuditLogEntry[] = [];
 
-const CONTROL_CLASS =
-  "h-7 rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink disabled:cursor-not-allowed disabled:opacity-50";
 
 // action is "<METHOD> <route pattern>", e.g. "PATCH /api/v1/platforms/{id}".
 function splitAuditAction(action: string): { method: string; route: string } {
@@ -113,8 +112,8 @@ function AuditPagination({
       <div className="flex items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={CONTROL_CLASS}
+          <Select
+            className="w-auto"
             value={String(pageSize)}
             disabled={disabled}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
@@ -124,7 +123,7 @@ function AuditPagination({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Button variant="secondary" size="sm" onClick={onPrev} disabled={disabled || pageIndex <= 0}>
           {t("上一页")}

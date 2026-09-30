@@ -58,15 +58,18 @@ capacity:
 
 verify: lint test test-race protocol-matrix test-web
 
-# Frontend checks that need no browser: the panel's server modules, the
-# intel-scope mapping, and the design system's contrast gate (which reads the
-# tokens in src/styles/design.css and fails on any pair below WCAG AA). Part of
-# `verify`, so a regression in the panel or in the palette fails CI like any Go
-# test would.
+# Frontend checks that need no browser: the panel's server modules, the kit's own
+# invariants, the design system's contrast gate (which reads the tokens in
+# src/styles/design.css and fails on any pair below WCAG AA), and the
+# component-kit gate (which reads the .tsx sources directly, because the
+# anti-pattern detector does not scan them — DESIGN.md:235-236). Part of
+# `verify`, so a regression in the panel, in the kit or in the palette fails CI
+# like any Go test would.
 test-web:
 	$(NPM) --prefix $(WEB_DIR) run test:config
 	$(NPM) --prefix $(WEB_DIR) run check:types
 	$(NPM) --prefix $(WEB_DIR) run check:contrast
+	$(NPM) --prefix $(WEB_DIR) run check:kit
 
 # The browser-driven checks. They need Playwright's browser binaries, which no
 # workflow installs (CI has no browser step), so this is a local/on-demand target

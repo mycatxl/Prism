@@ -1,5 +1,5 @@
-import { cn } from "../../lib/cn";
-import { useI18n } from "../../i18n";
+import { cn } from "../../../lib/cn";
+import { useI18n } from "../../../i18n";
 import { purityBands } from "./presentation";
 
 // A small filled swatch carries the band, not a coloured edge. A chromatic

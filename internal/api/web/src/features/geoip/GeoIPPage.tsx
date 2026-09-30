@@ -164,13 +164,14 @@ export function GeoIPPage() {
                     variant="secondary"
                     onClick={() => void updateMutation.mutateAsync()}
                     disabled={updateMutation.isPending}
+                    loading={updateMutation.isPending}
                   >
                     <ArrowDownToLine
                       size={14}
                       aria-hidden
                       className={cn(updateMutation.isPending && "animate-spin")}
                     />
-                    {updateMutation.isPending ? t("更新中...") : t("立即更新")}
+                    {t("立即更新")}
                   </Button>
                 </div>
               </div>

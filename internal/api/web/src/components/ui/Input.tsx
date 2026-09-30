@@ -17,9 +17,14 @@ export const Input = forwardRef<
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        "h-8 w-full rounded-control border bg-paper-raised px-2.5 text-sm text-ink",
+        "h-[var(--control-h)] w-full rounded-control border bg-paper-raised px-2.5 text-sm text-ink",
         "placeholder:text-ink-faint disabled:cursor-not-allowed disabled:opacity-50",
-        invalid ? "border-alert" : "border-rule",
+        // Hover and active are the two states a field can have that a border can
+        // express without moving anything. They are on the valid branch only: an
+        // invalid field keeps the alert edge, which is the more important signal.
+        invalid
+          ? "border-alert"
+          : "border-rule hover:border-rule-strong active:border-ink-faint",
         className,
       )}
       {...rest}

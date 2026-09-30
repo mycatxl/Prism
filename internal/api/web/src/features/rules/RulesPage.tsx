@@ -338,8 +338,8 @@ export function RulesPage() {
         width="md"
         footer={
           <div className="flex items-center justify-end gap-2">
-            <Button type="submit" form="rule-edit-form" disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? t("保存中...") : t("保存规则")}
+            <Button type="submit" form="rule-edit-form" disabled={updateMutation.isPending} loading={updateMutation.isPending}>
+              {t("保存规则")}
             </Button>
           </div>
         }
@@ -420,8 +420,9 @@ export function RulesPage() {
               variant="secondary"
               onClick={() => void resolveMutation.mutateAsync()}
               disabled={resolveMutation.isPending}
+              loading={resolveMutation.isPending}
             >
-              {resolveMutation.isPending ? t("测试中...") : t("开始测试")}
+              {t("开始测试")}
             </Button>
           </div>
         }
@@ -476,8 +477,8 @@ export function RulesPage() {
             <Button variant="secondary" onClick={() => setCreateModalOpen(false)} disabled={createMutation.isPending}>
               {t("取消")}
             </Button>
-            <Button type="submit" form="create-rule-form" disabled={createMutation.isPending}>
-              {createMutation.isPending ? t("创建中...") : t("确认创建")}
+            <Button type="submit" form="create-rule-form" disabled={createMutation.isPending} loading={createMutation.isPending}>
+              {t("确认创建")}
             </Button>
           </div>
         }

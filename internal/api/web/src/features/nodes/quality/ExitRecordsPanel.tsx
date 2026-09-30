@@ -2,20 +2,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Globe2, LoaderCircle, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { Select } from "../../components/ui/Select";
-import { Sheet } from "../../components/ui/Sheet";
-import { TBody, TD, TDClip, TDNum, TH, THead, TR, Table, TableWrap } from "../../components/ui/Table";
-import { ToastContainer } from "../../components/ui/Toast";
-import { useDebouncedValue } from "../../hooks/useDebouncedValue";
-import { useToast } from "../../hooks/useToast";
-import { useI18n } from "../../i18n";
-import { formatApiErrorMessage } from "../../lib/error-message";
-import { formatRelativeTime } from "../../lib/time";
+import { Button } from "../../../components/ui/Button";
+import { Input } from "../../../components/ui/Input";
+import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../../components/ui/Panel";
+import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
+import { Select } from "../../../components/ui/Select";
+import { Sheet } from "../../../components/ui/Sheet";
+import { TBody, TD, TDClip, TDNum, TH, THead, TR, Table, TableWrap } from "../../../components/ui/Table";
+import { ToastContainer } from "../../../components/ui/Toast";
+import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
+import { useToast } from "../../../hooks/useToast";
+import { useI18n } from "../../../i18n";
+import { formatApiErrorMessage } from "../../../lib/error-message";
+import { formatRelativeTime } from "../../../lib/time";
 import { getIPQuality, getQualityStatus, inspectIP, listQuality, qualityPollingInterval } from "./api";
 import { IPTypeBadge, QualityBadge, QualityDetails, VerdictBadge } from "./QualityDetails";
 import { evidenceFor, inspectionErrorLabel } from "./presentation";
@@ -181,14 +181,15 @@ export function ExitRecordsPanel() {
               {records.data?.items.map(item => (
                 <TR key={item.ip} selected={selected === item.ip}>
                   <TDClip title={item.ip}>
-                    <button
+                    <Button
                       type="button"
-                      className="flex w-full min-w-0 items-center gap-2 text-left"
+                      variant="quiet"
+                      className="h-auto w-full min-w-0 justify-start gap-2 p-0 text-left"
                       onClick={() => update("quality_ip", item.ip || "")}
                     >
                       <Globe2 size={15} aria-hidden className="shrink-0 text-ink-faint" />
                       <span className="readout truncate font-medium text-ink">{item.ip}</span>
-                    </button>
+                    </Button>
                   </TDClip>
                   <TDClip className="text-xs text-ink-faint" title={item.evidence?.organization || undefined}>
                     {item.evidence?.organization || t("等待来源数据")}

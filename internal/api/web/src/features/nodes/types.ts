@@ -1,4 +1,4 @@
-import type { QualitySummary } from "../quality/types";
+import type { QualitySummary } from "./quality/types";
 
 export type NodeTag = {
   subscription_id: string;

@@ -12,6 +12,7 @@ import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
@@ -95,10 +96,21 @@ type FilterFieldDescriptor = {
   kind: FilterFieldKind;
   options?: readonly string[];
   placeholder?: string;
+  /**
+   * Set when the field is edited by the profile-level control instead of by a
+   * row of this table, so the filter section never grows a second input for the
+   * same value.
+   */
+  editedByProfileField?: boolean;
 };
 
 // One descriptor per field of exportProfileFilter, so the form and the filter
 // chips can never drift apart from the API contract.
+//
+// `platform_id` has a descriptor so the chips and the summary still describe
+// it, but its input lives at the profile level: the API treats the profile
+// column and this filter key as one value with one meaning, so the form asks
+// for it exactly once (see `editedByProfileField`).
 const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
   { key: "ip_type", label: "IP 类型", kind: "select", options: IP_TYPE_OPTIONS },
   { key: "quality_state", label: "质量状态", kind: "select", options: QUALITY_STATE_OPTIONS },
@@ -119,7 +131,7 @@ const FILTER_FIELDS: readonly FilterFieldDescriptor[] = [
   { key: "circuit_open", label: "熔断状态", kind: "boolean" },
   { key: "has_outbound", label: "出站可用", kind: "boolean" },
   { key: "native", label: "原生 IP", kind: "boolean" },
-  { key: "platform_id", label: "平台", kind: "platform" },
+  { key: "platform_id", label: "平台", kind: "platform", editedByProfileField: true },
   { key: "subscription_id", label: "订阅", kind: "subscription" },
   { key: "checks", label: "检测项（check_id:outcome，逗号分隔）", kind: "text", placeholder: "chatgpt:unblocked" },
 ];
@@ -257,9 +269,10 @@ const exportProfileSchema = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["platform_id"], message: "关联平台必须是 UUID" });
     }
     const { filter } = value;
-    if (filter.platform_id.trim() && !UUID_PATTERN.test(filter.platform_id.trim())) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["filter", "platform_id"], message: "关联平台必须是 UUID" });
-    }
+    // filter.platform_id has no input of its own: it is owned by the
+    // profile-level field above, and a legacy row that still carries a value
+    // there is migrated into that field by profileToForm. Validating a value
+    // the form no longer shows would report an error nobody can fix.
     if (filter.subscription_id.trim() && !UUID_PATTERN.test(filter.subscription_id.trim())) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["filter", "subscription_id"], message: "订阅（可选）必须是 UUID" });
     }
@@ -475,7 +488,9 @@ function formToFilter(form: ExportFilterForm): ExportProfileFilter {
   assignText("egress_ip", form.egress_ip);
   assignText("tag_keyword", form.tag_keyword);
   assignText("probed_since", form.probed_since);
-  assignText("platform_id", form.platform_id);
+  // platform_id is deliberately absent: the profile column is its one home.
+  // Writing it here too would let the two disagree, which the API rejects with
+  // a 400 (see checkExportProfilePlatformConflict in handler_export.go).
   assignText("subscription_id", form.subscription_id);
   const triple = (value: TriState): boolean | undefined =>
     value === "" ? undefined : value === "true";
@@ -507,13 +522,20 @@ function formToFilter(form: ExportFilterForm): ExportProfileFilter {
 }
 
 function profileToForm(profile: ExportProfile): ExportProfileForm {
+  const filter = filterToForm(profile.filter);
+  // A profile written before the column became the single home for the
+  // platform may still carry it in the filter JSON only. Surface it in the one
+  // input that owns it now; saving then moves it onto the column, so the old
+  // row migrates on its next edit instead of quietly filtering by a value the
+  // form never showed.
+  const platformID = profile.platform_id?.trim() || filter.platform_id.trim();
   return {
     name: profile.name,
     format: profile.format,
-    platform_id: profile.platform_id ?? "",
+    platform_id: platformID,
     name_template: profile.name_template,
     enabled: profile.enabled,
-    filter: filterToForm(profile.filter),
+    filter,
   };
 }
 
@@ -621,38 +643,38 @@ function ExportProfileFields({
     return (
       <Fieldset key={field.key} label={t(field.label)} htmlFor={inputId}>
         {field.kind === "select" ? (
-          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
+          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
             <option value="">{t("不限")}</option>
             {(field.options ?? []).map((option) => (
               <option key={option} value={option}>
                 {option}
               </option>
             ))}
-          </select>
+          </Select>
         ) : field.kind === "boolean" ? (
-          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
+          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
             <option value="">{t("不限")}</option>
             <option value="true">{t("是")}</option>
             <option value="false">{t("否")}</option>
-          </select>
+          </Select>
         ) : field.kind === "platform" ? (
-          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
+          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
             <option value="">{t("不限")}</option>
             {platforms.map((platform) => (
               <option key={platform.id} value={platform.id}>
                 {platform.name}
               </option>
             ))}
-          </select>
+          </Select>
         ) : field.kind === "subscription" ? (
-          <select id={inputId} className={cn(selectClass, invalidClass)} {...register(path)}>
+          <Select id={inputId} invalid={Boolean(error)} {...register(path)}>
             <option value="">{t("不限")}</option>
             {subscriptions.map((subscription) => (
               <option key={subscription.id} value={subscription.id}>
                 {subscription.name}
               </option>
             ))}
-          </select>
+          </Select>
         ) : (
           <Input
             id={inputId}
@@ -689,13 +711,13 @@ function ExportProfileFields({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Fieldset label={t("导出格式")} htmlFor={`${idPrefix}-format`}>
-          <select id={`${idPrefix}-format`} className={selectClass} {...register("format")}>
+          <Select id={`${idPrefix}-format`} {...register("format")}>
             {EXPORT_FORMATS.map((format) => (
               <option key={format} value={format}>
                 {t(FORMAT_LABELS[format])}
               </option>
             ))}
-          </select>
+          </Select>
         </Fieldset>
 
         <Fieldset
@@ -707,9 +729,9 @@ function ExportProfileFields({
               : undefined
           }
         >
-          <select
+          <Select
             id={`${idPrefix}-platform`}
-            className={cn(selectClass, formState.errors.platform_id && "border-alert")}
+            invalid={Boolean(formState.errors.platform_id)}
             {...register("platform_id")}
           >
             <option value="">{t("不限制")}</option>
@@ -718,7 +740,7 @@ function ExportProfileFields({
                 {platform.name}
               </option>
             ))}
-          </select>
+          </Select>
           {formState.errors.platform_id?.message ? (
             <p className="text-xs text-alert">{t(formState.errors.platform_id.message)}</p>
           ) : null}
@@ -774,7 +796,7 @@ function ExportProfileFields({
           </p>
         </div>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {FILTER_FIELDS.map(renderFilterField)}
+          {FILTER_FIELDS.filter((field) => !field.editedByProfileField).map(renderFilterField)}
         </div>
       </section>
     </form>
@@ -892,9 +914,8 @@ function ExportDialog({
 
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <Fieldset label={t("导出格式")} htmlFor="export-dialog-format">
-          <select
+          <Select
             id="export-dialog-format"
-            className={selectClass}
             value={format}
             onChange={(event) => setFormat(event.target.value as ExportFormat)}
           >
@@ -903,13 +924,12 @@ function ExportDialog({
                 {t(FORMAT_LABELS[option])}
               </option>
             ))}
-          </select>
+          </Select>
         </Fieldset>
 
         <Fieldset label={t("导出上限")} htmlFor="export-dialog-limit">
-          <select
+          <Select
             id="export-dialog-limit"
-            className={selectClass}
             value={String(limit)}
             onChange={(event) => setLimit(Number(event.target.value))}
           >
@@ -918,7 +938,7 @@ function ExportDialog({
                 {option}
               </option>
             ))}
-          </select>
+          </Select>
         </Fieldset>
       </div>
 
@@ -1108,8 +1128,6 @@ function SubscriptionUrlDialog({
   );
 }
 
-const selectClass =
-  "h-7 w-auto rounded-control border border-rule bg-paper-raised px-1.5 text-xs text-ink";
 
 /** Offset pagination for this page's table footer. */
 function PageNavigator({
@@ -1153,8 +1171,8 @@ function PageNavigator({
       <div className="flex flex-wrap items-center gap-2">
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("每页")}</span>
-          <select
-            className={selectClass}
+          <Select
+            className="w-auto px-1.5 text-xs"
             value={pageSize}
             onChange={(event) => onPageSizeChange(Number(event.target.value))}
           >
@@ -1163,7 +1181,7 @@ function PageNavigator({
                 {size}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="flex items-center gap-1.5 text-xs text-ink-soft">
           <span>{t("跳至")}</span>
@@ -1546,9 +1564,13 @@ export function ExportsPage() {
                       : t("启用导出配置 {{name}}", { name: profile.name });
                     const chips = activeFilterChips(profile.filter);
                     const lastAccess = nsToIso(profile.last_access_at_ns);
-                    const platformName = profile.platform_id
-                      ? platformOptions.find((platform) => platform.id === profile.platform_id)?.name ??
-                        profile.platform_id
+                    // Same precedence as the edit form: the column wins, and a
+                    // legacy filter-only row still shows its platform.
+                    const profilePlatformID =
+                      profile.platform_id?.trim() || profile.filter.platform_id?.trim() || "";
+                    const platformName = profilePlatformID
+                      ? (platformOptions.find((platform) => platform.id === profilePlatformID)?.name ??
+                        profilePlatformID)
                       : "";
                     const filterSummary = chips.map((field) => t(field.label)).join(" · ");
                     const filterDetail = chips

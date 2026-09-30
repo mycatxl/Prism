@@ -1,3 +1,13 @@
+---
+id: prism-console-implementation
+type: submodule-design
+title: Prism console implementation design
+status: draft
+parent: prism-console-visual
+tags:
+  - frontend
+  - implementation
+---
 # Prism console — implementation detail
 
 How the console is built. The **visual system of record** — concept, colour, type,
@@ -40,12 +50,39 @@ these; it does not invent a control.
 | `Panel` / `PanelHeader` / `PanelToolbar` / `PanelBody` / `PanelFooter` | A region. Header 44px, padding 16, title 14/600. **Actions are visible, never hover-revealed** — an action behind `opacity: 0` does not exist on a touch screen |
 | `Table` / `THead` / `TH` / `TBody` / `TR` / `TD` / `TDNum` / `TDClip` | The data grid. Fixed row heights 32/28/36, sticky head, **row rules only, no cell borders**; long text must use `TDClip` |
 | `Readout` / `ReadoutStrip` / `ReadoutCell` / `Numeral` | Instrument readings and the count-up |
-| `Button` / `Input` / `Textarea` / `Select` / `Switch` | Controls, 28px tall (sm 24 / lg 32) |
+| `Button` / `Input` / `Textarea` / `Select` / `Checkbox` / `Switch` | Controls, 28px tall (sm 24 / lg 32). Every one ships default / hover / focus / active / disabled / loading / error — see the state table below |
 | `Badge` | Status. The only fully-round shape in the system, so the shape itself says "this is a state" |
 | `Tabs` / `Tooltip` / `Sheet` / `Toast` | Overlays and feedback |
 | `LoadingState` / `ErrorState` / `EmptyState` | The three states, identical everywhere |
 
 **Radix owns behaviour; this repository owns appearance.**
+
+### States: where each of the seven lives
+
+Root `DESIGN.md:130-131` asks every control for default / hover / focus / active /
+disabled / loading / error. This is the audit of that list — it is a table because
+the answer differs per state, and two of the seven belong somewhere other than the
+component:
+
+| State | Where it lives | Why there |
+|---|---|---|
+| default | The variant's own classes | — |
+| hover | Per component, a step on the component's own colour | The step differs by surface (a button fills, a field steps its border) |
+| focus | **One rule in `design.css`** — `:focus-visible`, 2px accent, 1px offset | Focus is one decision for the whole console; a per-component outline would be a second one |
+| active | Per component, one step past hover | — |
+| disabled | `disabled:opacity-45` (buttons) / `disabled:opacity-50` (fields) + `cursor-not-allowed` | — |
+| loading | `Button`'s `loading` prop: spinner **and** `disabled` **and** `aria-busy` | A spinner that leaves the button clickable invites a double submit; one a screen reader cannot announce is not a state. **Not available with `asChild`** — Radix's `Slot` takes exactly one child |
+| error | `Input` / `Select` / `Textarea`'s `invalid` prop: the alert border **and** `aria-invalid` | A button does not fail; the field does. An error that is only visible is not reported to a screen reader |
+
+Two consequences worth stating, because they are the ones that drifted before:
+
+- **A page never swaps a button's label to say it is working.** `<Button loading>`
+  keeps the label and adds the spinner; `{pending ? t("保存中...") : t("保存")}`
+  moves the button's own text — and its width — out from under the pointer that
+  just clicked it.
+- **`Checkbox` is the one control whose box is not its hit target.** It is always
+  inside a `<label>` that carries the click area, so the 14px box is the visual
+  and the label is the target.
 
 Charts are ECharts. The console's 3D globe is `echarts-gl` with a texture drawn at
 runtime from the repository's own `public/world-110m.geo.json` — no added asset, no
@@ -92,11 +129,13 @@ opaque black block. WebGL unavailable falls back to the flat map.
 | Floor | How it is checked |
 |---|---|
 | Contrast and series separation, both themes | `npm run check:contrast` — **86 pairs**, light and dark. In `make test-web` → `make verify`, so a palette regression fails CI like a Go test |
+| The kit is the only source of controls | `npm run check:kit` reads the `.tsx` sources: native `<select>`/`<input>`/`<button>`/`<textarea>` outside `src/components/ui/`, hard-coded control heights inside it, and `rounded-full` anywhere but `Badge`. In `make test-web` → `make verify` |
+| The kit's own invariants | `tests/kit.test.mjs` — the `Button` single-child rule, token heights, and the pill reservation, each with the reason it exists |
 | Row height and panel geometry | DOM audit of the live pages: `--row-h`, panel radius 8, rail width, rhythm on 6/8/12/16 |
 | Types are really checked | `npm run check:types` runs `tsc -p tsconfig.app.json --noEmit`. **`npx tsc --noEmit` at the repo root is a no-op** — `tsconfig.json` is a solution file with `files: []` — so it proves nothing |
 | Focus is visible | `:focus-visible` draws 2px accent with 1px offset |
 | Reduced motion | The media query at the end of `design.css` |
-| Anti-patterns | `make test-slop` — see the detector section below |
+| Anti-patterns | `make test-slop` — see the detector section below. **It does not read `.tsx`**, which is why `check:kit` exists |
 
 ## Anti-patterns and how to check for them
 

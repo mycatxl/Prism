@@ -1,13 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, ArrowUpRight, LoaderCircle, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
-import { Badge, type BadgeProps } from "../../components/ui/Badge";
-import { Button } from "../../components/ui/Button";
-import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
-import { ErrorState } from "../../components/ui/QueryState";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { useI18n } from "../../i18n";
-import { formatDateTime } from "../../lib/time";
+import { Badge, type BadgeProps } from "../../../components/ui/Badge";
+import { Button } from "../../../components/ui/Button";
+import { Panel, PanelBody, PanelHeader } from "../../../components/ui/Panel";
+import { ErrorState } from "../../../components/ui/QueryState";
+import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
+import { useI18n } from "../../../i18n";
+import { formatDateTime } from "../../../lib/time";
 import { getQualityStatus, reviewIPPure } from "./api";
 import { purityBand, purityScore, useQualityTime } from "./presentation";
 
