@@ -261,17 +261,22 @@ function attribution(finding) {
    * replica probes.
    */
   if (finding.rule === "radial-halo" && /(^|\/)(ui\/index\.html|styles\/design\.css)$/.test(finding.file ?? "")) {
-    const body = read();
-    if (!/prism/i.test(body)) return null;
     /*
-     * The excuse has to name the colour the engine named: it holds only while that exact
-     * stop is inside the hero band's rule. Editing any of the band's stops (or moving them
-     * off the band) drops the excuse by itself, which is the point.
+     * The excuse has to name the colour the engine named, and that colour has to sit inside
+     * the hero band's rule in the source stylesheet. The built shell links its stylesheet
+     * rather than inlining it, so the source is the only place the claim can be checked.
+     * Editing the band's stops, or moving them off the band, drops the excuse by itself.
      */
     const stop = /#([0-9a-f]{6})/i.exec(finding.text ?? "");
     if (!stop) return null;
+    let css = "";
+    try {
+      css = readFileSync(new URL("../src/styles/design.css", import.meta.url), "utf8");
+    } catch {
+      return null;
+    }
     const rule = /\.wb-slot-a[^{}]*\{[^}]*\}/g;
-    for (let hit = rule.exec(body); hit; hit = rule.exec(body)) {
+    for (let hit = rule.exec(css); hit; hit = rule.exec(css)) {
       if (new RegExp("#" + stop[1], "i").test(hit[0])) {
         return "our own shell; the hero band reproduces the measured light field of the operator's reference art, bounded in DESIGN.md";
       }
