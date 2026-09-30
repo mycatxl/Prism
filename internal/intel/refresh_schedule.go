@@ -1,3 +1,5 @@
+package intel
+
 // This file implements the §3.6 scheduled refresh of the intel subsystem.
 //
 // The plan requires a periodic job driven by intel_refresh_schedule:
@@ -9,7 +11,6 @@
 // Without it, evidence that passed its TTL is never re-queried and a deployment
 // that leaves intel_auto_checks off (the default) keeps reading stale unlock
 // results forever. This file supplies the missing trigger.
-package intel
 
 import (
 	"context"

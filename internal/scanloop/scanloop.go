@@ -1,3 +1,5 @@
+// Package scanloop provides the shared periodic scan cadence: an interval
+// with bounded jitter, so independent scanners do not align on one tick.
 package scanloop
 
 import (

@@ -1,3 +1,5 @@
+package node
+
 // OpenVPN .ovpn profile parsing (WP06 §4).
 //
 // sing-box ships no .ovpn reader: the openvpn-client endpoint only consumes
@@ -5,7 +7,6 @@
 // subset of an OpenVPN client profile into those options, and refuses anything
 // the endpoint cannot represent with an explicit reason instead of letting
 // box.New fail later (fact F8).
-package node
 
 import (
 	"bufio"

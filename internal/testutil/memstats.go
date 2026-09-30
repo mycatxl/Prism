@@ -1,3 +1,6 @@
+// Package testutil holds the test-only helpers the other packages share:
+// the memory-accounting helpers, the no-op outbound and the dial-capable
+// stub outbound builder.
 package testutil
 
 import "runtime"

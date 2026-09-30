@@ -24,7 +24,8 @@ var (
 	ErrStorageFull   = errors.New("quality evidence storage limit reached")
 )
 
-// Pointers distinguish an observed negative signal from missing provider data.
+// Signals is the set of provider signals reported for one IP address. Pointers
+// distinguish an observed negative signal from missing provider data.
 type Signals struct {
 	Proxy       *bool `json:"proxy"`
 	VPN         *bool `json:"vpn"`

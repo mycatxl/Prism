@@ -260,9 +260,9 @@ func TestService_FlushesByBatchSize(t *testing.T) {
 	svc.Start()
 	t.Cleanup(svc.Stop)
 
-	baseTs := time.Now().UnixNano()
+	baseTS := time.Now().UnixNano()
 	svc.EmitRequestLog(proxy.RequestLogEntry{
-		StartedAtNs: baseTs,
+		StartedAtNs: baseTS,
 		ProxyType:   proxy.ProxyTypeForward,
 		ClientIP:    "127.0.0.1",
 		PlatformID:  "plat-1",
@@ -274,7 +274,7 @@ func TestService_FlushesByBatchSize(t *testing.T) {
 		NetOK:       true,
 	})
 	svc.EmitRequestLog(proxy.RequestLogEntry{
-		StartedAtNs: baseTs + 1,
+		StartedAtNs: baseTS + 1,
 		ProxyType:   proxy.ProxyTypeReverse,
 		ClientIP:    "127.0.0.2",
 		PlatformID:  "plat-1",
@@ -316,10 +316,10 @@ func TestService_RepoReadFlushesQueuedLogs(t *testing.T) {
 	svc.Start()
 	t.Cleanup(svc.Stop)
 
-	baseTs := time.Now().UnixNano()
+	baseTS := time.Now().UnixNano()
 	svc.EmitRequestLog(proxy.RequestLogEntry{
 		ID:          "barrier-log-1",
-		StartedAtNs: baseTs,
+		StartedAtNs: baseTS,
 		ProxyType:   proxy.ProxyTypeForward,
 		PlatformID:  "plat-1",
 		TargetHost:  "example.com",

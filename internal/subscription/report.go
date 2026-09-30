@@ -33,8 +33,8 @@ const (
 // decoder quadratic work (see yaml_guard.go).
 const ReasonComplexityExceeded = "COMPLEXITY_EXCEEDED"
 
-// Parse-report reason produced by the parser itself for a body that a
-// parser-side resource limit refused wholesale, rather than for a node the
+// ReasonDepthExceeded is the parse-report reason the parser produces for a body
+// a parser-side resource limit refused wholesale, rather than for a node the
 // parser could not import: the nesting-depth guard of the Clash YAML path
 // (see MaxYAMLNestingDepth in yaml_depth.go). It is a report-only reason; the
 // node.Reason* codes stay the vocabulary for per-node drops.

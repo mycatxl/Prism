@@ -1,3 +1,6 @@
+// Package netutil holds the network helpers every outbound fetch shares:
+// domain extraction, bounded response bodies, bounded downloads and the
+// HTTP-over-node transport.
 package netutil
 
 import (

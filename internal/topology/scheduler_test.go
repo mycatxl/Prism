@@ -1111,9 +1111,9 @@ func TestEphemeralCleaner_DisabledEphemeralStillEvicted(t *testing.T) {
 func TestPlatform_ReadOnlyView_Interface(t *testing.T) {
 	plat := platform.NewPlatform("p1", "Test", nil, nil)
 
-	// View() returns ReadOnlyView, not *RoutableView.
-	// This compile-time type assignment verifies the interface constraint.
-	var view platform.ReadOnlyView = plat.View()
+	// View() returns ReadOnlyView, not *RoutableView; the package-level
+	// assertion below pins that at compile time.
+	view := plat.View()
 
 	// Read methods work.
 	if view.Size() != 0 {
@@ -1133,6 +1133,10 @@ func TestPlatform_ReadOnlyView_Interface(t *testing.T) {
 
 // Ensure ReadOnlyView is correctly implemented by RoutableView.
 var _ platform.ReadOnlyView = (*platform.RoutableView)(nil)
+
+// Ensure Platform.View() hands out the read-only interface, not the concrete
+// mutable type.
+var _ func(*platform.Platform) platform.ReadOnlyView = (*platform.Platform).View
 
 // --- Test: SetSubscriptionEnabled rebuilds platform views ---
 

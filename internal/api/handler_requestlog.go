@@ -153,13 +153,13 @@ func parseRequestLogCursorQuery(w http.ResponseWriter, r *http.Request) (*reques
 		return nil, false
 	}
 	return &requestlog.ListCursor{
-		TsNs: tsNs,
+		TSNs: tsNs,
 		ID:   parts[1],
 	}, true
 }
 
 func encodeRequestLogCursor(c requestlog.ListCursor) string {
-	raw := strconv.FormatInt(c.TsNs, 10) + ":" + c.ID
+	raw := strconv.FormatInt(c.TSNs, 10) + ":" + c.ID
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
@@ -280,7 +280,7 @@ func parseStrictBoolQuery(w http.ResponseWriter, r *http.Request, key string) (*
 
 type logListItem struct {
 	ID                  string `json:"id"`
-	Ts                  string `json:"ts"`
+	TS                  string `json:"ts"`
 	ProxyType           int    `json:"proxy_type"`
 	ClientIP            string `json:"client_ip"`
 	PlatformID          string `json:"platform_id"`
@@ -319,7 +319,7 @@ type logListItem struct {
 func toLogListItem(s requestlog.LogSummary) logListItem {
 	return logListItem{
 		ID:                   s.ID,
-		Ts:                   time.Unix(0, s.TsNs).UTC().Format(time.RFC3339Nano),
+		TS:                   time.Unix(0, s.TSNs).UTC().Format(time.RFC3339Nano),
 		ProxyType:            s.ProxyType,
 		ClientIP:             s.ClientIP,
 		PlatformID:           s.PlatformID,

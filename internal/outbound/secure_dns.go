@@ -156,7 +156,7 @@ func parseCustomDNSUpstream(raw string, tag string) (secureDNSTransportSpec, boo
 		},
 	}
 	if needsLocalResolver {
-		remoteOptions.RawLocalDNSServerOptions.DialerOptions.DomainResolver = &option.DomainResolveOptions{
+		remoteOptions.DomainResolver = &option.DomainResolveOptions{
 			Server: localDNSTransportTag,
 		}
 	}
@@ -233,10 +233,7 @@ func hasInvalidDNSUpstreamPortSyntax(hostport string) bool {
 		return closing >= 0 && len(hostport) > closing+1 && strings.HasPrefix(hostport[closing+1:], ":")
 	}
 	lastColon := strings.LastIndex(hostport, ":")
-	if lastColon < 0 {
-		return false
-	}
-	return true
+	return lastColon >= 0
 }
 
 func validateDNSUpstreamQuery(query url.Values) error {
@@ -268,7 +265,7 @@ func remoteTLSDNSOptions(remoteOptions option.RemoteDNSServerOptions, sni string
 		RemoteDNSServerOptions: remoteOptions,
 	}
 	if sni != "" {
-		options.OutboundTLSOptionsContainer.TLS = &option.OutboundTLSOptions{
+		options.TLS = &option.OutboundTLSOptions{
 			ServerName: sni,
 		}
 	}

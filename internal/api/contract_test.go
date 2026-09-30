@@ -209,11 +209,11 @@ func (s contractRuntimeStats) PlatformEgressIPCount(platformID string) (int, boo
 	return 3, true
 }
 
-func (p contractRuntimeStats) CollectNodeEWMAs(platformID string) []float64 {
+func (s contractRuntimeStats) CollectNodeEWMAs(platformID string) []float64 {
 	if platformID == "" {
 		return []float64{50, 150, 280}
 	}
-	if platformID == p.platformID {
+	if platformID == s.platformID {
 		return []float64{80, 120}
 	}
 	return nil
