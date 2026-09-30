@@ -91,7 +91,7 @@ func ensureRequestLogSchema(db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("begin request log index migration: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(requestLogIndexesDDL); err != nil {
 		return fmt.Errorf("create request log indexes: %w", err)

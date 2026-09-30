@@ -441,7 +441,7 @@ func TestP2C_FavorsIdleIP(t *testing.T) {
 
 	// Create several leases to push IP load on node 1.
 	for i := 0; i < 10; i++ {
-		router.RouteRequest(platName, "p2c-loaded-"+string(rune('A'+i)), "example.com")
+		_, _ = router.RouteRequest(platName, "p2c-loaded-"+string(rune('A'+i)), "example.com")
 	}
 
 	// Now route with empty account (random route) many times.

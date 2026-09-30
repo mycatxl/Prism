@@ -108,7 +108,10 @@ func writeProxyError(w http.ResponseWriter, pe *ProxyError) {
 	w.Header().Set("X-Resin-Error", pe.PrismError)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(pe.HTTPCode)
-	w.Write([]byte(pe.Message))
+	// The status line and headers are already committed, so a failed body write
+	// can no longer be reported to the client; the request log carries the
+	// outcome.
+	_, _ = w.Write([]byte(pe.Message))
 }
 
 // classifyUpstreamError maps an upstream error to the appropriate ProxyError.

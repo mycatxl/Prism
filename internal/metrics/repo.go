@@ -104,7 +104,7 @@ func (r *MetricsRepo) WriteBucket(data *BucketFlushData) error {
 	if err != nil {
 		return fmt.Errorf("metrics repo begin: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() { _ = tx.Rollback() }()
 
 	// Traffic.
 	_, err = tx.Exec(`INSERT INTO metric_traffic_bucket (bucket_start_unix, ingress_bytes, egress_bytes)

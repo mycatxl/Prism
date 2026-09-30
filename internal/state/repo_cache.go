@@ -321,7 +321,7 @@ func (r *CacheRepo) bulkExec(query string, n int, execFn func(stmt *sql.Stmt, i 
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if err := bulkExecTx(tx, query, n, execFn); err != nil {
 		return err
@@ -363,7 +363,7 @@ func (r *CacheRepo) FlushTx(ops FlushOps) error {
 	if err != nil {
 		return fmt.Errorf("begin flush tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	// Upserts in dependency order.
 	steps := []struct {

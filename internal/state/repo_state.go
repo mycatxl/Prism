@@ -648,7 +648,7 @@ func (r *StateRepo) UpsertAccountHeaderRuleWithCreated(rule model.AccountHeaderR
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	insertRes, err := tx.Exec(`
 		INSERT INTO account_header_rules (url_prefix, headers_json, updated_at_ns)
