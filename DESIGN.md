@@ -326,6 +326,7 @@ fails the build. Recorded for the current tree:
 |---|---|---|
 | `[layout-transition] transition: padding` | ECharts' own bundled code, in a Vite shared chunk (`useReducedMotion-*.js` names the module the split happened on, not its contents) | **Provenance.** It is third-party; Prism cannot fix it without forking ECharts. The gate re-reads the chunk and only excuses it while the file still contains ECharts |
 | `[ai-color-palette] Purple/violet accent colors detected` | the built `ui/index.html`, i.e. this console's own palette | **Decision.** The accent is an indigo→violet pair, because the operator pinned that look in a mockup. The bound: two gradient stops on one pane, one ground wash, one accent token pair, no gradient text, no glow and no second accent hue — see [What is deliberate now, and its bound](#what-is-deliberate-now-and-its-bound). A second palette finding still fails the gate |
+| `[radial-halo] radial-gradient halo (#0b1631 → transparent) on dark page` | the built `ui/index.html`, i.e. our own shell | **Decision.** The hero band reproduces the light field of the operator's reference art, which was measured rather than eyeballed: one lit pane, soft stops inside the 1255×233 band only, no shadow on any card, no second accent hue. The bound is enforced by the replica probes (`hero_*`) — see [The 1536 board](#the-1536-board-the-reference-replica). The gate excuses it only while the shell still carries that band |
 
 The gate's own parser used to drop the second kind of row entirely: the engine reports
 **file-scoped** rules (`ai-color-palette`, `cream-palette`, the font tells) without a
@@ -333,6 +334,50 @@ The gate's own parser used to drop the second kind of row entirely: the engine r
 line number — so the scan reported "clean" while the engine had reported a finding. A
 false clean is the one failure a gate must not have; `parse()` now reads both shapes,
 which is how the palette finding surfaced at all.
+
+### The 1536 board: the reference replica
+
+The workbench was rebuilt to reproduce the operator's reference art at exactly 1536×1024.
+The art exists only as a PNG and no agent here has an image channel, so it was turned into
+numbers first — colour census, hairline grid, per-card text metrics, corner insets — and
+those numbers became the spec. The acceptance harness boots a real binary, seeds a
+fixture, renders `/dashboard` at 1536×1024 in dark, and re-runs the same probes against
+the render, printing PASS/FAIL per probe. Fidelity is therefore a number, not an opinion.
+
+Measured skeleton (px, origin = canvas top-left): floating rail card `20,188 → 235,1023`;
+hero band `257,0 → 1512,233` with the search field at `259..740, 18..50` and the title's
+glyph box at `281..981, 110..145`; main column `257..1054`, right column `1070..1512`,
+16 px gutters; KPI tiles at `y579..688` with the measured unequal widths 206/188/186/173;
+and the quick-action card `1237,163 → 1512,361`, which breaks the grid upward across the
+hero's bottom edge — the art's most recognisable move.
+
+| Slot | Rect | Content |
+|---|---|---|
+| A | 257,0 → 1512,233 | hero: title, range, refresh, add-subscription, readouts |
+| B | 1237,163 → 1512,361 | quick actions (four rows) |
+| C | 20,188 → 235,1023 | rail: brand, nav at 44 px pitch, status, session footer |
+| D | 257,250 → 1054,562 | 出口 / 区域: the sphere or the plate, plus the region breakdown |
+| E | 1070,250 → 1221,361 | 订阅状态, the compact tile |
+| F | 1070,378 → 1512,579 | 流量概览: the window's timeline |
+| G1–G4 | y579..688 | 总请求数 / 平均延迟 / 错误率 / 活跃租约 |
+| H | 1070,600 → 1512,934 | 最近变更 |
+| I | 257,704 → 727,987 | 最近加入节点 |
+| J | 743,704 → 1054,987 | 平台分布 |
+
+The art has nine content slots and this console has eleven blocks, so **two blocks fold at
+exactly this breakpoint**: instance health (its figures live in the rail status block) and
+the latency profile (the hero carries window latency). Both render in full below 1536, so
+the fold is a breakpoint decision rather than a deletion — it is the one place the replica
+knowingly stops being one panel per slot.
+
+The skeleton layer is scoped with `:has(.wb-board)`, so it applies to this board and not
+to the dense routes; the rail's own geometry is shared, because the rail should read the
+same everywhere at this width.
+
+Residuals, printed rather than hidden: the art's nested tile inside `H` (a six-row region
+list) is not reproduced yet, and where the art contradicts itself — unequal KPI widths and
+the overlapping quick-action card — it is reproduced as measured where that reads as
+intent, and normalised where it reads as noise.
 
 ### Installing the detector
 
