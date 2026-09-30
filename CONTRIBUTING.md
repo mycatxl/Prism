@@ -31,6 +31,7 @@ Run these before opening a pull request. They are the same steps CI runs.
 
 ```bash
 make verify         # go vet, unit tests, -race, protocol matrix, frontend gates
+make lint-go        # golangci-lint; needs golangci-lint v2.14.0 on PATH
 make smoke          # end-to-end against the built binary (needs bin/prism)
 ```
 
@@ -43,6 +44,15 @@ make smoke          # end-to-end against the built binary (needs bin/prism)
 | `test-race` | The same suite under the race detector |
 | `protocol-matrix` | `TestProtocolMatrix`: every protocol's import/build outcome |
 | `test-web` | Panel config tests, TypeScript, WCAG AA contrast, and the component-kit rules |
+
+`make lint-go` runs `errcheck`, `govet`, `ineffassign`, `staticcheck` at `all`
+and `unused` over the same packages, with no per-check exclusion: the tree passes
+as written rather than by suppression. Install the pinned version first, because
+CI uses it:
+
+```bash
+go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
+```
 
 `make smoke` boots the compiled binary against a throw-away environment and
 exercises health, the UI, API auth, the management listener, HTTP and SOCKS5
