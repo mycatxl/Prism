@@ -1,0 +1,30 @@
+# Line-ending and diff policy for the whole repository.
+#
+# The repository stores text with LF. Before this file existed, 55 tracked files
+# were committed with CRLF (most of internal/api/web/, plus LICENSE and the two
+# files under LICENSES/), and an editor or script that wrote LF back over one of
+# them produced a whole-file diff that buried the real change. `eol=lf` pins the
+# answer for everyone, on every platform, so that cannot happen again.
+#
+# `text=auto` lets git decide what is text by content, which is why no explicit
+# binary list is needed beyond the image types below.
+* text=auto eol=lf
+
+# Images and other binary payloads must never be normalised.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Vendored licence texts are kept verbatim in content but normalised to LF like
+# everything else; they are read as text, not executed.
+LICENSE text eol=lf
+LICENSES/*.txt text eol=lf
+
+# Lockfiles and generated data are still text, but they are never hand-edited,
+# so keep them out of diffs reviewers have to read.
+internal/api/web/package-lock.json -diff
+internal/api/web/public/world-110m.geo.json -diff
