@@ -585,6 +585,66 @@ code; the fix belongs upstream, and the prepared patch (plus a deterministic rep
 in D-5 of `docs/ENGINE_DECISIONS.md`. Re-evaluate when upstream fixes the field, or when the hit rate
 rises.
 
+**Rechecked 2026-09-30, two additions.**
+
+*It reproduces with no Prism code linked.* A standalone `main` that imports only
+`sing/common/bufio` and `sing/common/buf` - no Prism package at all - builds the value the report
+names (`bufio.NewCachedConn`), then reads it and closes it from two goroutines. Under `-race` it
+prints 8 reports naming exactly this field and method pair: `(*CachedConn).Close` `cache.go:85` (read)
+against `(*CachedConn).Read` `cache.go:47` (write), plus the `cache.go:40` variant. That removes the
+last place the attribution could have gone wrong: nothing in the reproducer is ours, so the race
+cannot be ours either. (`CachedConn.Read` does not touch `taken`; only `Close` and `ReadCached` do,
+which is why the older upstream fix does not cover it.)
+
+*It is pre-existing, not introduced by the lint cleanup.* Between the last commit whose CI was green
+before that work (`535ca96`) and HEAD:
+
+- `go.mod`'s `sagernet/sing` and `sagernet/sing-box` requirements are unchanged, and the `go.sum`
+  lines for `sagernet/sing` are byte-identical.
+- The same holds against the released `v0.1.0-rc2` (`64100a9`), so the race is present in the
+  published tag as well.
+- The only change under `internal/e2e/` in that range is the removal of the `offlineCase.udp` field,
+  which was never assigned or read - it cannot affect scheduling.
+- The `-race` stage was green on `535ca96` (CI run `36701455439`) and the failure first appeared on
+  the run for HEAD, which is the signature of a probabilistic upstream race rather than a
+  regression.
+
+Local stress on `535ca96` itself (4 rounds x `-count=400` at `GOMAXPROCS=2`) did not reproduce it -
+at roughly one hit per 100 runs, four rounds is not enough to expect one - but the dependency and
+diff evidence above does not depend on that sampling.
+
+### 10.12 The e2e fixture reused a loopback port (fixed, and not the race above)
+
+Same test case, different failure, and worth separating: `shadowtls-v3-shadowsocks-chain` can also
+fail with
+
+```
+start inbound/shadowtls[stls-in]: listen tcp 127.0.0.1:44417: bind: address already in use
+```
+
+That one was **ours**. `internal/e2e/protocols_test.go`'s `freeLoopbackPort` reserves a port by
+binding `127.0.0.1:0`, reading the number and closing the listener again. The kernel is free to hand
+the same number straight back on the next call, and this case reserves two ports back to back
+(`ssPort`, `shadowTLSPort`) and then binds both inside **one** sing-box instance, so the second bind
+can collide with the first. Measured before the fix: one failure in 3000 runs of that case
+(`-count=3000`, no `-race`).
+
+The fix keeps a bounded window (`recentPortWindow`, 64 entries) of recently handed-out ports in
+`recentPorts` and draws another port when the kernel repeats itself. The window update lives in the
+pure function `portWindowAppend`, pinned by `TestPortWindowAppend`, so the behaviour is tested
+without depending on the kernel actually repeating a port. After the fix the same 3000 runs are
+clean.
+
+Bounded is the load-bearing word. The first version remembered every port for the lifetime of the
+process; under `-count=3000` the suite reserves thousands of ports and, because a closed port is
+handed out again immediately, the draw loop then never found an unused one - 212 failures, all
+`no unused loopback port after 128 attempts`. A sliding window is sufficient because only the
+reservations one fixture makes in a row have to differ.
+
+Do not confuse this with §10.11. `address already in use` is a fixture defect and is fixed; a
+`WARNING: DATA RACE` naming `(*CachedConn).Read`/`Close` in `sing/common/bufio` is upstream code and
+is not.
+
 ## 11. Which test pins which claim
 
 | Claim | Test |
