@@ -103,15 +103,105 @@ func (o *targetServer) requests() int {
 	return o.served
 }
 
+// recentPortWindow is how many previous reservations a new one is checked
+// against. It only has to cover the reservations one fixture makes in a row (two,
+// at the most), so 64 is generous. Keeping it bounded matters: remembering every
+// port for the lifetime of the process exhausts the ephemeral range under
+// `go test -count=N`, because a closed port is handed out again immediately.
+const recentPortWindow = 64
+
+// recentPorts is the sliding window of ports handed out most recently.
+var recentPorts = struct {
+	sync.Mutex
+	last []uint16
+}{}
+
+// portWindowAppend adds port to window, trimming the oldest entries so the window
+// never exceeds limit, and reports whether port was already inside it. It is a
+// pure function so the behaviour below is testable without the kernel's
+// cooperation.
+func portWindowAppend(window []uint16, port uint16, limit int) ([]uint16, bool) {
+	for _, previous := range window {
+		if previous == port {
+			return window, true
+		}
+	}
+	window = append(window, port)
+	if len(window) > limit {
+		window = window[len(window)-limit:]
+	}
+	return window, false
+}
+
 // freeLoopbackPort reserves a port and releases it, so an inbound can bind it.
+// Reserving means binding :0, reading the number and closing the listener, so the
+// kernel is free to return the same number on the very next call. A fixture that
+// binds several ports in one sing-box instance would then fail with "address
+// already in use", which is why a recently handed-out port is refused and another
+// one is drawn.
 func freeLoopbackPort(t *testing.T) uint16 {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve port: %v", err)
+	for attempt := 0; attempt < 128; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserve port: %v", err)
+		}
+		port := uint16(listener.Addr().(*net.TCPAddr).Port)
+		_ = listener.Close()
+
+		recentPorts.Lock()
+		window, repeated := portWindowAppend(recentPorts.last, port, recentPortWindow)
+		recentPorts.last = window
+		recentPorts.Unlock()
+
+		if !repeated {
+			return port
+		}
 	}
-	defer listener.Close()
-	return uint16(listener.Addr().(*net.TCPAddr).Port)
+	t.Fatal("reserve port: no unused loopback port after 128 attempts")
+	return 0
+}
+
+// TestPortWindowAppend pins the two properties the port reservation relies on: a
+// port already inside the window is reported as a repeat, and the window is
+// trimmed from the oldest end so it stays bounded.
+func TestPortWindowAppend(t *testing.T) {
+	window := []uint16{}
+	for _, port := range []uint16{1, 2, 3, 4} {
+		var repeated bool
+		window, repeated = portWindowAppend(window, port, 3)
+		if repeated {
+			t.Fatalf("port %d was reported as a repeat on first sight", port)
+		}
+	}
+	if want := []uint16{2, 3, 4}; !equalPorts(window, want) {
+		t.Fatalf("window = %v, want %v (oldest entry must be trimmed)", window, want)
+	}
+
+	if _, repeated := portWindowAppend(window, 3, 3); !repeated {
+		t.Fatal("port 3 is inside the window but was accepted")
+	}
+
+	next, repeated := portWindowAppend(window, 1, 3)
+	if repeated {
+		t.Fatal("port 1 had been trimmed out but was still refused")
+	}
+	if want := []uint16{3, 4, 1}; !equalPorts(next, want) {
+		t.Fatalf("window = %v, want %v", next, want)
+	}
+}
+
+// equalPorts compares two port windows for the test above.
+func equalPorts(left, right []uint16) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // startPeer starts a sing-box instance with the given inbound JSON template. The
