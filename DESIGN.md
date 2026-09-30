@@ -1,3 +1,13 @@
+---
+id: prism-console-visual
+type: module-design
+title: Prism console visual system
+status: draft
+parent: prism-product
+tags:
+  - frontend
+  - visual-system
+---
 # Prism design system
 
 The visual system of record for the console. A page's look is decided here; the
@@ -118,7 +128,9 @@ What the set establishes, and what a new component must not break:
 - **`Table` is a data grid, not a table**: fixed row heights 32/28/36, a sticky head,
   row rules and no cell borders, and `TDClip` for any text that can run long.
 - **Controls are 28px** (24 small, 32 large), and every one ships default / hover /
-  focus / active / disabled / loading / error. Half that list is not done.
+  focus / active / disabled / loading / error. Focus is one rule for the whole
+  console and error belongs to the field rather than to the button; the per-state
+  audit is in [internal/api/web/DESIGN.md](internal/api/web/DESIGN.md).
 - **`Readout` / `Numeral` is how a figure is shown**: monospaced, tabular, counting up
   on change. A bare number in a `div` is not a reading.
 - **Panel actions are visible.** Never revealed on hover: on a touch screen an action
@@ -210,7 +222,7 @@ fade-and-rise on every section; images that scale or rotate on hover.
 | Keyboard focus visible | `:focus-visible` draws accent at 2px with 1px offset |
 | `prefers-reduced-motion` honoured | Media query at the end of `design.css` |
 | Browser surfaces belong to the system | Selection, caret, scrollbar, underline offset and `tabular-nums` are set in the base layer |
-| Every interactive component has default/hover/focus/active/disabled/loading/error | The UI kit. Half of them is not done |
+| Every interactive component has default/hover/focus/active/disabled/loading/error | The UI kit, audited per state in [internal/api/web/DESIGN.md](internal/api/web/DESIGN.md). Focus is the one shared `:focus-visible` rule; error is the field's `invalid` prop |
 
 ### The third-party slop detector
 

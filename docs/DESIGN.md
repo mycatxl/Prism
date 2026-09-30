@@ -1,6 +1,6 @@
 # Prism 项目总设计 v2
 
-日期：2026-09-05。状态：个人开源版实现基线 v2.1；方案已整理，应用代码与容量验收尚未实施。
+日期：2026-09-05（结构按当前代码复核 2026-09-30）。状态：个人开源版实现基线 v2.1；主体应用代码、检测子系统与容量测试均已在仓库中实现，本文按现有代码校准，不再描述"目标结构"。
 
 > 当前范围固定为个人自用与开源发行，不实现 SaaS、套餐、支付和多租户。分组、容量、检测与换 IP 的现行行为见 [INTEL.md](INTEL.md)、[PERFORMANCE.md](PERFORMANCE.md) 与 [DESIGN.md 第 4 节](#4-逻辑架构)。
 
@@ -27,7 +27,9 @@ Prism 是个人自用的代理资源管理与质量检测工具：导入不同�
 
 ## 2. 当前证据与继承结论
 
-当前主项目已包含迁出的 Go 应用及独立管理前端，原参考副本保留在 `references/Resin/`。Resin 的转发、租约、平台视图、探测队列和存储已被继承，新增质量检测和容量改造仍待实施。历史检查支持局部扩展，不以新增检测为由整体重写代理核心。
+> **本节是 2026-09-05 的 M0 基线的历史记录**，不是待办清单。下文"需要局部改造""必要改造"描述的是当时评估出的工作量；这些改造此后已经落地，当前结构见 §4。阅读时以 §3 的约束和 §4 的现状为准。
+
+当前主项目已包含迁出的 Go 应用及独立管理前端；原参考副本位于本地私有目录 `references/Resin/`（`.gitignore` 忽略，不属于仓库）。Resin 的转发、租约、平台视图、探测队列和存储已被继承。本节早期写作"新增质量检测和容量改造仍待实施"，现已落地：质量检测子系统在 `internal/intel` 与独立 `intel.db`，容量测试为 `make capacity`，实测结果记录在 [PERFORMANCE.md](PERFORMANCE.md)。
 
 2026-09-05 已运行以下七个包的现有普通测试并通过：
 
@@ -36,7 +38,7 @@ go test ./internal/proxy ./internal/routing ./internal/probe \
   ./internal/topology ./internal/platform ./internal/requestlog ./internal/state
 ```
 
-执行位置为 `references/Resin/`，使用 Go 1.27.0；参考模块声明 Go 1.25.5、sing-box v1.12.21。未完成 race、真实供应节点、全构建标签、规模和长时间稳定性验证。正式构建版本由 M0 验证后锁定，不以运行环境版本自动升级依赖。
+执行位置为 `references/Resin/`，使用 Go 1.27.0；参考模块声明 Go 1.25.5、sing-box v1.12.21。当时的验证未覆盖真实供应节点、全构建标签、规模和长时间稳定性；race 此后已纳入 `make verify` 并在 CI 中运行。正式构建版本由 M0 验证后锁定，不以运行环境版本自动升级依赖。
 
 继承的是协议实现、并发语义和现有行为测试。节点库存持久化、有界 Outbound 生命周期、出口组索引和增量视图需要局部改造；不能原样迁移全量常驻运行态后宣称达到新容量目标。
 
@@ -99,66 +101,83 @@ flowchart LR
 | 个人版 | 单个 `prism run` 进程（`bin/prism` 无子命令即启动），同进程独立工作池 | 本地 SQLite 保存配置、质量证据、运行缓存和滚动日志 |
 | 可选高级部署 | 单机多个进程或只读分析工具 | 仍由一个 Prism 进程拥有写入权；不保证跨机器状态同步 |
 
-默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。state.db 可靠保存配置、节点库存与质量证据，cache.db 仅保存可重建运行快照，metrics.db 和 request_logs 分别保存统计与滚动日志。
+默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。数据归属是分库的：**state.db** 保存配置（`system_config`、`platforms`、`subscriptions`（含订阅源文本 `content`，是节点库存的重建来源）、`account_header_rules`、`endpoints`、`export_profiles`、`intel_provider_settings`）与变更审计（`audit_log`）；**cache.db** 保存由订阅重建出来的节点库存（`nodes_static`、`nodes_dynamic`、`node_latency`、`subscription_nodes`）与租约（`leases`），即"可重建"的运行快照；检测证据在独立的 **intel.db**（`egress_history`、`evidence`、`ip_assessment`、`node_egress`、`node_checks` 与任务/provider 状态）；`metrics.db` 与滚动库 `request_logs-<unix_ms>.db` 位于日志目录（`PRISM_LOG_DIR`），既不在 state 目录、也不在备份清单允许范围内。
+
+**"可重建"已核实成立**：节点进入池的唯一路径是 `GlobalNodePool.AddNodeFromSub`，其调用者全部在 `internal/topology/subscription_scheduler.go`（订阅刷新），没有手工加节点的接口；节点来源文本存在 state.db 的 `subscriptions.content` 里。因此删除 cache.db 只会丢掉可从订阅重新拉取的节点库存、延迟记录与租约——`prism import-resin` 也把 state.db（含 `subscriptions`）与 cache.db 一起搬，不构成例外。运维文档可以据此承诺"cache.db 可删"。
 
 Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与 `PRISM_PORT`（默认 `2260`）上的同一个 listener 同时提供 `/ui/` 管理面板、`/api/v1/` 接口、HTTP/SOCKS5 正向代理、`/<token>/...` 反向代理与 `/sub/{token}` 订阅入口。可选的管理面通过 `PRISM_ADMIN_LISTEN` 单独开放，默认关闭且必须是 loopback。`PRISM_ADMIN_TOKEN` / `PRISM_PROXY_TOKEN` 从 `.env` 读取，不打包进前端。前端开发服务器（`npm run dev`）另有自己的端口与 `PRISM_API_TARGET` 反代目标，那只用于本地开发，不是产品部署形态。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
 
 ### 4.2 模块与依赖
 
-| 模块 | 单一职责 | 可依赖的能力 |
-|---|---|---|
-| `identity` | 验证本地凭证，产生可信请求身份 | 本地凭证存储、令牌验证器 |
-| `access` | 平台、协议、来源和目标准入 | Principal、已编译规则和并发接口 |
-| `proxy` | 协议解析、转发和连接上下文 | access、targetpolicy、routing、outbound 接口 |
-| `targetpolicy` | 规范化目标、解析与连接地址检查 | 受控解析器、只读规则 |
-| `node`, `topology` | 节点状态、订阅引用、出口映射 | 事件回调、质量快照读取接口 |
-| `probe` | 网络健康、出口观测 | 节点拨号接口、健康更新接口 |
-| `intel` | 质量任务、限流、预算、数据源调用（WP08 §8：原 `inspection` 的职责已迁到这里） | quality、Provider、持久化任务接口 |
-| `quality` | 证据归并、评级、有效性判断 | 标准数据类型、只读版本化规则 |
-| `platform`, `policy` | 编译规则、构建候选视图和解释结果 | 节点与质量快照 |
-| `routing` | P2C、租约、同 IP 轮换 | 授权后的平台 ID、候选视图、运行态 |
-| `requestlog`, `metrics` | 访问日志、流量/连接统计和聚合指标 | 专属存储适配器，不修改代理状态；不增加重复的 usage 模块 |
-| `audit` | 业务变更和操作证据 | 调用方事务、审计仓储 |
-| `service`, `api` | 用例编排、输入输出与权限边界 | 模块公开接口，不直接改内部集合 |
-| `state` | 配置事务、迁移、快照与恢复 | 数据库驱动；不发起代理请求 |
-| `app` | 初始化、依赖注入、启停顺序 | 上述模块，不承载领域规则 |
+| 模块 | 单一职责 |
+|---|---|
+| `config` | 环境变量配置加载与运行期配置模型 |
+| `model` | 跨持久化层共享的领域结构体 |
+| `state` | 配置事务、迁移、快照与恢复；SQLite 仓储、StateEngine 与脏集刷盘 |
+| `addrpolicy` | 目的地址控制：判定一个节点目标是否可接受（原设计中的 `targetpolicy`） |
+| `netutil` | 受控解析与下载辅助：域名提取、响应体与下载上限 |
+| `node` | 节点文档格式、能力与哈希 |
+| `subscription` | 订阅类型与解析 |
+| `topology` | 订阅 → 节点池 → 平台视图的编排，打破 node / subscription / platform 之间的导入环 |
+| `platform` | 平台、节点条件、质量策略与规则编译，构建可路由视图并给出排除原因（原设计中的 `access`／`policy`） |
+| `proxy` | 协议入口与转发、可信请求身份与准入（原设计中的 `identity`） |
+| `outbound` | sing-box 出口适配和资源生命周期 |
+| `probe` | 网络健康与出口观测 |
+| `routing` | P2C、租约与同 IP 轮换 |
+| `quality` | 数据源证据、评级与有效性，独立于节点健康 |
+| `intel` | 检测任务、provider 适配、限流与预算、证据持久化（原 `inspection` 的职责） |
+| `publicsource` | 从公开订阅源收集节点 |
+| `geoip` | GeoIP 数据库下载、校验与读取 |
+| `scanloop` | 带抖动的周期性扫描循环 |
+| `export` | 导出渲染：sing-box／mihomo／v2rayN／CSV-JSON |
+| `requestlog`, `metrics` | 访问日志与聚合指标；专属存储适配器，不修改代理状态 |
+| `service`, `api` | 用例编排、输入输出与权限边界；变更审计在 `internal/api/audit.go` |
+| `buildinfo` | 构建期由 ldflags 注入的版本信息 |
+| `testutil`, `e2e`, `docsguard` | 测试辅助、端到端协议场景与文档一致性门禁（仅测试代码，非运行期模块） |
+
+本表的早期版本还列出了 `identity`、`access`、`targetpolicy`、`policy`、`audit`、`app` 六个模块名，它们在代码中没有同名包；`app` 的装配与启停职责落在 `cmd/prism/app_runtime.go`，其余对应关系见上表括注与 §4.3 末尾。
 
 接口由使用方定义，使用 Go 构造函数注入。保留现有包边界；只有出现新职责时新增包，不统一改名和搬迁全部旧代码。禁止循环依赖、可变全局服务定位器，以及一个通用事件总线承载所有一致性等级的数据。
 
 所有模块只通过所有者的公开方法修改状态。数据库事务由用例层协调，写入经过对应仓储；代理热路径不持有数据库句柄。普通通知允许合并，安全失效必须另有实时检查保证，配置与审计事件必须可靠持久化。
 
-### 4.3 目标目录
+### 4.3 目录结构
 
-以下是目标结构，未标记为已经存在：
+以下是当前代码的真实结构（`internal/` 下 27 个目录，外加 `cmd/prism/`）：
 
 ```text
-cmd/prism/                 # standalone 子命令
-internal/app/              # 组装、生命周期、配置校验
-internal/proxy/            # 继承协议入口和转发
-internal/outbound/         # sing-box 适配和资源生命周期
-internal/node/             # 节点状态
-internal/topology/         # 订阅、节点、平台关系
-internal/probe/            # 健康与出口探测
-internal/inspection/       # 质量任务、provider 适配（WP08 §8 已取消：职责迁到 intel.db 与控制面）
-internal/quality/          # 证据、评级与有效性
-internal/platform/         # 可路由视图
-internal/policy/           # 质量规则编译
-internal/routing/          # P2C 与租约
-internal/identity/         # 可信身份
-internal/access/           # 授权、准入
-internal/targetpolicy/     # 目的地址控制
-internal/audit/            # 变更审计
-internal/requestlog/       # 请求诊断记录
-internal/metrics/          # 聚合指标
-internal/state/            # 配置、迁移和恢复
-internal/service/          # 应用用例
-internal/api/              # API DTO、校验、路由
-web/                       # 个人管理端
-api/openapi/               # 从首个 API 版本起维护的契约
-tests/                     # 集成、跨协议、安全、性能场景
-docs/                      # 当前设计及决策
-references/Resin/          # 只读参考基线
+cmd/prism/                 # 服务入口与 standalone 子命令（run / backup / restore / import-resin / …）
+internal/config/           # 环境变量配置加载与运行期配置模型
+internal/model/            # 跨持久化层共享的领域结构体
+internal/state/            # 持久化层：SQLite 仓储、StateEngine、脏集刷盘、一致性修复与迁移
+internal/addrpolicy/       # 所有"节点目标是否可接受"判定共用的地址策略
+internal/netutil/          # 网络辅助：域名提取、响应体与下载上限
+internal/node/             # 节点文档格式与哈希
+internal/subscription/     # 订阅类型与解析
+internal/topology/         # 订阅 → 节点池 → 平台视图的编排；持有 GlobalNodePool / PlatformManager / SubscriptionManager
+internal/platform/         # Platform 类型、分片可路由视图、节点条件与质量策略、正则过滤编译
+internal/proxy/            # 前向/反向代理数据面、协议解析与请求身份
+internal/outbound/         # sing-box 出口适配与资源生命周期
+internal/probe/            # 网络健康与出口探测
+internal/routing/          # P2C 选路与租约
+internal/quality/          # 数据源证据、评级与有效性（与节点健康解耦）
+internal/intel/            # 检测任务、限流、预算、数据源调用与持久化（子包 intel/store 持有 intel.db）
+internal/publicsource/     # 从公开订阅源收集节点
+internal/geoip/            # GeoIP 数据库下载、校验与读取
+internal/scanloop/         # 带抖动的周期性扫描循环
+internal/export/           # 把节点池渲染成用户消费的格式（sing-box / mihomo / v2rayN / CSV-JSON）
+internal/requestlog/       # 结构化请求日志：异步写入滚动 SQLite 库
+internal/metrics/          # 指标采集、聚合与存储
+internal/service/          # 用例编排的服务层类型
+internal/api/              # HTTP API 服务、DTO、校验、路由与变更审计
+internal/api/web/          # 个人管理端（Vite + React 面板）
+internal/buildinfo/        # 构建期由 ldflags 注入的版本信息
+internal/docsguard/        # 文档↔代码一致性门禁（仅测试代码，随 make test 运行）
+internal/testutil/         # 测试辅助（内存统计、空出口等）
+internal/e2e/              # 端到端协议场景（仅测试文件与 testdata）
 ```
+
+本节的早期版本按"目标结构"列出了 `internal/app`、`internal/inspection`、`internal/policy`、`internal/identity`、`internal/access`、`internal/targetpolicy`、`internal/audit`、`api/openapi`、`tests/` 与 `references/Resin`。这些路径在代码中**都不存在**，此处已按实际结构替换。职责的实际落点：请求身份在 `internal/proxy`，平台与目标准入、质量规则编译在 `internal/platform`，地址策略在 `internal/addrpolicy`，变更审计在 `internal/api/audit.go` 与 `internal/state`（`audit_log` 表），装配与启停在 `cmd/prism/app_runtime.go`；`inspection` 已按 WP08 §8 取消，职责在 `internal/intel`。`references/` 与 `docs/design/` 是 `.gitignore` 忽略的本地私有目录，不属于仓库结构。
 
 ## 5. 请求上下文与关键流程
 
@@ -187,8 +206,8 @@ references/Resin/          # 只读参考基线
 | 平台候选为空 | 返回 `NO_ELIGIBLE_NODE`，不降级到未授权或低质量资源 |
 | 配置变更队列积压 | 路由最终检查版本和有效期；不依赖事件已及时处理 |
 | 管理 API 暂时不可用 | 已加载的本地配置继续运行；配置有效性无法确认时拒绝写入，不放宽代理策略 |
-| 普通访问日志队列满 | 按配置丢弃并计数告警，不影响代理；检测和审计记录不能静默伪造成功 |
-| 审计写入失败 | 对需要审计的管理变更回滚并返回错误 |
+| 普通访问日志队列满 | 按配置丢弃并计数告警，不影响代理；检测记录不能静默伪造成功 |
+| 审计写入失败 | **尽力而为，不回滚**：审计是管理写请求成功之后追加的记录（`internal/api/audit.go` 的 `AuditMiddleware` 先放行 handler、再 `AppendAudit`），写失败只记录一条日志（`audit: append failed for …`），已完成的变更保持生效。审计不被当作管理写路径的失败源——把它并入同一事务会让一个日志故障阻断所有配置变更。`/sub/{token}` 的公开访问审计同样尽力而为（`handler_subscription_token.go`） |
 | 检测队列满或外部来源限流 | 保留旧证据到有效期；到期后按平台策略排除，不阻塞代理请求 |
 | 进程崩溃 | 恢复权威配置、校验质量证据、重建分组和平台视图；未证实的状态不能放宽 |
 

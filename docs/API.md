@@ -279,9 +279,9 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 |---|---|---|---|
 | GET | `/api/v1/nodes/export` | 导出节点，管理员直接下载 | 必填 `format` ∈ `singbox`,`mihomo`,`v2rayn`,`uri`,`csv`,`json`（`internal/export/types.go`）。过滤词表与 `/api/v1/nodes` 完全一致（含 intel 过滤器）。`name_template` ≤256 字节，`healthy_only` 布尔；响应是**文件本体**（不是 JSON），带 `Content-Type`/`Content-Disposition` 与 `X-Prism-Export-Exported`、`X-Prism-Export-Skipped`、`X-Prism-Export-Truncated` 头。跳过明细只有 JSON 格式会写进正文 |
 | GET | `/api/v1/export-profiles` | 订阅档案列表 | 标准分页信封 |
-| POST | `/api/v1/export-profiles` | 创建档案并一次性给出订阅 URL | 体：`name`（1..128）、`format`（必填）、`platform_id?`（UUID）、`filter?`、`name_template?`、`enabled?`（默认 true）。**201**，**明文 URL 只在这一个响应里出现**（`url` 字段） |
-| GET | `/api/v1/export-profiles/{id}` | 档案详情 | **永远不含 `url`**（服务端只存 SHA-256 摘要，`token_sha256` 是 `json:"-"`） |
-| PATCH | `/api/v1/export-profiles/{id}` | 修改档案 | 可改 `name`、`format`、`platform_id`、`name_template`、`enabled`、`filter`；**不返回 `url`**，也不会换令牌 |
+| POST | `/api/v1/export-profiles` | 创建档案并一次性给出订阅 URL | 体：`name`（1..128）、`format`（必填）、`platform_id?`（UUID）、`filter?`、`name_template?`、`enabled?`（默认 true）。**201**，**明文 URL 只在这一个响应里出现**（`url` 字段）。`platform_id` 是该档案的平台范围，与 `filter.platform_id` 同一含义，两者都填且不同 → **400**；只填 `platform_id` 时它会成为实际过滤条件 |
+| GET | `/api/v1/export-profiles/{id}` | 档案详情 | **永远不含 `url`**（服务端只存 SHA-256 摘要，`token_sha256` 是 `json:\"-\"`） |
+| PATCH | `/api/v1/export-profiles/{id}` | 修改档案 | 可改 `name`、`format`、`platform_id`、`name_template`、`enabled`、`filter`；**不返回 `url`**，也不会换令牌。冲突判定针对写入后的整行：只改 `platform_id` 而库里 filter 指向另一平台 → **400** |
 | DELETE | `/api/v1/export-profiles/{id}` | 删除档案 | **204**；订阅 URL 立即失效且不可恢复 |
 | POST | `/api/v1/export-profiles/{id}/actions/rotate-token` | 轮换订阅令牌 | 200，**新的明文 URL 只在这里出现一次**，旧令牌立刻失效。`url` 的 scheme/host 取自请求（`X-Forwarded-Proto`、`Host`），因此反代后也正确 |
 | （见 §4） | `GET /sub/{token}` | 公开订阅入口 | 用摘要查表 + 限流 + 统一 404 |

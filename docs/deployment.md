@@ -8,7 +8,7 @@ described under [Docker](#docker).
 
 - Linux with systemd for the service installer (optional — Prism also runs in the
   foreground without systemd).
-- Go 1.26 or later and Node.js/npm to build; `make backend` skips the web UI.
+- Go 1.27 or later and Node.js/npm to build; `make backend` skips the web UI.
 - A deployment directory that contains the binary at `<deploy-dir>/bin/prism` and
   receives the `.env` configuration file.
 - Root only for installing the systemd unit (`--no-service` needs no privileges).

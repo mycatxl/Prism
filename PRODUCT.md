@@ -1,3 +1,11 @@
+---
+id: prism-product
+type: goal-and-requirements
+title: Prism product context
+status: draft
+tags:
+  - product
+---
 # Prism product context
 
 > **Provenance.** This file exists because the design workflow reads product context

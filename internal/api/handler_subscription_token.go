@@ -80,6 +80,7 @@ func (h *SubscriptionHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	body, contentType, report, err := runNodeExport(h.cp, exportRequest{
 		Format:       profile.Format,
 		NameTemplate: profile.NameTemplate,
+		PlatformID:   profile.PlatformID,
 		Filter:       filter,
 		Limit:        defaultExportLimit,
 	}, 0)

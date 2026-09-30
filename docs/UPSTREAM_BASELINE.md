@@ -3,7 +3,7 @@
 日期：2026-09-24。
 
 - Resin 提交：`9b8ef8e5cf83071fbac4de29bd7187268b9cff7b`。
-- 原 Resin 模块声明：`go 1.25.5`；Prism 当前声明：`go 1.26.0`，由安全依赖的最低要求决定。
+- 原 Resin 模块声明：`go 1.25.5`；Prism 当前声明：`go 1.27.0`（`go.mod`；1.27 对 x/net HTTP/2 包装的影响见下文）。
 - sing-box：`v1.14.2`（1.14 系列最新稳定补丁版；1.15.0 仍在 alpha，不采用）。v1.14.2 重写了
   `route.NetworkManager` 的并发模型，顺带修掉了 v1.12.21–v1.14.1 的 `started` 数据竞争（见
   `docs/ENGINE_DECISIONS.md` D-3）。

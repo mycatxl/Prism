@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"prism/internal/config"
 	"prism/internal/intel/jobs"
 	"prism/internal/model"
 	"prism/internal/node"
@@ -292,5 +294,79 @@ func TestResolveIntelScope_ErrorsWrapInvalidJob(t *testing.T) {
 		if !errors.Is(err, jobs.ErrInvalidJob) {
 			t.Errorf("scope %+v: error = %v, want it to wrap jobs.ErrInvalidJob", scope, err)
 		}
+	}
+}
+
+// TestResolveIntelScope_SubscriptionWithFilterDoesNotWidenToPool is the
+// regression test for the widening defect the panel made routine.
+//
+// The scope {subscription_ids:[sub-a], filter:{healthy:"true"}} must resolve to
+// the nodes of sub-a that match the filter — NOT to "every healthy node in the
+// pool UNION the nodes of sub-a". The earlier code triggered the pool walk on
+// `scope.All || hasFilter`, so any request carrying a filter walked the whole
+// pool; because buildBulkIntelScope always attaches filter.healthy, clicking
+// "detect this subscription" covered the entire healthy pool.
+//
+// This fixture deliberately wires a real pool (the older subscription test did
+// not, which is why the defect slipped through) with healthy nodes belonging to
+// OTHER subscriptions. If the walk ever widens again, those foreign nodes appear
+// in the result and this test fails.
+func TestResolveIntelScope_SubscriptionWithFilterDoesNotWidenToPool(t *testing.T) {
+	app, hashes := scopeFixture(t, map[string][]string{
+		"sub-a": {"a1"},
+		"sub-b": {"b1", "b2"},
+	})
+
+	// A real pool holding all three nodes, every one of them healthy, so a
+	// widened walk would have something to pick up.
+	_, pool := newBootstrapTestRuntime(config.NewDefaultRuntimeConfig())
+	for name, hashHex := range hashes {
+		parsed, err := node.ParseHex(hashHex)
+		if err != nil {
+			t.Fatalf("ParseHex(%s): %v", name, err)
+		}
+		raw := json.RawMessage(`{"type":"ss","server":"` + name + `.example","port":443}`)
+		pool.AddNodeFromSub(parsed, raw, "sub-a")
+		entry, ok := pool.GetEntry(parsed)
+		if !ok {
+			t.Fatalf("node %s missing after AddNodeFromSub", name)
+		}
+		markScopeFilterEntryHealthy(entry)
+	}
+	app.topoRuntime = &topologyRuntime{pool: pool}
+
+	got, err := app.resolveIntelScope(context.Background(), jobs.Scope{
+		SubscriptionIDs: []string{"sub-a"},
+		Filter:          map[string]string{"healthy": "true"},
+	})
+	if err != nil {
+		t.Fatalf("resolveIntelScope: %v", err)
+	}
+
+	want := sortedHashes([]string{hashes["a1"]})
+	if strings.Join(sortedHashes(got), ",") != strings.Join(want, ",") {
+		t.Fatalf("subscription+filter scope = %v, want only sub-a's node %v; "+
+			"the filter must narrow the subscription, never widen it to the pool", got, want)
+	}
+	for _, foreign := range []string{hashes["b1"], hashes["b2"]} {
+		for _, hash := range got {
+			if hash == foreign {
+				t.Fatalf("node from another subscription %s leaked into a filtered "+
+					"subscription scope: %v", foreign, got)
+			}
+		}
+	}
+
+	// The documented counterpart: with no explicit selector, the filter alone is
+	// what makes the pool walk happen (WP08 §7.1: "equivalent to all:true plus
+	// the filter"). All three nodes are healthy, so all three must appear.
+	got, err = app.resolveIntelScope(context.Background(), jobs.Scope{
+		Filter: map[string]string{"healthy": "true"},
+	})
+	if err != nil {
+		t.Fatalf("resolveIntelScope(filter only): %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("a filter with no other selector must walk the pool, got %v (want all 3)", got)
 	}
 }

@@ -2,13 +2,13 @@
 
 正式部署优先使用根目录 `make build` 后的 `./bin/prism`（等价于 `prism run`），由 Go 进程在 `PRISM_LISTEN_ADDRESS:PRISM_PORT`（默认 `127.0.0.1:2260`）上直接提供 `/ui/` 管理入口、`/api`、HTTP 正向代理、反向代理和 SOCKS5。本目录中的 Vite / Node 服务用于独立前端开发及兼容部署。
 
-本目录的 Node 服务默认监听 **127.0.0.1:8080**，打开 `http://127.0.0.1:8080/ui/`，并把 `/api` 反代到 `PRISM_API_TARGET`（默认 `http://127.0.0.1:2260`）。
+本目录的 Node 服务默认监听 **127.0.0.1:1262**，打开 `http://127.0.0.1:1262/ui/`，并把 `/api` 反代到 `PRISM_API_TARGET`（默认 `http://127.0.0.1:2260`）。
 
 > 注意：`PRISM_UI_HOST` / `PRISM_UI_PORT` **只影响本目录的 Node/Vite 服务**，与 Go 服务的 `PRISM_LISTEN_ADDRESS` / `PRISM_PORT` 以及可选的独立管理监听 `PRISM_ADMIN_LISTEN`（只提供 `/ui`、`/api`、`/healthz`）完全无关。运行 `bin/prism` 时请使用后者。
 
 ## 启动
 
-要求 Node.js 24+。在 `web/` 中执行：
+要求 Node.js `>=22.12.0`（`package.json` 的 `engines` 声明，也是 Vite 7 自身的下限）。CI 与 Dockerfile 用 Node 24 构建，那是有意选择的**构建基线**，不是更低的下限；本地开发只要满足 `engines` 即可。在 `web/` 中执行：
 
 ```sh
 npm ci
@@ -30,7 +30,7 @@ npm start
 | 环境变量 | 默认 | 作用 |
 |---|---|---|
 | `PRISM_UI_HOST` | `127.0.0.1` | 管理面板监听地址 |
-| `PRISM_UI_PORT` | `8080` | 管理面板端口 |
+| `PRISM_UI_PORT` | `1262` | 管理面板端口 |
 | `PRISM_API_TARGET` | `http://127.0.0.1:2260` | 后端 API origin，只在面板服务器读取 |
 | `VITE_PROXY_BASE_URL` | 不设置 | 可选的公开代理地址，构建时用于地址生成；也可在平台接入页直接填写 |
 
@@ -46,9 +46,11 @@ npm start
 
 - `PRISM_ADMIN_TOKEN`：管理登录使用的 token。
 - `PRISM_PROXY_TOKEN`：HTTP/SOCKS 等代理接入使用的 token。
-- `PRISM_LISTEN_ADDRESS` / `PRISM_PORT`：后端自身监听地址和端口，与面板的 8080 分开。
+- `PRISM_LISTEN_ADDRESS` / `PRISM_PORT`：后端自身监听地址和端口，与面板的 `PRISM_UI_PORT`（默认 1262）分开。
 
 统一后端配置在项目根目录 `.env`，示例见 [根目录环境示例](../.env.example)。首次部署运行 `./bin/prism init` 生成两个独立随机令牌；已有配置继续保留。修改环境后重启后端即可，无需修改前端源码。
+
+上游 Resin 的拼写仍然生效：当 `PRISM_<X>` 查不到时，后端会回退到 `RESIN_<X>`（例如 `RESIN_ADMIN_TOKEN`、`RESIN_PROXY_TOKEN`、`RESIN_PORT`），并对每个变量各记录一次弃用警告 `config: RESIN_<X> is deprecated, use PRISM_<X>`（`internal/config/env.go` 的 `lookupEnv` 与 `warnLegacyEnv`）。这是为从 Resin 迁移的部署保留的兼容层，**新部署一律使用 `PRISM_*`**。`PRISM_QUALITY_*` 没有回退路径，因为这些变量只存在于 Prism。
 
 面板登录时输入管理员 token；面板反代只传递浏览器已提供的 Authorization，**不会将环境中的管理员 token 自动注入匿名请求，也不提供查询 token 的接口**。浏览器 token 仅保留当前 tab 会话。关闭 tab 后重新登录；平台接入页的代理 token 也按会话保存。
 

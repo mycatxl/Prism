@@ -420,8 +420,9 @@ func (a *prismApp) KnownNodeHashes() map[string]struct{} {
 // subscription ids, platform ids, node hashes) are a union (WP08 §3.1) and an
 // explicit filter is applied on top of the all/subscription/platform selectors —
 // but never to node_hashes, because a node named by hash is taken as given. The
-// expansion happens server-side and it never truncates: a scope above
-// jobs.MaxNodesPerJob fails with the named limit error.
+// filter narrows a selector; it never widens one. The expansion happens
+// server-side and it never truncates: a scope above jobs.MaxNodesPerJob fails
+// with the named limit error.
 func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]string, error) {
 	// Reject an unknown filter key instead of ignoring it. Ignoring it would make
 	// a narrowing request expand to the whole pool, and the caller would never
@@ -493,11 +494,26 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 		return filter.matches(entry)
 	}
 
-	// An empty filter only expands when scope.all is set; otherwise the pool walk
-	// below is skipped and only the explicit selectors contribute. The walk stops
-	// one node past the bound so the limit error is always reported instead of a
-	// silent truncation.
-	if hasPool && (scope.All || hasFilter) {
+	// The pool walk has exactly two reasons to happen: scope.all was asked for, or
+	// the filter is the only selector given — WP08 §7.1 defines that as
+	// "equivalent to all:true plus the filter".
+	//
+	// A filter that arrives next to subscription_ids or platform_ids narrows those
+	// selectors instead. Triggering the walk on the filter alone made
+	// {subscription_ids:[x], filter:{...}} mean "every filtered node in the pool
+	// UNION every node of x" instead of "the nodes of x that match the filter" —
+	// so a per-subscription run quietly covered the whole pool. The panel made
+	// that the common case rather than an edge one: every bulk job it builds
+	// carries filter.healthy, which is enough to satisfy the old condition.
+	//
+	// Explicit node_hashes deliberately do NOT suppress the walk: §7.1 says the
+	// filter never applies to a node named by hash, so a hash is taken as given
+	// and the filtered pool walk beside it is the documented union, not a bug.
+	//
+	// The walk stops one node past the bound so the limit error is always
+	// reported instead of a silent truncation.
+	hasNarrowableSelector := len(scope.SubscriptionIDs) > 0 || len(scope.PlatformIDs) > 0
+	if hasPool && (scope.All || (hasFilter && !hasNarrowableSelector)) {
 		a.topoRuntime.pool.Range(func(hash node.Hash, entry *node.NodeEntry) bool {
 			if filter.matches(entry) {
 				add(hash.String())
@@ -505,7 +521,6 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 			return len(selected) <= maxIntelScopeNodes
 		})
 	}
-
 	if len(scope.SubscriptionIDs) > 0 {
 		wanted := make(map[string]struct{}, len(scope.SubscriptionIDs))
 		for _, id := range scope.SubscriptionIDs {

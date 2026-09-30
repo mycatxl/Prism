@@ -20,8 +20,8 @@ independent read-only connection, so a running service is not disturbed:
 | File | Read from | Content |
 |------|-----------|---------|
 | `state.db` | `PRISM_STATE_DIR` (default `./.local/state`) | platforms, subscriptions, endpoints, account header rules, system settings, audit log |
-| `intel.db` | `PRISM_STATE_DIR` | included only when the file exists; the intel subsystem that would create it is not implemented yet, so it is normally absent |
-| `cache.db` | `PRISM_CACHE_DIR` (default `./.local/cache`) | rebuildable cache |
+| `intel.db` | `PRISM_STATE_DIR` | the authoritative detection store (WP08): node egress observations, detection evidence, IP assessments and job/provider state. It is opened at startup, so it exists in any deployment that has run the service |
+| `cache.db` | `PRISM_CACHE_DIR` (default `./.local/cache`) | the node inventory rebuilt from subscriptions (`nodes_static`, `nodes_dynamic`, `node_latency`, `subscription_nodes`) plus `leases`. Safe to delete: every node enters the pool through a subscription refresh and the source text lives in `state.db`, so the file is rebuilt on the next refresh. Deleting it loses only latency history and active leases |
 | `manifest.json` | written by `prism backup` | name, size and sha256 of every file, timestamp and build info |
 
 Properties that always hold:
@@ -251,10 +251,15 @@ host, take one extra snapshot instead of relying on retention:
 
 Copy the whole backup directory (databases plus `manifest.json`) and the `.env`
 to the new host; both are needed, and `manifest.json` must travel with the
-databases or the restore will refuse to run. `prism import-resin` — the tool that
-would import an existing Resin `state.db` — is not implemented yet: the
-subcommand prints `prism import-resin is not available yet (WP05)` and exits with
-status 1.
+databases or the restore will refuse to run.
+
+To import an existing Resin installation instead of a Prism backup, use
+`prism import-resin`: `--from-state DIR` and `--from-cache DIR` are required, and
+`--from-log DIR` is optional (the upstream request-log databases). It copies the
+databases with `VACUUM INTO`, applies the Prism migrations and prints the imported
+row counts. It refuses to run while a Prism instance is active; with `--force`
+existing databases are replaced, after being renamed to `*.pre-import-<timestamp>`.
+See [MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md).
 
 ## Troubleshooting
 
