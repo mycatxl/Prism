@@ -75,9 +75,11 @@ cp docker-compose.yml.example docker-compose.yml
 docker compose up -d        # then open http://<host>:2260/ui/
 ```
 
-The example publishes `2260:2260` and keeps its databases and logs in three
-named volumes. Requirements, volume paths, the container user, health checks and
-upgrades are in the [Docker section of docs/deployment.md](docs/deployment.md#docker).
+The example publishes `2260:2260`, keeps its databases and logs in three named
+volumes, and pins a release tag of the image: the moving `latest` tag only
+appears once a non-prerelease is published, so a pinned tag is what pulls today.
+Requirements, volume paths, the container user, health checks and upgrades are in
+the [Docker section of docs/deployment.md](docs/deployment.md#docker).
 
 ### Managing a running instance
 
