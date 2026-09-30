@@ -371,7 +371,7 @@ function EndpointPagination({
           <span>{t("跳至")}</span>
           <Input
             key={current}
-            className="readout h-7 w-14 px-1.5 text-xs"
+            className="readout h-[var(--control-h)] w-14 px-1.5 text-xs"
             type="number"
             inputMode="numeric"
             min={1}

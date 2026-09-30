@@ -117,7 +117,7 @@ function PageNavigator({
             defaultValue={current + 1}
             aria-label={t("选择页码")}
             disabled={disabled}
-            className="h-7 w-14 px-1.5 text-xs"
+            className="h-[var(--control-h)] w-14 px-1.5 text-xs"
             onKeyDown={(event) => {
               if (event.key === "Enter") jump(event.currentTarget.value);
             }}
@@ -278,7 +278,7 @@ export function PlatformPage() {
                     setSearch(event.target.value);
                     setPage(0);
                   }}
-                  className="h-7 pl-7 text-xs"
+                  className="h-[var(--control-h)] pl-7 text-xs"
                 />
               </div>
             </PanelToolbar>

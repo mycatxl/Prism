@@ -202,7 +202,7 @@ export function AppShell() {
                     // The current destination is a filled pill. A coloured edge
                     // stripe on a list row is the loudest generic-UI tell there is,
                     // and it says nothing the fill does not already say.
-                    "mx-2 flex h-8 items-center gap-2.5 rounded-control text-sm transition-colors",
+                    "mx-2 flex h-[var(--row-h)] items-center gap-2.5 rounded-control text-sm transition-colors",
                     collapsed ? "justify-center px-0" : "px-2.5",
                     active
                       ? "bg-paper-raised font-semibold text-accent-deep shadow-xs"

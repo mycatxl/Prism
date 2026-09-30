@@ -626,7 +626,7 @@ export function SystemConfigPage() {
                       className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
                     />
                     <Input
-                      className="h-7 pl-7 text-xs"
+                      className="h-[var(--control-h)] pl-7 text-xs"
                       aria-label={t("搜索配置分类")}
                       placeholder={t("搜索配置分类或参数")}
                       value={categorySearch}
@@ -1168,9 +1168,14 @@ export function SystemConfigPage() {
                     <RotateCcw size={14} aria-hidden />
                     {t("重置草稿")}
                   </Button>
-                  <Button variant="primary" onClick={() => saveMutation.mutate()} disabled={isSaveDisabled}>
+                  <Button
+                    variant="primary"
+                    onClick={() => saveMutation.mutate()}
+                    disabled={isSaveDisabled}
+                    loading={saveMutation.isPending}
+                  >
                     <Save size={14} aria-hidden />
-                    {t(saveMutation.isPending ? "保存中..." : "保存全部更改")}
+                    {t("保存全部更改")}
                   </Button>
                 </div>
               </PanelBody>

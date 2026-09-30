@@ -362,7 +362,7 @@ function PageNavigator({
             max={pages}
             defaultValue={current + 1}
             aria-label={t("选择页码")}
-            className="h-7 w-14 px-1.5 text-xs"
+            className="h-[var(--control-h)] w-14 px-1.5 text-xs"
             onKeyDown={(event) => {
               if (event.key === "Enter") jump(event.currentTarget.value);
             }}

@@ -214,7 +214,7 @@ export function RulesPage() {
               />
               <Input
                 id="rules-search"
-                className="h-7 pl-7 text-xs"
+                className="h-[var(--control-h)] pl-7 text-xs"
                 placeholder={t("搜索规则")}
                 aria-label={t("搜索规则")}
                 value={search}
