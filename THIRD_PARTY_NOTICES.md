@@ -8,11 +8,11 @@ Prism 按 GPL-3.0-or-later 发行，完整条款见 `LICENSE`。派生源码保�
 - 固定提交：`9b8ef8e5cf83071fbac4de29bd7187268b9cff7b`，2026-08-01。
 - 原始许可：MIT，版权归 Resinat and contributors；全文保存在 `LICENSES/Resin-MIT.txt`。
 - 继承范围：代理、调度、节点与订阅、探测、状态、指标、API，以及相关测试和 SQLite 迁移。
-- 原参考副本和 Git 历史保留在 `references/Resin/`；Prism 应用源码位于 `cmd/prism/` 和 `internal/`。
+- 上游源码的对照副本不在本仓库内（`references/` 被 `.gitignore` 排除）：Prism 的应用源码位于 `cmd/prism/` 和 `internal/`，需要逐字比对时按上表的固定提交自行检出上游。
 
 ## sing-box
 
-- 固定版本：`v1.14.1`；依赖锁定见 `go.mod` / `go.sum`。
+- 固定版本：`v1.14.2`；依赖锁定见 `go.mod` / `go.sum`，版本常量见 `internal/node/capabilities.go` 的 `SingboxVersion`。
 - 原许可声明为 GPL 第 3 版或更新版本，保存在 `LICENSES/sing-box-NOTICE.txt`。
 - Prism 使用独立名称，不表示与 sing-box 或其作者存在官方关联。
 - WireGuard 以 sing-box 的 `wireguard` endpoint 类型使用，所需 `github.com/sagernet/wireguard-go` 直接取自模块依赖，仓库内不再保留本地替换副本。
