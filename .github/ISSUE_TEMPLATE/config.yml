@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/mycatxl/Prism/security/advisories/new
+    about: Report privately through a GitHub Security Advisory, not a public issue.
+  - name: Deployment and configuration questions
+    url: https://github.com/mycatxl/Prism/blob/main/docs/deployment.md
+    about: Requirements, deploy.sh, systemd, Docker, upgrades and backups.
+  - name: Security controls and known limitations
+    url: https://github.com/mycatxl/Prism/blob/main/docs/SECURITY.md
+    about: What is implemented, what is verified by a test, and what is off by default.

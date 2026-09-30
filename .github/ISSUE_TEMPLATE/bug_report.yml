@@ -1,0 +1,69 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. See
+        [SECURITY.md](../blob/main/SECURITY.md) for the private channel.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: |
+        Commands, requests or UI steps, in order. A minimal reproduction is
+        worth more than a description of the symptom.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Output of `./bin/prism version` (includes git commit and build tags)."
+      placeholder: "v0.1.0-rc2, commit abc1234, tags with_quic,..."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How is it deployed
+      options:
+        - systemd (scripts/deploy.sh)
+        - Docker / docker compose
+        - Foreground (./bin/prism run)
+        - Built from source, not deployed
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: |
+        The `PRISM_*` variables that matter, with **tokens redacted**. Do not
+        paste `PRISM_ADMIN_TOKEN` or `PRISM_PROXY_TOKEN`; `./bin/prism check-config`
+        prints the effective configuration with every secret masked.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`sudo journalctl -u prism -n 100 --no-pager`, or the foreground output. Redact tokens and credentials."
+      render: shell
+    validations:
+      required: false
