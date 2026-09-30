@@ -173,7 +173,7 @@ func HostIsForbiddenLexically(host string) bool {
 			return true
 		}
 		for _, r := range label {
-			if !(r == '-' || r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			if r != '-' && r != '_' && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
 				return true
 			}
 		}

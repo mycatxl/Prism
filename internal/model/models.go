@@ -122,19 +122,7 @@ func (q QualityPolicy) IsEmpty() bool {
 
 // MarshalJSON writes only the current keys.
 func (q QualityPolicy) MarshalJSON() ([]byte, error) {
-	return json.Marshal(qualityPolicyWire{
-		MinPurity:        q.MinPurity,
-		IPTypes:          q.IPTypes,
-		AllowedVerdicts:  q.AllowedVerdicts,
-		MinConfidence:    q.MinConfidence,
-		RequireNative:    q.RequireNative,
-		RequiredChecks:   q.RequiredChecks,
-		MaxAssessmentAge: q.MaxAssessmentAge,
-		MaxEgressAge:     q.MaxEgressAge,
-		UnknownAction:    q.UnknownAction,
-		ExcludeTor:       q.ExcludeTor,
-		ExcludeHighRisk:  q.ExcludeHighRisk,
-	})
+	return json.Marshal(qualityPolicyWire(q))
 }
 
 // UnmarshalJSON accepts both the current keys and the legacy ones
@@ -150,19 +138,7 @@ func (q *QualityPolicy) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	*q = QualityPolicy{
-		MinPurity:        wire.MinPurity,
-		IPTypes:          wire.IPTypes,
-		AllowedVerdicts:  wire.AllowedVerdicts,
-		MinConfidence:    wire.MinConfidence,
-		RequireNative:    wire.RequireNative,
-		RequiredChecks:   wire.RequiredChecks,
-		MaxAssessmentAge: wire.MaxAssessmentAge,
-		MaxEgressAge:     wire.MaxEgressAge,
-		UnknownAction:    wire.UnknownAction,
-		ExcludeTor:       wire.ExcludeTor,
-		ExcludeHighRisk:  wire.ExcludeHighRisk,
-	}
+	*q = QualityPolicy(wire)
 
 	if q.MinPurity == nil && legacy.MinScore != nil {
 		q.MinPurity = legacy.MinScore

@@ -52,11 +52,9 @@ func UserRuleDir(stateDir string) string {
 	return stateDir + string(os.PathSeparator) + userRuleDirName
 }
 
-// SourceRecordsEnabled reports the per-check enabled override stored in
-// intel_provider_settings under provider_id "check:<id>" (§5.4).
-type SettingID func(checkID string) string
-
-// CheckSettingID is the provider_id used for a check toggle.
+// CheckSettingID is the provider_id under which the per-check enabled override
+// is stored in intel_provider_settings, and read back by SourceRecordsEnabled
+// (§5.4).
 func CheckSettingID(checkID string) string { return "check:" + checkID }
 
 // EnabledSource resolves the persisted enabled flag of one check.

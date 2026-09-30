@@ -119,7 +119,7 @@ func prepareConnectTunnel(
 		}
 	}
 
-	var upstreamBase net.Conn = rawConn
+	upstreamBase := rawConn
 	if deps.metricsSink != nil {
 		deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
 		upstreamBase = newCountingConn(rawConn, deps.metricsSink)
@@ -157,7 +157,7 @@ func prepareDirectConnectTunnel(ctx context.Context, deps tunnelDeps, target str
 		}
 	}
 
-	var upstreamConn net.Conn = rawConn
+	upstreamConn := rawConn
 	if deps.metricsSink != nil {
 		deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
 		upstreamConn = newCountingConn(rawConn, deps.metricsSink)

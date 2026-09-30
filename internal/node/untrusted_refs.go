@@ -1,3 +1,5 @@
+package node
+
 // Untrusted local file references in node documents.
 //
 // A node document can be produced from untrusted subscription content:
@@ -24,7 +26,6 @@
 // The check runs in ParseNodeDoc, which every consumer of a node document uses
 // (the outbound builder, the export path and the subscription parse report), so
 // no format can bypass it. Inline PEM material keeps working.
-package node
 
 import (
 	"encoding/json"

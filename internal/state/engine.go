@@ -142,7 +142,7 @@ func (e *StateEngine) FlushDirtySets(readers CacheReaders) error {
 	upsertLeases, deleteLeases := classifyDirtySet(drainedLeases, readers.ReadLease)
 
 	// Execute all writes in a single transaction.
-	if err := e.CacheRepo.FlushTx(FlushOps{
+	if err := e.FlushTx(FlushOps{
 		UpsertNodesStatic:       upsertStatic,
 		DeleteNodesStatic:       deleteStatic,
 		UpsertSubscriptionNodes: upsertSubNodes,

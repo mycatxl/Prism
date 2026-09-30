@@ -112,7 +112,7 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("requestlog repo begin tx: %w", err)
 	}
-	defer tx.Rollback() //nolint:errcheck
+	defer func() { _ = tx.Rollback() }()
 
 	insertLog, err := tx.Prepare(`INSERT OR IGNORE INTO request_logs (
 		id, ts_ns, proxy_type, client_ip,
@@ -207,7 +207,7 @@ func (r *Repo) recoverActiveDB() error {
 // LogSummary is the result of listing logs (without payload blobs).
 type LogSummary struct {
 	ID                  string `json:"id"`
-	TsNs                int64  `json:"ts_ns"`
+	TSNs                int64  `json:"ts_ns"`
 	ProxyType           int    `json:"proxy_type"`
 	ClientIP            string `json:"client_ip"`
 	PlatformID          string `json:"platform_id"`
@@ -273,7 +273,7 @@ type ListFilter struct {
 // ListCursor encodes a request-log pagination position.
 // Ordering is ts_ns DESC then id ASC.
 type ListCursor struct {
-	TsNs int64
+	TSNs int64
 	ID   string
 }
 
@@ -316,8 +316,8 @@ func (r *Repo) List(f ListFilter) ([]LogSummary, bool, *ListCursor, error) {
 
 	// Global merge sort: DESIGN.md §577 requires ts_ns DESC, same ts_ns by id ASC.
 	sort.Slice(results, func(i, j int) bool {
-		if results[i].TsNs != results[j].TsNs {
-			return results[i].TsNs > results[j].TsNs
+		if results[i].TSNs != results[j].TSNs {
+			return results[i].TSNs > results[j].TSNs
 		}
 		return results[i].ID < results[j].ID
 	})
@@ -333,7 +333,7 @@ func (r *Repo) List(f ListFilter) ([]LogSummary, bool, *ListCursor, error) {
 	var nextCursor *ListCursor
 	if hasMore && len(results) > 0 {
 		last := results[len(results)-1]
-		nextCursor = &ListCursor{TsNs: last.TsNs, ID: last.ID}
+		nextCursor = &ListCursor{TSNs: last.TSNs, ID: last.ID}
 	}
 	return results, hasMore, nextCursor, nil
 }
@@ -616,7 +616,7 @@ func (r *Repo) queryLogs(db *sql.DB, f ListFilter, limit int) ([]LogSummary, err
 		// Pagination condition for ORDER BY ts_ns DESC, id ASC:
 		// next rows are strictly "after" the cursor in that ordering.
 		where = append(where, "(ts_ns < ? OR (ts_ns = ? AND id > ?))")
-		args = append(args, f.Cursor.TsNs, f.Cursor.TsNs, f.Cursor.ID)
+		args = append(args, f.Cursor.TSNs, f.Cursor.TSNs, f.Cursor.ID)
 	}
 
 	q := "SELECT " + logSummarySelectColumns + " FROM request_logs"
@@ -676,7 +676,7 @@ func scanLogSummary(s rowScanner) (LogSummary, error) {
 	var netOK, payloadPresent, rht, rbt, rsht, rsbt int
 	var eventsRaw string
 	err := s.Scan(
-		&row.ID, &row.TsNs, &row.ProxyType, &row.ClientIP,
+		&row.ID, &row.TSNs, &row.ProxyType, &row.ClientIP,
 		&row.PlatformID, &row.PlatformName, &row.Account,
 		&row.TargetHost, &row.TargetURL, &row.NodeHash, &row.NodeTag, &row.EgressIP,
 		&row.DurationNs, &row.FirstByteDurationNs, &netOK, &row.HTTPMethod, &row.HTTPStatus,

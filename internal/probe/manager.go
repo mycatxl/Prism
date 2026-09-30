@@ -1,3 +1,6 @@
+// Package probe measures node health: it runs the egress, latency and
+// reachability probes, records their results on the node pool, and reports
+// which upstream stage a failed request reached.
 package probe
 
 import (

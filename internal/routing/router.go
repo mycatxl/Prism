@@ -1,3 +1,6 @@
+// Package routing selects the outbound of a request: it applies the
+// platform filter, picks a node with P2C over recent latency, and keeps the
+// sticky leases and rotations that make the choice repeatable.
 package routing
 
 import (

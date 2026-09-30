@@ -1,3 +1,5 @@
+package node
+
 // Node document formats (WP06 §1).
 //
 // A node document has two shapes:
@@ -6,7 +8,6 @@
 //     upstream Resin representation (hash unchanged);
 //   - form B: an envelope object marked with "prism_node":1 that carries an
 //     endpoint, a detour chain, or a mihomo proxy.
-package node
 
 import (
 	"encoding/json"

@@ -1,3 +1,5 @@
+// Package geoip downloads, verifies and reloads the MaxMind GeoIP database
+// and answers country lookups from the reader it currently holds (WP09).
 package geoip
 
 import (

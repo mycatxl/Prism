@@ -17,7 +17,8 @@ import (
 	"prism/internal/intel/store"
 )
 
-// uses it to drop intel.db rows of deleted nodes (§6).
+// NodeCensus enumerates the node hashes the pool still knows about. The
+// manager uses it to drop intel.db rows of deleted nodes (§6).
 type NodeCensus interface {
 	KnownNodeHashes() map[string]struct{}
 }

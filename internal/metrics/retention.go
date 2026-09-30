@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Metrics retention (G-08).
+// RetentionPolicy bounds the persisted metrics history (G-08).
 //
 // PRISM_METRIC_THROUGHPUT_RETENTION_SECONDS,
 // PRISM_METRIC_CONNECTIONS_RETENTION_SECONDS and

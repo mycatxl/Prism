@@ -1,3 +1,6 @@
+// Package outbound builds and owns sing-box outbounds: it turns a node
+// document into a running outbound, keeps one runtime per build, and
+// publishes the capability matrix the control plane reports (WP06).
 package outbound
 
 import (

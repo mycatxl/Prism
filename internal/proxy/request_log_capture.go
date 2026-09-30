@@ -19,7 +19,7 @@ func captureRequestHeaders(header http.Header, accountHeaders ...string) []byte 
 
 // headerWireLen returns canonical wire-format header bytes length.
 func headerWireLen(header http.Header) int64 {
-	if header == nil || len(header) == 0 {
+	if len(header) == 0 {
 		return 0
 	}
 	var buf bytes.Buffer
