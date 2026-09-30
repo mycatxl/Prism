@@ -100,6 +100,15 @@ func (s *inboundDemuxServer) Serve(ln net.Listener) error {
 // interrupting accept, exhausted file descriptors, or a connection that died
 // before it reached the accept queue. A closed listener and every other error
 // end the accept loop.
+//
+// It is a superset of the deprecated predicate, not a transcription of it. Go
+// treats ECONNRESET and ECONNABORTED as transient for accept (isConnError, issue
+// 6163), but only when the errno is unwrapped, and a real accept error arrives as
+// an *os.SyscallError inside a *net.OpError, so Temporary answered false for the
+// two errnos it documents as transient. Retrying is the safe direction: the
+// listener is healthy and the pending connection is not. Verified against a real
+// EMFILE from accept, where both predicates agree (true) and both end the loop on
+// net.ErrClosed.
 func inboundDemuxAcceptRetryable(err error) bool {
 	if errors.Is(err, net.ErrClosed) {
 		return false

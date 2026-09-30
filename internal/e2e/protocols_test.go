@@ -121,6 +121,12 @@ var recentPorts = struct {
 // pure function so the behaviour below is testable without the kernel's
 // cooperation.
 func portWindowAppend(window []uint16, port uint16, limit int) ([]uint16, bool) {
+	if limit < 1 {
+		// A window that can hold nothing would silently stop detecting repeats, and
+		// a negative limit would slice out of range. One entry is the smallest
+		// window that still catches the repeat this helper exists to catch.
+		limit = 1
+	}
 	for _, previous := range window {
 		if previous == port {
 			return window, true
@@ -188,6 +194,18 @@ func TestPortWindowAppend(t *testing.T) {
 	}
 	if want := []uint16{3, 4, 1}; !equalPorts(next, want) {
 		t.Fatalf("window = %v, want %v", next, want)
+	}
+
+	// A limit below one must neither panic nor silently stop detecting repeats, so
+	// a mis-set window constant cannot disable the guard quietly.
+	for _, limit := range []int{0, -1} {
+		single, firstSight := portWindowAppend(nil, 7, limit)
+		if firstSight {
+			t.Fatalf("limit %d: the first sight of port 7 was reported as a repeat", limit)
+		}
+		if _, again := portWindowAppend(single, 7, limit); !again {
+			t.Fatalf("limit %d: a repeat was not detected", limit)
+		}
 	}
 }
 
