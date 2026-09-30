@@ -13,7 +13,11 @@ explicitly — they are not security claims.
 How to reproduce everything in §1:
 
 ```sh
-TAGS='with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy with_mihomo'
+# The same set every build path passes (Makefile TAGS, release.yml, both
+# Dockerfiles). with_mihomo is deliberately absent: no build path passes it
+# (docs/ENGINE_DECISIONS.md D-1), so a run that added it would not describe
+# any shipped binary.
+TAGS='with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy'
 go test -tags "$TAGS" -count=1 ./cmd/... ./internal/...
 bash scripts/smoke.sh
 ```
@@ -35,10 +39,8 @@ fail; the management routes are unreachable without the token.
 
 Verified by:
 
-- `scripts/smoke.sh` check `/api/v1/system/info rejects missing token` → 401
-  (`scripts/smoke.sh:316-317`).
-- `scripts/smoke.sh` check `/api/v1/system/info accepts the admin token` → 200
-  (`scripts/smoke.sh:318-319`).
+- `scripts/smoke.sh` check `/api/v1/system/info rejects missing token` → 401.
+- `scripts/smoke.sh` check `/api/v1/system/info accepts the admin token` → 200.
 - `TestAuthRateLimit_SuccessfulRequestsAreNotCounted`
   (`internal/api/wp04_security_test.go`) exercises the successful path.
 
@@ -167,8 +169,7 @@ Verified by:
 - `TestEmptyTokenRequiresLoopbackAdminListen` and
   `TestEmptyProxyTokenRequiresLoopbackAdminListen`
   (`internal/config/env_test.go`).
-- `scripts/smoke.sh` check `admin listener refuses CONNECT`
-  (`scripts/smoke.sh:330-335`).
+- `scripts/smoke.sh` check `admin listener refuses CONNECT`.
 
 ### 1.6 Audit logging of management writes
 
@@ -382,8 +383,7 @@ Verified by:
 Verified by:
 
 - `TestCheckConfigNeverPrintsSecrets` (`cmd/prism/subcommands_test.go`).
-- `scripts/smoke.sh` check `check-config succeeds without printing any token`
-  (`scripts/smoke.sh:454-463`).
+- `scripts/smoke.sh` check `check-config succeeds without printing any token`.
 
 ### 1.10 Online backup is a consistent snapshot and excludes secrets
 
@@ -398,10 +398,8 @@ Verified by:
 
 - `TestBackupProducesConsistentDatabasesAndManifest`
   (`cmd/prism/subcommands_test.go`).
-- `scripts/smoke.sh` check `online backup databases are consistent (quick_check
-  ok)` (`scripts/smoke.sh:420-444`).
-- `scripts/smoke.sh` check `backup does not contain .env`
-  (`scripts/smoke.sh:414-418`).
+- `scripts/smoke.sh` check `online backup databases are consistent (quick_check ok)`.
+- `scripts/smoke.sh` check `backup does not contain .env`.
 
 ### 1.11 Restore verifies the backup before it touches live data
 
@@ -418,8 +416,7 @@ Verified by:
   (`cmd/prism/subcommands_test.go`).
 - `TestRestoreRefusesWhileServiceIsRunning`
   (`cmd/prism/subcommands_test.go`).
-- `scripts/smoke.sh` check `restore refuses to run while the service is active`
-  (`scripts/smoke.sh:445-452`).
+- `scripts/smoke.sh` check `restore refuses to run while the service is active`.
 
 `scripts/prism-backup.sh` is a thin wrapper over these two subcommands; it adds
 `--keep N` retention and never packages a live database with `tar`.
