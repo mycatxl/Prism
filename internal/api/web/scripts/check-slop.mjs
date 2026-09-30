@@ -108,7 +108,14 @@ function detect(targets) {
 
 /**
  * Parses the report into findings. The format is a bare path line followed by
- * indented `line N: [rule] detail` rows.
+ * indented `line N: [rule] detail` rows — and, for the rules the engine decides on
+ * the whole file rather than on one declaration, an indented `[rule] detail` row with
+ * no line number.
+ *
+ * Both shapes are read. The first version of this file only understood the first, so
+ * a file-scoped rule (`ai-color-palette`, `cream-palette`, the font tells) parsed as
+ * zero findings and the gate printed "clean" while the engine had reported one — a
+ * false clean, which is the one failure mode a gate must not have.
  */
 function parse(output) {
   const findings = [];
@@ -116,8 +123,14 @@ function parse(output) {
   for (const raw of output.split("\n")) {
     const line = raw.replace(/\r$/, "");
     if (!line.trim()) continue;
-    if (/^\s+line \d+: \[([^\]]+)\]/.test(line)) {
-      findings.push({ file, rule: line.match(/^\s+line \d+: \[([^\]]+)\]/)[1], text: line.trim() });
+    const lineScoped = /^\s+line \d+: \[([^\]]+)\]/.exec(line);
+    if (lineScoped) {
+      findings.push({ file, rule: lineScoped[1], text: line.trim(), scope: "line" });
+      continue;
+    }
+    const fileScoped = /^\s+\[([^\]]+)\]\s*(.*)$/.exec(line);
+    if (fileScoped) {
+      findings.push({ file, rule: fileScoped[1], text: line.trim(), scope: "file" });
       continue;
     }
     if (/^\s/.test(line)) continue; // rule text, arrows, advisories
@@ -192,22 +205,53 @@ const findings = parse(output);
 /* ---- 3. attribute anything that is not ours ----------------------------- */
 
 /**
- * A finding is excused only if the file holding it carries the third-party marker
- * that is claimed for it. Matching the filename would excuse a regression that
- * happens to land in the same chunk; reading the file does not.
+ * A finding is excused only for a reason that is written down, and only after the file
+ * holding it has been read. Matching the filename alone would excuse a regression that
+ * happens to land in the same file; reading it does not.
+ *
+ * Two kinds of reason exist, and both are printed on every run so the choice is visible
+ * rather than silent:
+ *
+ *   - **provenance**: the code is not ours (a vendored chunk);
+ *   - **decision**: the code is ours and the pattern is deliberate, recorded in the
+ *     root `DESIGN.md` with its bound.
  */
 function attribution(finding) {
-  if (finding.rule !== "layout-transition") return null;
-  if (!/useReducedMotion-[A-Za-z0-9_-]+\.js$/.test(finding.file ?? "")) return null;
-  let body;
-  try {
-    body = readFileSync(finding.file, "utf8");
-  } catch {
-    return null;
+  let body = null;
+  const read = () => {
+    if (body !== null) return body;
+    try {
+      body = readFileSync(finding.file, "utf8");
+    } catch {
+      body = "";
+    }
+    return body;
+  };
+
+  if (finding.rule === "layout-transition") {
+    if (!/useReducedMotion-[A-Za-z0-9_-]+\.js$/.test(finding.file ?? "")) return null;
+    return /echarts/i.test(read())
+      ? "ECharts' own bundled code (a Vite shared chunk named after the module the split happened on). Recorded in DESIGN.md"
+      : null;
   }
-  return /echarts/i.test(body)
-    ? "ECharts' own bundled code (a Vite shared chunk named after the module the split happened on). Recorded in DESIGN.md"
-    : null;
+
+  /*
+   * The detector reads the shell and its linked stylesheet as one palette, and reports
+   * a violet/indigo accent as an "AI tell". This console's accent *is* an indigo→violet
+   * pair, because the operator pinned that look in a mockup, and the design system
+   * states that decision and its bounds. The engine cannot know that; a reader of this
+   * output can, which is why the finding is still printed.
+   *
+   * The exemption is narrow on purpose: one rule, our own shell only (read, then
+   * checked), and any second palette finding still fails the gate.
+   */
+  if (finding.rule === "ai-color-palette" && /(^|\/)ui\/index\.html$/.test(finding.file ?? "")) {
+    return /prism/i.test(read())
+      ? "our own shell; the indigo→violet accent is pinned by the operator's brief and bounded in DESIGN.md"
+      : null;
+  }
+
+  return null;
 }
 
 const ours = [];
