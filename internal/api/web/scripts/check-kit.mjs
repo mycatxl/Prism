@@ -20,8 +20,9 @@
  *   1. Native controls are not allowed outside `src/components/ui/`, with an
  *      explicit allow-list for the cases where a native tag is the correct
  *      answer.
- *   2. Control heights inside `src/components/ui/` must come from the
- *      `--control-h*` tokens, never from a hard-coded `h-*` step.
+ *   2. Control heights must come from the `--control-h*` tokens, never from a
+ *      hard-coded `h-*` step. Unlike rule 1 this has no scope guard: a page that
+ *      sizes a control has made the same per-page decision the kit may not make.
  *   3. `rounded-full` belongs to `Badge` alone.
  *
  * Fails closed: a missing directory is an error, not a skip, because a gate that
@@ -98,10 +99,22 @@ const NATIVE_CONTROL_RE = /<(select|input|button|textarea)\b/;
 // ---------------------------------------------------------------------------
 
 /*
- * Hard-coded height steps that must not appear on a control in the kit. `h-0`,
- * `h-20` (a textarea's block size) and the token forms are not control heights,
- * so they are not listed: this rule is about the control step, not about every
- * `h-*` utility in the file.
+ * Hard-coded height steps that must not appear on a control. `h-0`, `h-20` (a
+ * textarea's block size) and the token forms are not control heights, so they are
+ * not listed: this rule is about the control step, not about every `h-*` utility
+ * in the file.
+ *
+ * This rule applies to *every* file, not just the kit. The first version of it
+ * was scoped to `src/components/ui/`, on the reasoning that the kit is where a
+ * control's height is decided — and that scoping is exactly how a page kept a
+ * 32px `selectClass` and thirteen 28px overrides without the gate saying a word.
+ * A page that sets a control's height has made the same per-page decision the
+ * rule forbids, so it is the same failure.
+ *
+ * 28px (`h-7`) is not exempt: it happens to equal `--control-h` today, which is
+ * precisely why it must not be written down. A literal that agrees with the token
+ * by coincidence stops agreeing the moment the token moves, and nothing reports
+ * it. The token is the decision; the literal is a copy of it.
  */
 const CONTROL_HEIGHT_RE = /\bh-(6\.5|7|8|9|10)\b/;
 const CONTROL_HEIGHT_ALLOW = [
@@ -110,6 +123,19 @@ const CONTROL_HEIGHT_ALLOW = [
     file: "src/components/ui/Textarea.tsx",
     pattern: /h-20/,
     reason: "textarea block size, not a control step",
+  },
+  {
+    /*
+     * The command palette's query field. This is not a chrome control: it is the
+     * input of a modal search surface, sized to the dialog's own row rather than
+     * to a toolbar, and it sits in no form. Sizing it to `--control-h` would make
+     * the palette's single most-used element shorter than the list it searches.
+     * The pattern is the element's own class string, so another `h-10` in this
+     * file still fails.
+     */
+    file: "src/components/QuickSearch.tsx",
+    pattern: /className="h-10 min-w-0 flex-1 bg-transparent/,
+    reason: "command palette query field, sized to the dialog row",
   },
 ];
 
@@ -175,12 +201,12 @@ function checkFile(path) {
       }
     }
 
-    if (isUiKit(path)) {
-      if (CONTROL_HEIGHT_RE.test(line) && !allowed(path, CONTROL_HEIGHT_ALLOW, line)) {
-        failures.push(
-          `${rel}:${lineNo} hard-codes a control height; use h-[var(--control-h)] (or -sm/-lg)`,
-        );
-      }
+    // Rule 2 has no scope guard: a page that sets a control's height has made
+    // the same per-page decision the kit is forbidden from making.
+    if (CONTROL_HEIGHT_RE.test(line) && !allowed(path, CONTROL_HEIGHT_ALLOW, line)) {
+      failures.push(
+        `${rel}:${lineNo} hard-codes a control height; use h-[var(--control-h)] (or -sm/-lg)`,
+      );
     }
     if (ROUNDED_FULL_RE.test(line) && !allowed(path, ROUNDED_FULL_ALLOW, line)) {
       failures.push(

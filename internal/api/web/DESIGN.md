@@ -129,8 +129,8 @@ opaque black block. WebGL unavailable falls back to the flat map.
 | Floor | How it is checked |
 |---|---|
 | Contrast and series separation, both themes | `npm run check:contrast` — **86 pairs**, light and dark. In `make test-web` → `make verify`, so a palette regression fails CI like a Go test |
-| The kit is the only source of controls | `npm run check:kit` reads the `.tsx` sources: native `<select>`/`<input>`/`<button>`/`<textarea>` outside `src/components/ui/`, hard-coded control heights inside it, and `rounded-full` anywhere but `Badge`. In `make test-web` → `make verify` |
-| The kit's own invariants | `tests/kit.test.mjs` — the `Button` single-child rule, token heights, and the pill reservation, each with the reason it exists |
+| The kit is the only source of controls | `npm run check:kit` reads the `.tsx` sources: native `<select>`/`<input>`/`<button>`/`<textarea>` outside `src/components/ui/`, hard-coded control heights **anywhere** (a page that sizes a control has made the same per-page decision the kit may not make), and `rounded-full` anywhere but `Badge`. In `make test-web` → `make verify` |
+| The kit's own invariants | `tests/kit.test.mjs` — the `Button` single-child rule, token heights, the pill reservation, that the height rule carries no scope guard, and that no control renders with an empty `onChange`. Each with the reason it exists |
 | Row height and panel geometry | DOM audit of the live pages: `--row-h`, panel radius 8, rail width, rhythm on 6/8/12/16 |
 | Types are really checked | `npm run check:types` runs `tsc -p tsconfig.app.json --noEmit`. **`npx tsc --noEmit` at the repo root is a no-op** — `tsconfig.json` is a solution file with `files: []` — so it proves nothing |
 | Focus is visible | `:focus-visible` draws 2px accent with 1px offset |

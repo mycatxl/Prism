@@ -4,10 +4,10 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button } from "../../../components/ui/Button";
 import { Input } from "../../../components/ui/Input";
+import { PageMeta } from "../../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
-import { Select } from "../../../components/ui/Select";
 import { Sheet } from "../../../components/ui/Sheet";
 import { TBody, TD, TDClip, TDNum, TH, THead, TR, Table, TableWrap } from "../../../components/ui/Table";
 import { ToastContainer } from "../../../components/ui/Toast";
@@ -20,8 +20,6 @@ import { getIPQuality, getQualityStatus, inspectIP, listQuality, qualityPollingI
 import { IPTypeBadge, QualityBadge, QualityDetails, VerdictBadge } from "./QualityDetails";
 import { evidenceFor, inspectionErrorLabel } from "./presentation";
 
-const selectClass =
-  "h-8 w-auto rounded-control border border-rule bg-paper-raised pr-7 text-sm text-ink";
 const pageSize = 25;
 
 export function ExitRecordsPanel() {
@@ -119,7 +117,7 @@ export function ExitRecordsPanel() {
         >
           <Globe2 size={16} aria-hidden className="shrink-0 text-ink-faint" />
           <Input
-            className="readout h-7 w-full text-xs sm:w-56"
+            className="readout h-[var(--control-h)] w-full text-xs sm:w-56"
             value={ipInput}
             maxLength={80}
             onChange={event => setIPInput(event.target.value)}
@@ -135,7 +133,7 @@ export function ExitRecordsPanel() {
         <div className="relative ml-auto w-full sm:w-64">
           <Search size={14} aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint" />
           <Input
-            className="h-7 pl-8 text-xs"
+            className="h-[var(--control-h)] pl-8 text-xs"
             value={keyword}
             onChange={event => update("quality_q", event.target.value)}
             aria-label={t("搜索质量记录")}
@@ -219,23 +217,16 @@ export function ExitRecordsPanel() {
             })}
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-              <span>{t("每页")}</span>
-              <Select
-                className={selectClass}
-                value={pageSize}
-                disabled={records.isFetching}
-                aria-label={t("每页")}
-                onChange={() => {}}
-              >
-                <option value={pageSize}>{pageSize}</option>
-              </Select>
-            </label>
+            {/* The page size is fixed at 25 and the API takes no size parameter,
+                so this is a reading, not a selector. It used to be a `<Select>`
+                with an empty `onChange`, which is a control that cannot be
+                operated — the one shape worse than a missing control. */}
+            <PageMeta label={t("每页")} value={pageSize} />
             <label className="flex items-center gap-1.5 text-xs text-ink-soft">
               <span>{t("跳至")}</span>
               <Input
                 key={currentPage}
-                className="readout h-7 w-16 text-center text-xs"
+                className="readout h-[var(--control-h)] w-16 text-center text-xs"
                 type="number"
                 inputMode="numeric"
                 min={1}

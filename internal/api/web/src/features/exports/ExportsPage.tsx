@@ -1193,7 +1193,7 @@ function PageNavigator({
             max={pages}
             defaultValue={current + 1}
             aria-label={t("选择页码")}
-            className="h-7 w-14 px-1.5 text-xs"
+            className="h-[var(--control-h)] w-14 px-1.5 text-xs"
             onKeyDown={(event) => {
               if (event.key === "Enter") jump(event.currentTarget.value);
             }}
@@ -1723,8 +1723,8 @@ export function ExportsPage() {
             subscriptions={subscriptionOptions}
           />
           <div className="mt-4 flex items-center gap-2 border-t border-rule pt-3">
-            <Button onClick={() => void onCreateSubmit()} disabled={createMutation.isPending}>
-              {createMutation.isPending ? t("创建中") : t("确认创建")}
+            <Button onClick={() => void onCreateSubmit()} loading={createMutation.isPending}>
+              {t("确认创建")}
             </Button>
             <Button variant="secondary" onClick={() => setCreateOpen(false)}>
               {t("取消")}
@@ -1789,8 +1789,8 @@ export function ExportsPage() {
                 subscriptions={subscriptionOptions}
               />
               <div className="mt-4 flex items-center gap-2 border-t border-rule pt-3">
-                <Button onClick={() => void onEditSubmit()} disabled={updateMutation.isPending}>
-                  {updateMutation.isPending ? t("保存中") : t("保存配置")}
+                <Button onClick={() => void onEditSubmit()} loading={updateMutation.isPending}>
+                  {t("保存配置")}
                 </Button>
               </div>
             </section>

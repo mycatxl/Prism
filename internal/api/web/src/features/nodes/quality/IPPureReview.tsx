@@ -72,9 +72,15 @@ export function IPPureReviewPanel({ nodeHash, nodeIP, ready }: { nodeHash: strin
     />
     <PanelBody className="space-y-3">
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="secondary" size="sm" onClick={() => review.mutate()} disabled={!ready || !nodeIP || review.isPending || manual?.busy || waiting}>
-          {review.isPending ? <LoaderCircle size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-          {t(review.isPending ? "正在经节点查询" : "通过此节点复核")}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => review.mutate()}
+          disabled={!ready || !nodeIP || review.isPending || manual?.busy || waiting}
+          loading={review.isPending}
+        >
+          <ShieldCheck size={14} />
+          {t("通过此节点复核")}
         </Button>
         {waiting && <span className="readout text-xs text-ink-soft" role="status">{t("{{seconds}} 秒后可再次复核", { seconds: Math.ceil((nextAt - now) / 1000) })}</span>}
       </div>
