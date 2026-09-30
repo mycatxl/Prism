@@ -261,9 +261,22 @@ function attribution(finding) {
    * replica probes.
    */
   if (finding.rule === "radial-halo" && /(^|\/)(ui\/index\.html|styles\/design\.css)$/.test(finding.file ?? "")) {
-    return /#0b1631/.test(finding.text ?? "") && /prism/i.test(read())
-      ? "our own shell; the hero band reproduces the measured light field of the operator's reference art, bounded in DESIGN.md"
-      : null;
+    const body = read();
+    if (!/prism/i.test(body)) return null;
+    /*
+     * The excuse has to name the colour the engine named: it holds only while that exact
+     * stop is inside the hero band's rule. Editing any of the band's stops (or moving them
+     * off the band) drops the excuse by itself, which is the point.
+     */
+    const stop = /#([0-9a-f]{6})/i.exec(finding.text ?? "");
+    if (!stop) return null;
+    const rule = /\.wb-slot-a[^{}]*\{[^}]*\}/g;
+    for (let hit = rule.exec(body); hit; hit = rule.exec(body)) {
+      if (new RegExp("#" + stop[1], "i").test(hit[0])) {
+        return "our own shell; the hero band reproduces the measured light field of the operator's reference art, bounded in DESIGN.md";
+      }
+    }
+    return null;
   }
 
   return null;
