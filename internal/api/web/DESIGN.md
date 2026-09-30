@@ -103,6 +103,11 @@ opaque black block. WebGL unavailable falls back to the flat map.
 └──────┴────────────────────────────────────────────┘
 ```
 
+- The page header band is a **floor, not a height**: `PageHeader` applies
+  `--page-header-h` as a minimum. Measured on the live panel across all eleven
+  rail destinations, the band is 54.6–99px depending on what it carries — 99px on
+  `/nodes`, the one destination that passes a tab strip — so nothing may place
+  content against a fixed 52px offset.
 - The rail is `bg-rail`; the **current destination is a filled pill** (accent wash,
   600 weight, raised sheet) — **no coloured side bar**. A coloured edge on a list row
   is the loudest generic UI tell, and it says nothing the fill did not already say.
