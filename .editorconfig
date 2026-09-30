@@ -1,0 +1,36 @@
+# Editor configuration for Prism.
+#
+# The repository stores every text file with LF endings; .gitattributes is the
+# authority for that. These settings keep an editor from writing CRLF back in,
+# which would show up as a whole-file diff.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+# Deliberately false: 40 tracked text files (docs, several .tsx components and
+# a few scripts) end without a trailing newline today. Turning this on would
+# make every editor add one and produce a diff that has nothing to do with the
+# change being made.
+insert_final_newline = false
+trim_trailing_whitespace = true
+
+# Go: gofmt decides, and it uses tabs.
+[*.go]
+indent_style = tab
+indent_size = 4
+
+# The web UI is formatted by ESLint/Prettier with two spaces.
+[{*.ts,*.tsx,*.js,*.mjs,*.json,*.jsonc,*.css,*.html}]
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab
+
+[*.md]
+# Trailing whitespace is meaningful in Markdown: two spaces force a line break.
+trim_trailing_whitespace = false
