@@ -796,7 +796,10 @@ func unwrapDatabase(dst io.Writer, body []byte, src GeoDBSource, maxBytes int64)
 			if err != nil {
 				return 0, geoFailed(GeoCodeInvalidDB, "the downloaded archive does not contain "+src.FileName)
 			}
-			if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+			// archive/tar normalizes the historical NUL typeflag (TypeRegA)
+			// to TypeReg while reading, so one regular-file check covers both
+			// spellings an archive may use.
+			if header.Typeflag != tar.TypeReg {
 				continue
 			}
 			if filepath.Base(header.Name) != src.FileName {

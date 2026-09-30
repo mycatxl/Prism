@@ -7,8 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -48,34 +50,22 @@ type stubAddr string
 func (a stubAddr) Network() string { return "tcp" }
 func (a stubAddr) String() string  { return string(a) }
 
-type temporaryNetError struct {
-	err error
-}
-
-func (e temporaryNetError) Error() string {
-	if e.err == nil {
-		return "temporary network error"
-	}
-	return e.err.Error()
-}
-
-func (e temporaryNetError) Timeout() bool   { return false }
-func (e temporaryNetError) Temporary() bool { return true }
-
-type temporaryErrorListener struct {
+// firstAcceptErrorListener fails the first Accept with acceptErr and delegates
+// every later Accept to the wrapped listener.
+type firstAcceptErrorListener struct {
 	net.Listener
 	mu        sync.Mutex
 	issued    bool
 	acceptErr error
 }
 
-func (l *temporaryErrorListener) Accept() (net.Conn, error) {
+func (l *firstAcceptErrorListener) Accept() (net.Conn, error) {
 	l.mu.Lock()
 	if !l.issued {
 		l.issued = true
 		err := l.acceptErr
 		l.mu.Unlock()
-		return nil, temporaryNetError{err: err}
+		return nil, err
 	}
 	l.mu.Unlock()
 	return l.Listener.Accept()
@@ -177,7 +167,7 @@ func TestInboundDemux_RoutesHTTPToHTTPServer(t *testing.T) {
 	}
 }
 
-func TestInboundDemux_RetriesTemporaryAcceptError(t *testing.T) {
+func TestInboundDemux_RetriesRetryableAcceptError(t *testing.T) {
 	httpServer := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Demux-Route", "http")
@@ -190,9 +180,13 @@ func TestInboundDemux_RetriesTemporaryAcceptError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	ln := &temporaryErrorListener{
-		Listener:  baseLn,
-		acceptErr: errors.New("temporary accept failure"),
+	ln := &firstAcceptErrorListener{
+		Listener: baseLn,
+		acceptErr: &net.OpError{
+			Op:  "accept",
+			Net: "tcp",
+			Err: os.NewSyscallError("accept", syscall.EMFILE),
+		},
 	}
 
 	demux := newInboundDemuxServer(httpServer, &stubSocksHandler{})
@@ -244,6 +238,41 @@ func TestInboundDemux_RetriesTemporaryAcceptError(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for demux server to stop")
+	}
+}
+
+func TestInboundDemuxAcceptRetryableClassification(t *testing.T) {
+	retryable := []struct {
+		name string
+		err  error
+	}{
+		{"EINTR", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EINTR)}},
+		{"EMFILE", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.EMFILE)}},
+		{"ENFILE", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.ENFILE)}},
+		{"ECONNABORTED", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.ECONNABORTED)}},
+		{"ECONNRESET", &net.OpError{Op: "accept", Net: "tcp", Err: os.NewSyscallError("accept", syscall.ECONNRESET)}},
+		{"expired deadline", &net.OpError{Op: "accept", Net: "tcp", Err: os.ErrDeadlineExceeded}},
+		{"bare errno", syscall.EMFILE},
+	}
+	for _, tc := range retryable {
+		if !inboundDemuxAcceptRetryable(tc.err) {
+			t.Errorf("%s: expected the accept error to be retried", tc.name)
+		}
+	}
+
+	fatal := []struct {
+		name string
+		err  error
+	}{
+		{"closed listener", net.ErrClosed},
+		{"wrapped closed listener", &net.OpError{Op: "accept", Net: "tcp", Err: net.ErrClosed}},
+		{"plain error", errors.New("accept failed")},
+		{"nil", nil},
+	}
+	for _, tc := range fatal {
+		if inboundDemuxAcceptRetryable(tc.err) {
+			t.Errorf("%s: expected the accept error to end the loop", tc.name)
+		}
 	}
 }
 
