@@ -14,7 +14,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -71,13 +71,26 @@ const REMOVED_CLASS_TOKENS = [
   "workspace-bar",
 ];
 
-// DESIGN.md colour tokens, as the browser reports them.
-// The console ships dark by default and offers light as a switch, so these are the
-// dark primitives from src/styles/design.css. Both themes are verified pair by pair
-// by `npm run check:contrast`; this file only has to prove the page painted the
-// ground it was asked for rather than falling back to the browser's white.
-const PAPER = "rgb(11, 18, 32)";
-const INK = "rgb(241, 243, 247)";
+// The ground and the ink, read from the dark primitives in src/styles/design.css
+// rather than written down here. The console ships dark by default and offers light
+// as a switch; both themes are verified pair by pair by `npm run check:contrast`, and
+// this file only has to prove the page painted the tokens it was asked for rather
+// than falling back to the browser's black on white. Reading them is deliberate: a
+// literal turns the next deliberate re-solve of the palette into a false failure.
+const darkTheme = (() => {
+  const css = readFileSync(new URL("../src/styles/design.css", import.meta.url), "utf8");
+  const block = /\[data-theme="dark"\] \{([\s\S]*?)\n\}/.exec(css);
+  if (!block) throw new Error("check-ui-live: design.css has no dark theme block");
+  return block[1];
+})();
+const darkToken = (name) => {
+  const value = new RegExp(`--p-${name}:\\s*(#[0-9a-fA-F]{6})\\b`).exec(darkTheme);
+  if (!value) throw new Error(`check-ui-live: the dark theme declares no --p-${name}`);
+  const hex = value[1].slice(1);
+  return `rgb(${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)})`;
+};
+const PAPER = darkToken("canvas");
+const INK = darkToken("ink");
 
 const LOCALE = "zh-CN";
 const DASHBOARD = "/ui/dashboard";

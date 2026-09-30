@@ -5,58 +5,65 @@
  * These are copies of `src/styles/design.css` — the chart cannot read CSS
  * variables off its canvas, and a second palette would drift. When a colour here
  * changes, `scripts/check-contrast.mjs` is what proves the change is still legible;
- * it checks the CSS tokens, so keep the two in step.
+ * it checks the CSS tokens, so keep the two in step. `tests/chart-palette.test.mjs`
+ * is what proves they *are* in step: it reads both files and fails on any pair that
+ * disagrees.
+ *
+ * Everything below mirrors the **light** theme, because the flat map is the day
+ * board; the globe carries its own palette (see `GLOBE_DARK`), and its tooltip
+ * mirrors the dark primitives.
  */
-export const CHART_PAPER = "#f1f3f7";
-export const CHART_PAPER_SUNK = "#e5e9f0";
-export const CHART_PAPER_RAISED = "#ffffff";
-export const CHART_PAPER_INSET = "#f8fafc";
-export const CHART_RULE = "#d1d7e0";
-export const CHART_RULE_STRONG = "#a4adbb";
-export const CHART_INK = "#0a0f16";
-export const CHART_INK_SOFT = "#39434f";
-export const CHART_INK_FAINT = "#566170";
-export const CHART_SIGNAL = "#0a6b52";
-export const CHART_SIGNAL_DEEP = "#06483a";
-export const CHART_LIVE = "#0b5f8a";
-export const CHART_GRID = "#e8ecf2";
-export const CHART_AXIS = "#5d6876";
+export const CHART_PAPER = "#f4f6fb";
+export const CHART_PAPER_SUNK = "#eceef4";
+export const CHART_PAPER_RAISED = "#fcfcfe";
+export const CHART_PAPER_INSET = "#fafbfd";
+export const CHART_RULE = "#d5dbe6";
+export const CHART_RULE_STRONG = "#9fa9ba";
+export const CHART_INK = "#0b111e";
+export const CHART_INK_SOFT = "#364152";
+export const CHART_INK_FAINT = "#526075";
+export const CHART_SIGNAL = "#086a50";
+export const CHART_SIGNAL_DEEP = "#054937";
+export const CHART_LIVE = "#0a5d88";
+export const CHART_GRID = "#e6eaf2";
+export const CHART_AXIS = "#556274";
 
 /**
  * The categorical sequence, in the order a chart should spend it.
  *
  * Spread across the luminance axis as well as the hue axis, so the lines stay
  * apart in greyscale — the fallback that a printed screenshot, a colour-blind
- * reader and a three-metre viewing distance all land on. Blue is the primary
+ * reader and a three-metre viewing distance all land on. Indigo is the primary
  * series, teal is healthy, amber is warned, red is failing.
  */
 export const CHART_SERIES = [
-  "#0554bb",
-  "#03725c",
-  "#ba6e05",
-  "#dd2206",
-  "#6505d1",
-  "#059bd1",
+  "#2b2470",
+  "#04745c",
+  "#b86c04",
+  "#dd2408",
+  "#6d1eb5",
+  "#0393c9",
 ] as const;
 
-export const CHART_FONT_SANS = '"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif';
+export const CHART_FONT_SANS = '"Manrope", ui-sans-serif, system-ui, sans-serif';
 export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace';
 
 /**
- * The choropleth ramp: one hue, five luminance steps, from near the panel ground to
- * the primary series colour.
+ * The choropleth ramp: one hue, five luminance steps, from pale paper to the
+ * primary series colour.
  *
  * Deliberately not a continuous gradient and deliberately not ECharts' red / yellow
  * / green ramp — a country's colour has to be readable as a count band, and the
  * lightest step still sits clearly above the colour an empty country keeps, so the
- * coloured area *is* the footprint.
+ * coloured area *is* the footprint. The deepest step is `CHART_SERIES[0]`: the
+ * legend's last swatch and the primary series line are the same colour on purpose.
  */
 export const EXIT_COUNT_BANDS: Array<{ min: number; max: number; color: string }> = [
-  { min: 1, max: 2, color: "#cedef4" },
-  { min: 3, max: 5, color: "#9abeef" },
-  { min: 6, max: 11, color: "#5f9eef" },
-  { min: 12, max: 24, color: "#1073f5" },
-  { min: 25, max: Number.POSITIVE_INFINITY, color: "#0554bb" },
+  { min: 1, max: 2, color: "#dfe0f8" },
+  { min: 3, max: 5, color: "#b9bcef" },
+  { min: 6, max: 11, color: "#8f93e4" },
+  { min: 12, max: 24, color: "#5257c9" },
+  { min: 25, max: Number.POSITIVE_INFINITY, color: "#2b2470" },
 ];
 
 export function exitCountBandLabel(band: { min: number; max: number }): string {
@@ -110,34 +117,36 @@ export type GlobePalette = {
 /**
  * The dark panel, which is the globe's home: the board is read at night, on
  * glass, from three metres away, and a bright sphere would be the only thing on
- * it that has to be squinted at.
+ * it that has to be squinted at. The ground is the dark canvas; the land and the
+ * coast are the sphere's own indigo, which is the one thing here that is art
+ * rather than a token.
  */
 export const GLOBE_DARK: GlobePalette = {
-  base: "#0b1220",
-  land: "#1b2a44",
-  coast: "#2f4a72",
-  graticule: "rgba(47, 74, 114, 0.42)",
-  atmosphere: "#3f6ea8",
+  base: "#070d1a",
+  land: "#1b2440",
+  coast: "#33456b",
+  graticule: "rgba(51, 69, 107, 0.45)",
+  atmosphere: "#4a5fc4",
   markerStroke: "rgba(5, 10, 18, 0.75)",
   ramp: EXIT_COUNT_BANDS.map((band) => band.color).reverse(),
-  tooltipPaper: "#111a2b",
-  tooltipRule: "#2f4a72",
-  tooltipInk: "#e9eff9",
-  tooltipInkSoft: "#9db0ca",
-  tooltipSignal: "#3ecfa0",
+  tooltipPaper: "#1a1f2b",
+  tooltipRule: "#2a3447",
+  tooltipInk: "#f1f3f7",
+  tooltipInkSoft: "#aeb9cb",
+  tooltipSignal: "#34b888",
 };
 
 /**
- * The paper theme, for the day the board is switched back. Same structure, the
+ * The day board, for the theme the console can be switched to. Same structure, the
  * luminance axis inverted: the land is the pale step and the busiest region is
- * the deepest blue, which is the order `EXIT_COUNT_BANDS` already runs in.
+ * the deepest indigo, which is the order `EXIT_COUNT_BANDS` already runs in.
  */
 export const GLOBE_LIGHT: GlobePalette = {
-  base: "#e2e8f2",
-  land: "#c3d2e8",
-  coast: "#8299bd",
-  graticule: "rgba(130, 153, 189, 0.35)",
-  atmosphere: "#0b5f8a",
+  base: "#e6e9f5",
+  land: "#cbd1ea",
+  coast: "#8a93c4",
+  graticule: "rgba(138, 147, 196, 0.35)",
+  atmosphere: "#4338ca",
   markerStroke: "rgba(255, 255, 255, 0.85)",
   ramp: EXIT_COUNT_BANDS.map((band) => band.color),
   tooltipPaper: CHART_PAPER_RAISED,

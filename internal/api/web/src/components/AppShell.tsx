@@ -13,6 +13,7 @@ import { ThemeSwitcher } from "./ThemeSwitcher";
 import { QuickSearch } from "./QuickSearch";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
+import { Tooltip, TooltipProvider } from "./ui/Tooltip";
 
 function subscribeOnline(callback: () => void) {
   window.addEventListener("online", callback);
@@ -26,16 +27,8 @@ function subscribeOnline(callback: () => void) {
 const RAIL_COLLAPSED_KEY = "prism.rail-collapsed";
 
 /**
- * The application frame: a rail of destinations and a bar that answers "where am I"
- * and "is this instance healthy".
- *
- * Geometry is fixed by tokens (rail 232 expanded / 56 collapsed, bar 48) rather than
- * chosen per screen, because the whole point of a console is that the frame never
- * moves. 232 is what Vben, Tabler and shadcn-admin converge on; 56 is the width at
- * which a 15px icon still has a 36px hit target.
- *
- * The rail sits on its own neutral layer (`--color-rail`) so the frame and the sheet
- * the data is read on never blur into one field.
+ * The application frame: a translucent glass rail (248px expanded / 64px collapsed)
+ * and a 56px sticky glass top bar over the deep-navy glowing canvas.
  */
 export function AppShell() {
   const { t } = useI18n();
@@ -48,10 +41,6 @@ export function AppShell() {
   const [railCollapsed, setRailCollapsed] = useState(
     () => window.localStorage.getItem(RAIL_COLLAPSED_KEY) === "1",
   );
-  // A 232px rail on a laptop is a fifth of the screen. Below 1440 the rail folds to
-  // its icon width on its own, so navigation stays reachable and the data gets the
-  // room; above that the operator's own preference applies. Nobody's console is one
-  // device, so this is a width the layout reacts to rather than a reference viewport.
   const [narrow, setNarrow] = useState(
     () => window.matchMedia("(max-width: 1439px)").matches,
   );
@@ -99,14 +88,10 @@ export function AppShell() {
     });
   }, []);
 
-  // Closing the mobile drawer on navigation keeps the destination the only thing
-  // that changed on screen.
   useEffect(() => {
     setMobileNavOpen(false);
   }, [location.pathname]);
 
-  // Move focus to the page heading after a navigation so keyboard users land in
-  // the new content instead of at the top of the chrome.
   useEffect(() => {
     const heading = document.querySelector<HTMLElement>("main h1");
     heading?.setAttribute("tabindex", "-1");
@@ -125,124 +110,183 @@ export function AppShell() {
     return acc;
   }, {});
 
+  const statusBadge = unauthorized ? (
+    <Badge tone="alert" dot>
+      {t("令牌失效")}
+    </Badge>
+  ) : disconnected ? (
+    <Badge tone="warn" dot>
+      {t("连接中断")}
+    </Badge>
+  ) : weakTokens > 0 ? (
+    <Badge tone="warn" title={t("部分令牌未设置")}>
+      {t("令牌未设置")}
+    </Badge>
+  ) : info.data ? (
+    <Badge tone="signal" dot title={`${info.data.version ?? ""}`}>
+      {t("实例在线")}
+      <span className="readout ml-1 font-normal opacity-80">
+        {info.data.version ?? ""}
+      </span>
+    </Badge>
+  ) : (
+    <Badge tone="neutral" dot>
+      {t("连接中")}
+    </Badge>
+  );
+
   const rail = (
-    <nav
-      aria-label={t("主导航")}
-      className={cn(
-        "flex h-full flex-col border-r border-rule bg-rail shadow-[inset_-1px_0_0_0_var(--color-rule)]",
-        collapsed ? "w-[var(--shell-rail-w-collapsed)]" : "w-[var(--shell-rail-w)]",
-      )}
-    >
-      <div
+    <TooltipProvider delayDuration={180}>
+      <nav
+        aria-label={t("主导航")}
         className={cn(
-          "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule",
-          collapsed ? "justify-center px-2" : "gap-2.5 px-3",
+          "glass-rail flex h-full flex-col border-r border-glass-edge",
+          collapsed ? "w-[var(--shell-rail-w-collapsed)]" : "w-[var(--shell-rail-w)]",
         )}
       >
-        <span
-          aria-hidden
-          className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-ink text-2xs font-semibold tracking-tight text-paper"
+        <div
+          className={cn(
+            "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule-faint",
+            collapsed ? "justify-center px-2" : "gap-2.5 px-3.5",
+          )}
         >
-          P
-        </span>
-        {!collapsed && (
-          <>
-            <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">
-              Prism
-            </span>
-            {!narrow && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={toggleRail}
-                className="hidden shrink-0 lg:inline-flex"
-                aria-label={t("收起导航")}
-              >
-                <PanelLeftClose size={15} />
-              </Button>
-            )}
-          </>
-        )}
-      </div>
-
-      {collapsed && !narrow && (
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={toggleRail}
-          className="mx-auto mt-2 hidden shrink-0 lg:inline-flex"
-          aria-label={t("展开导航")}
-        >
-          <PanelLeftOpen size={15} />
-        </Button>
-      )}
-
-      <div className="min-h-0 flex-1 overflow-y-auto py-2">
-        {Object.entries(sections).map(([section, items], index) => (
-          <div key={section} className={cn(index > 0 && "mt-3")}>
-            {/* A rail group label, not an eyebrow over a heading: it names the set
-                of destinations under it, which is the one job micro-caps have. */}
-            {collapsed ? (
-              index > 0 && <div className="mx-2.5 mb-2 border-t border-rule" />
-            ) : (
-              <div className="micro px-3 pb-1.5">{t(section)}</div>
-            )}
-            {items.map((item) => {
-              const Icon = item.icon;
-              const active =
-                location.pathname === item.path ||
-                location.pathname.startsWith(item.path + "/");
-              return (
-                <NavLink
-                  key={item.path}
-                  to={item.path}
-                  title={collapsed ? t(item.label) : undefined}
-                  aria-current={active ? "page" : undefined}
-                  className={cn(
-                    // The current destination is a filled pill. A coloured edge
-                    // stripe on a list row is the loudest generic-UI tell there is,
-                    // and it says nothing the fill does not already say.
-                    "mx-2 flex h-[var(--row-h)] items-center gap-2.5 rounded-control text-sm transition-colors",
-                    collapsed ? "justify-center px-0" : "px-2.5",
-                    active
-                      ? "bg-paper-raised font-semibold text-accent-deep shadow-xs"
-                      : "text-ink-soft hover:bg-paper-raised/70 hover:text-ink",
-                  )}
+          <span
+            aria-hidden
+            className="grid size-[var(--control-h)] shrink-0 place-items-center rounded-control bg-accent text-xs font-bold tracking-tight text-on-accent shadow-xs"
+          >
+            P
+          </span>
+          {!collapsed && (
+            <>
+              <div className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold tracking-tight text-ink">
+                  Prism
+                </span>
+                <span className="block truncate text-2xs text-ink-faint">
+                  {info.data?.version ? `v${info.data.version.replace(/^v/, "")}` : t("控制台")}
+                </span>
+              </div>
+              {!narrow && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleRail}
+                  className="hidden shrink-0 lg:inline-flex"
+                  aria-label={t("收起导航")}
                 >
-                  <Icon size={15} className="shrink-0" />
-                  {!collapsed && <span className="truncate">{t(item.label)}</span>}
-                </NavLink>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-
-      <div
-        className={cn(
-          "shrink-0 border-t border-rule p-2",
-          collapsed ? "flex flex-col items-center gap-1" : "flex items-center justify-between gap-2",
-        )}
-      >
-        <div className={cn("flex items-center gap-1", collapsed && "flex-col gap-1")}>
-          <LanguageSwitcher collapsed={collapsed} />
-          <ThemeSwitcher collapsed={collapsed} />
+                  <PanelLeftClose size={15} />
+                </Button>
+              )}
+            </>
+          )}
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={logout}
-          aria-label={t("退出登录")}
-          title={t("退出登录")}
+
+        {collapsed && !narrow && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={toggleRail}
+            className="mx-auto mt-2.5 hidden shrink-0 lg:inline-flex"
+            aria-label={t("展开导航")}
+          >
+            <PanelLeftOpen size={15} />
+          </Button>
+        )}
+
+        <div className="min-h-0 flex-1 overflow-y-auto py-3">
+          {Object.entries(sections).map(([section, items], index) => (
+            <div key={section} className={cn(index > 0 && "mt-4")}>
+              {collapsed ? (
+                index > 0 && <div className="mx-3 mb-2.5 border-t border-rule-faint" />
+              ) : (
+                <div className="micro px-3.5 pb-1.5">{t(section)}</div>
+              )}
+              {items.map((item) => {
+                const Icon = item.icon;
+                const active =
+                  location.pathname === item.path ||
+                  location.pathname.startsWith(item.path + "/");
+                const link = (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    title={collapsed ? t(item.label) : undefined}
+                    aria-current={active ? "page" : undefined}
+                    className={cn(
+                      "action mx-2.5 my-0.5 flex h-[var(--control-h-xl)] items-center gap-2.5 rounded-control text-sm",
+                      collapsed ? "justify-center px-0" : "px-3",
+                      active
+                        ? "border border-glass-edge-strong bg-accent-wash font-semibold text-accent shadow-xs"
+                        : "border border-transparent text-ink-soft hover:bg-glass hover:text-ink",
+                    )}
+                  >
+                    <Icon size={16} className="shrink-0" />
+                    {!collapsed && <span className="truncate">{t(item.label)}</span>}
+                  </NavLink>
+                );
+                return collapsed ? (
+                  <Tooltip key={item.path} content={t(item.label)} side="right">
+                    {link}
+                  </Tooltip>
+                ) : (
+                  link
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
+        <div
+          className={cn(
+            "shrink-0 border-t border-rule-faint p-2.5",
+            collapsed ? "flex flex-col items-center gap-1.5" : "flex flex-col gap-2",
+          )}
         >
-          <LogOut size={15} />
-        </Button>
-      </div>
-    </nav>
+          {!collapsed && (
+            <div className="flex items-center justify-between gap-2 rounded-control border border-glass-edge bg-glass px-2.5 py-1.5">
+              <span className="truncate text-2xs font-medium text-ink-soft">
+                {unauthorized
+                  ? t("令牌失效")
+                  : disconnected
+                    ? t("连接中断")
+                    : info.data
+                      ? t("实例在线")
+                      : t("连接中")}
+              </span>
+              {info.data?.version && (
+                <span className="readout shrink-0 text-2xs text-ink-faint">
+                  {info.data.version}
+                </span>
+              )}
+            </div>
+          )}
+          <div
+            className={cn(
+              "flex items-center",
+              collapsed ? "flex-col gap-1.5" : "justify-between gap-2",
+            )}
+          >
+            <div className={cn("flex items-center gap-1", collapsed && "flex-col gap-1")}>
+              <LanguageSwitcher collapsed={collapsed} />
+              <ThemeSwitcher collapsed={collapsed} />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={logout}
+              aria-label={t("退出登录")}
+              title={t("退出登录")}
+            >
+              <LogOut size={15} />
+            </Button>
+          </div>
+        </div>
+      </nav>
+    </TooltipProvider>
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-paper">
+    <div className="flex h-dvh overflow-hidden bg-transparent text-ink">
       <div className="hidden lg:flex">{rail}</div>
 
       {mobileNavOpen && (
@@ -258,7 +302,7 @@ export function AppShell() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[var(--shell-bar-h)] shrink-0 items-center gap-3 border-b border-rule bg-paper-raised px-3 lg:px-4">
+        <header className="glass-bar sticky top-0 z-20 flex h-[var(--shell-bar-h)] shrink-0 items-center gap-3 border-b border-glass-edge px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"
@@ -270,44 +314,16 @@ export function AppShell() {
             {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
           </Button>
 
-          <div className="flex min-w-0 items-baseline gap-2">
+          <QuickSearch />
+
+          <div className="flex min-w-0 items-baseline gap-2 sm:hidden">
             <span className="truncate text-sm font-semibold text-ink">
               {t(current?.label ?? "工作区")}
             </span>
-            {current && (
-              <span className="hidden truncate text-2xs tracking-[0.06em] text-ink-faint uppercase sm:inline">
-                {t(current.section)}
-              </span>
-            )}
           </div>
 
           <div className="ml-auto flex items-center gap-2">
-            <QuickSearch />
-
-            {unauthorized ? (
-              <Badge tone="alert" dot>
-                {t("令牌失效")}
-              </Badge>
-            ) : disconnected ? (
-              <Badge tone="warn" dot>
-                {t("连接中断")}
-              </Badge>
-            ) : weakTokens > 0 ? (
-              <Badge tone="warn" title={t("部分令牌未设置")}>
-                {t("令牌未设置")}
-              </Badge>
-            ) : info.data ? (
-              <Badge tone="signal" dot title={`${info.data.version ?? ""}`}>
-                {t("实例在线")}
-                <span className="readout ml-1 font-normal opacity-70">
-                  {info.data.version ?? ""}
-                </span>
-              </Badge>
-            ) : (
-              <Badge tone="neutral" dot>
-                {t("连接中")}
-              </Badge>
-            )}
+            {statusBadge}
 
             <Button
               variant="ghost"
@@ -316,8 +332,22 @@ export function AppShell() {
               aria-label={t("刷新数据")}
               title={t("刷新数据")}
             >
-              <RefreshCw size={15} className={cn(info.isFetching && "animate-spin")} />
+              <RefreshCw size={15} />
             </Button>
+
+            <div className="hidden items-center gap-1.5 sm:flex">
+              <ThemeSwitcher />
+              <LanguageSwitcher />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={logout}
+                aria-label={t("退出登录")}
+                title={t("退出登录")}
+              >
+                <LogOut size={15} />
+              </Button>
+            </div>
           </div>
         </header>
 

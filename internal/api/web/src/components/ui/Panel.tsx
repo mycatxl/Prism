@@ -2,18 +2,16 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * A panel is the console's one framing primitive: a region with a 1px 12% edge and
- * the smallest step of elevation, so it reads as a region rather than as a wash of
- * text. Depth above this step belongs to overlays, never to peers.
+ * A panel is the console's glass framing primitive: a region with a 1px glass edge,
+ * inner top highlight, backdrop blur, and soft shadow elevation (`--radius-panel`).
  */
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("panel", className)} {...rest} />;
 }
 
 /**
- * The panel header: a fixed 44px band, 16px padding, a 14px/600 title and an
- * action slot on the right. The height is a token, so two panels side by side
- * always agree on where their bodies start.
+ * The panel header: a quiet 44px token band, 16px padding, a 14px/600 title and an
+ * action slot on the right. Soft divider underneath rather than a heavy rule.
  *
  * `meta` is for the one or two facts that belong to the whole region (a count, a
  * timestamp) and sits beside the title rather than under it.
@@ -36,12 +34,12 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        "flex min-h-[var(--panel-header-h)] items-center gap-3 border-b border-rule px-4 py-2",
+        "flex min-h-[var(--panel-header-h)] items-center gap-3 border-b border-rule-faint px-4 py-2.5",
         className,
       )}
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
-        <As className="truncate text-sm font-semibold">{title}</As>
+        <As className="truncate text-sm font-semibold tracking-tight text-ink">{title}</As>
         {meta && <span className="label shrink-0 whitespace-nowrap">{meta}</span>}
       </div>
       {description && (
@@ -56,8 +54,7 @@ export function PanelHeader({
 
 /**
  * The toolbar strip: filters and view controls for the region below it. 40px tall
- * with 28px controls, so it reads as furniture rather than as content, and it
- * sticks under the page header while the table scrolls.
+ * with 28px controls, framed by soft hairline dividers.
  */
 export function PanelToolbar({
   children,
@@ -69,7 +66,7 @@ export function PanelToolbar({
   return (
     <div
       className={cn(
-        "flex min-h-[var(--toolbar-h)] flex-wrap items-center gap-2 border-b border-rule-faint bg-paper-inset px-4 py-1.5",
+        "flex min-h-[var(--toolbar-h)] flex-wrap items-center gap-2 border-b border-rule-faint bg-paper-inset/60 px-4 py-2",
         className,
       )}
     >
@@ -80,7 +77,7 @@ export function PanelToolbar({
 
 /** The body of a panel: the 16px gutter every panel shares. */
 export function PanelBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("px-4 py-3", className)}>{children}</div>;
+  return <div className={cn("px-4 py-3.5", className)}>{children}</div>;
 }
 
 /** A panel footer for totals, pagination and bulk actions. */
@@ -94,7 +91,7 @@ export function PanelFooter({
   return (
     <div
       className={cn(
-        "flex min-h-11 flex-wrap items-center gap-3 border-t border-rule px-4 py-2 text-xs text-ink-faint",
+        "flex min-h-11 flex-wrap items-center gap-3 border-t border-rule-faint px-4 py-2.5 text-xs text-ink-faint",
         className,
       )}
     >
@@ -104,8 +101,7 @@ export function PanelFooter({
 }
 
 /**
- * A section heading for content that is not framed by a panel. The rule under it
- * is what makes the grouping visible without spending a box on it.
+ * A section heading for content that is not framed by a panel.
  */
 export function SectionTitle({
   children,
@@ -117,8 +113,8 @@ export function SectionTitle({
   trailing?: ReactNode;
 }) {
   return (
-    <div className={cn("flex items-baseline justify-between gap-3 pb-1.5", className)}>
-      <h2 className="text-sm font-semibold">{children}</h2>
+    <div className={cn("flex items-baseline justify-between gap-3 pb-2", className)}>
+      <h2 className="text-sm font-semibold tracking-tight text-ink">{children}</h2>
       {trailing}
     </div>
   );

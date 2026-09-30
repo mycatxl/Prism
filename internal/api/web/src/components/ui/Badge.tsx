@@ -3,23 +3,21 @@ import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Status is the only fully rounded shape in the system, so the shape alone says
- * "this is a state" without needing a label to explain it.
+ * Status is the only fully rounded shape in the system (`--radius-chip` / `rounded-full`
+ * on the static dot), so the shape alone carries "this is a state".
  *
- * `dot` adds a small leading marker for states that are live rather than
- * categorical (running, in flight). It is deliberately static: a pulsing dot
- * carries no state a colour and a word do not already carry, and it makes a
- * dense board twitch.
+ * `dot` adds a static leading marker for live states (never animated).
  */
-const badge = cva("pill", {
+const badge = cva("pill border", {
   variants: {
     tone: {
-      neutral: "bg-paper-sunk text-ink-soft",
-      signal: "bg-signal-wash text-signal-deep",
-      live: "bg-live-wash text-live",
-      warn: "bg-warn-wash text-warn",
-      alert: "bg-alert-wash text-alert",
-      outline: "border border-rule text-ink-soft",
+      neutral: "border-glass-edge bg-glass text-ink-soft",
+      signal: "border-signal/25 bg-signal-wash text-signal",
+      live: "border-live/25 bg-live-wash text-live",
+      warn: "border-warn/25 bg-warn-wash text-warn",
+      alert: "border-alert/25 bg-alert-wash text-alert",
+      accent: "border-accent/25 bg-accent-wash text-accent",
+      outline: "border-glass-edge-strong bg-transparent text-ink-soft",
     },
   },
   defaultVariants: { tone: "neutral" },

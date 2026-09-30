@@ -5,7 +5,7 @@ import { cn } from "../../lib/cn";
 
 /**
  * A side sheet for detail views. Radix supplies focus trapping, escape handling and
- * the scroll lock; the appearance is a paper panel that slides in from the right.
+ * the scroll lock; the surface is an elevated glass sheet with generous panel radius.
  */
 export function Sheet({
   open,
@@ -29,17 +29,17 @@ export function Sheet({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/25" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-xs" />
         <DialogPrimitive.Content
           className={cn(
-            "fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-rule bg-paper-raised",
+            "glass-elevated fixed inset-y-0 right-0 z-50 flex w-full flex-col rounded-l-panel border-l border-glass-edge-strong bg-paper-elevated",
             "focus:outline-none",
             widthClass,
           )}
         >
-          <header className="flex items-start justify-between gap-4 border-b border-rule px-5 py-3">
+          <header className="flex items-start justify-between gap-4 border-b border-rule-faint px-5 py-3.5">
             <div className="min-w-0">
-              <DialogPrimitive.Title className="truncate text-base font-semibold">
+              <DialogPrimitive.Title className="truncate text-base font-semibold text-ink">
                 {title}
               </DialogPrimitive.Title>
               {description && (
@@ -50,7 +50,7 @@ export function Sheet({
             </div>
             <DialogPrimitive.Close
               aria-label="关闭"
-              className="-mr-1 rounded-control p-1 text-ink-soft transition-colors hover:bg-paper-sunk hover:text-ink"
+              className="action -mr-1 rounded-control p-1.5 text-ink-soft hover:bg-glass hover:text-ink"
             >
               <X size={16} />
             </DialogPrimitive.Close>
@@ -59,7 +59,7 @@ export function Sheet({
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
 
           {footer && (
-            <footer className="border-t border-rule px-5 py-3">{footer}</footer>
+            <footer className="border-t border-rule-faint px-5 py-3.5">{footer}</footer>
           )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

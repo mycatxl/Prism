@@ -4,11 +4,7 @@ import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
 /**
- * Language control.
- *
- * Expanded, it is a two-option segmented control so the current language is
- * visible without opening anything. Collapsed, the rail has no room for two
- * options, so it becomes a single button that toggles.
+ * Language control inside a compact glass trough.
  */
 export function LanguageSwitcher({
   collapsed = false,
@@ -26,7 +22,7 @@ export function LanguageSwitcher({
         type="button"
         variant="ghost"
         size="icon"
-        className={cn("text-ink-soft", className)}
+        className={cn("text-ink-soft hover:text-ink", className)}
         onClick={() => setLocale(next)}
         aria-label={t("切换语言")}
         title={t("切换语言")}
@@ -38,7 +34,10 @@ export function LanguageSwitcher({
 
   return (
     <div
-      className={cn("inline-flex items-center rounded-control border border-rule p-px", className)}
+      className={cn(
+        "inline-flex items-center rounded-control border border-glass-edge bg-glass p-0.5 shadow-[inset_0_1px_0_0_var(--color-glass-highlight)]",
+        className,
+      )}
       role="group"
       aria-label={t("切换语言")}
     >
@@ -58,10 +57,10 @@ export function LanguageSwitcher({
             onClick={() => setLocale(value)}
             aria-pressed={active}
             className={cn(
-              "rounded-[1px] px-1.5",
+              "rounded-[calc(var(--radius-control)-2px)] px-2 text-2xs",
               active
-                ? "bg-signal-wash font-medium text-signal-deep hover:bg-signal-wash hover:text-signal-deep"
-                : "text-ink-faint",
+                ? "bg-accent-wash font-semibold text-accent-deep shadow-xs hover:bg-accent-wash hover:text-accent-deep"
+                : "text-ink-faint hover:text-ink-soft",
             )}
           >
             {label}

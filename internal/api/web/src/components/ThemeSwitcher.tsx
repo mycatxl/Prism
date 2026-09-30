@@ -5,12 +5,7 @@ import { cn } from "../lib/cn";
 import { Button } from "./ui/Button";
 
 /**
- * Switches between the two authored themes.
- *
- * Both are supported surfaces rather than a dark mode bolted onto a light design,
- * so this is a real choice and not a preference toggle that quietly breaks the
- * palette. The icon shows the theme you would get, which is the convention users
- * already have.
+ * Switches between the two authored glass themes (deep navy dark and soft slate light).
  */
 export function ThemeSwitcher({ collapsed = false }: { collapsed?: boolean }) {
   const { t } = useI18n();
@@ -23,7 +18,7 @@ export function ThemeSwitcher({ collapsed = false }: { collapsed?: boolean }) {
       onClick={toggle}
       aria-label={label}
       title={label}
-      className={cn(collapsed && "shrink-0")}
+      className={cn("text-ink-soft hover:text-ink", collapsed && "shrink-0")}
     >
       {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
     </Button>
