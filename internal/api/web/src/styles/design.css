@@ -901,12 +901,18 @@
   html[data-theme="dark"] .wb-slot-a {
     background-color: #111b3a;
     background-image:
+      /* the ridge the art actually carries: local (743,100) #4962ad, (560,175) #31497f,
+         (943,55) #2b4172, all inside the 1255x233 band */
+      radial-gradient(340px 104px at 743px 100px, #47609f 0%, transparent 100%),
+      radial-gradient(300px 128px at 560px 175px, #31497f 0%, transparent 100%),
+      radial-gradient(250px 88px at 943px 55px, #2b4172 0%, transparent 100%),
       radial-gradient(120px 60px at 3px 5px, #0b1631 0%, transparent 100%),
       radial-gradient(180px 60px at 1193px 40px, #0d1834 0%, transparent 100%),
       radial-gradient(180px 45px at 443px 70px, #0e1a36 0%, transparent 100%),
       radial-gradient(240px 36px at 443px 105px, #192649 0%, transparent 100%),
       radial-gradient(160px 34px at 943px 120px, #1d2d59 0%, transparent 100%),
       radial-gradient(120px 50px at 973px 200px, #0c1835 0%, transparent 100%),
+      radial-gradient(720px 230px at 800px 165px, #1b2a53 0%, transparent 100%),
       linear-gradient(
         180deg,
         #101a38 0px,
