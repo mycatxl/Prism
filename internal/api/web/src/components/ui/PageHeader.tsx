@@ -2,13 +2,18 @@ import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * The page header: one 52px band that answers where am I, what is this, and what
+ * The page header: one ruled band that answers where am I, what is this, and what
  * can I do here.
+ *
+ * 52px is the band's floor, not its height, so this is `min-h` and not `h`: the
+ * description line and the tab strip both belong in this band, and both push it
+ * past 52. Replacing the minimum with `h-[var(--page-header-h)]` clips exactly
+ * those two things.
  *
  * The earlier panel had none of this: an `<h1>` with no band stretched across
  * 2288px of a 2560px screen, a description under it, and the actions floating to
- * the right, so the top of every page was a different shape. A fixed band with a
- * rule under it is what puts every page on the same grid.
+ * the right, so the top of every page was a different shape. One band with a rule
+ * under it is what puts every page on the same grid.
  *
  * `meta` is a row of facts that belong to the whole page — a count, a sync time, a
  * scope chip. It sits on the baseline of the title rather than in a card of its

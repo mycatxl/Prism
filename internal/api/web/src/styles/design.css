@@ -210,8 +210,11 @@
   --radius-chip: 999px;
 
   /* Chrome heights are ONE decision for the whole console, never a per-page one.
-     The rail width is deliberately absent here: it is set below, under a media
-     query, because a 232px rail on a 1200px laptop is 19% of the screen. */
+     `--page-header-h` is a floor rather than a fixed height: the page header keeps
+     a description line and a tab strip inside the same band, so the token is
+     applied as a minimum and the band may grow. The rail width is deliberately
+     absent here: it is set below, under a media query, because a 232px rail on a
+     1200px laptop is 19% of the screen. */
   --shell-rail-w: 232px;
   --shell-rail-w-collapsed: 56px;
   --shell-bar-h: 48px;

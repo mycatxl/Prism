@@ -46,7 +46,7 @@ these; it does not invent a control.
 
 | Component | Purpose |
 |---|---|
-| `Page` / `PageHeader` / `PageMeta` | Page skeleton. Header is a fixed 52px, title 18/600, description 12px at ≤68ch, actions on the right |
+| `Page` / `PageHeader` / `PageMeta` | Page skeleton. The header band is **52px at minimum, never a fixed height**: the description line and the tab strip both live inside it, so it is applied as `min-h` and grows. Title 18/600, description 12px at ≤68ch, actions on the right |
 | `Panel` / `PanelHeader` / `PanelToolbar` / `PanelBody` / `PanelFooter` | A region. Header 44px, padding 16, title 14/600. **Actions are visible, never hover-revealed** — an action behind `opacity: 0` does not exist on a touch screen |
 | `Table` / `THead` / `TH` / `TBody` / `TR` / `TD` / `TDNum` / `TDClip` | The data grid. Fixed row heights 32/28/36, sticky head, **row rules only, no cell borders**; long text must use `TDClip` |
 | `Readout` / `ReadoutStrip` / `ReadoutCell` / `Numeral` | Instrument readings and the count-up |
