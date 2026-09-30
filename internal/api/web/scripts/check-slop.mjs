@@ -31,7 +31,7 @@
  *    third-party marker; the excuse and its evidence are printed.
  *
  * Fails closed: no detector, or a detector that cannot see our stylesheet, is an
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+ * error rather than a pass.
  *
  * Usage:
  *   node scripts/check-slop.mjs              # scan the build if present, else source
