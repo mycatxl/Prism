@@ -135,150 +135,236 @@ export function AppShell() {
     </Badge>
   );
 
+  const railCardTops = [12, 56, 99, 143, 186, 232, 275, 318, 363, 408];
+  const statusText = unauthorized
+    ? t("令牌失效")
+    : disconnected
+      ? t("连接中断")
+      : info.data
+        ? t("实例在线")
+        : t("连接中");
+
   const rail = (
     <TooltipProvider delayDuration={180}>
       <nav
         aria-label={t("主导航")}
         className={cn(
           "glass-rail flex h-full flex-col border-r border-glass-edge",
+          !collapsed && "wb-rail-nav",
           collapsed ? "w-[var(--shell-rail-w-collapsed)]" : "w-[var(--shell-rail-w)]",
         )}
       >
-        <div
-          className={cn(
-            "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule-faint",
-            collapsed ? "justify-center px-2" : "gap-2.5 px-3.5",
-          )}
-        >
-          <span
-            aria-hidden
-            className="grid size-[var(--control-h)] shrink-0 place-items-center rounded-control bg-accent text-xs font-bold tracking-tight text-on-accent shadow-xs"
-          >
-            P
-          </span>
-          {!collapsed && (
-            <>
-              <div className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold tracking-tight text-ink">
-                  Prism
-                </span>
-                <span className="block truncate text-2xs text-ink-faint">
-                  {info.data?.version ? `v${info.data.version.replace(/^v/, "")}` : t("控制台")}
-                </span>
-              </div>
-              {!narrow && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleRail}
-                  className="hidden shrink-0 lg:inline-flex"
-                  aria-label={t("收起导航")}
-                >
-                  <PanelLeftClose size={15} />
-                </Button>
-              )}
-            </>
-          )}
-        </div>
+        {!collapsed && (
+          <div className="hidden h-full w-full 2xl:block">
+            <span aria-hidden className="wb-brand-mark">
+              P
+            </span>
+            <span className="wb-brand-title">Prism</span>
 
-        {collapsed && !narrow && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleRail}
-            className="mx-auto mt-2.5 hidden shrink-0 lg:inline-flex"
-            aria-label={t("展开导航")}
-          >
-            <PanelLeftOpen size={15} />
-          </Button>
-        )}
-
-        <div className="min-h-0 flex-1 overflow-y-auto py-3">
-          {Object.entries(sections).map(([section, items], index) => (
-            <div key={section} className={cn(index > 0 && "mt-4")}>
-              {collapsed ? (
-                index > 0 && <div className="mx-3 mb-2.5 border-t border-rule-faint" />
-              ) : (
-                <div className="micro px-3.5 pb-1.5">{t(section)}</div>
-              )}
-              {items.map((item) => {
+            <div className="wb-rail-top-links">
+              {navigation.slice(0, 2).map((item, idx) => {
                 const Icon = item.icon;
                 const active =
                   location.pathname === item.path ||
                   location.pathname.startsWith(item.path + "/");
-                const link = (
+                return (
                   <NavLink
                     key={item.path}
                     to={item.path}
-                    title={collapsed ? t(item.label) : undefined}
+                    data-idx={idx}
                     aria-current={active ? "page" : undefined}
-                    className={cn(
-                      "action mx-2.5 my-0.5 flex h-[var(--control-h-xl)] items-center gap-2.5 rounded-control text-sm",
-                      collapsed ? "justify-center px-0" : "px-3",
-                      active
-                        ? "border border-glass-edge-strong bg-accent-wash font-semibold text-accent shadow-xs"
-                        : "border border-transparent text-ink-soft hover:bg-glass hover:text-ink",
-                    )}
+                    className="wb-rail-top-item"
                   >
-                    <Icon size={16} className="shrink-0" />
-                    {!collapsed && <span className="truncate">{t(item.label)}</span>}
+                    <Icon size={13} className="shrink-0" />
+                    <span className="truncate">{t(item.label)}</span>
                   </NavLink>
-                );
-                return collapsed ? (
-                  <Tooltip key={item.path} content={t(item.label)} side="right">
-                    {link}
-                  </Tooltip>
-                ) : (
-                  link
                 );
               })}
             </div>
-          ))}
-        </div>
 
-        <div
-          className={cn(
-            "shrink-0 border-t border-rule-faint p-2.5",
-            collapsed ? "flex flex-col items-center gap-1.5" : "flex flex-col gap-2",
-          )}
-        >
-          {!collapsed && (
-            <div className="flex items-center justify-between gap-2 rounded-control border border-glass-edge bg-glass px-2.5 py-1.5">
-              <span className="truncate text-2xs font-medium text-ink-soft">
-                {unauthorized
-                  ? t("令牌失效")
-                  : disconnected
-                    ? t("连接中断")
-                    : info.data
-                      ? t("实例在线")
-                      : t("连接中")}
-              </span>
-              {info.data?.version && (
-                <span className="readout shrink-0 text-2xs text-ink-faint">
-                  {info.data.version}
-                </span>
-              )}
+            <div className="wb-rail-card">
+              {navigation.slice(2).map((item, idx) => {
+                const Icon = item.icon;
+                const active =
+                  location.pathname === item.path ||
+                  location.pathname.startsWith(item.path + "/");
+                const top = railCardTops[idx] ?? 12 + idx * 44;
+                return (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    aria-current={active ? "page" : undefined}
+                    className="wb-rail-card-item"
+                    style={{ top: `${top}px`, gap: idx === 3 ? "35px" : "24px" }}
+                  >
+                    <Icon size={12} className="shrink-0" />
+                    <span className="truncate">{t(item.label)}</span>
+                  </NavLink>
+                );
+              })}
+
+              <div className="wb-rail-status">
+                <div className="flex items-center justify-between text-[10px] leading-[11px] font-medium text-ink-soft">
+                  <span className="truncate">{statusText}</span>
+                  <span className="readout shrink-0 text-[10px] text-signal">●</span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] leading-[11px] text-ink-faint">
+                  <span className="truncate">{t("控制台")}</span>
+                  <span className="readout shrink-0">
+                    {info.data?.version ? `v${info.data.version.replace(/^v/, "")}` : "v0.1"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="wb-rail-footer">
+                <LanguageSwitcher collapsed />
+                <ThemeSwitcher collapsed />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={logout}
+                  aria-label={t("退出登录")}
+                  title={t("退出登录")}
+                  className="px-1"
+                >
+                  <LogOut size={12} />
+                </Button>
+              </div>
             </div>
-          )}
+          </div>
+        )}
+
+        <div className={cn("flex h-full flex-col", !collapsed && "2xl:hidden")}>
           <div
             className={cn(
-              "flex items-center",
-              collapsed ? "flex-col gap-1.5" : "justify-between gap-2",
+              "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule-faint",
+              collapsed ? "justify-center px-2" : "gap-2.5 px-3.5",
             )}
           >
-            <div className={cn("flex items-center gap-1", collapsed && "flex-col gap-1")}>
-              <LanguageSwitcher collapsed={collapsed} />
-              <ThemeSwitcher collapsed={collapsed} />
-            </div>
+            <span
+              aria-hidden
+              className="grid size-[var(--control-h)] shrink-0 place-items-center rounded-control bg-accent text-xs font-bold tracking-tight text-on-accent shadow-xs"
+            >
+              P
+            </span>
+            {!collapsed && (
+              <>
+                <div className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold tracking-tight text-ink">
+                    Prism
+                  </span>
+                  <span className="block truncate text-2xs text-ink-faint">
+                    {info.data?.version ? `v${info.data.version.replace(/^v/, "")}` : t("控制台")}
+                  </span>
+                </div>
+                {!narrow && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={toggleRail}
+                    className="hidden shrink-0 lg:inline-flex"
+                    aria-label={t("收起导航")}
+                  >
+                    <PanelLeftClose size={15} />
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+
+          {collapsed && !narrow && (
             <Button
               variant="ghost"
               size="icon"
-              onClick={logout}
-              aria-label={t("退出登录")}
-              title={t("退出登录")}
+              onClick={toggleRail}
+              className="mx-auto mt-2.5 hidden shrink-0 lg:inline-flex"
+              aria-label={t("展开导航")}
             >
-              <LogOut size={15} />
+              <PanelLeftOpen size={15} />
             </Button>
+          )}
+
+          <div className="min-h-0 flex-1 overflow-y-auto py-3">
+            {Object.entries(sections).map(([section, items], index) => (
+              <div key={section} className={cn(index > 0 && "mt-4")}>
+                {collapsed ? (
+                  index > 0 && <div className="mx-3 mb-2.5 border-t border-rule-faint" />
+                ) : (
+                  <div className="micro px-3.5 pb-1.5">{t(section)}</div>
+                )}
+                {items.map((item) => {
+                  const Icon = item.icon;
+                  const active =
+                    location.pathname === item.path ||
+                    location.pathname.startsWith(item.path + "/");
+                  const link = (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      title={collapsed ? t(item.label) : undefined}
+                      aria-current={active ? "page" : undefined}
+                      className={cn(
+                        "action mx-2.5 my-0.5 flex h-[var(--control-h-xl)] items-center gap-2.5 rounded-control text-sm",
+                        collapsed ? "justify-center px-0" : "px-3",
+                        active
+                          ? "border border-glass-edge-strong bg-accent-wash font-semibold text-accent shadow-xs"
+                          : "border border-transparent text-ink-soft hover:bg-glass hover:text-ink",
+                      )}
+                    >
+                      <Icon size={16} className="shrink-0" />
+                      {!collapsed && <span className="truncate">{t(item.label)}</span>}
+                    </NavLink>
+                  );
+                  return collapsed ? (
+                    <Tooltip key={item.path} content={t(item.label)} side="right">
+                      {link}
+                    </Tooltip>
+                  ) : (
+                    link
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          <div
+            className={cn(
+              "shrink-0 border-t border-rule-faint p-2.5",
+              collapsed ? "flex flex-col items-center gap-1.5" : "flex flex-col gap-2",
+            )}
+          >
+            {!collapsed && (
+              <div className="flex items-center justify-between gap-2 rounded-control border border-glass-edge bg-glass px-2.5 py-1.5">
+                <span className="truncate text-2xs font-medium text-ink-soft">
+                  {statusText}
+                </span>
+                {info.data?.version && (
+                  <span className="readout shrink-0 text-2xs text-ink-faint">
+                    {info.data.version}
+                  </span>
+                )}
+              </div>
+            )}
+            <div
+              className={cn(
+                "flex items-center",
+                collapsed ? "flex-col gap-1.5" : "justify-between gap-2",
+              )}
+            >
+              <div className={cn("flex items-center gap-1", collapsed && "flex-col gap-1")}>
+                <LanguageSwitcher collapsed={collapsed} />
+                <ThemeSwitcher collapsed={collapsed} />
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={logout}
+                aria-label={t("退出登录")}
+                title={t("退出登录")}
+              >
+                <LogOut size={15} />
+              </Button>
+            </div>
           </div>
         </div>
       </nav>
@@ -286,8 +372,8 @@ export function AppShell() {
   );
 
   return (
-    <div className="flex h-dvh overflow-hidden bg-transparent text-ink">
-      <div className="hidden lg:flex">{rail}</div>
+    <div className="wb-shell-root flex h-dvh overflow-hidden bg-transparent text-ink">
+      <div className={cn("hidden lg:flex", !collapsed && "wb-rail-zone")}>{rail}</div>
 
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">
@@ -301,8 +387,8 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass-bar sticky top-0 z-20 flex h-[var(--shell-bar-h)] shrink-0 items-center gap-3 border-b border-glass-edge px-4 lg:px-6">
+      <div className="wb-main-zone flex min-w-0 flex-1 flex-col">
+        <header className="wb-topbar glass-bar sticky top-0 z-20 flex h-[var(--shell-bar-h)] shrink-0 items-center gap-3 border-b border-glass-edge px-4 lg:px-6">
           <Button
             variant="ghost"
             size="icon"
@@ -322,7 +408,7 @@ export function AppShell() {
             </span>
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          <div className="wb-topbar-actions ml-auto flex items-center gap-2">
             {statusBadge}
 
             <Button
@@ -351,7 +437,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto">
+        <main className="wb-main-scroll min-h-0 flex-1 overflow-y-auto">
           {token ? (
             <Outlet />
           ) : (

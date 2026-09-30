@@ -169,6 +169,7 @@ function Kpi({
   basis,
   series,
   tone,
+  className,
 }: {
   icon: typeof Activity;
   label: string;
@@ -178,6 +179,7 @@ function Kpi({
   basis: string;
   series: number[];
   tone: "accent" | "signal" | "live" | "alert";
+  className?: string;
 }) {
   const iconTone = {
     accent: "bg-accent-wash text-accent",
@@ -186,7 +188,7 @@ function Kpi({
     alert: "bg-alert-wash text-alert",
   }[tone];
   return (
-    <Panel className="min-w-0 p-4">
+    <Panel className={`min-w-0 p-4 ${className ?? ""}`}>
       <div className="flex items-start gap-2.5">
         <span aria-hidden className={`grid size-7 shrink-0 place-items-center rounded-control ${iconTone}`}>
           <Icon size={15} />
@@ -486,14 +488,14 @@ export function WorkbenchPage() {
 
   return (
     <Page bleed>
-      <div className="flex flex-col gap-3 px-[var(--page-gutter)] py-3.5 lg:gap-4 2xl:gap-5 2xl:py-5">
+      <div className="flex flex-col gap-3 px-[var(--page-gutter)] py-3.5 lg:gap-4 2xl:gap-5 2xl:py-5 wb-board">
         {snapshot.isError && <ErrorState message={offline} onRetry={() => void snapshot.refetch()} />}
 
-        <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-12">
+        <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-12 wb-board-stack">
           {/* The left column: the data story, from "where does traffic leave from" to
               "what changed in the last five minutes". */}
-          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8">
-            <Panel className="hero-gradient min-w-0 overflow-hidden">
+          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8 wb-board-stack">
+            <Panel className="hero-gradient min-w-0 overflow-hidden wb-slot-a">
               <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
                 <div className="min-w-0">
                   <h1 className="truncate text-xl font-semibold text-ink">{t("总览看板")}</h1>
@@ -566,7 +568,7 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-d">
               <PanelHeader
                 title={t("出口 / 区域")}
                 meta={
@@ -690,8 +692,9 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:gap-4 2xl:gap-5 xl:grid-cols-4">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:gap-4 2xl:gap-5 xl:grid-cols-4 wb-kpi-row">
               <Kpi
+                className="wb-slot-g1"
                 icon={Activity}
                 tone="accent"
                 label={t("总请求数")}
@@ -701,6 +704,7 @@ export function WorkbenchPage() {
                 series={requestSeries}
               />
               <Kpi
+                className="wb-slot-g2"
                 icon={Gauge}
                 tone="live"
                 label={t("平均延迟")}
@@ -710,6 +714,7 @@ export function WorkbenchPage() {
                 series={latencySeries}
               />
               <Kpi
+                className="wb-slot-g3"
                 icon={CircleAlert}
                 tone="alert"
                 label={t("错误率")}
@@ -719,6 +724,7 @@ export function WorkbenchPage() {
                 series={errorSeries}
               />
               <Kpi
+                className="wb-slot-g4"
                 icon={Zap}
                 tone="signal"
                 label={t("活跃租约")}
@@ -729,7 +735,7 @@ export function WorkbenchPage() {
               />
             </div>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-f">
               <PanelHeader
                 title={t("流量概览")}
                 meta={
@@ -789,7 +795,7 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-i">
               <PanelHeader
                 title={t("最近加入节点")}
                 meta={
@@ -858,7 +864,7 @@ export function WorkbenchPage() {
               )}
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-e">
               <PanelHeader
                 title={t("订阅状态")}
                 meta={
@@ -917,8 +923,8 @@ export function WorkbenchPage() {
           </div>
 
           {/* The right column: the always-on panes. */}
-          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-4">
-            <Panel className="min-w-0 p-4">
+          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-4 wb-board-stack">
+            <Panel className="min-w-0 p-4 wb-folded">
               <div className="flex items-center gap-2.5">
                 <Badge tone={instanceState.tone} dot>
                   {instanceState.label}
@@ -948,7 +954,7 @@ export function WorkbenchPage() {
               </p>
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-b">
               <PanelHeader title={t("快捷操作")} />
               <div className="flex flex-col gap-0.5 p-2">
                 <QuickAction to="/subscriptions?create=1" icon={Rss} label={t("添加订阅")} />
@@ -958,7 +964,7 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-folded">
               <PanelHeader
                 title={t("节点延迟分布")}
                 meta={
@@ -982,7 +988,7 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-j">
               <PanelHeader
                 title={t("平台分布")}
                 meta={
@@ -1018,7 +1024,7 @@ export function WorkbenchPage() {
               )}
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
+            <Panel className="flex min-w-0 flex-col wb-slot-h">
               <PanelHeader
                 title={t("最近变更")}
                 actions={
