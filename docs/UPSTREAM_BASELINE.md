@@ -23,6 +23,10 @@
 
 - `github.com/sagernet/gvisor` 固定为 `v0.0.0-20260727.0-sing-box-mod.1`。该伪版本的数字预发布标识在 semver 规则下排序低于更早的 hash 型伪版本，MVS 不会自动选中，因此必须显式 require；`go.mod` 中有对应注释。
 - `github.com/sagernet/wireguard-go` 直接使用模块依赖版本，不再使用 `third_party/` 本地替换。sing-box 1.14 的 WireGuard endpoint 需要新接口，旧的 beta.7 补丁副本已删除，相关失效说明见下。
+- 上游 `github.com/sagernet/sing` 的 `common/bufio.CachedConn` 有一处 `Read`/`Close` 数据竞争：
+  上游 `dev`/`main` 均未修复，版本由 `sing-box v1.14.2` 的 require 锁定，因此不 patch。它只在
+  `-race` 压力下偶发（`GOMAXPROCS=2` 时约每 100 次一轮命中），命中时重跑即可。影响面、精确栈
+  与复现命令见 `docs/PROTOCOLS.md` §10.11，决策记录见 `docs/ENGINE_DECISIONS.md` D-5。
 - 升级任一内核都必须通过 `make protocol-matrix`。
 
 ## 安全依赖与兼容性

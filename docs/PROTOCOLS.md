@@ -502,7 +502,11 @@ in `sing-box/route/network.go`, which v1.14.2 fixed.
 Upstream status rechecked 2026-09-28: `dev` (the default branch) and `main` both still carry the
 unsynchronised `Close()`/`Read()`. There is no `master` branch - the earlier note saying "dev, main
 and master were all checked" was wrong; the branches are `dev`, `main`, `stable` and some
-`renovate/*`. Prism pins `sing v0.9.6-0.20260922013354-87c33f17688f`, chosen by `sing-box v1.14.2`'s
+`renovate/*`. Rechecked 2026-09-30: a request for `master` still answers 200, because GitHub
+redirects a branch's old name after a rename, and the bytes it returns are `dev`'s
+(`sha256 b14f264a...`, identical to `dev` and different from `main`'s `0ecef13b...`); a genuinely
+missing branch answers 404. Do not read that 200 as a third branch. Prism pins
+`sing v0.9.6-0.20260922013354-87c33f17688f`, chosen by `sing-box v1.14.2`'s
 require. `main`'s `common/bufio/cache.go` is **byte-identical** to our pin (blob `94423887b2`); `dev`
 differs only in the UDP `CachedPacketConn` refactor from `9822d61a` (author 2026-09-10, committer
 2026-09-27 - upstream rebased it), and `CachedConn`/`CachedReader` are identical on both. Do not
