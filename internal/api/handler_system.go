@@ -53,10 +53,26 @@ type systemEnvConfigResponse struct {
 	AuthVersion                                     string          `json:"auth_version"`
 }
 
-// HandleSystemInfo returns a handler for GET /api/v1/system/info.
-func HandleSystemInfo(info service.SystemInfo) http.HandlerFunc {
+// PanelEgressProvider supplies the panel server's own egress observation for
+// GET /api/v1/system/info. *service.PanelEgress satisfies it. Snapshot must not
+// block: the handler reads whatever is cached right now.
+type PanelEgressProvider interface {
+	Snapshot() service.PanelEgressSnapshot
+}
+
+// HandleSystemInfo returns a handler for GET /api/v1/system/info. When
+// panelEgress is non-nil the panel egress fields are filled from the current
+// cached snapshot on every request, so a snapshot that arrives after boot is
+// reflected without restarting the server.
+func HandleSystemInfo(info service.SystemInfo, panelEgress PanelEgressProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, info)
+		payload := info
+		if panelEgress != nil {
+			snapshot := panelEgress.Snapshot()
+			payload.PanelEgressRegion = snapshot.Region
+			payload.PanelEgressIP = snapshot.IP
+		}
+		WriteJSON(w, http.StatusOK, payload)
 	}
 }
 

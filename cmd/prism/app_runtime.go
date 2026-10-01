@@ -534,6 +534,12 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		StartedAt: startedAt,
 	}
 
+	// The dashboard map draws panel -> node-region traffic, so the system info
+	// endpoint reports where the panel server itself egresses from. The trace is
+	// a best-effort direct HTTPS GET issued in the background: the handler reads
+	// the cached snapshot and never waits for it.
+	panelEgress := service.NewPanelEgressProvider()
+
 	cpService := &service.ControlPlaneService{
 		RuntimeCfg:     a.runtimeCfg,
 		EnvCfg:         a.envCfg,
@@ -568,6 +574,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		int64(a.envCfg.APIMaxBodyBytes),
 		a.requestlogRepo,
 		a.metricsManager,
+		panelEgress,
 	)
 	// The optional admin listener (PRISM_ADMIN_LISTEN) reuses this handler but
 	// only exposes the management paths, never a proxy protocol.

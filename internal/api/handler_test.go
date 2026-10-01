@@ -63,7 +63,7 @@ func newTestServer() *Server {
 		BuildTime: "2026-01-01T00:00:00Z",
 		StartedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 	}
-	return NewServer(0, "test-admin-token", systemInfo, runtimeCfg, envCfg, nil, 1<<20, nil, nil)
+	return NewServer(0, "test-admin-token", systemInfo, runtimeCfg, envCfg, nil, 1<<20, nil, nil, nil)
 }
 
 // --- /healthz ---
@@ -194,6 +194,77 @@ func TestSystemInfo_OK(t *testing.T) {
 	}
 	if _, ok := body["started_at"]; !ok {
 		t.Error("missing started_at field")
+	}
+	// The panel egress fields must always be present and always be strings,
+	// even while the panel self-trace is still unknown (empty string).
+	for _, key := range []string{"panel_egress_region", "panel_egress_ip"} {
+		value, ok := body[key]
+		if !ok {
+			t.Errorf("missing %s field", key)
+			continue
+		}
+		if _, ok := value.(string); !ok {
+			t.Errorf("%s: got %T, want string", key, value)
+		}
+	}
+}
+
+// stubPanelEgress is a fixed panel-egress snapshot source for handler tests.
+type stubPanelEgress struct {
+	snapshot service.PanelEgressSnapshot
+}
+
+func (s *stubPanelEgress) Snapshot() service.PanelEgressSnapshot { return s.snapshot }
+
+// TestSystemInfo_PanelEgressPerRequest covers the request-time fill: the
+// snapshot is read on every request, so an observation that lands after boot is
+// reported without rebuilding the handler.
+func TestSystemInfo_PanelEgressPerRequest(t *testing.T) {
+	provider := &stubPanelEgress{}
+	handler := HandleSystemInfo(service.SystemInfo{Version: "1.0.0-test"}, provider)
+
+	read := func() map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+		}
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return body
+	}
+
+	// Unknown panel egress still serialises both keys as empty strings.
+	body := read()
+	if body["panel_egress_region"] != "" || body["panel_egress_ip"] != "" {
+		t.Errorf("unknown panel egress: got %v/%v, want empty strings",
+			body["panel_egress_region"], body["panel_egress_ip"])
+	}
+
+	// A snapshot that arrives after boot is visible without rebuilding the handler.
+	provider.snapshot = service.PanelEgressSnapshot{Region: "JP", IP: "198.51.100.7"}
+	body = read()
+	if body["panel_egress_region"] != "JP" {
+		t.Errorf("panel_egress_region: got %v, want %q", body["panel_egress_region"], "JP")
+	}
+	if body["panel_egress_ip"] != "198.51.100.7" {
+		t.Errorf("panel_egress_ip: got %v, want %q", body["panel_egress_ip"], "198.51.100.7")
+	}
+
+	// A nil provider keeps both keys present and empty rather than omitting them.
+	unwired := httptest.NewRecorder()
+	HandleSystemInfo(service.SystemInfo{Version: "1.0.0-test"}, nil).
+		ServeHTTP(unwired, httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil))
+	var unwiredBody map[string]any
+	if err := json.Unmarshal(unwired.Body.Bytes(), &unwiredBody); err != nil {
+		t.Fatalf("unmarshal unwired: %v", err)
+	}
+	if unwiredBody["panel_egress_region"] != "" || unwiredBody["panel_egress_ip"] != "" {
+		t.Errorf("unwired panel egress: got %v/%v, want empty strings",
+			unwiredBody["panel_egress_region"], unwiredBody["panel_egress_ip"])
 	}
 }
 

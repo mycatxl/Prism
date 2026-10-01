@@ -50,6 +50,7 @@ func NewServer(
 	apiMaxBodyBytes int64,
 	requestlogRepo *requestlog.Repo,
 	metricsManager *metrics.Manager,
+	panelEgress PanelEgressProvider,
 ) *Server {
 	return NewServerWithAddress(
 		"",
@@ -62,10 +63,12 @@ func NewServer(
 		apiMaxBodyBytes,
 		requestlogRepo,
 		metricsManager,
+		panelEgress,
 	)
 }
 
 // NewServerWithAddress creates a new API server with an explicit listen address.
+// panelEgress may be nil: the panel egress fields stay empty.
 func NewServerWithAddress(
 	listenAddress string,
 	port int,
@@ -77,6 +80,7 @@ func NewServerWithAddress(
 	apiMaxBodyBytes int64,
 	requestlogRepo *requestlog.Repo,
 	metricsManager *metrics.Manager,
+	panelEgress PanelEgressProvider,
 ) *Server {
 	mux := http.NewServeMux()
 
@@ -93,7 +97,7 @@ func NewServerWithAddress(
 
 	// Authenticated routes
 	authed := http.NewServeMux()
-	authed.Handle("GET /api/v1/system/info", HandleSystemInfo(systemInfo))
+	authed.Handle("GET /api/v1/system/info", HandleSystemInfo(systemInfo, panelEgress))
 	authed.Handle("GET /api/v1/system/config", HandleSystemConfig(runtimeCfg))
 	authed.Handle("GET /api/v1/system/config/default", HandleSystemDefaultConfig())
 	authed.Handle("GET /api/v1/system/config/env", HandleSystemEnvConfig(envCfg))

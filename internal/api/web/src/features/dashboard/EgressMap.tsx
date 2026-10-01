@@ -28,10 +28,25 @@ import {
 
 const MAP_NAME = "prism-world";
 
+/** The tooltip key of the origin marker: not a region id, so it cannot collide. */
+const ORIGIN_KEY = "panel-egress";
+
 type MapSource = Parameters<typeof echarts.registerMap>[1];
 
 /** One region with the position its hub resolved to. */
 type PlacedRegion = RegionTraffic & { hub: [number, number] };
+
+/**
+ * The panel's own egress, as `/system/info` reports it.
+ *
+ * Both fields are optional and either may arrive empty: the backend answers this
+ * pair from whatever it could resolve, and a panel with no egress region is a
+ * normal state rather than an error.
+ */
+export type PanelEgress = { region?: string; ip?: string };
+
+/** The origin, once the outline has confirmed where it is. */
+type PlacedOrigin = { coords: [number, number]; region: string; ip: string };
 
 /**
  * The map follows the theme, because its ground *is* the panel's own surface: on
@@ -53,14 +68,25 @@ function paletteFor(theme: "dark" | "light"): MapPalette {
 }
 
 /**
- * The egress map: where this network's traffic leaves the world.
+ * The egress map: where this network's traffic leaves from, and where it goes.
  *
  * The plate answers the question the globe answered in three dimensions, but in
  * the form a wall display can be read at a glance: the continents are filled, one
- * hub sits over each region that carries traffic, and a flight line joins the
- * hubs to the busiest one. The lines are *not* traffic measurements — nothing in
- * the inventory says which node talks to which — so they are drawn as the
- * region-to-hub relationship they actually are, and the tooltip says so.
+ * hub sits over each region that carries traffic, and one flight line runs from
+ * the panel's own egress **outward** to each of those hubs.
+ *
+ * The origin is the panel's own egress — `panel_egress_region` on
+ * `/system/info`, resolved through the same centroid index the hubs use — and it
+ * is deliberately not sized by node count, because it is not part of the pool.
+ * The lines are *not* traffic measurements: nothing in the inventory says which
+ * node talks to which, so they are drawn as the dispatch relationship they
+ * actually are — traffic leaves the panel and arrives at a region — and the
+ * tooltip says so.
+ *
+ * When the panel reports no egress region, or the outline does not carry the one
+ * it reports, the plate draws **no origin and no lines**. Hubs on their own are
+ * the honest picture; lines converging on whichever hub happened to be busiest
+ * would be a fact nobody measured.
  *
  * A hub sits on the region's **busiest member country** (`hubFor`), so every
  * marker is a place the pool really exits from rather than a decorative point
@@ -71,7 +97,13 @@ function paletteFor(theme: "dark" | "light"): MapPalette {
  * The canvas is transparent, so the panel's own ground is the sea and the world
  * has no frame drawn around it.
  */
-export default function EgressMap({ regions }: { regions: RegionTraffic[] }) {
+export default function EgressMap({
+  regions,
+  origin,
+}: {
+  regions: RegionTraffic[];
+  origin?: PanelEgress;
+}) {
   const { t, isEnglish } = useI18n();
   const reducedMotion = useReducedMotion();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -83,6 +115,11 @@ export default function EgressMap({ regions }: { regions: RegionTraffic[] }) {
   const [attempt, setAttempt] = useState(0);
 
   const palette = useMemo(() => paletteFor(theme), [theme]);
+
+  /* The report is normalised to two primitives, so a re-render of the board that
+     re-sends the same query data does not rebuild the option. */
+  const originRegion = origin?.region?.trim().toUpperCase() ?? "";
+  const originIp = origin?.ip?.trim() ?? "";
 
   useEffect(() => {
     const observer = new MutationObserver(() => setTheme(readMapTheme()));
@@ -128,6 +165,21 @@ export default function EgressMap({ regions }: { regions: RegionTraffic[] }) {
     });
   }, [regions, centroidIndex]);
 
+  /*
+   * The origin, resolved through the same index and with no fallback: the index
+   * is keyed by the outline's ISO-2 codes, and a code the outline does not carry
+   * leaves the plate without an origin rather than with a guessed one. There is
+   * deliberately no continent fallback here — the marker claims "traffic leaves
+   * from *this place*", which a regional approximation would not support.
+   */
+  const placedOrigin = useMemo(() => {
+    if (!centroidIndex || !originRegion) {
+      return null;
+    }
+    const coords = centroidIndex.get(originRegion);
+    return coords ? { coords, region: originRegion, ip: originIp } : null;
+  }, [centroidIndex, originRegion, originIp]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !geo) {
@@ -157,10 +209,11 @@ export default function EgressMap({ regions }: { regions: RegionTraffic[] }) {
     // animation every minute would be decoration, not state.
     const animate = !reducedMotion && !hasDrawnRef.current;
     hasDrawnRef.current = true;
-    chart.setOption(buildOption({ regions: placed, nameIndex, palette, isEnglish, t, animate }), {
-      notMerge: true,
-    });
-  }, [placed, geo, nameIndex, centroidIndex, palette, isEnglish, reducedMotion, t]);
+    chart.setOption(
+      buildOption({ regions: placed, origin: placedOrigin, nameIndex, palette, isEnglish, t, animate }),
+      { notMerge: true },
+    );
+  }, [placed, placedOrigin, geo, nameIndex, centroidIndex, palette, isEnglish, reducedMotion, t]);
 
   if (failed) {
     return (
@@ -186,6 +239,7 @@ type TooltipParam = { name?: string; seriesType?: string; data?: unknown };
 
 function buildOption({
   regions,
+  origin,
   nameIndex,
   palette,
   isEnglish,
@@ -193,6 +247,7 @@ function buildOption({
   animate,
 }: {
   regions: PlacedRegion[];
+  origin: PlacedOrigin | null;
   nameIndex: Map<string, { en: string; zh: string }>;
   palette: MapPalette;
   isEnglish: boolean;
@@ -204,15 +259,11 @@ function buildOption({
   const colorOf = new Map(
     regions.map((item, index) => [item.id, palette.series[index % palette.series.length]]),
   );
-  const busiest = regions.reduce<PlacedRegion | null>(
-    (best, item) => (best === null || item.exits > best.exits ? item : best),
-    null,
-  );
 
-  /** Every hub with at least one node behind it. */
+  /** Every hub with at least one node behind it: the destinations of the lines. */
   const hubs = regions.filter((item) => item.exits > 0);
 
-  const maxExits = busiest?.exits ?? 0;
+  const maxExits = hubs.reduce((max, item) => Math.max(max, item.exits), 0);
   const hubSize = (exits: number) => {
     if (maxExits <= 0) {
       return palette.hubMin;
@@ -223,17 +274,18 @@ function buildOption({
   };
 
   /*
-   * The flight lines: every hub to the busiest one.
+   * The flight lines: the panel's own egress to every hub, one line each.
    *
-   * A region pair is drawn only when both ends carry traffic, and the line is
-   * styled as the relationship (a route the network operates), never as a
-   * volume — `lineStyle.width` is constant, so two lines of different weight
-   * never imply a measurement nobody took.
+   * The direction is the point. The line is a dispatch route the network
+   * operates — traffic leaves the panel and arrives in a region — never a volume,
+   * and `lineStyle.width` is constant so two lines of different weight never
+   * imply a measurement nobody took.
+   *
+   * With no origin there are no lines at all: without a starting point there is
+   * nothing honest to draw between two hubs.
    */
-  const lines = busiest
-    ? hubs
-        .filter((hub) => hub.id !== busiest.id)
-        .map((hub) => ({ coords: [hub.hub, busiest.hub] as Array<[number, number]> }))
+  const lines = origin
+    ? hubs.map((hub) => ({ coords: [origin.coords, hub.hub] as Array<[number, number]> }))
     : [];
 
   return {
@@ -255,15 +307,27 @@ function buildOption({
         if (!name) {
           return "";
         }
+        // The panel's own egress: the one mark that is not a region, and the only
+        // one that explains what the lines mean.
+        if (name === ORIGIN_KEY) {
+          if (!origin) {
+            return "";
+          }
+          const names = nameIndex.get(origin.region);
+          const label = names ? (isEnglish ? names.en : names.zh) : origin.region;
+          return [
+            head(t("面板出口"), origin.region),
+            row(t("地区"), label, CHART_INK),
+            ...(origin.ip ? [row(t("出口 IP"), origin.ip, CHART_INK)] : []),
+            `<div style="margin-top:6px;max-width:210px;color:${CHART_INK_SOFT};font-size:11px;line-height:1.35">${escapeHtml(t("流量从这里分发到各节点区域。"))}</div>`,
+          ].join("");
+        }
         // The hub series carries the region id in `name`, so the tooltip reads
         // the region's own row rather than re-deriving it from the geometry.
         const region = byRegion.get(name);
         if (region) {
           return [
-            `<div style="display:flex;align-items:baseline;gap:6px">`,
-            `<span style="font-weight:600">${escapeHtml(t(region.name))}</span>`,
-            `<span style="font-family:${CHART_FONT_MONO};font-size:11px;color:${CHART_INK_FAINT}">${escapeHtml(region.hubIso)}</span>`,
-            `</div>`,
+            head(t(region.name), region.hubIso),
             row(t("节点"), formatCount(region.exits), CHART_INK),
             row(t("健康"), formatCount(region.healthy), palette.tooltipSignal),
             row(t("延迟"), region.latency === null ? t("未知") : formatLatency(region.latency), CHART_INK),
@@ -274,10 +338,7 @@ function buildOption({
         // The map series carries the whole outline, so a country with no entry
         // has no exits — that is a measured zero, not unknown data.
         return [
-          `<div style="display:flex;align-items:baseline;gap:6px">`,
-          `<span style="font-weight:600">${escapeHtml(title)}</span>`,
-          `<span style="font-family:${CHART_FONT_MONO};font-size:11px;color:${CHART_INK_FAINT}">${escapeHtml(name)}</span>`,
-          `</div>`,
+          head(title, name),
           row(t("节点"), formatCount(0), CHART_INK),
           row(t("健康"), formatCount(0), palette.tooltipSignal),
         ].join("");
@@ -288,11 +349,10 @@ function buildOption({
       roam: false,
       silent: false,
       /*
-       * The insets are the reference plate's land box, measured off the art and
-       * held as percentages so the plate keeps its proportions as the board
-       * grows. With all four set, ECharts stretches the projection to fill the
-       * box instead of fitting it — which is what makes the box *be* the land
-       * bounding box rather than something the aspect ratio decides.
+       * The insets hold the plate's proportions as the board grows. With all four
+       * set, ECharts stretches the projection to fill the box instead of fitting
+       * it — which is what makes the box *be* the land bounding box rather than
+       * something the aspect ratio decides.
        */
       left: "0.8%",
       right: "3.2%",
@@ -353,7 +413,7 @@ function buildOption({
           name: hub.id,
           value: [...hub.hub, hub.exits] as [number, number, number],
           // The hub carries its region's series colour — the same colour that
-          // region's row uses in the table beside the plate.
+          // region's row uses in the table.
           itemStyle: {
             color: colorOf.get(hub.id) ?? palette.series[0],
             borderColor: palette.hubStroke,
@@ -362,24 +422,41 @@ function buildOption({
         })),
       },
       {
-        // The centre of the plate: the region every line meets at.
-        type: "scatter",
+        // The panel's own egress: the origin the lines leave from, drawn one step
+        // larger and in the accent rather than in a region colour, so it never
+        // reads as a hub.
+        type: "effectScatter",
         coordinateSystem: "geo",
         zlevel: 4,
-        silent: true,
-        symbolSize: (value: unknown) =>
-          hubSize(Number((value as [number, number, number])[2] ?? 0)) * 1.6,
+        rippleEffect: {
+          number: animate ? 3 : 0,
+          period: 3,
+          scale: 3,
+          brushType: "stroke",
+        },
+        symbolSize: palette.originSize,
+        showEffectOn: animate ? "render" : "emphasis",
+        emphasis: { scale: 1.1 },
+        label: { show: false },
         itemStyle: {
-          color: palette.hubCore,
-          borderColor: busiest ? (colorOf.get(busiest.id) ?? palette.series[0]) : palette.hubCore,
+          color: palette.origin,
+          borderColor: palette.originStroke,
           borderWidth: 2,
         },
-        data: busiest
-          ? [{ name: busiest.id, value: [...busiest.hub, busiest.exits] as [number, number, number] }]
-          : [],
+        data: origin ? [{ name: ORIGIN_KEY, value: [...origin.coords, 0] as [number, number, number] }] : [],
       },
     ],
   };
+}
+
+/** The two-line head of a tooltip: the name and the code it belongs to. */
+function head(title: string, code: string): string {
+  return [
+    `<div style="display:flex;align-items:baseline;gap:6px">`,
+    `<span style="font-weight:600">${escapeHtml(title)}</span>`,
+    `<span style="font-family:${CHART_FONT_MONO};font-size:11px;color:${CHART_INK_FAINT}">${escapeHtml(code)}</span>`,
+    `</div>`,
+  ].join("");
 }
 
 /** One `label / value` row of the tooltip, right-aligned like the table. */

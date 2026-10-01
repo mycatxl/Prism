@@ -138,7 +138,7 @@ func prismAuthLimiter() *AuthFailureLimiter {
 // endpoint is a long-lived stream and a write deadline would cut every progress
 // stream short.
 func TestServerConnectionBounds(t *testing.T) {
-	srv := NewServer(0, "token", service.SystemInfo{}, nil, nil, nil, 1<<20, nil, nil)
+	srv := NewServer(0, "token", service.SystemInfo{}, nil, nil, nil, 1<<20, nil, nil, nil)
 	httpSrv := srv.httpServer
 
 	if httpSrv.ReadHeaderTimeout != apiReadHeaderTimeout {

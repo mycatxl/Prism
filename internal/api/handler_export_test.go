@@ -89,7 +89,7 @@ func addExportTestNode(t *testing.T, pool *topology.GlobalNodePool, sub *subscri
 func newExportTestServer(t *testing.T) (*service.ControlPlaneService, *httptest.Server) {
 	t.Helper()
 	cp := newExportTestControlPlane(t)
-	srv := NewServer(0, exportTestAdminToken, service.SystemInfo{}, nil, cp.EnvCfg, cp, 1<<20, nil, nil)
+	srv := NewServer(0, exportTestAdminToken, service.SystemInfo{}, nil, cp.EnvCfg, cp, 1<<20, nil, nil, nil)
 	server := httptest.NewServer(srv.Handler())
 	t.Cleanup(server.Close)
 	return cp, server

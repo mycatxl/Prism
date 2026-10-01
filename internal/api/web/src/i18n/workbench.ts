@@ -172,6 +172,10 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Other regions",
   "未定位":
     "Unlocated",
+  "面板出口":
+    "Panel egress",
+  "流量从这里分发到各节点区域。":
+    "Traffic dispatches from here to the node regions.",
 
   // The redesigned shell and dashboard.
   "实例在线":

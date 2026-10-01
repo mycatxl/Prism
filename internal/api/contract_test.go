@@ -107,7 +107,7 @@ func newControlPlaneTestServerWithBodyLimit(
 		BuildTime: "2026-01-01T00:00:00Z",
 		StartedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 	}
-	srv := NewServer(0, testAdminToken, systemInfo, runtimeCfg, cp.EnvCfg, cp, apiMaxBodyBytes, nil, nil)
+	srv := NewServer(0, testAdminToken, systemInfo, runtimeCfg, cp.EnvCfg, cp, apiMaxBodyBytes, nil, nil, nil)
 	return srv, cp, runtimeCfg
 }
 
@@ -260,7 +260,7 @@ func newObservabilityTestServer(t *testing.T) (*Server, *requestlog.Repo, *metri
 		RuntimeStats:                contractRuntimeStats{platformID: platformID},
 	})
 
-	srv := NewServer(0, testAdminToken, systemInfo, runtimeCfg, nil, nil, 1<<20, requestlogRepo, metricsManager)
+	srv := NewServer(0, testAdminToken, systemInfo, runtimeCfg, nil, nil, 1<<20, requestlogRepo, metricsManager, nil)
 	return srv, requestlogRepo, metricsManager, platformID
 }
 
