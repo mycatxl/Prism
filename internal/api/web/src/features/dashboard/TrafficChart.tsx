@@ -224,6 +224,12 @@ function buildOption({
         lineStyle: { width: 1.5, color: CHART_SIGNAL },
         itemStyle: { color: CHART_SIGNAL },
         emphasis: { focus: "series" },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: "rgba(59, 130, 246, 0.25)" },
+            { offset: 1, color: "rgba(59, 130, 246, 0.0)" },
+          ]),
+        },
         data: egress,
       },
       {
@@ -238,6 +244,12 @@ function buildOption({
         lineStyle: { width: 1.5, color: CHART_LIVE },
         itemStyle: { color: CHART_LIVE },
         emphasis: { focus: "series" },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: "rgba(16, 185, 129, 0.25)" },
+            { offset: 1, color: "rgba(16, 185, 129, 0.0)" },
+          ]),
+        },
         data: ingress,
       },
       {

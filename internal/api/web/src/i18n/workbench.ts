@@ -55,7 +55,15 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   返回平台列表: "Back to platforms",
   服务版本: "Service version",
   快速定位: "Quick search",
-  搜索节点或工作区: "Find nodes or a workspace",
+  "搜索节点或工作区": "Find nodes or a workspace",
+  "搜索节点、平台、接入点...": "Search nodes, platforms, endpoints...",
+  "欢迎回来，Prism": "Welcome back, Prism",
+  "网络运行平稳，以下是各区域概览。": "Your network is running smoothly. Here's what's happening across regions.",
+  "所有系统运行正常": "All Systems Operational",
+  "无活动事件": "No active incidents",
+  "添加节点": "Add Node",
+  "新建接入点": "New Endpoint",
+  "运行健康检查": "Run Health Check",
   没有匹配的工作区: "No matching workspace",
   节点搜索: "Node search",
   搜索节点: "Search nodes",
@@ -177,7 +185,7 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   "快捷操作":
     "Quick actions",
   "新建平台":
-    "New platform",
+    "Create Platform",
   "检测任务":
     "Check jobs",
   "查看全部":
@@ -240,4 +248,7 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Recent changes",
   "暂无变更记录":
     "No changes recorded",
+  "最近 1 小时": "Last 1 hour",
+  "最近 6 小时": "Last 6 hours",
+  "最近 24 小时": "Last 24 hours",
 };
