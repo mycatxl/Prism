@@ -17,6 +17,7 @@
     "check:types": "tsc -p tsconfig.app.json --noEmit",
     "check:contrast": "node scripts/check-contrast.mjs",
     "check:kit": "node scripts/check-kit.mjs",
+    "check:responsive": "node scripts/check-responsive.mjs",
     "check:slop": "node scripts/check-slop.mjs",
     "preview": "vite preview"
   },

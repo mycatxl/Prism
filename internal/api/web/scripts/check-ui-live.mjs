@@ -325,21 +325,25 @@ check("the rail reaches every destination and marks the current one", async ({ o
 
   const rail = page.locator('nav[aria-label="主导航"]');
   await rail.waitFor({ state: "visible", timeout: 15000 });
-  assert.equal(await rail.locator("a").count(), RAIL_PATHS.length, "the rail must carry one link per destination");
+  // Two rail variants live in this nav and the 2xl breakpoint swaps which one is shown
+  // (AppShell renders the board rail inside `2xl:block` and the standard list inside
+  // `2xl:hidden`), so the DOM carries 24 links while 12 are reachable. Assert against the
+  // rail a user can click, which is also what makes this check meaningful at 1536px.
+  assert.equal(await rail.locator("a:visible").count(), RAIL_PATHS.length, "the rail must carry one link per destination");
   for (const path of RAIL_PATHS) {
-    assert.equal(await rail.locator(`a[href="${path}"]`).count(), 1, `the rail must link to ${path}`);
+    assert.equal(await rail.locator(`a[href="${path}"]:visible`).count(), 1, `the rail must link to ${path}`);
   }
   // aria-current is written by React after the history entry changes, so wait for
   // it rather than reading the attribute the instant the URL moves.
-  const dashboardLink = rail.locator(`a[href="${DASHBOARD}"][aria-current="page"]`);
+  const dashboardLink = rail.locator(`a[href="${DASHBOARD}"][aria-current="page"]:visible`);
   await dashboardLink.waitFor({ state: "attached", timeout: 15000 });
-  assert.equal(await rail.locator('a[aria-current="page"]').count(), 1, "exactly one destination is current");
+  assert.equal(await rail.locator('a[aria-current="page"]:visible').count(), 1, "exactly one destination is current");
 
-  await rail.locator(`a[href="${NODES}"]`).click();
+  await rail.locator(`a[href="${NODES}"]:visible`).click();
   await page.waitForURL(/\/ui\/nodes$/);
-  const nodesLink = rail.locator(`a[href="${NODES}"][aria-current="page"]`);
+  const nodesLink = rail.locator(`a[href="${NODES}"][aria-current="page"]:visible`);
   await nodesLink.waitFor({ state: "attached", timeout: 15000 });
-  assert.equal(await rail.locator('a[aria-current="page"]').count(), 1, "exactly one destination is current");
+  assert.equal(await rail.locator('a[aria-current="page"]:visible').count(), 1, "exactly one destination is current");
   assert.equal(
     await nodesLink.getAttribute("aria-current"),
     "page",

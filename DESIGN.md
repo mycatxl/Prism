@@ -286,6 +286,7 @@ control that does not do what its label says.
 | Text contrast: body ≥4.5:1, large text and graphical objects ≥3:1 | `npm run check:contrast` reads `design.css` and computes **100 pairs across both themes**, including the hero pane's two gradient stops; non-zero exit on failure. Wired into `make test-web` → `make verify` |
 | Series separable in greyscale | The same gate: adjacent relative luminance ≥1.15 |
 | The console composes the kit and nothing else | `npm run check:kit`: native controls outside `src/components/ui/`, hard-coded control heights, and the pill shape outside `Badge` — over every `.tsx` in `src/`. Wired into `make test-web` |
+| The board fills the window instead of sitting in a corner | `npm run check:responsive` reads the 1536 layer of `design.css`: the board is absolutely positioned with `height: max(100%, 1024px)`, every slot and rail anchor is a percentage, each percentage resolves to the measured reference geometry within 0.6 px, and positional pixels outside a documented allow-list fail. In `make test-web` → `make verify`, so the rule holds in CI even though CI installs no browser |
 | Row height and panel geometry match this file | DOM audit over the live pages: `--row-h`, pane radius 16, rail 248/64, the ground's glow, both themes |
 | The chart palette is a copy, and it is current | `tests/chart-palette.test.mjs` (in `npm test` → `make test-web`) reads `design.css` and `chartPalette.ts` and fails on any pair that disagrees, on a series out of order, on a band ramp that is not separable in greyscale, or on a font that is not the token's family |
 | Focus visible | `:focus-visible` draws accent at 2px with 1px offset |
@@ -343,6 +344,22 @@ numbers first — colour census, hairline grid, per-card text metrics, corner in
 those numbers became the spec. The acceptance harness boots a real binary, seeds a
 fixture, renders `/dashboard` at 1536×1024 in dark, and re-runs the same probes against
 the render, printing PASS/FAIL per probe. Fidelity is therefore a number, not an opinion.
+
+**The board fills the window; it is not a screenshot.** The layer used to be a fixed 1288x1024
+canvas, which is right at exactly 1536x1024 and wrong everywhere else: at 1920x1080 it covered
+72% of the window with 408 px empty to the right, at 2560x1440 40% and 1048 px. Every slot and
+every rail anchor is now a percentage of the canvas, so the art grows with the window while the
+reference size keeps its measured pixels - the same probes pass unchanged. Type, radii, borders,
+padding and the fixed 248 px rail stay in px: this is a dashboard that gets wider, not a scaled
+screenshot. Two traps are worth recording, because both were hit. The board must be
+**absolutely positioned**: its wrapper has `height: auto`, so a percentage inside `max()` could
+not resolve, the whole declaration fell away and the board - with every slot on it - collapsed
+to 0 px. And the rail's status block and session footer are children of the rail *card*, so
+their percentages resolve against the card's 835 px height rather than the column's 1024; the
+scanlines that settled that also showed the status block is a vertical ramp (#142648 to
+#1a3e6d), which the flat fill it used to carry did not reproduce. Both positions and the ramp
+are now probe points (`rail_status_lower`, `rail_footer_fill`), which is how the rail's lower
+half stopped being the one part of the board no probe sampled.
 
 Measured skeleton (px, origin = canvas top-left): floating rail card `20,188 → 235,1023`;
 hero band `257,0 → 1512,233` with the search field at `259..740, 18..50` and the title's
