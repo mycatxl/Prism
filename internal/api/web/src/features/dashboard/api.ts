@@ -691,16 +691,22 @@ type ApiNodeExitSummary = {
   enabled?: boolean | null;
   has_outbound?: boolean | null;
   circuit_open_since?: string | null;
+  reference_latency_ms?: number | null;
 };
 
 /**
  * Every node's exit facts, in one request.
  *
- * The exit map aggregates the whole inventory by country, so paging would only
+ * The exit map aggregates the whole inventory by region, so paging would only
  * add round trips: the node list caps `limit` at 100000, which is far above any
- * realistic pool. Only the four fields the map needs are read, and the healthy
- * rule mirrors the backend aggregate (`service.NodeSummary.IsHealthyAndEnabled`:
+ * realistic pool. Only the fields the map needs are read, and the healthy rule
+ * mirrors the backend aggregate (`service.NodeSummary.IsHealthyAndEnabled`:
  * enabled, outbound-ready, not circuit-open) so the map and the snapshot agree.
+ *
+ * `reference_latency_ms` is the node's own measured latency, which is what the
+ * region rows average. A node that has not been measured maps to `null` rather
+ * than to `0`, because a zero would drag its region's mean down as if the node
+ * were instant.
  */
 export async function listNodeExitFacts(signal?: AbortSignal): Promise<NodeExitFact[]> {
   const data = await apiRequest<{ items?: ApiNodeExitSummary[] | null }>("/api/v1/nodes?limit=100000", {
@@ -711,5 +717,9 @@ export async function listNodeExitFacts(signal?: AbortSignal): Promise<NodeExitF
     region: toString(node.region).trim().toUpperCase(),
     egressIp: toString(node.egress_ip),
     healthy: node.enabled !== false && node.has_outbound === true && !node.circuit_open_since,
+    referenceLatencyMs:
+      typeof node.reference_latency_ms === "number" && Number.isFinite(node.reference_latency_ms)
+        ? node.reference_latency_ms
+        : null,
   }));
 }

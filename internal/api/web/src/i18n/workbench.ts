@@ -146,14 +146,32 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Synced",
   "出口地区排行":
     "Top exit regions",
-  "节点占比":
-    "Share of pool",
   "暂无出口数据":
     "No exit data yet",
-  视图: "View",
-  立体地球: "3D globe",
-  平面地图: "Flat map",
-  地球视图: "Globe view",
+
+  // The traffic plate and the region table beside it.
+  "全球流量":
+    "Global traffic",
+  "热门区域":
+    "Top regions",
+  "占比":
+    "Share",
+  "亚太":
+    "Asia Pacific",
+  "北美":
+    "North America",
+  "欧洲":
+    "Europe",
+  "中东":
+    "Middle East",
+  "南美":
+    "South America",
+  "非洲":
+    "Africa",
+  "其他地区":
+    "Other regions",
+  "未定位":
+    "Unlocated",
 
   // The redesigned shell and dashboard.
   "实例在线":
