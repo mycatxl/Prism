@@ -612,6 +612,131 @@
 }
 
 
+/* ---- The night board, restated -------------------------------------------
+   Every rule below this point that reads a token exists so the *light* theme has
+   something to read; the art is a dark board, so its measured literals are put
+   back here. Keeping them in one block, rather than as a second copy beside each
+   token, is what makes it possible to see at a glance that the dark theme is
+   unchanged: this block and the tokens are the whole delta.
+
+   Where a token's night value already *is* the measured value, nothing is
+   restated — the token is the art. */
+html[data-theme="dark"] .wb-hero-heading {
+  color: #f8fafc;
+}
+
+html[data-theme="dark"] .wb-hero-desc {
+  color: #8c9fc2;
+}
+
+html[data-theme="dark"] .wb-status-title {
+  color: #f1f5f9;
+}
+
+html[data-theme="dark"] .wb-status-desc {
+  color: #6da2cc;
+}
+
+html[data-theme="dark"] .wb-metric-val {
+  color: #f8fafc;
+}
+
+html[data-theme="dark"] .wb-metric-label {
+  color: #8c9fc2;
+}
+
+html[data-theme="dark"] .wb-text-emerald {
+  color: #34d399 !important;
+}
+
+html[data-theme="dark"] .wb-status-dot {
+  background-color: #34d399;
+}
+
+html[data-theme="dark"] .wb-region-table thead th {
+  border-bottom-color: rgba(255, 255, 255, 0.09);
+}
+
+html[data-theme="dark"] .wb-region-table tbody td {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme="dark"] .wb-metric-chip {
+  border-color: #1a2958;
+}
+
+html[data-theme="dark"] .wb-timerange-select {
+  background-color: #334985 !important;
+  border: 1px solid #445e9f !important;
+  color: #dbe4f8 !important;
+}
+
+html[data-theme="dark"] .wb-timerange-select:hover {
+  border-color: #5572bd !important;
+  background-color: #3b5499 !important;
+}
+
+html[data-theme="dark"] .wb-timerange-icon {
+  color: #9eb4e0;
+}
+
+html[data-theme="dark"] .wb-select-option {
+  background-color: #0d1733;
+  color: #e2e8f0;
+}
+
+html[data-theme="dark"] .wb-icon-server {
+  background: rgba(53, 94, 155, 0.7);
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  color: #93c5fd;
+}
+
+html[data-theme="dark"] .wb-icon-emerald {
+  background: rgba(20, 41, 94, 0.8);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #34d399;
+}
+
+html[data-theme="dark"] .wb-icon-cyan {
+  background: rgba(36, 55, 114, 0.8);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #22d3ee;
+}
+
+html[data-theme="dark"] .wb-icon-blue {
+  background: rgba(25, 42, 88, 0.8);
+  border: 1px solid rgba(59, 130, 246, 0.25);
+  color: #60a5fa;
+}
+
+html[data-theme="dark"] .wb-metric-badge-neutral {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.12);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+html[data-theme="dark"] .wb-metric-badge-green {
+  color: #34d399;
+  background-color: rgba(5, 78, 59, 0.45);
+  border-color: rgba(16, 185, 129, 0.25);
+}
+
+html[data-theme="dark"] .wb-metric-badge-up {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.2);
+}
+
+html[data-theme="dark"] .wb-metric-badge-down {
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.2);
+}
+
+html[data-theme="dark"] .wb-plate-side {
+  border-left-color: #1c2d51;
+}
+
 /* ---- 1536x1024 workbench precision layout & dark console surfaces -------- */
 .wb-search-pill {
   border-radius: 999px;
@@ -640,7 +765,7 @@
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -0.01em;
-  color: #f8fafc;
+  color: var(--color-ink);
   margin: 0;
   white-space: nowrap;
 }
@@ -649,7 +774,7 @@
   margin: 0;
   font-size: 12px;
   line-height: 1.3;
-  color: #8c9fc2;
+  color: var(--color-ink-soft);
   white-space: nowrap;
 }
 .wb-hero-timerange {
@@ -659,9 +784,9 @@
 .wb-timerange-select {
   appearance: none;
   cursor: pointer;
-  background-color: #334985 !important;
-  border: 1px solid #445e9f !important;
-  color: #dbe4f8 !important;
+  background-color: var(--color-accent-wash) !important;
+  border: 1px solid var(--color-rule-strong) !important;
+  color: var(--color-accent-deep) !important;
   font-size: 12px !important;
   font-weight: 500 !important;
   padding: 0 28px 0 12px !important;
@@ -671,20 +796,20 @@
 }
 
 .wb-timerange-select:hover {
-  border-color: #5572bd !important;
-  background-color: #3b5499 !important;
+  border-color: var(--color-accent) !important;
+  background-color: var(--color-paper-raised) !important;
 }
 
 .wb-timerange-icon {
   position: absolute;
   right: 8px;
-  color: #9eb4e0;
+  color: var(--color-accent);
   pointer-events: none;
 }
 
 .wb-select-option {
-  background-color: #0d1733;
-  color: #e2e8f0;
+  background-color: var(--color-paper-raised);
+  color: var(--color-ink);
 }
 
 /* Status Card (All Systems Operational) */
@@ -696,6 +821,8 @@
   padding: 16px 20px;
   backdrop-filter: blur(8px);
   flex-shrink: 0;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-rule);
 }
 
 html[data-theme="dark"] .wb-status-card {
@@ -709,7 +836,7 @@ html[data-theme="dark"] .wb-status-card {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background-color: #34d399;
+  background-color: var(--color-signal);
   border: 2px solid rgba(52, 211, 153, 0.3);
   flex-shrink: 0;
 }
@@ -775,7 +902,7 @@ html[data-theme="dark"] .wb-status-card {
 .wb-region-table thead th {
   background-color: transparent;
   backdrop-filter: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  border-bottom: 1px solid var(--color-rule);
   color: var(--color-ink-faint);
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -788,7 +915,7 @@ html[data-theme="dark"] .wb-status-card {
 }
 
 .wb-region-table tbody td {
-  border-bottom-color: rgba(255, 255, 255, 0.05);
+  border-bottom-color: var(--color-row-rule);
 }
 
 .wb-region-table tbody td:first-child {
@@ -807,7 +934,7 @@ html[data-theme="dark"] .wb-status-card {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.2;
-  color: #f1f5f9;
+  color: var(--color-ink);
   letter-spacing: -0.01em;
 }
 
@@ -815,7 +942,7 @@ html[data-theme="dark"] .wb-status-card {
   margin-top: 3px;
   font-size: 12px;
   line-height: 1.2;
-  color: #6da2cc;
+  color: var(--color-ink-soft);
 }
 
 /* Metric Chips */
@@ -839,7 +966,7 @@ html[data-theme="dark"] .wb-status-card {
   gap: 12px;
   border-radius: 8px;
   padding: 10px 14px;
-  border: 1px solid #1a2958;
+  border: 1px solid var(--color-rule-faint);
 }
 
 html[data-theme="dark"] .wb-metric-chip {
@@ -876,28 +1003,31 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
   flex-shrink: 0;
 }
 
+/* The day tiles read the design system's own wash for each meaning — neutral,
+   healthy, live, accent — so the four stay distinguishable on paper instead of
+   collapsing into four near-identical blues. */
 .wb-icon-server {
-  background: rgba(53, 94, 155, 0.7);
-  border: 1px solid rgba(96, 165, 250, 0.3);
-  color: #93c5fd;
+  background: var(--color-paper-sunk);
+  border: 1px solid var(--color-rule);
+  color: var(--color-accent-deep);
 }
 
 .wb-icon-emerald {
-  background: rgba(20, 41, 94, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  color: #34d399;
+  background: var(--color-signal-wash);
+  border: 1px solid var(--color-rule);
+  color: var(--color-signal-deep);
 }
 
 .wb-icon-cyan {
-  background: rgba(36, 55, 114, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  color: #22d3ee;
+  background: var(--color-live-wash);
+  border: 1px solid var(--color-rule);
+  color: var(--color-live);
 }
 
 .wb-icon-blue {
-  background: rgba(25, 42, 88, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  color: #60a5fa;
+  background: var(--color-accent-wash);
+  border: 1px solid var(--color-rule);
+  color: var(--color-accent-deep);
 }
 .wb-metric-content {
   display: flex;
@@ -919,28 +1049,28 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
   font-size: 20px;
   font-weight: 700;
   line-height: 1.1;
-  color: #f8fafc;
+  color: var(--color-ink);
   font-family: var(--font-mono);
   letter-spacing: -0.02em;
 }
 
 .wb-text-emerald {
-  color: #34d399 !important;
+  color: var(--color-signal) !important;
 }
 
 .wb-metric-label {
   font-size: 11px;
   font-weight: 500;
-  color: #8c9fc2;
+  color: var(--color-ink-soft);
   white-space: nowrap;
 }
 
 .wb-metric-badge-neutral {
   font-size: 10px;
   font-weight: 600;
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--color-ink-soft);
+  background: var(--color-paper-sunk);
+  border: 1px solid var(--color-rule);
   padding: 1px 5px;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -950,9 +1080,9 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
 .wb-metric-badge-green {
   font-size: 10px;
   font-weight: 600;
-  color: #34d399;
-  background-color: rgba(5, 78, 59, 0.45);
-  border: 1px solid rgba(16, 185, 129, 0.25);
+  color: var(--color-signal-deep);
+  background-color: var(--color-signal-wash);
+  border: 1px solid var(--color-rule);
   padding: 1px 5px;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -962,9 +1092,9 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
 .wb-metric-badge-up {
   font-size: 10px;
   font-weight: 600;
-  color: #34d399;
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.2);
+  color: var(--color-signal-deep);
+  background: var(--color-signal-wash);
+  border: 1px solid var(--color-rule);
   padding: 1px 5px;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -974,9 +1104,9 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
 .wb-metric-badge-down {
   font-size: 10px;
   font-weight: 600;
-  color: #60a5fa;
-  background: rgba(59, 130, 246, 0.12);
-  border: 1px solid rgba(59, 130, 246, 0.2);
+  color: var(--color-live);
+  background: var(--color-live-wash);
+  border: 1px solid var(--color-rule);
   padding: 1px 5px;
   border-radius: 4px;
   font-family: var(--font-mono);
@@ -1058,7 +1188,7 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     font-size: 15px;
     font-weight: 700;
     letter-spacing: -0.01em;
-    color: #f1f3f7;
+    color: var(--color-ink);
   }
 
   .wb-rail-top-links {
@@ -1081,7 +1211,7 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     border-radius: 9px;
     font-size: 12px;
     line-height: 12px;
-    color: #aeb9cb;
+    color: var(--color-ink-soft);
     text-decoration: none;
   }
 
@@ -1093,11 +1223,17 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     top: 74px;
   }
 
+  .wb-rail-top-item[aria-current="page"] {
+    background-color: var(--color-accent-wash);
+    border: 1px solid var(--color-rule);
+    color: var(--color-accent-deep);
+    font-weight: 600;
+  }
+
   html[data-theme="dark"] .wb-rail-top-item[aria-current="page"] {
     background-color: #212f5d;
     border: 1px solid #314584;
     color: #f1f3f7;
-    font-weight: 600;
   }
 
   .wb-rail-card {
@@ -1108,6 +1244,11 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     height: 81.542969%;
     border-radius: 11px;
     overflow: hidden;
+  }
+
+  .wb-rail-card {
+    background: var(--color-paper-raised);
+    border: 1px solid var(--color-rule);
   }
 
   html[data-theme="dark"] .wb-rail-card {
@@ -1125,14 +1266,18 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     font-size: 13px;
     line-height: 13px;
     font-weight: 500;
-    color: #aeb9cb;
+    color: var(--color-ink-soft);
     text-decoration: none;
     white-space: nowrap;
   }
 
+  .wb-rail-card-item[aria-current="page"] {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+
   html[data-theme="dark"] .wb-rail-card-item[aria-current="page"] {
     color: #f1f3f7;
-    font-weight: 600;
   }
 
   /* Children of the rail card, so these percentages resolve against the card's height
@@ -1149,6 +1294,11 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     display: flex;
     flex-direction: column;
     justify-content: space-between;
+  }
+
+  .wb-rail-status {
+    background-color: var(--color-paper-raised);
+    border: 1px solid var(--color-rule);
   }
 
   html[data-theme="dark"] .wb-rail-status {
@@ -1180,6 +1330,11 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     align-items: center;
     justify-content: space-between;
     gap: 2px;
+  }
+
+  .wb-rail-footer {
+    background-color: var(--color-paper-sunk);
+    border: 1px solid var(--color-rule);
   }
 
   html[data-theme="dark"] .wb-rail-footer {
@@ -1236,6 +1391,12 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     border-radius: 999px !important;
     padding: 0 14px 0 34px !important;
     box-shadow: none !important;
+  }
+
+  .wb-shell-root:has(.wb-board) .wb-search-btn {
+    background: var(--color-paper-sunk) !important;
+    border: 1px solid var(--color-rule) !important;
+    color: var(--color-ink-soft) !important;
   }
 
   html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-search-btn {
@@ -1418,7 +1579,7 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
 
   .wb-plate-side {
     border-top: 0;
-    border-left: 1px solid #1c2d51;
+    border-left: 1px solid var(--color-rule);
   }
 
   .wb-plate-head {
