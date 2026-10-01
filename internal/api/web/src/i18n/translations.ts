@@ -825,6 +825,54 @@ Note: Once enabled, requests without authentication information are rejected ins
   "经节点查询": "Via node",
   "已暂停": "Paused",
   "不限": "Unlimited",
+
+  // The platform criteria form, the node list, the quality surfaces and the shell
+  // strings that the first coverage scan found unregistered.
+  "平台加载的节点": "Nodes loaded by the platform",
+  "条件同时生效（AND）": "All criteria apply at once (AND)",
+  "节点必须同时满足下列每一项条件；同一项里勾选多个值时，命中其中任意一个即通过（OR）。某项留空表示不做限制。":
+    "A node must satisfy every criterion below. Within one criterion, the selected values are alternatives: hitting any one of them passes (OR). Leaving a criterion empty applies no restriction.",
+  "取自节点的出口地区（GeoIP 或探测结果）。": "Taken from each node's egress region (GeoIP or probe result).",
+  "网络类型（ip_type）": "IP type (ip_type)",
+  "取值来自质量评估模型。": "Values come from the quality assessment model.",
+  "纯净度等级": "Purity band",
+  "未评估的节点不会通过纯净度条件。": "Nodes without an assessment never pass a purity criterion.",
+  "取自节点池里实际存在的协议。": "Taken from the protocols actually present in the node pool.",
+  "节点必须仍被所选订阅引用（替代旧的 ^订阅名/ 正则技巧）。":
+    "The node must still be referenced by the selected subscription (replaces the old ^subscription-name/ regex trick).",
+  "正在计算匹配节点…": "Counting matching nodes…",
+  "匹配 ≥ {{count}} 个节点": "Matches at least {{count}} nodes",
+  "当前条件没有匹配到任何节点；请减少条件或放宽取值。": "No node matches these criteria. Remove a criterion or widen a value.",
+  "被排除的原因（首个命中的条件）：": "Why it was excluded (first criterion that hit):",
+  "刷新中…": "Refreshing…",
+  "已扫描 {{scanned}} 个节点后停止（上限 {{limit}}），实际可能更多":
+    "Stopped after scanning {{scanned}} nodes (limit {{limit}}); the real total may be higher",
+  "另有 {{count}} 个未显示": "{{count}} more not shown",
+  "预览失败：无法连接后端，保存时仍会校验。": "Preview failed: the backend is unreachable. Saving still validates.",
+  "{{count}} 个节点": "{{count}} nodes",
+  "选项来自节点池（已扫描 {{scanned}} / {{total}} 个节点）":
+    "Options come from the node pool (scanned {{scanned}} of {{total}} nodes)",
+  "选项来自当前节点池（共 {{total}} 个节点）": "Options come from the current node pool ({{total}} nodes)",
+  "不限（任何值都通过）": "Any value passes",
+  "已选 {{count}} 项；命中任意一项即通过本项": "{{count}} selected; any one of them passes this criterion",
+  "当前节点池里没有可选值": "The node pool has no values to choose from",
+  "保留的排除项（旧配置）：": "Kept exclusions (legacy configuration):",
+  "排除": "Exclude",
+  "高级：旧版标签正则规则（可选）": "Advanced: legacy tag regex rules (optional)",
+  "仅供旧配置使用：普通正则命中其一即可、* 开头必须匹配、! 开头排除；它与上面的条件同时生效（AND）。":
+    "Legacy configurations only: a plain regex hits on any line, a line starting with * must match, and a line starting with ! excludes. It applies together with the criteria above (AND).",
+  "每行一条正则表达式，例如：\n香港\n*专线\n!失效": "One regular expression per line, for example:\nHong Kong\n*Dedicated\n!Expired",
+  "新配置请直接使用上面的条件；保留此框是为了让已保存的平台继续按原有规则过滤。":
+    "New configurations should use the criteria above. This box stays so saved platforms keep filtering by their existing rules.",
+  "节点详情": "Node details",
+  "查看": "View",
+  "可用节点": "Available nodes",
+  "已创建复核任务，仍在等待节点返回；稍后会自动刷新。":
+    "A review job was created and is waiting for the node to respond; this refreshes automatically.",
+  "已过期": "Expired",
+  "地图数据加载失败": "Failed to load map data",
+  "这个地址没有对应的页面，可能已经被移除或改名。": "This address has no page. It may have been removed or renamed.",
+  "订阅详情": "Subscription details",
 };
 
 export function translateDocumentTitle(locale: AppLocale): string {

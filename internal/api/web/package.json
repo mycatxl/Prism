@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "start": "node scripts/start.mjs",
-    "test:config": "node --test tests/chart-palette.test.mjs tests/config.test.mjs tests/request-limit.test.mjs tests/intel-scope.test.mjs tests/platform-criteria.test.mjs tests/kit.test.mjs",
+    "test:config": "node --test tests/chart-palette.test.mjs tests/config.test.mjs tests/request-limit.test.mjs tests/intel-scope.test.mjs tests/platform-criteria.test.mjs tests/kit.test.mjs tests/i18n-coverage.test.mjs",
     "test:e2e": "node scripts/check-ui-live.mjs",
     "prep:world-map": "node scripts/build-world-map.mjs",
     "build": "tsc -b && vite build",
