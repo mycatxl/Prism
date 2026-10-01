@@ -745,9 +745,10 @@ html[data-theme="dark"] .wb-plate-side {
 /* ---- Slot A Hero, Status Card & Metric Chips ---- */
 .wb-hero-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px 16px;
   padding: 12px 16px;
 }
 
@@ -777,7 +778,12 @@ html[data-theme="dark"] .wb-plate-side {
   color: var(--color-ink-soft);
   white-space: nowrap;
 }
+
 .wb-hero-timerange {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   flex-shrink: 0;
 }
 
