@@ -11,6 +11,7 @@ import {
   Share2,
   Waypoints,
   Zap,
+  Plus,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
@@ -465,6 +466,12 @@ export function WorkbenchPage() {
     }
     setParams(nextParams, { replace: true });
   };
+  /** Refetches every board query at once; the hero's refresh stays honest because
+      it invalidates the same cache the range picker reads. */
+  const refreshBoard = () => {
+    void queryClient.invalidateQueries({ queryKey: ["dashboard-global-snapshot"] });
+    void queryClient.invalidateQueries({ queryKey: ["workbench"] });
+  };
 
   const chartEmpty = ingressPoints.length === 0 && egressPoints.length === 0 && connectionPoints.length === 0;
   const chartFallback = <LoadingState className="h-full" label={t("正在加载")} />;
@@ -501,6 +508,21 @@ export function WorkbenchPage() {
                   </p>
                 </div>
                 <div className="wb-hero-timerange">
+                  <Button asChild variant="secondary" size="sm" className="wb-hero-add">
+                    <Link to="/subscriptions?create=1">
+                      <Plus size={14} aria-hidden />
+                      {t("添加订阅")}
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="wb-hero-refresh"
+                    loading={snapshot.isFetching || realtime.isFetching || history.isFetching}
+                    onClick={refreshBoard}
+                  >
+                    {t("刷新数据")}
+                  </Button>
                   <div className="relative inline-flex items-center">
                     <Select
                       aria-label={t("时间范围")}
