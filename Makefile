@@ -95,6 +95,7 @@ test-web:
 	$(NPM) --prefix $(WEB_DIR) run check:types
 	$(NPM) --prefix $(WEB_DIR) run check:contrast
 	$(NPM) --prefix $(WEB_DIR) run check:kit
+	$(NPM) --prefix $(WEB_DIR) run check:responsive
 
 # The browser-driven checks. They need Playwright's browser binaries, which no
 # workflow installs (CI has no browser step), so this is a local/on-demand target
