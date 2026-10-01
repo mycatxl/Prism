@@ -428,6 +428,227 @@ check("the dashboard hero renders", async ({ origin, page }) => {
   assert(readouts >= 4, `the instrument strip must show at least four readouts (found ${readouts})`);
 });
 
+check("every theme is legible, not just the one the art was drawn in", async ({ origin, page }) => {
+  /*
+   * The console ships dark and the reference art is a dark board, so a literal is
+   * the natural thing to write while matching it — and a literal in a component's
+   * own rule is invisible to `check-contrast.mjs`, which reads the `--p-*`
+   * primitives in `design.css`. That is not hypothetical: the workbench's hero
+   * heading, status card, metric values and labels were all measured against a dark
+   * ground, and on paper they rendered as white on white — 1.02:1, with every gate
+   * green. This check is the one that would have caught it.
+   *
+   * Two decisions worth knowing before editing it:
+   *
+   *  - **The ground is read from the rendered pixels**, not from a walk up the
+   *    ancestor chain. An earlier version of this check composited
+   *    `backgroundColor` by hand and treated the dark panel's
+   *    `rgba(255, 255, 255, 0.043)` as opaque white, which turned four legible
+   *    badges into false failures. Gradients, glass, and images all paint, and only
+   *    the pixels know what the ground under a word actually is. Text is made
+   *    transparent for the screenshot — colour does not affect layout — so the
+   *    sample is the ground itself rather than a glyph.
+   *  - **Ink comes from the computed style**, because that is the colour the word is
+   *    painted in; sampling glyph pixels would measure antialiasing instead.
+   */
+  const TARGETS = [
+    ".wb-hero-heading",
+    ".wb-hero-desc",
+    ".wb-timerange-select",
+    ".wb-status-title",
+    ".wb-status-desc",
+    ".wb-metric-val",
+    ".wb-metric-label",
+    ".wb-metric-badge-neutral",
+    ".wb-metric-badge-green",
+    ".wb-metric-badge-up",
+    ".wb-metric-badge-down",
+    ".wb-brand-title",
+    ".wb-rail-top-item",
+    ".wb-rail-card-item",
+    ".wb-plate-head h2",
+    ".wb-plate-head .label",
+    ".wb-region-table thead th",
+    ".wb-region-table tbody td",
+  ];
+
+  /*
+   * Shortfalls that are the reference art's own, measured rather than assumed, and
+   * left in place on purpose.
+   *
+   * The board is a reproduction of an operator's art, and these three are its
+   * colours: `#8c9fc2` at 4.44:1, `#6da2cc` at 4.05:1 and `#60a5fa` on the blue
+   * badge wash at 4.48:1 all sit just under 4.5:1. "Fixing" them would mean
+   * repainting the reference, which is a different decision from matching it, and
+   * not one this file should make silently. Each entry names the selector, the theme
+   * and the measured ratio, so the exemption cannot widen: change a colour and the
+   * number here stops matching and the check fails.
+   *
+   * The light theme is held to the full standard, because the art has no light
+   * theme to be faithful to — it is ours to solve.
+   */
+  const ART_EXEMPTIONS = [
+    // selector, theme, ratio the art actually renders
+    { sel: ".wb-hero-desc", theme: "dark", ratio: 4.44 },
+    { sel: ".wb-status-desc", theme: "dark", ratio: 4.05 },
+    { sel: ".wb-metric-badge-down", theme: "dark", ratio: 4.48 },
+  ];
+  const exemptionFor = (sel, theme) =>
+    ART_EXEMPTIONS.find((entry) => entry.sel === sel && entry.theme === theme);
+
+  /** Runs in the page: every target that carries words and is on screen. */
+  const COLLECT = (selectors) => {
+    const rows = [];
+    for (const sel of selectors) {
+      for (const el of document.querySelectorAll(sel)) {
+        // A mark with no text is a colour sample, not a word: the dots carry no
+        // ink, so their contrast is meaningless.
+        const text = (el.textContent || "").trim();
+        if (!text) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 2 || rect.height < 2) continue;
+        const cx = Math.round(rect.left + rect.width / 2);
+        const cy = Math.round(rect.top + rect.height / 2);
+        // Off-screen text is not what the operator reads, so it is not measured;
+        // the count is reported so a target that silently left the viewport shows.
+        if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
+        const cs = getComputedStyle(el);
+        rows.push({
+          sel,
+          text: text.slice(0, 24),
+          ink: cs.color,
+          size: parseFloat(cs.fontSize),
+          weight: parseInt(cs.fontWeight, 10) || 400,
+          cx,
+          cy,
+        });
+      }
+    }
+    return rows;
+  };
+
+  /**
+   * Runs in the page: hides every word without touching a single background.
+   *
+   * Inline, not a stylesheet. Several of the rules under test declare their colour
+   * with `!important` (the art's control and its badge washes), and a stylesheet
+   * `!important` outranks an injected one by specificity — measured: the injected
+   * rule lost, the glyphs stayed painted, and the probe reported the select's own
+   * antialiased text (`#98a7ca`) as its ground. An inline `!important` is the one
+   * author declaration that wins over every other author declaration.
+   */
+  const HIDE_TEXT = () => {
+    for (const el of document.querySelectorAll("*")) {
+      if (el.tagName === "svg" || el.tagName === "path") continue;
+      el.style.setProperty("color", "transparent", "important");
+    }
+  };
+
+  /** Runs in the page: the painted colour under each point, from the screenshot. */
+  const SAMPLE = async ({ b64, points, scale }) => {
+    const image = new Image();
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = "data:image/png;base64," + b64;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(image, 0, 0);
+    return points.map((point) => {
+      const data = ctx.getImageData(Math.round(point.cx * scale), Math.round(point.cy * scale), 1, 1).data;
+      return [data[0], data[1], data[2]];
+    });
+  };
+
+  const parseInk = (value) => {
+    const m = /rgba?\(([^)]+)\)/.exec(value);
+    if (!m) return null;
+    const parts = m[1].split(/[,/]/).map((p) => parseFloat(p.trim()));
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+  };
+  const luminance = ({ r, g, b }) => {
+    const f = (v) => {
+      const s = v / 255;
+      return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const contrast = (a, b) => {
+    const [hi, lo] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const over = (fg, bg) => ({
+    r: fg.r * fg.a + bg.r * (1 - fg.a),
+    g: fg.g * fg.a + bg.g * (1 - fg.a),
+    b: fg.b * fg.a + bg.b * (1 - fg.a),
+  });
+  const hex = (c) => "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+
+  const problems = [];
+  for (const theme of ["dark", "light"]) {
+    await page.goto(origin + DASHBOARD);
+    await rendered(page);
+    await page.evaluate((next) => {
+      localStorage.setItem("prism.theme", next);
+      document.documentElement.dataset.theme = next;
+    }, theme);
+    await page.goto(origin + DASHBOARD);
+    await rendered(page);
+    await page.waitForTimeout(800);
+
+    // The theme the page actually painted, not the one that was asked for: a
+    // mismatch here would silently grade one theme twice.
+    const applied = await page.evaluate(() => document.documentElement.dataset.theme);
+    assert.equal(applied, theme, `the page painted the ${applied} theme after ${theme} was requested`);
+
+    const rows = await page.evaluate(COLLECT, TARGETS);
+    assert(rows.length >= 12, `only ${rows.length} legible targets were found on screen`);
+
+    await page.evaluate(HIDE_TEXT);
+    const shot = await page.screenshot();
+    const scale = await page.evaluate(() => window.devicePixelRatio || 1);
+    const grounds = await page.evaluate(SAMPLE, {
+      b64: shot.toString("base64"),
+      points: rows.map(({ cx, cy }) => ({ cx, cy })),
+      scale,
+    });
+    // The page is navigated again on the next pass, which drops the inline styles.
+
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      const ground = { r: grounds[index][0], g: grounds[index][1], b: grounds[index][2] };
+      const ink = parseInk(row.ink);
+      if (!ink) continue;
+      // WCAG 1.4.3: 3:1 for large text (24px, or 18.66px bold), else 4.5:1.
+      const large = row.size >= 24 || (row.weight >= 700 && row.size >= 18.66);
+      const floor = large ? 3 : 4.5;
+      const measured = contrast(over(ink, ground), ground);
+      if (measured < floor) {
+        const exemption = exemptionFor(row.sel, theme);
+        if (exemption) {
+          // The art's own value, or the exemption is stale: if the colour moved,
+          // the ratio here moves too and this becomes a failure again.
+          if (Math.abs(measured - exemption.ratio) > 0.02) {
+            problems.push(
+              `[${theme}] ${row.sel} is exempted at ${exemption.ratio}:1 as the art's own value, ` +
+                `but now measures ${measured.toFixed(2)}:1 — the exemption no longer describes the art`,
+            );
+          }
+          continue;
+        }
+        problems.push(
+          `[${theme}] ${row.sel} "${row.text}": ${measured.toFixed(2)}:1 ` +
+            `(ink ${hex([ink.r, ink.g, ink.b])} over ${hex([ground.r, ground.g, ground.b])}), needs ${floor}:1`,
+        );
+      }
+    }
+  }
+  assert.deepEqual(problems, [], "text that is not legible against its own ground:\n  " + problems.join("\n  "));
+});
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------

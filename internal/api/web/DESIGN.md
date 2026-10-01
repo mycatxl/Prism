@@ -49,6 +49,25 @@ That split is what makes a theme switch cost one attribute on `<html>` instead o
 second stylesheet. Adding a colour means adding a primitive in *both* blocks and a
 binding in `@theme inline`; adding it in one place only is how a theme breaks silently.
 
+**The board is a replica of a dark reference, and the light theme is ours to solve.**
+The workbench's own rules (`.wb-*`) are written so the *base* rule reads a token — so
+paper gets ink and surfaces that belong on paper — and a single block, "The night board,
+restated", puts the art's measured literals back behind `html[data-theme="dark"]`. The
+alternative (a literal in the base rule, which is what the panel originally had) makes
+the light theme render the art's night values on a white sheet: the hero heading, status
+title and metric values measured **1.02:1** — white on white — with every gate green,
+because the literal was in a component rule and no gate read those.
+
+Two consequences worth stating:
+
+- **Do not write a bare colour literal in a `.wb-*` rule.** If it comes from the art,
+  it belongs in the night block; if it is the panel's own, it belongs in a token. The
+  block exists so that "the dark theme did not move" is checkable by reading one place.
+- **A map's palette is a literal by necessity** (`chartPalette.ts`, because a canvas
+  cannot read CSS variables) and so is exempt from the above — its two plates are
+  `MAP_DARK`/`MAP_LIGHT`, chosen from `data-theme` at runtime, and
+  `tests/chart-palette.test.mjs` holds them to the tokens they mirror.
+
 **Canvas cannot read CSS variables.** `src/features/dashboard/chartPalette.ts` holds a
 literal copy of the series, grid and axis colours for ECharts. Change the two together
 and re-run the contrast gate.
@@ -183,6 +202,7 @@ range picker, refresh and import actions stay reachable without scrolling.
 | Floor | How it is checked |
 |---|---|
 | Contrast and series separation, both themes | `npm run check:contrast` — **100 pairs**, light and dark, including the hero pane's two stops. In `make test-web` → `make verify`, so a palette regression fails CI like a Go test |
+| The *rendered page* is legible in both themes | `npm run test:e2e` → "every theme is legible, not just the one the art was drawn in". `check:contrast` reads the `--p-*` primitives, so a colour written into a component's own rule is invisible to it — and the workbench was full of them. This check screenshots each theme with the words made transparent, samples the **painted** ground under every text element, and grades the computed ink against it at WCAG 1.4.3. Three shortfalls are exempted as the reference art's own values (4.44:1, 4.05:1, 4.48:1), each pinned to the ratio it renders so the exemption cannot quietly widen |
 | The kit is the only source of controls | `npm run check:kit` reads the `.tsx` sources: native `<select>`/`<input>`/`<button>`/`<textarea>` outside `src/components/ui/`, hard-coded control heights **anywhere** (a page that sizes a control has made the same per-page decision the kit may not make), and `rounded-full` anywhere but `Badge`. In `make test-web` → `make verify` |
 | The 1536 replica layer stays fluid | `npm run check:responsive` resolves the board's box, every slot percentage and every rail anchor back to the reference geometry at 1288x1024 - the rail card's children against the card's 835 px height, not the column's 1024 - and fails on positional pixels that are not allow-listed with a reason. In `make test-web` → `make verify`; the browser-side measurements are the replica probes in the root `DESIGN.md` |
 | The kit's own invariants | `tests/kit.test.mjs` — the `Button` single-child rule, token heights, the pill reservation, that the height rule carries no scope guard, and that no control renders with an empty `onChange`. Each with the reason it exists |
