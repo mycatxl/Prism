@@ -374,10 +374,25 @@ The skeleton layer is scoped with `:has(.wb-board)`, so it applies to this board
 to the dense routes; the rail's own geometry is shared, because the rail should read the
 same everywhere at this width.
 
-Residuals, printed rather than hidden: the art's nested tile inside `H` (a six-row region
-list) is not reproduced yet, and where the art contradicts itself — unequal KPI widths and
-the overlapping quick-action card — it is reproduced as measured where that reads as
-intent, and normalised where it reads as noise.
+What later measurements settled: the region the art appeared to nest inside `H` at
+`1136,704 → 1237,855` is not a tile. Its ink runs past x1237, `H`'s fill is continuous
+across it, and no border separates it from the card — it is `H`'s own rows: two lines each
+(the action and its target), the timestamp right-aligned, which this board already draws at
+the same x-extents (secondary line from x1126, reference x1135). Two scans agree, one on
+fill difference and one on brightness. The slot was therefore **removed from the stylesheet
+rather than filled with an invented box**, and the acceptance probe that used to sample
+that area (`K_fill`) now passes against the fill the art actually has there.
+
+Those rows did differ in one thing: their rhythm. The art spaces them 54 px apart; the
+design system's 44 px left the list ending well above the card's bottom border. The board
+uses the measured value, which puts the five rows at y659/713/767/821/875 against the art's
+662/715/769/823/878 — a constant 3 px, the same offset the rest of the column shows.
+
+Residuals, printed rather than hidden: `J` (平台分布) renders a real distribution where the
+art carries sample data, so its fill differs where bars would be (Δ18.6); the upper cards'
+glass overlays read slightly darker than the art (E Δ11.8, F Δ8.4); and where the art
+contradicts itself — unequal KPI widths, the overlapping quick-action card — it is
+reproduced as measured where that reads as intent, and normalised where it reads as noise.
 
 ### Installing the detector
 

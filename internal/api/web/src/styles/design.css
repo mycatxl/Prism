@@ -1060,21 +1060,20 @@
     border: 1px solid #182848 !important;
   }
 
-  /* Slot K: Nested Region Share (global 1136,704 -> 1237,855 => inside H at left:66, top:104, w:101, h:151) */
-  .wb-slot-k {
-    position: absolute;
-    left: 66px;
-    top: 104px;
-    width: 101px;
-    height: 151px;
-    border-radius: 8px;
-    z-index: 5;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-k {
-    background: #0c1836 !important;
-    border: 1px solid #132242 !important;
+  /*
+   * H's rows. The reference holds five of them between y620 and y905: two lines per row
+   * (27px), a 26px gap, so 54px apart, and the list reaches the card's bottom border. The
+   * design-system rhythm (44px) leaves the list short, and the acceptance probe that samples
+   * a between-rows pixel lands on a glyph instead of the fill.
+   *
+   * There is deliberately no slot for the region that earlier measurements recorded as a
+   * nested tile at 1136,704 -> 1237,855. Measured twice since (z119, z121): the ink there
+   * runs past x1237, the card's fill is continuous across it and no border separates it —
+   * it is H's own rows, and building a box for it would move the board away from the
+   * reference. The geometry notes in DESIGN.md carry the finding.
+   */
+  .wb-slot-h li {
+    min-height: 54px;
   }
 
   /* Slot I: Recently Added Nodes (global 257,704 -> 727,987 => local left:9, top:704, w:470, h:283) */
