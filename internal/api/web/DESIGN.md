@@ -24,8 +24,16 @@ Colour, type, spacing and chrome heights are defined in
 [`src/styles/design.css`](src/styles/design.css). The shape is deliberate and worth
 knowing before editing:
 
-- `@theme inline` **binds** Tailwind utility names to primitives — it defines no
-  values of its own. `--color-paper: var(--p-canvas)` and so on.
+- `@theme inline static` **binds** Tailwind utility names to primitives — it defines
+  no values of its own. `--color-paper: var(--p-canvas)` and so on. `static` is
+  load-bearing: Tailwind emits an alias only when it can see a consumer, and it reads
+  markup and CSS, never JavaScript. An alias a component names at runtime —
+  `style={{ backgroundColor: "var(--color-series-1)" }}`, which is how the donut's
+  legend and the region table's dots name theirs — is invisible to it, gets dropped
+  from the bundle, and the `var()` resolves to nothing, so the element paints
+  transparent with no error anywhere. Six series aliases and `--color-chart-grid` had
+  no other consumer and were being pruned exactly that way;
+  `tests/design-tokens.test.mjs` now holds the line.
 - The primitives (`--p-*`) are declared **twice**: once in `:root` (light) and once in
   `[data-theme="dark"]`. They are the only place a colour literal appears.
 - Static scales — fonts, the type scale, spacing, radii, chrome heights, easings — sit
@@ -92,12 +100,27 @@ Two consequences worth stating, because they are the ones that drifted before:
   inside a `<label>` that carries the click area, so the 14px box is the visual
   and the label is the target.
 
-Charts are ECharts. The console's 3D globe is `echarts-gl` with a texture drawn at
-runtime from the repository's own `public/world-110m.geo.json` — no added asset, no
-network call at render time. Two `echarts-gl@2.1.0` traps are worked around in
-`EgressGlobe.tsx` and commented there: handing it a canvas as `baseTexture` turns the
-sphere white on the second render, and a colour-typed `environment` smears into an
-opaque black block. WebGL unavailable falls back to the flat map.
+Charts are ECharts. The egress plate is a 2D world map whose outline is read at runtime
+from the repository's own `public/world-110m.geo.json` — no added asset, no network
+call to anyone but the panel. ECharts' `geo`, `lines` and `effectScatter` series are
+registered in `echartsCore.ts`; there is no WebGL path and no extension pack, so the
+plate draws everywhere the canvas does.
+
+The plate is one panel split in two, and both halves read the same six rows: the map
+carries one hub per region and the table beside it carries the region's latency and its
+share of the pool. A hub sits on the region's **busiest member country** rather than on
+a hand-picked label position, so every marker is a place the pool really exits from. The
+flight lines join each hub to the busiest one and are drawn as a constant-width
+relationship, never as a volume — the inventory does not say which node talks to which,
+and a line that implied otherwise would be the one figure on the board nobody measured.
+The panel's ground is the sea (the map's canvas is transparent), which is why the ground
+is a `.wb-slot-d` gradient rather than a colour in `MAP_DARK`.
+
+The plate follows the theme, like every other chart: `MAP_DARK` is the night plate and
+`MAP_LIGHT` the day one, and the two read in opposite directions on purpose — on the dark
+board the countries are lighter than the sea, on paper they are darker than the sheet.
+`tests/chart-palette.test.mjs` asserts both directions and that each plate spends its own
+theme's series tokens.
 
 ## Layout
 
@@ -136,7 +159,7 @@ equally important:
 
 | Column | Panes, in order |
 |---|---|
-| Main (`xl:col-span-8`) | hero (`hero-gradient`) with the range picker, refresh and the four-readout strip · egress globe (or flat map) with the top-region table and the band legend · four KPI panes, each with its sparkline and its trend basis · traffic overview with the ingress/egress totals · recently added nodes · subscription state |
+| Main (`xl:col-span-8`) | hero (`hero-gradient`) with the range picker, refresh and the four-readout strip · the egress plate (global traffic) with the top-region table beside it · four KPI panes, each with its sparkline and its trend basis · traffic overview with the ingress/egress totals · recently added nodes · subscription state |
 | Side (`xl:col-span-4`) | instance state (the shell's own `system/info` query, reused) · quick actions to four real destinations · node latency distribution · platform distribution ring · recent changes from the audit log |
 
 Below `xl` the two columns stack; below `sm` the KPI panes do too. What the board may

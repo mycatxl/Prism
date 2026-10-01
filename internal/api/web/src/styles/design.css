@@ -19,7 +19,20 @@
 @import "tailwindcss";
 
 /* ---- theme-bound tokens -------------------------------------------------- */
-@theme inline {
+/*
+ * `static` is load-bearing, not decoration.
+ *
+ * Tailwind emits an alias from this block only when it can see a consumer, and it
+ * reads markup and CSS — never JavaScript. A component that names its colour at
+ * runtime (`style={{ backgroundColor: "var(--color-series-1)" }}`, which is how the
+ * donut's legend and the region table's dots name theirs) is therefore invisible to
+ * it. The six series aliases and `--color-chart-grid` had no consumer at all and were
+ * dropped from the bundle, so every one of those elements painted transparent — a
+ * rendered dot's computed background read `rgba(0, 0, 0, 0)`. `static` keeps the whole
+ * layer in the output; it costs 979 bytes before gzip. `tests/design-tokens.test.mjs`
+ * holds the line.
+ */
+@theme inline static {
   --color-paper: var(--p-canvas);
   --color-paper-sunk: var(--p-sunk);
   --color-paper-raised: var(--p-raised);
@@ -701,6 +714,95 @@ html[data-theme="dark"] .wb-status-card {
   flex-shrink: 0;
 }
 
+/* The traffic plate: a map and the table that reads the same six rows.
+   These live outside the 1536 layer on purpose. The split, the dots and the
+   table's own rules are the same at every width; only the panel's *position* on
+   the board is a property of the reference canvas, and that stays in the layer.
+   A px width here is therefore allowed, which is why the dot is sized here
+   rather than in the breakpoint. */
+.wb-plate {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+
+.wb-plate-side {
+  border-top: 1px solid var(--color-rule-faint);
+}
+
+.wb-plate-head {
+  display: flex;
+  min-height: var(--panel-header-h);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+/* The live dot beside the plate's title: the same signal the rail status uses,
+   at the size the reference header carries. */
+.wb-live-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background-color: var(--p-signal);
+  border: 1px solid var(--p-signal-deep);
+  flex-shrink: 0;
+}
+
+/* A region's colour, as a dot: the table's half of the map's legend. */
+.wb-region-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* The map's own body. Below the reference breakpoint the panel is as tall as its
+   content, and a flex child with `min-height: 0` would collapse the canvas to
+   nothing, so the plate keeps a floor of its own; the breakpoint layer, where the
+   panel's height is fixed by the board, clears it again. */
+.wb-plate-map {
+  min-height: clamp(240px, 34vh, 460px);
+}
+
+/* The reference table has no glass wash over its column heads, title-case labels
+   rather than the kit's micro-caps, and rules a constant step above the panel
+   ground — so the kit's sticky glass band is replaced here rather than in the
+   shared component. The rules are a translucent white rather than a fixed colour
+   because the ground itself fades toward the bottom of the panel: a constant
+   colour would read as a rule that fades out, which is not the art. */
+.wb-region-table thead th {
+  background-color: transparent;
+  backdrop-filter: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--color-ink-faint);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  padding-left: 17px;
+}
+
+.wb-region-table thead th:last-child {
+  padding-right: 20px;
+}
+
+.wb-region-table tbody td {
+  border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+.wb-region-table tbody td:first-child {
+  padding-left: 17px;
+}
+
+.wb-region-table tbody td:last-child {
+  padding-right: 20px;
+}
+
+.wb-region-table tbody tr:last-child td {
+  border-bottom-color: transparent;
+}
+
 .wb-status-title {
   font-size: 14px;
   font-weight: 600;
@@ -1294,9 +1396,55 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     overflow: hidden;
   }
 
+  /* The light theme's plate is the day plate: the panel keeps the kit's own
+     surface, because on paper the sea is the sheet and the countries are the
+     ink. Nothing is overridden here on purpose — `MAP_LIGHT` is what changes. */
   html[data-theme="dark"] .wb-slot-d {
-    background: #0d1a37 !important;
+    /* The panel ground *is* the sea (the map's canvas is transparent), and the
+       reference art lights it from the top: measured, the top edge runs #0a152d
+       at the left to #132449 at the right, and the bottom edge is #0b162d on
+       both. A linear ramp, because a radial wash on a dark surface is the
+       decorative halo the anti-pattern gate forbids. */
+    background: linear-gradient(200deg, #16264d 0%, #122142 14%, #0e1b38 40%, #0b162f 78%, #0a152d 100%) !important;
     border: 1px solid #202d4c !important;
+  }
+
+  /* The plate is two columns: the map (501 of 797 px, 62.9%) and the region
+     table. The divider is the right column's own left border, so it is exactly
+     as tall as the panel and needs no element of its own. */
+  .wb-plate {
+    grid-template-columns: minmax(0, 62.9%) minmax(0, 1fr);
+  }
+
+  .wb-plate-side {
+    border-top: 0;
+    border-left: 1px solid #1c2d51;
+  }
+
+  .wb-plate-head {
+    align-items: flex-end;
+    padding: 0 16px 6px 18px;
+  }
+
+  /* The reference panel titles are a step down from the kit's 14px: at 13px the
+     heading's cap top and baseline land where the art puts them (ink rows
+     25..33 measured). */
+  .wb-plate-head h2 {
+    font-size: 13px;
+  }
+
+  /* The panel's height is fixed by the board here, so the plate fills it. */
+  .wb-plate-map {
+    min-height: 0;
+  }
+
+  /* The reference header carries the title alone, and the rail beside the board
+     already reaches the node pool, so the plate's shortcut folds away at the
+     reference size rather than putting a control in the art's empty corner. It
+     stays in the DOM below 1536, where the board is a stack of panels and the
+     rail is the only other way there. */
+  .wb-plate-link {
+    display: none !important;
   }
 
   /* Slot E: Egress Tile (global 1070,250 -> 1221,361 => local left:822, top:250, w:151, h:111) */

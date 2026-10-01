@@ -104,54 +104,83 @@ test("the series is the design system's series, in order", () => {
   }
 });
 
-test("the band ramp runs pale to deep, in one hue, and ends on the primary series", () => {
-  const block = /export const EXIT_COUNT_BANDS[^=]*= \[([\s\S]*?)\n\];/.exec(palette);
-  assert.ok(block, "chartPalette.ts declares no EXIT_COUNT_BANDS array");
-  const bands = [...block[1].matchAll(/\{ min: ([\d.]+|Number\.POSITIVE_INFINITY), max: ([\d.]+|Number\.POSITIVE_INFINITY), color: "(#[0-9a-fA-F]{6})" \}/g)];
-  assert.equal(bands.length, 5, "the ramp is five steps");
-  const colors = bands.map((band) => band[3].toLowerCase());
-  assert.equal(
-    colors.at(-1),
-    light.get("series-1"),
-    "the deepest band must be the primary series colour, or the legend and the line disagree",
-  );
-  assert.equal(new Set(colors).size, 5, "the five steps must be five different colours");
-  for (let i = 1; i < colors.length; i += 1) {
+test("the dark series is the dark theme's series, in order", () => {
+  const block = /export const CHART_SERIES_DARK = \[([^\]]*)\] as const;/.exec(palette);
+  assert.ok(block, "chartPalette.ts declares no CHART_SERIES_DARK array");
+  const series = [...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1].toLowerCase());
+  assert.equal(series.length, 6, "the dark series must hold six colours");
+  for (const [index, value] of series.entries()) {
+    assert.equal(
+      value,
+      dark.get(`series-${index + 1}`),
+      `dark series ${index + 1} is not --p-series-${index + 1} from the dark theme`,
+    );
+  }
+});
+
+test("the map's plate mirrors the dark theme, and spends the dark series", () => {
+  const block = /export const MAP_DARK: MapPalette = \{([\s\S]*?)\n\};/.exec(palette);
+  assert.ok(block, "chartPalette.ts declares no MAP_DARK palette");
+  const body = block[1];
+  /*
+   * `land` and `coast` are the two values that are art rather than token: the
+   * plate is read at three metres, and the gap between the filled country and the
+   * sea is what makes the footprint legible at that distance. They are asserted
+   * as literals so a redesign cannot quietly swap in a token that measures wrong
+   * on a night ground.
+   */
+  for (const field of ["land", "coast"]) {
     assert.ok(
-      luminance(colors[i]) < luminance(colors[i - 1]),
-      `band ${i + 1} is not darker than band ${i}: the ramp must read as a count in greyscale`,
+      new RegExp(`${field}: "(#[0-9a-fA-F]{6})"`).test(body),
+      `MAP_DARK.${field} is not a literal colour`,
     );
   }
-});
-
-test("the globe's dark tooltip mirrors the dark primitives", () => {
-  const darkMirrors = [
-    ["base", "canvas"],
-    ["tooltipPaper", "elevated"],
-    ["tooltipRule", "rule"],
-    ["tooltipInk", "ink"],
-    ["tooltipInkSoft", "ink-soft"],
+  assert.match(
+    body,
+    /series:\s*CHART_SERIES_DARK,/,
+    "MAP_DARK must spend the dark series rather than restating six colours",
+  );
+  // Everything a reader has to *interpret* on the plate is a dark-theme token, so
+  // the map and the rest of the board stay one edit apart.
+  for (const [field, token] of [
+    ["ink", "ink"],
     ["tooltipSignal", "signal"],
-  ];
-  const block = /export const GLOBE_DARK: GlobePalette = \{([\s\S]*?)\n\};/.exec(palette);
-  assert.ok(block, "chartPalette.ts declares no GLOBE_DARK palette");
-  for (const [field, token] of darkMirrors) {
-    const value = new RegExp(`${field}: "(#[0-9a-fA-F]{6})"`).exec(block[1]);
-    assert.ok(value, `GLOBE_DARK.${field} is not a literal colour`);
-    assert.equal(value[1].toLowerCase(), dark.get(token), `GLOBE_DARK.${field} is not --p-${token} from the dark theme`);
+  ]) {
+    const value = new RegExp(`${field}: "(#[0-9a-fA-F]{6})"`).exec(body);
+    assert.ok(value, `MAP_DARK.${field} is not a literal colour`);
+    assert.equal(value[1].toLowerCase(), dark.get(token), `MAP_DARK.${field} is not --p-${token} from the dark theme`);
   }
 });
 
-test("the globe's light tooltip reuses the light literals instead of restating them", () => {
-  const block = /export const GLOBE_LIGHT: GlobePalette = \{([\s\S]*?)\n\};/.exec(palette);
-  assert.ok(block, "chartPalette.ts declares no GLOBE_LIGHT palette");
-  for (const constant of ["CHART_PAPER_RAISED", "CHART_RULE", "CHART_INK", "CHART_INK_SOFT", "CHART_SIGNAL_DEEP"]) {
+test("the day plate mirrors the light theme, and spends the light series", () => {
+  const block = /export const MAP_LIGHT: MapPalette = \{([\s\S]*?)\n\};/.exec(palette);
+  assert.ok(block, "chartPalette.ts declares no MAP_LIGHT palette");
+  const body = block[1];
+  // The day plate reuses the light literals rather than restating them, which is
+  // what keeps it one edit away from the theme it belongs to.
+  for (const constant of ["CHART_INK", "CHART_SERIES", "CHART_SIGNAL_DEEP"]) {
     assert.match(
-      block[1],
+      body,
       new RegExp(`:\\s*${constant},`),
-      `GLOBE_LIGHT restates a colour instead of using ${constant}`,
+      `MAP_LIGHT restates a colour instead of using ${constant}`,
     );
   }
+  /*
+   * The two plates must read in opposite directions, or the footprint vanishes
+   * into the ground it is drawn on: on paper the countries are darker than the
+   * sheet, and on the night plate they are lighter than the sea.
+   */
+  const lightLand = /land: "(#[0-9a-fA-F]{6})"/.exec(body)[1];
+  const darkBlock = /export const MAP_DARK: MapPalette = \{([\s\S]*?)\n\};/.exec(palette)[1];
+  const darkLand = /land: "(#[0-9a-fA-F]{6})"/.exec(darkBlock)[1];
+  assert.ok(
+    luminance(lightLand) < luminance(light.get("canvas")),
+    "MAP_LIGHT.land must be darker than the light canvas, or the footprint disappears into the sheet",
+  );
+  assert.ok(
+    luminance(darkLand) > luminance(dark.get("canvas")),
+    "MAP_DARK.land must be lighter than the dark canvas, or the footprint disappears into the sea",
+  );
 });
 
 test("the chart fonts are the tokens' families", () => {

@@ -1,3 +1,5 @@
+import type { ContinentId } from "./continents";
+
 export type TimeWindow = {
   from: string;
   to: string;
@@ -146,11 +148,45 @@ export type NodeExitFact = {
   region: string;
   healthy: boolean;
   egressIp: string;
+  /**
+   * The node's own reference latency in ms, or `null` when it has not been
+   * measured. A node that reported nothing is excluded from its region's mean
+   * rather than counted as zero, because a zero would read as "instant".
+   */
+  referenceLatencyMs: number | null;
 };
 
-/** Exit nodes of one country. The map plots `exits` and the tooltip adds `healthy`. */
-export type RegionExitCount = {
-  region: string;
+/**
+ * One region of the map and one row of its table: the same numbers, so the
+ * plate and the table can never disagree about a region.
+ *
+ * `id` is the region's own key. A country code the region table does not carry
+ * keeps its own row, so an unexpected territory shows up as itself instead of
+ * being folded into the wrong region. The hub's *position* is not here: it is
+ * resolved against the world outline at render time (`hubFor`), because it
+ * depends on geography rather than on the inventory.
+ */
+export type RegionTraffic = {
+  id: ContinentId | string;
+  /** The dictionary key for the display name. */
+  name: string;
+  /** The busiest member country, ISO alpha-2: where the hub is hung. */
+  hubIso: string;
+  /** Nodes whose traffic leaves through this region. */
   exits: number;
+  /** Of those, how many are healthy. */
   healthy: number;
+  /** Mean reference latency across the nodes that reported one, or `null`. */
+  latency: number | null;
+  /** The region's share of the located pool, as a fraction. */
+  share: number;
+};
+
+/** A regional view of the pool, plus what could not be placed. */
+export type RegionTrafficReport = {
+  regions: RegionTraffic[];
+  /** Nodes whose egress region is not known at all. */
+  unknown: number;
+  /** The located pool size the shares are taken against. */
+  total: number;
 };

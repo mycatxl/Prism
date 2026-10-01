@@ -203,9 +203,9 @@ What the set establishes, and what a new component must not break:
   never invented per page.
 - **Charts are ECharts**, with the palette literals mirrored in
   `src/features/dashboard/chartPalette.ts` because canvas cannot read CSS variables.
-  The globe is `echarts-gl` with its texture drawn at runtime from the repository's own
-  GeoJSON — no added asset, no network call — and it falls back to the flat map where
-  WebGL can't start. A chart's ground is the pane's inset, never a second card.
+  The egress plate is a 2D world map with its outline read from the repository's own
+  GeoJSON — no added asset, no network call to anyone but the panel. A chart's ground
+  is the pane's inset, never a second card.
 
 ## Typography
 
@@ -254,7 +254,8 @@ and over pale paper is a soft one.
 
 `--ease-instrument` = `cubic-bezier(0.16, 1, 0.3, 1)`; 110 / 170 / 240ms, with
 `--dur-count` 800ms for a counting numeral. **There is no page-load choreography.**
-`prefers-reduced-motion` is honoured, including the globe's rotation.
+`prefers-reduced-motion` is honoured, including the plate's flight-line pulses and its
+hub ripples, which become solid marks.
 
 ## Prohibited
 

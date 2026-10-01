@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useMemo, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useMemo, useSyncExternalStore } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -7,7 +7,6 @@ import {
   ChevronRight,
   CircleAlert,
   Gauge,
-  Globe2,
   Server,
   Share2,
   Waypoints,
@@ -39,7 +38,6 @@ import {
   getDashboardGlobalSnapshotData,
   listNodeExitFacts,
 } from "./api";
-import { EXIT_COUNT_BANDS, exitCountBandLabel } from "./chartPalette";
 import {
   PLACEHOLDER,
   formatBytes,
@@ -61,7 +59,7 @@ import {
   rangeOption,
   realtimeRefreshMsFromSteps,
 } from "./range";
-import { aggregateExitsByRegion } from "./worldMap";
+import { aggregateRegionTraffic } from "./worldMap";
 import LatencyProfile from "./LatencyProfile";
 
 /**
@@ -69,13 +67,9 @@ import LatencyProfile from "./LatencyProfile";
  * board and the canvas, not with the route table.
  */
 const EgressMap = lazy(() => import("./EgressMap"));
-const EgressGlobe = lazy(() => import("./EgressGlobe"));
 const TrafficChart = lazy(() => import("./TrafficChart"));
 
 type Point = [number, number];
-
-/** The two views of the egress panel: the sphere, and the plate it replaced. */
-type MapView = "globe" | "flat";
 
 function toPoints<T>(items: T[], valueOf: (item: T) => number, stampOf: (item: T) => string): Point[] {
   const points: Point[] = [];
@@ -238,7 +232,6 @@ function QuickAction({ to, icon: Icon, label }: { to: string; icon: typeof Activ
 export function WorkbenchPage() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
-  const [mapView, setMapView] = useState<MapView>("globe");
   const rangeKey = parseRangeKey(params.get("range"));
   const queryClient = useQueryClient();
   const online = useSyncExternalStore(
@@ -338,7 +331,7 @@ export function WorkbenchPage() {
   const latency = snapshot.data?.snapshot_latency_global;
 
   const nodeFacts = useMemo(() => nodes.data ?? [], [nodes.data]);
-  const { regions, unknown } = useMemo(() => aggregateExitsByRegion(nodeFacts), [nodeFacts]);
+  const { regions, unknown } = useMemo(() => aggregateRegionTraffic(nodeFacts), [nodeFacts]);
 
   const leaseItems = useMemo(() => realtime.data?.realtime_leases.items ?? [], [realtime.data]);
   const latestLease = leaseItems.at(-1);
@@ -419,8 +412,12 @@ export function WorkbenchPage() {
   }, [latencySeries]);
 
   const poolHealthy = pool?.healthy_nodes ?? 0;
-  const topRegions = useMemo(() => regions.slice(0, 8), [regions]);
-  const busiestRegion = topRegions[0]?.exits ?? 0;
+  /*
+   * The plate and the table read the same six rows: the map is the summary and
+   * the table is the data, so they cannot disagree about a region. `regions` is
+   * already ranked by node count, which is the order the table reads in.
+   */
+  const topRegions = useMemo(() => regions.slice(0, 6), [regions]);
 
   const windowSuccessRate = windowRequests.total > 0 ? windowRequests.success / windowRequests.total : null;
   const errorRate = windowSuccessRate === null ? null : 1 - windowSuccessRate;
@@ -595,124 +592,112 @@ export function WorkbenchPage() {
             </Panel>
 
             <Panel className="flex min-w-0 flex-col wb-slot-d">
-              <PanelHeader
-                title={t("出口 / 区域")}
-                meta={
-                  <>
-                    {formatCount(regions.length)} {t("地区")}
-                  </>
-                }
-                actions={
-                  <>
-                    <div
-                      role="group"
-                      aria-label={t("视图")}
-                      className="inline-flex items-center divide-x divide-rule overflow-hidden rounded-control border border-glass-edge"
-                    >
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="rounded-none border-0 aria-pressed:bg-glass-strong aria-pressed:font-semibold aria-pressed:text-ink"
-                        aria-pressed={mapView === "globe"}
-                        onClick={() => setMapView("globe")}
-                      >
-                        {t("立体地球")}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="rounded-none border-0 aria-pressed:bg-glass-strong aria-pressed:font-semibold aria-pressed:text-ink"
-                        aria-pressed={mapView === "flat"}
-                        onClick={() => setMapView("flat")}
-                      >
-                        {t("平面地图")}
-                      </Button>
-                    </div>
-                    <Button asChild variant="ghost" size="sm">
+              {/*
+                The plate and the table are one panel split in two: the map is
+                the summary and the table is the data, and the split is stated as
+                two columns so the header's two titles line up with the columns
+                they name. The divider is the right column's own left border, so
+                it is exactly as tall as the content and needs no element of its
+                own.
+              */}
+              <div className="wb-plate grid min-h-0 flex-1">
+                <div className="flex min-w-0 flex-col">
+                  <div className="wb-plate-head">
+                    <span className="wb-live-dot" aria-hidden />
+                    <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
+                      {t("全球流量")}
+                    </h2>
+                    <span className="label shrink-0 whitespace-nowrap">
+                      {formatCount(regions.length)} {t("地区")}
+                    </span>
+                    {/*
+                      Nodes whose egress has not been located are outside the
+                      shares, so the count is stated rather than folded into a
+                      row: a reader comparing the column against 100% needs to
+                      know what it was taken over.
+                    */}
+                    {unknown > 0 && (
+                      <span className="label shrink-0 whitespace-nowrap">
+                        {t("未定位")}
+                        <span className="readout ml-1 text-ink-soft">{formatCount(unknown)}</span>
+                      </span>
+                    )}
+                    <Button asChild variant="ghost" size="sm" className="wb-plate-link ml-auto shrink-0">
                       <Link to="/nodes">{t("查看节点池")}</Link>
                     </Button>
-                  </>
-                }
-              />
-              <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-5">
-                <div className="min-h-[clamp(300px,38vh,520px)] 2xl:min-h-0 2xl:h-full lg:col-span-3">
-                  {nodes.isError ? (
-                    <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
-                  ) : !nodes.data ? (
-                    <LoadingState className="h-full" label={t("正在加载")} />
-                  ) : nodeFacts.length === 0 ? (
-                    <EmptyState
-                      className="h-full justify-center"
-                      title={t("建立你的第一个节点池")}
-                      hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
-                      action={
-                        <Button asChild variant="primary">
-                          <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
-                        </Button>
-                      }
-                    />
-                  ) : (
-                    <Suspense fallback={chartFallback}>
-                      {mapView === "globe" ? <EgressGlobe regions={regions} /> : <EgressMap regions={regions} />}
-                    </Suspense>
-                  )}
+                  </div>
+                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col">
+                    {nodes.isError ? (
+                      <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
+                    ) : !nodes.data ? (
+                      <LoadingState className="h-full" label={t("正在加载")} />
+                    ) : nodeFacts.length === 0 ? (
+                      <EmptyState
+                        className="h-full justify-center"
+                        title={t("建立你的第一个节点池")}
+                        hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
+                        action={
+                          <Button asChild variant="primary">
+                            <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <Suspense fallback={chartFallback}>
+                        <EgressMap regions={regions} />
+                      </Suspense>
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex min-w-0 flex-col lg:col-span-2">
-                  <h3 className="micro px-1 pb-1.5">{t("节点占比")}</h3>
-                  {topRegions.length === 0 ? (
-                    <EmptyState className="flex-1 justify-center" title={t("暂无出口数据")} />
-                  ) : (
-                    <TableWrap className="flex-1">
-                      <Table className="min-w-0">
-                        <THead>
-                          <TR>
-                            <TH>{t("地区")}</TH>
-                            <TH className="text-right">{t("出口")}</TH>
-                            <TH className="text-right">{t("健康")}</TH>
-                          </TR>
-                        </THead>
-                        <TBody>
-                          {topRegions.map((region) => {
-                            const share = busiestRegion > 0 ? region.exits / busiestRegion : 0;
-                            return (
-                              <TR key={region.region}>
+                <div className="wb-plate-side flex min-w-0 flex-col">
+                  <div className="wb-plate-head">
+                    <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
+                      {t("热门区域")}
+                    </h2>
+                  </div>
+                  <div className="min-h-0 flex-1">
+                    {topRegions.length === 0 ? (
+                      <EmptyState className="h-full justify-center" title={t("暂无出口数据")} />
+                    ) : (
+                      <TableWrap className="h-full">
+                        <Table className="min-w-0 wb-region-table" density="comfortable">
+                          <THead>
+                            <TR>
+                              <TH>{t("地区")}</TH>
+                              <TH className="text-right">{t("延迟")}</TH>
+                              <TH className="text-right">{t("占比")}</TH>
+                            </TR>
+                          </THead>
+                          <TBody>
+                            {topRegions.map((region, index) => (
+                              <TR key={region.id}>
                                 <TD className="font-medium">
                                   <span className="inline-flex min-w-0 items-center gap-2">
+                                    {/*
+                                      The dot is the region's colour, spent in
+                                      table order — the same sequence, in the
+                                      same order, the plate's hubs use, so a
+                                      colour means one region on both halves.
+                                    */}
                                     <span
                                       aria-hidden
-                                      className="block h-1.5 shrink-0 rounded-[2px] bg-series-1"
-                                      style={{ width: `${Math.max(4, Math.round(share * 28))}px` }}
+                                      className="wb-region-dot"
+                                      style={{ backgroundColor: `var(--color-series-${(index % 6) + 1})` }}
                                     />
-                                    {region.region || t("未知")}
+                                    <span className="truncate">{t(region.name)}</span>
                                   </span>
                                 </TD>
-                                <TDNum>{formatCount(region.exits)}</TDNum>
-                                <TDNum className="text-ink-faint">{formatCount(region.healthy)}</TDNum>
+                                <TDNum className="text-ink-soft">
+                                  {region.latency === null ? PLACEHOLDER : formatLatency(region.latency)}
+                                </TDNum>
+                                <TDNum>{formatPercent(region.share)}</TDNum>
                               </TR>
-                            );
-                          })}
-                        </TBody>
-                      </Table>
-                    </TableWrap>
-                  )}
-                  <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1 pb-1 text-2xs text-ink-faint">
-                    <span className="micro">{t("节点")}</span>
-                    {EXIT_COUNT_BANDS.map((band) => (
-                      <span key={band.min} className="inline-flex items-center gap-1.5">
-                        <span
-                          aria-hidden
-                          className="size-2.5 rounded-[2px] border border-rule-faint"
-                          style={{ backgroundColor: band.color }}
-                        />
-                        <span className="readout">{exitCountBandLabel(band)}</span>
-                      </span>
-                    ))}
-                    <span className="ml-auto inline-flex items-center gap-1.5">
-                      <Globe2 size={12} aria-hidden />
-                      {t("地区")} {t("未知")}
-                      <span className="readout text-ink-soft">{formatCount(unknown)}</span>
-                    </span>
+                            ))}
+                          </TBody>
+                        </Table>
+                      </TableWrap>
+                    )}
                   </div>
                 </div>
               </div>
