@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "./auth-store";
-import { apiRequest } from "../../lib/api-client";
+import { fetchAuthMode } from "../../lib/api-client";
 import { LoadingState } from "../../components/ui/QueryState";
 
 type RequireAuthProps = {
@@ -26,15 +26,11 @@ export function RequireAuth({ children }: RequireAuthProps) {
 
     const checkAuthMode = async () => {
       try {
-        await apiRequest("/api/v1/system/info", {
-          auth: false,
-          signal: controller.signal,
-        });
+        const authRequired = await fetchAuthMode(controller.signal);
         if (!active) {
           return;
         }
-        // /api/v1/system/info returns 200 only when admin auth is disabled.
-        setAnonymousAllowed(true);
+        setAnonymousAllowed(!authRequired);
       } catch {
         if (!active) {
           return;

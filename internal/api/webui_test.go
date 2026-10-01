@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -80,7 +81,7 @@ func TestWebUINotBuiltHandlerAnswers503(t *testing.T) {
 // the embed resolves (the directory exists, it just holds no UI), so the handler
 // is constructed normally and then reports the missing index.html itself.
 func TestWebUIHandlerFromEmptyFSSaysNotBuilt(t *testing.T) {
-	h := newWebUIHandlerFromFS(fstest.MapFS{})
+	h := newWebUIHandlerFromFS(fstest.MapFS{}, true)
 
 	for _, path := range []string{"/ui/", "/ui/", "/ui/nodes"} {
 		rec := httptest.NewRecorder()
@@ -135,7 +136,7 @@ func TestWebUIHandlerServesAssetsAndFallsBackToIndex(t *testing.T) {
 		"index.html":    &fstest.MapFile{Data: []byte(indexBody)},
 		"assets/app.js": &fstest.MapFile{Data: []byte("console.log('prism')")},
 	}
-	h := newWebUIHandlerFromFS(distFS)
+	h := newWebUIHandlerFromFS(distFS, true)
 
 	cases := []struct {
 		name       string
@@ -182,7 +183,7 @@ func TestWebUIHandlerUsesTheEmbeddedFS(t *testing.T) {
 		t.Fatalf("embed does not contain %s: %v", webDistDir, err)
 	}
 
-	h := newWebUIHandler()
+	h := newWebUIHandler(true)
 	if h == nil {
 		t.Fatal("newWebUIHandler returned nil")
 	}
@@ -201,5 +202,36 @@ func TestWebUIHandlerUsesTheEmbeddedFS(t *testing.T) {
 		}
 	default:
 		t.Fatalf("/ui/ answered %d; want 200 (built UI) or 503 (not built)", rec.Code)
+	}
+}
+
+// TestWebUISessionModeAnswersBothWays covers /ui/session.json, the endpoint the login
+// page uses to decide whether it is looking at an anonymous deployment.
+//
+// Two things are pinned. It answers both values, because a handler that only ever says
+// "true" would send an anonymous deployment to a login form that cannot accept anything;
+// and it never falls through to the SPA shell, whose HTML would parse as a JSON error on
+// the one screen a user cannot get past.
+func TestWebUISessionModeAnswersBothWays(t *testing.T) {
+	const indexBody = "<html>prism-workbench</html>"
+	distFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(indexBody)}}
+
+	for _, required := range []bool{true, false} {
+		handler := newWebUIHandlerFromFS(distFS, required)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ui/session.json", nil))
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("auth_required=%v: status = %d, want 200", required, recorder.Code)
+		}
+		var body struct {
+			AuthRequired bool `json:"auth_required"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("auth_required=%v: body is not JSON: %v (%q)", required, err, recorder.Body.String())
+		}
+		if body.AuthRequired != required {
+			t.Fatalf("auth_required=%v: reported %v", required, body.AuthRequired)
+		}
 	}
 }
