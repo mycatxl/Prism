@@ -135,7 +135,6 @@ export function AppShell() {
     </Badge>
   );
 
-  const railCardTops = [12, 56, 99, 143, 186, 232, 275, 318, 363, 408];
   const statusText = unauthorized
     ? t("令牌失效")
     : disconnected
@@ -144,97 +143,22 @@ export function AppShell() {
         ? t("实例在线")
         : t("连接中");
 
+  /*
+   * One rail for every page. The board used to carry its own replica of the
+   * reference rail above 1536px, with its geometry in a breakpoint layer in
+   * `design.css`; the layer is gone and the board now reads the same shell as
+   * every other route, so the replica is gone with it.
+   */
   const rail = (
     <TooltipProvider delayDuration={180}>
       <nav
         aria-label={t("主导航")}
         className={cn(
           "glass-rail flex h-full flex-col border-r border-glass-edge",
-          !collapsed && "wb-rail-nav",
           collapsed ? "w-[var(--shell-rail-w-collapsed)]" : "w-[var(--shell-rail-w)]",
         )}
       >
-        {!collapsed && (
-          <div className="hidden h-full w-full 2xl:block">
-            <span aria-hidden className="wb-brand-mark">
-              P
-            </span>
-            <span className="wb-brand-title">Prism</span>
-
-            <div className="wb-rail-top-links">
-              {navigation.slice(0, 2).map((item, idx) => {
-                const Icon = item.icon;
-                const active =
-                  location.pathname === item.path ||
-                  location.pathname.startsWith(item.path + "/");
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    data-idx={idx}
-                    aria-current={active ? "page" : undefined}
-                    className="wb-rail-top-item"
-                  >
-                    <Icon size={13} className="shrink-0" />
-                    <span className="truncate">{t(item.label)}</span>
-                  </NavLink>
-                );
-              })}
-            </div>
-
-            <div className="wb-rail-card">
-              {navigation.slice(2).map((item, idx) => {
-                const Icon = item.icon;
-                const active =
-                  location.pathname === item.path ||
-                  location.pathname.startsWith(item.path + "/");
-                const top = railCardTops[idx] ?? 12 + idx * 44;
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    aria-current={active ? "page" : undefined}
-                    className="wb-rail-card-item"
-                    style={{ top: `${top}px`, gap: idx === 3 ? "35px" : "24px" }}
-                  >
-                    <Icon size={12} className="shrink-0" />
-                    <span className="truncate">{t(item.label)}</span>
-                  </NavLink>
-                );
-              })}
-
-              <div className="wb-rail-status">
-                <div className="flex items-center justify-between text-[10px] leading-[11px] font-medium text-ink-soft">
-                  <span className="truncate">{statusText}</span>
-                  <span className="readout shrink-0 text-[10px] text-signal">●</span>
-                </div>
-                <div className="flex items-center justify-between text-[10px] leading-[11px] text-ink-faint">
-                  <span className="truncate">{t("控制台")}</span>
-                  <span className="readout shrink-0">
-                    {info.data?.version ? `v${info.data.version.replace(/^v/, "")}` : "v0.1"}
-                  </span>
-                </div>
-              </div>
-
-              <div className="wb-rail-footer">
-                <LanguageSwitcher collapsed />
-                <ThemeSwitcher collapsed />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={logout}
-                  aria-label={t("退出登录")}
-                  title={t("退出登录")}
-                  className="px-1"
-                >
-                  <LogOut size={12} />
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className={cn("flex h-full flex-col", !collapsed && "2xl:hidden")}>
+        <div className="flex h-full flex-col">
           <div
             className={cn(
               "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule-faint",
@@ -373,7 +297,7 @@ export function AppShell() {
 
   return (
     <div className="wb-shell-root flex h-dvh overflow-hidden bg-transparent text-ink">
-      <div className={cn("hidden lg:flex", !collapsed && "wb-rail-zone")}>{rail}</div>
+      <div className="hidden lg:flex">{rail}</div>
 
       {mobileNavOpen && (
         <div className="fixed inset-0 z-50 flex lg:hidden">

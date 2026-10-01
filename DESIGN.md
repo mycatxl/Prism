@@ -287,7 +287,7 @@ control that does not do what its label says.
 | Text contrast: body ≥4.5:1, large text and graphical objects ≥3:1 | `npm run check:contrast` reads `design.css` and computes **100 pairs across both themes**, including the hero pane's two gradient stops; non-zero exit on failure. Wired into `make test-web` → `make verify` |
 | Series separable in greyscale | The same gate: adjacent relative luminance ≥1.15 |
 | The console composes the kit and nothing else | `npm run check:kit`: native controls outside `src/components/ui/`, hard-coded control heights, and the pill shape outside `Badge` — over every `.tsx` in `src/`. Wired into `make test-web` |
-| The board fills the window instead of sitting in a corner | `npm run check:responsive` reads the 1536 layer of `design.css`: the board is absolutely positioned with `height: max(100%, 1024px)`, every slot and rail anchor is a percentage, each percentage resolves to the measured reference geometry within 0.6 px, and positional pixels outside a documented allow-list fail. In `make test-web` → `make verify`, so the rule holds in CI even though CI installs no browser |
+| The board is a responsive Bento grid, not a pixel replica | `npm run check:responsive` reads `design.css` and fails if the geometry comes back: a `@media (min-width: 1536px)` block, a fixed pixel height on `.wb-board`/`.wb-shell-root`/`.wb-main-zone`, a `position: absolute` rule naming a board pane, or a missing board rule (the gate proves it read the right stylesheet rather than passing on an empty one). In `make test-web` → `make verify`, so the rule holds in CI even though CI installs no browser |
 | Row height and panel geometry match this file | DOM audit over the live pages: `--row-h`, pane radius 16, rail 248/64, the ground's glow, both themes |
 | The chart palette is a copy, and it is current | `tests/chart-palette.test.mjs` (in `npm test` → `make test-web`) reads `design.css` and `chartPalette.ts` and fails on any pair that disagrees, on a series out of order, on a band ramp that is not separable in greyscale, or on a font that is not the token's family |
 | Focus visible | `:focus-visible` draws accent at 2px with 1px offset |
@@ -328,7 +328,7 @@ fails the build. Recorded for the current tree:
 |---|---|---|
 | `[layout-transition] transition: padding` | ECharts' own bundled code, in a Vite shared chunk (`useReducedMotion-*.js` names the module the split happened on, not its contents) | **Provenance.** It is third-party; Prism cannot fix it without forking ECharts. The gate re-reads the chunk and only excuses it while the file still contains ECharts |
 | `[ai-color-palette] Purple/violet accent colors detected` | the built `ui/index.html`, i.e. this console's own palette | **Decision.** The accent is an indigo→violet pair, because the operator pinned that look in a mockup. The bound: two gradient stops on one pane, one ground wash, one accent token pair, no gradient text, no glow and no second accent hue — see [What is deliberate now, and its bound](#what-is-deliberate-now-and-its-bound). A second palette finding still fails the gate |
-| `[radial-halo] radial-gradient halo (<the band's stop> → transparent) on dark page` | the built `ui/index.html`, i.e. our own shell | **Decision.** The hero band reproduces the light field of the operator's reference art, which was measured rather than eyeballed: one lit pane, soft stops inside the 1255×233 band only, no shadow on any card, no second accent hue. The bound is enforced by the replica probes (`hero_*`) — see [The 1536 board](#the-1536-board-the-reference-replica). The gate excuses it only while the shell still carries that band |
+| `[radial-halo] radial-gradient halo (<stop> → transparent) on dark page` | none — the finding is gone | **Not applicable any more.** The finding was the hero band's radial stops, and the band went with the 1536px replica layer. Measured: the build scan is clean without it, and `check-slop.mjs` no longer carries the excuse, so a radial halo that comes back is an unexcused finding and fails the gate |
 
 The gate's own parser used to drop the second kind of row entirely: the engine reports
 **file-scoped** rules (`ai-color-palette`, `cream-palette`, the font tells) without a
@@ -337,80 +337,56 @@ line number — so the scan reported "clean" while the engine had reported a fin
 false clean is the one failure a gate must not have; `parse()` now reads both shapes,
 which is how the palette finding surfaced at all.
 
-### The 1536 board: the reference replica
+### The Bento board
 
-The workbench was rebuilt to reproduce the operator's reference art at exactly 1536×1024.
-The art exists only as a PNG and no agent here has an image channel, so it was turned into
-numbers first — colour census, hairline grid, per-card text metrics, corner insets — and
-those numbers became the spec. The acceptance harness boots a real binary, seeds a
-fixture, renders `/dashboard` at 1536×1024 in dark, and re-runs the same probes against
-the render, printing PASS/FAIL per probe. Fidelity is therefore a number, not an opinion.
+The workbench is a **Bento grid**, not a reproduction. An earlier revision rebuilt the board to
+match an operator's reference dashboard at exactly 1536×1024, and did it with a
+`@media (min-width: 1536px)` layer in `design.css` that positioned every pane as a percentage of
+a 1288×1024 canvas: unequal KPI widths, a quick-action card overlapping the hero, a rail replica,
+two panes folded away. It was faithful and it was wrong — at every other size the board read as
+cards of odd sizes in odd places, and the operator rejected it on exactly that ground. The layer
+is deleted, and with it the rail replica, the folded panes and the shell overrides: the dashboard
+wears the same shell as every other route, and its composition is the point rather than its pixel
+geometry.
 
-**The board fills the window; it is not a screenshot.** The layer used to be a fixed 1288x1024
-canvas, which is right at exactly 1536x1024 and wrong everywhere else: at 1920x1080 it covered
-72% of the window with 408 px empty to the right, at 2560x1440 40% and 1048 px. Every slot and
-every rail anchor is now a percentage of the canvas, so the art grows with the window while the
-reference size keeps its measured pixels - the same probes pass unchanged. Type, radii, borders,
-padding and the fixed 248 px rail stay in px: this is a dashboard that gets wider, not a scaled
-screenshot. Two traps are worth recording, because both were hit. The board must be
-**absolutely positioned**: its wrapper has `height: auto`, so a percentage inside `max()` could
-not resolve, the whole declaration fell away and the board - with every slot on it - collapsed
-to 0 px. And the rail's status block and session footer are children of the rail *card*, so
-their percentages resolve against the card's 835 px height rather than the column's 1024; the
-scanlines that settled that also showed the status block is a vertical ramp (#142648 to
-#1a3e6d), which the flat fill it used to carry did not reproduce. Both positions and the ramp
-are now probe points (`rail_status_lower`, `rail_footer_fill`), which is how the rail's lower
-half stopped being the one part of the board no probe sampled.
+What replaced it is a twelve-column grid at `xl` whose classes live in the JSX
+(`xl:grid-cols-12`, `xl:col-span-8`, `xl:grid-cols-5`) — no pane geometry in the stylesheet at
+all:
 
-Measured skeleton (px, origin = canvas top-left): floating rail card `20,188 → 235,1023`;
-hero band `257,0 → 1512,233` with the search field at `259..740, 18..50` and the title's
-glyph box at `281..981, 110..145`; main column `257..1054`, right column `1070..1512`,
-16 px gutters; KPI tiles at `y579..688` with the measured unequal widths 206/188/186/173;
-and the quick-action card `1237,163 → 1512,361`, which breaks the grid upward across the
-hero's bottom edge — the art's most recognisable move.
+| Column | Panes, top to bottom |
+|---|---|
+| Main (`xl:col-span-8`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · 全球流量: the egress plate at the column's full width · 最近加入节点 and 平台分布 side by side (3/5 and 2/5) · the 订阅状态 band |
+| Side (`xl:col-span-4`) | 运行状态 (status line, instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 热门区域 (the region table, each row carrying its share as a bar in the region's own colour) · 流量概览 · the four readings as four rows of one card · 最近变更 · 节点延迟分布 |
 
-| Slot | Rect | Content |
-|---|---|---|
-| A | 257,0 → 1512,233 | hero: title, range, refresh, add-subscription, readouts |
-| B | 1237,163 → 1512,361 | quick actions (four rows) |
-| C | 20,188 → 235,1023 | rail: brand, nav at 44 px pitch, status, session footer |
-| D | 257,250 → 1054,562 | 出口 / 区域: the sphere or the plate, plus the region breakdown |
-| E | 1070,250 → 1221,361 | 订阅状态, the compact tile |
-| F | 1070,378 → 1512,579 | 流量概览: the window's timeline |
-| G1–G4 | y579..688 | 总请求数 / 平均延迟 / 错误率 / 活跃租约 |
-| H | 1070,600 → 1512,934 | 最近变更 |
-| I | 257,704 → 727,987 | 最近加入节点 |
-| J | 743,704 → 1054,987 | 平台分布 |
+Below `xl` the two columns stack; below `sm` the panes inside them do. Type, radii and borders stay
+in px — this is a dashboard that gets wider, not a screenshot that gets scaled — but nothing about
+a pane's *position* is a fixed length any more. The hero heading is 26px in its own rule: that is
+the breakpoint layer's 34px folded back into the base, so the band keeps its presence at every
+width.
 
-The art has nine content slots and this console has eleven blocks, so **two blocks fold at
-exactly this breakpoint**: instance health (its figures live in the rail status block) and
-the latency profile (the hero carries window latency). Both render in full below 1536, so
-the fold is a breakpoint decision rather than a deletion — it is the one place the replica
-knowingly stops being one panel per slot.
+**The plate's flow runs outward.** The map's origin is the panel's own egress
+(`panel_egress_region` / `panel_egress_ip` on `/system/info`, resolved through the same centroid
+index the hubs use) and one constant-width flight line runs from that origin to every hub with
+exits. A missing or unresolvable egress region draws **no origin and no lines**, because the lines
+are the dispatch relationship and not a measurement: converging them on whichever hub happened to
+be busiest was a fact nobody took. The origin marker is the one mark on the plate that is not a
+region, and it is not sized by node count.
 
-The skeleton layer is scoped with `:has(.wb-board)`, so it applies to this board and not
-to the dense routes; the rail's own geometry is shared, because the rail should read the
-same everywhere at this width.
+**What stayed, because it was the design and not the replica**: the hero band's light field
+(`.hero-gradient`, the pane's own two stops), the metric-chip row, the plate's header, live dot and
+region-table rules, and every colour pair the contrast gate measures.
 
-What later measurements settled: the region the art appeared to nest inside `H` at
-`1136,704 → 1237,855` is not a tile. Its ink runs past x1237, `H`'s fill is continuous
-across it, and no border separates it from the card — it is `H`'s own rows: two lines each
-(the action and its target), the timestamp right-aligned, which this board already draws at
-the same x-extents (secondary line from x1126, reference x1135). Two scans agree, one on
-fill difference and one on brightness. The slot was therefore **removed from the stylesheet
-rather than filled with an invented box**, and the acceptance probe that used to sample
-that area (`K_fill`) now passes against the fill the art actually has there.
-
-Those rows did differ in one thing: their rhythm. The art spaces them 54 px apart; the
-design system's 44 px left the list ending well above the card's bottom border. The board
-uses the measured value, which puts the five rows at y659/713/767/821/875 against the art's
-662/715/769/823/878 — a constant 3 px, the same offset the rest of the column shows.
-
-Residuals, printed rather than hidden: `J` (平台分布) renders a real distribution where the
-art carries sample data, so its fill differs where bars would be (Δ18.6); the upper cards'
-glass overlays read slightly darker than the art (E Δ11.8, F Δ8.4); and where the art
-contradicts itself — unequal KPI widths, the overlapping quick-action card — it is
-reproduced as measured where that reads as intent, and normalised where it reads as noise.
+**The gate's new contract.** `npm run check:responsive` no longer resolves percentages against a
+canvas; it fails if the geometry comes back. It reads `design.css` and fails when (1) a
+`@media (min-width: 1536px)` block reappears, (2) a `.wb-board` / `.wb-shell-root` /
+`.wb-main-zone` rule carries a fixed pixel height — those boxes must be fluid, and today none of
+the three carries a rule at all, so this is a guard against the old geometry returning — (3) a
+`position: absolute` rule names a board pane (the range picker's chevron is not a pane and is not
+flagged), or (4) one of the board's own rules — `.wb-hero-banner`, `.wb-hero-heading`,
+`.wb-metric-chips`, `.wb-status-card`, `.wb-plate`, `.wb-region-table` — has been renamed or
+deleted, because a gate that passes on an empty stylesheet is a false clean. It fails closed on a
+missing or unparseable file, an implausible rule count or an empty check set, and prints a
+one-line summary when it passes.
 
 ### Installing the detector
 

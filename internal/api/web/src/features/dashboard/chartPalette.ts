@@ -28,6 +28,15 @@ export const CHART_LIVE = "#0a5d88";
 export const CHART_GRID = "#e6eaf2";
 export const CHART_AXIS = "#556274";
 
+/*
+ * The accent, which the map spends on exactly one thing: the panel's own egress
+ * marker. It is a state colour rather than a series colour, so it is the one mark
+ * on the plate that never means "a region". Both values are `--p-accent` from
+ * their own theme.
+ */
+export const CHART_ACCENT = "#4338ca";
+export const CHART_ACCENT_DARK = "#818cf8";
+
 /**
  * The categorical sequence, in the order a chart should spend it.
  *
@@ -77,7 +86,7 @@ export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular",
  *
  * There is deliberately no sea colour here. The map's canvas is transparent, so
  * the panel's own ground *is* the sea and the world has no frame drawn around it;
- * that ground is a stylesheet decision (`.wb-slot-d`), which is where a panel's
+ * that ground belongs to the pane itself (`.panel`), which is where a panel's
  * surface belongs. `land` and `coast` are the two values that are art rather than
  * token — the plate is read at three metres, and the gap between the filled
  * country and the sea is what makes the footprint legible at that distance.
@@ -101,8 +110,19 @@ export type MapPalette = {
   series: readonly string[];
   /** The dark ring that keeps a hub readable where it lands on land. */
   hubStroke: string;
-  /** The solid centre of the busiest hub: the one every line meets at. */
-  hubCore: string;
+  /**
+   * The panel's own egress marker: the one point the network's traffic leaves
+   * from, and the origin every flight line starts at.
+   *
+   * It comes from the panel's own egress region (`panel_egress_region` on
+   * `/system/info`) rather than from the pool, so it is not a hub: it is not
+   * sized by node count and it is not one of the six region colours.
+   */
+  origin: string;
+  /** The ring that keeps the origin marker readable wherever it lands. */
+  originStroke: string;
+  /** The origin marker's diameter, in px: one step above the largest hub. */
+  originSize: number;
   /** Hub diameter, in px, at the smallest and largest region. */
   hubMin: number;
   hubMax: number;
@@ -127,7 +147,9 @@ export const MAP_DARK: MapPalette = {
   ink: "#f1f3f7",
   series: CHART_SERIES_DARK,
   hubStroke: "rgba(11, 22, 47, 0.85)",
-  hubCore: "#eaf7ff",
+  origin: CHART_ACCENT_DARK,
+  originStroke: "rgba(11, 22, 47, 0.85)",
+  originSize: 16,
   hubMin: 6,
   hubMax: 15,
   line: "#7fd6f0",
@@ -155,7 +177,9 @@ export const MAP_LIGHT: MapPalette = {
   ink: CHART_INK,
   series: CHART_SERIES,
   hubStroke: "rgba(255, 255, 255, 0.9)",
-  hubCore: "#ffffff",
+  origin: CHART_ACCENT,
+  originStroke: "rgba(255, 255, 255, 0.9)",
+  originSize: 16,
   hubMin: 6,
   hubMax: 15,
   line: "#2f6fa8",

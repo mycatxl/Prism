@@ -125,15 +125,22 @@ call to anyone but the panel. ECharts' `geo`, `lines` and `effectScatter` series
 registered in `echartsCore.ts`; there is no WebGL path and no extension pack, so the
 plate draws everywhere the canvas does.
 
-The plate is one panel split in two, and both halves read the same six rows: the map
-carries one hub per region and the table beside it carries the region's latency and its
-share of the pool. A hub sits on the region's **busiest member country** rather than on
-a hand-picked label position, so every marker is a place the pool really exits from. The
-flight lines join each hub to the busiest one and are drawn as a constant-width
-relationship, never as a volume — the inventory does not say which node talks to which,
-and a line that implied otherwise would be the one figure on the board nobody measured.
-The panel's ground is the sea (the map's canvas is transparent), which is why the ground
-is a `.wb-slot-d` gradient rather than a colour in `MAP_DARK`.
+The plate is one panel of its own, and the region table beside it in the side column reads the same
+six rows: the map carries one hub per region and the table carries the region's latency and its
+share of the pool. A hub sits on the region's **busiest member country** rather than on a
+hand-picked label position, so every marker is a place the pool really exits from.
+
+**The flow runs outward.** The plate's origin is the panel's own egress —
+`panel_egress_region` / `panel_egress_ip` on `/system/info`, resolved through the same centroid
+index the hubs use — and one constant-width flight line runs from that origin to every hub with
+exits. It is drawn as a constant-width relationship, never as a volume: the inventory does not say
+which node talks to which, and a line that implied otherwise would be the one figure on the board
+nobody measured. When the panel reports no egress region, or the outline does not carry the one it
+reports, the plate draws **no origin and no lines** — hubs on their own are the honest picture, and
+converging the lines on whichever hub happened to be busiest was a fact nobody took. The origin
+marker is the one mark on the plate that is not a region, and it is not sized by node count. The
+panel's ground is the sea (the map's canvas is transparent), which is why the ground is the pane's
+own `.panel` surface rather than a colour in `MAP_DARK`.
 
 The plate follows the theme, like every other chart: `MAP_DARK` is the night plate and
 `MAP_LIGHT` the day one, and the two read in opposite directions on purpose — on the dark
@@ -171,17 +178,18 @@ theme's series tokens.
 
 ### The board
 
-The dashboard is the console's reference composition, and the only page with a layout of
-its own. It is **two columns of glass panes** on a twelve-column grid rather than a
-uniform card wall, because a board of thirteen equal rectangles makes every fact look
-equally important:
+The dashboard is the console's reference composition, and the only page with a layout of its own.
+It is **two columns of glass panes** on a twelve-column grid rather than a uniform card wall,
+because a board of thirteen equal rectangles makes every fact look equally important. Every pane is
+a plain responsive panel — the board carries no pixel geometry of its own, and no breakpoint layer
+positions anything:
 
 | Column | Panes, in order |
 |---|---|
-| Main (`xl:col-span-8`) | hero (`hero-gradient`) with the range picker, refresh and the four-readout strip · the egress plate (global traffic) with the top-region table beside it · four KPI panes, each with its sparkline and its trend basis · traffic overview with the ingress/egress totals · recently added nodes · subscription state |
-| Side (`xl:col-span-4`) | instance state (the shell's own `system/info` query, reused) · quick actions to four real destinations · node latency distribution · platform distribution ring · recent changes from the audit log |
+| Main (`xl:col-span-8`) | hero (`hero-gradient`) with the range picker, refresh, add-subscription and the four-readout strip · the egress plate (global traffic) at the column's full width · recently added nodes and the platform distribution ring side by side (3/5 and 2/5) · the subscription band |
+| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: status line, badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the top-region table, each row carrying its share as a bar in the region's own colour · traffic overview with the ingress/egress totals · the four readings (requests, latency, error rate, active leases) as four rows of one card, each with its sparkline and its trend basis · recent changes from the audit log · node latency distribution |
 
-Below `xl` the two columns stack; below `sm` the KPI panes do too. What the board may
+Below `xl` the two columns stack; below `sm` the panes inside them do. What the board may
 **not** do, and what the design system checks: no pane states a figure it did not fetch
 (a pane with nothing behind it renders its empty state), every trend names its basis in
 text as well as in its `title`, a sparkline never stands in for its number, and the
@@ -202,9 +210,9 @@ range picker, refresh and import actions stay reachable without scrolling.
 | Floor | How it is checked |
 |---|---|
 | Contrast and series separation, both themes | `npm run check:contrast` — **100 pairs**, light and dark, including the hero pane's two stops. In `make test-web` → `make verify`, so a palette regression fails CI like a Go test |
-| The *rendered page* is legible in both themes | `npm run test:e2e` → "every theme is legible, not just the one the art was drawn in". `check:contrast` reads the `--p-*` primitives, so a colour written into a component's own rule is invisible to it — and the workbench was full of them. This check screenshots each theme with the words made transparent, samples the **painted** ground under every text element, and grades the computed ink against it at WCAG 1.4.3. Three shortfalls are exempted as the reference art's own values (4.44:1, 4.05:1, 4.48:1), each pinned to the ratio it renders so the exemption cannot quietly widen |
+| The *rendered page* is legible in both themes | `npm run test:e2e` → "every theme is legible, not just the one the art was drawn in". `check:contrast` reads the `--p-*` primitives, so a colour written into a component's own rule is invisible to it — and the workbench was full of them. This check screenshots each theme with the words made transparent, samples the **painted** ground under every text element, and grades the computed ink against it at WCAG 1.4.3. **One** shortfall is exempted as the reference art's own value (4.48:1, the blue badge wash), pinned to the ratio it renders so the exemption cannot quietly widen; the two the board used to carry (4.44:1 on the hero description, 4.05:1 on the status line) went with the pixel replica, because the band and the status line are token surfaces now and clear 4.5:1 on them |
 | The kit is the only source of controls | `npm run check:kit` reads the `.tsx` sources: native `<select>`/`<input>`/`<button>`/`<textarea>` outside `src/components/ui/`, hard-coded control heights **anywhere** (a page that sizes a control has made the same per-page decision the kit may not make), and `rounded-full` anywhere but `Badge`. In `make test-web` → `make verify` |
-| The 1536 replica layer stays fluid | `npm run check:responsive` resolves the board's box, every slot percentage and every rail anchor back to the reference geometry at 1288x1024 - the rail card's children against the card's 835 px height, not the column's 1024 - and fails on positional pixels that are not allow-listed with a reason. In `make test-web` → `make verify`; the browser-side measurements are the replica probes in the root `DESIGN.md` |
+| The board stays a responsive Bento grid | `npm run check:responsive` reads `design.css` and fails if the geometry comes back: a `@media (min-width: 1536px)` block, a fixed pixel height on `.wb-board`/`.wb-shell-root`/`.wb-main-zone`, a `position: absolute` rule naming a board pane, or a board rule that has been renamed or deleted (so the gate cannot pass on an empty stylesheet). In `make test-web` → `make verify`; the browser-side legibility and geometry measurements are `npm run test:e2e` and the root `DESIGN.md` |
 | The kit's own invariants | `tests/kit.test.mjs` — the `Button` single-child rule, token heights, the pill reservation, that the height rule carries no scope guard, and that no control renders with an empty `onChange`. Each with the reason it exists |
 | Row height and panel geometry | DOM audit of the live pages: `--row-h`, pane radius 16, rail width 248/64, the top bar at 56, and the ground's glow |
 | Types are really checked | `npm run check:types` runs `tsc -p tsconfig.app.json --noEmit`. **`npx tsc --noEmit` at the repo root is a no-op** — `tsconfig.json` is a solution file with `files: []` — so it proves nothing |

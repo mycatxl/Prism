@@ -620,21 +620,18 @@
    unchanged: this block and the tokens are the whole delta.
 
    Where a token's night value already *is* the measured value, nothing is
-   restated — the token is the art. */
+   restated — the token is the art. Two restatements are deliberately absent: the
+   hero band's description and the status line's, whose literals (`#8c9fc2`,
+   `#6da2cc`) were solved against the pane gradients the replica carried. The band
+   is a panel on the board's ground and the status line is a token surface now, and
+   on those grounds the token (`--p-ink-soft`) is the legible value, so those two
+   read the token in both themes. */
 html[data-theme="dark"] .wb-hero-heading {
   color: #f8fafc;
 }
 
-html[data-theme="dark"] .wb-hero-desc {
-  color: #8c9fc2;
-}
-
 html[data-theme="dark"] .wb-status-title {
   color: #f1f5f9;
-}
-
-html[data-theme="dark"] .wb-status-desc {
-  color: #6da2cc;
 }
 
 html[data-theme="dark"] .wb-metric-val {
@@ -733,11 +730,7 @@ html[data-theme="dark"] .wb-metric-badge-down {
   border-color: rgba(59, 130, 246, 0.2);
 }
 
-html[data-theme="dark"] .wb-plate-side {
-  border-left-color: #1c2d51;
-}
-
-/* ---- 1536x1024 workbench precision layout & dark console surfaces -------- */
+/* ---- the workbench board: the hero band, the status line and the metric chips -- */
 .wb-search-pill {
   border-radius: 999px;
 }
@@ -762,13 +755,31 @@ html[data-theme="dark"] .wb-plate-side {
 }
 
 .wb-hero-heading {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   line-height: 1.2;
   letter-spacing: -0.01em;
   color: var(--color-ink);
   margin: 0;
   white-space: nowrap;
+}
+/* The status line of the 运行状态 card: the dot and the two lines, inside a Panel
+   that carries the frame, so this rule holds the row and nothing else. */
+.wb-status-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.wb-status-dot {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: var(--color-signal);
+  border: 2px solid var(--color-signal-wash);
+  flex-shrink: 0;
 }
 
 .wb-hero-desc {
@@ -818,48 +829,13 @@ html[data-theme="dark"] .wb-plate-side {
   color: var(--color-ink);
 }
 
-/* Status Card (All Systems Operational) */
-.wb-status-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  border-radius: 10px;
-  padding: 16px 20px;
-  backdrop-filter: blur(8px);
-  flex-shrink: 0;
-  background: var(--color-paper-raised);
-  border: 1px solid var(--color-rule);
-}
 
-html[data-theme="dark"] .wb-status-card {
-  background: linear-gradient(135deg, #184462 0%, #13334e 60%, #0d1e38 100%);
-  border: 1px solid #13243f;
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.05), 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
-.wb-status-dot {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background-color: var(--color-signal);
-  border: 2px solid rgba(52, 211, 153, 0.3);
-  flex-shrink: 0;
-}
-
-/* The traffic plate: a map and the table that reads the same six rows.
-   These live outside the 1536 layer on purpose. The split, the dots and the
-   table's own rules are the same at every width; only the panel's *position* on
-   the board is a property of the reference canvas, and that stays in the layer.
-   A px width here is therefore allowed, which is why the dot is sized here
-   rather than in the breakpoint. */
+/* The traffic plate: the map pane and the header band above it. The region table
+   that reads the same six rows lives in its own panel beside the plate, so the
+   plate is a single column at every width. */
 .wb-plate {
   grid-template-columns: minmax(0, 1fr);
   gap: 0;
-}
-
-.wb-plate-side {
-  border-top: 1px solid var(--color-rule-faint);
 }
 
 .wb-plate-head {
@@ -891,10 +867,9 @@ html[data-theme="dark"] .wb-status-card {
   flex-shrink: 0;
 }
 
-/* The map's own body. Below the reference breakpoint the panel is as tall as its
-   content, and a flex child with `min-height: 0` would collapse the canvas to
-   nothing, so the plate keeps a floor of its own; the breakpoint layer, where the
-   panel's height is fixed by the board, clears it again. */
+/* The map's own body: the panel is as tall as its content, and a flex child with
+   `min-height: 0` would collapse the canvas to nothing, so the plate keeps a
+   floor of its own. */
 .wb-plate-map {
   min-height: clamp(240px, 34vh, 460px);
 }
@@ -1117,714 +1092,6 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
   border-radius: 4px;
   font-family: var(--font-mono);
   line-height: 1.2;
-}
-@media (min-width: 1536px) {
-  /* Pixel-exact at 1536x1024 and proportional everywhere else: the shell fills the
-     window, the board fills the shell and every slot and rail anchor is a percentage
-     of that canvas, so the art grows with the window instead of sitting in a corner.
-     Type, radii, borders and inner padding stay in px - this is a dashboard, not a
-     scaled screenshot. Below 1536 the layout is the responsive one further up. */
-  .wb-shell-root:has(.wb-board) .wb-shell-root {
-    position: relative;
-    min-width: 1536px;
-    height: 100dvh;
-    overflow: hidden;
-  }
-
-  /* The rail column is a fixed 248px wide, so its edge stays at 248px; only the far end
-     of this ramp is proportional. */
-  html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-shell-root {
-    background-image:
-      linear-gradient(
-        90deg,
-        #0a152e 0%,
-        #0a152e 248px,
-        #071025 248px,
-        #071025 100.000000%
-      );
-  }
-
-  .wb-rail-zone {
-    position: relative;
-    width: 248px;
-    height: max(100%, 1024px);
-    flex-shrink: 0;
-  }
-
-  html[data-theme="dark"] .wb-rail-zone {
-    background-image:
-      linear-gradient(
-        180deg,
-        #0c1938 0.000000%,
-        #0c1938 8.789062%,
-        #0a152e 48.828125%,
-        #081228 100%
-      );
-  }
-
-  .wb-rail-nav {
-    position: relative;
-    width: 248px;
-    height: 100%;
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-  }
-
-  .wb-brand-mark {
-    position: absolute;
-    left: 50px;
-    top: 34px;
-    width: 13px;
-    height: 13px;
-    border-radius: 3px;
-    background: linear-gradient(135deg, #4060f4 0%, #489df1 100%);
-    color: transparent;
-    font-size: 0;
-    box-shadow: none;
-  }
-
-  .wb-brand-title {
-    position: absolute;
-    left: 75px;
-    top: 33px;
-    height: 14px;
-    line-height: 14px;
-    font-size: 15px;
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    color: var(--color-ink);
-  }
-
-  .wb-rail-top-links {
-    position: absolute;
-    left: 20px;
-    top: 6.640625%;
-    width: 215px;
-    height: 112px;
-  }
-
-  .wb-rail-top-item {
-    position: absolute;
-    left: 8px;
-    width: 199px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 8px;
-    border-radius: 9px;
-    font-size: 12px;
-    line-height: 12px;
-    color: var(--color-ink-soft);
-    text-decoration: none;
-  }
-
-  .wb-rail-top-item[data-idx="0"] {
-    top: 0px;
-  }
-
-  .wb-rail-top-item[data-idx="1"] {
-    top: 74px;
-  }
-
-  .wb-rail-top-item[aria-current="page"] {
-    background-color: var(--color-accent-wash);
-    border: 1px solid var(--color-rule);
-    color: var(--color-accent-deep);
-    font-weight: 600;
-  }
-
-  html[data-theme="dark"] .wb-rail-top-item[aria-current="page"] {
-    background-color: #212f5d;
-    border: 1px solid #314584;
-    color: #f1f3f7;
-  }
-
-  .wb-rail-card {
-    position: absolute;
-    left: 20px;
-    top: 18.359375%;
-    width: 215px;
-    height: 81.542969%;
-    border-radius: 11px;
-    overflow: hidden;
-  }
-
-  .wb-rail-card {
-    background: var(--color-paper-raised);
-    border: 1px solid var(--color-rule);
-  }
-
-  html[data-theme="dark"] .wb-rail-card {
-    background: linear-gradient(180deg, #0b152d 0%, #0b152e 14.371257%, #0b152e 100%);
-    border: 1px solid #101d3b;
-  }
-
-  .wb-rail-card-item {
-    position: absolute;
-    left: 18px;
-    height: 13px;
-    display: inline-flex;
-    align-items: center;
-    gap: 9px;
-    font-size: 13px;
-    line-height: 13px;
-    font-weight: 500;
-    color: var(--color-ink-soft);
-    text-decoration: none;
-    white-space: nowrap;
-  }
-
-  .wb-rail-card-item[aria-current="page"] {
-    color: var(--color-ink);
-    font-weight: 600;
-  }
-
-  html[data-theme="dark"] .wb-rail-card-item[aria-current="page"] {
-    color: #f1f3f7;
-  }
-
-  /* Children of the rail card, so these percentages resolve against the card's height
-     (835), not the rail column's 1024 - which is also how the reference measures: its
-     status box's bottom border sits at y=814..815 and the footer pill at y=837..857. */
-  .wb-rail-status {
-    position: absolute;
-    left: 37px;
-    top: 62.874251%;
-    width: 146px;
-    height: 102px;
-    border-radius: 8px;
-    padding: 4px 8px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-  }
-
-  .wb-rail-status {
-    background-color: var(--color-paper-raised);
-    border: 1px solid var(--color-rule);
-  }
-
-  html[data-theme="dark"] .wb-rail-status {
-    /* the reference's box is not flat: sampled down its column (x=100) it runs #142648 at
-       the top to #1a3e6d at the bottom, which is what the acceptance probe samples */
-    background-color: transparent;
-    background-image: linear-gradient(
-      180deg,
-      #142648 0%,
-      #142b50 16%,
-      #152f57 27%,
-      #16335e 38%,
-      #193965 47%,
-      #1a3e6d 61%,
-      #1a3e6d 100%
-    );
-    border: 2px solid #283e74;
-  }
-
-  .wb-rail-footer {
-    position: absolute;
-    left: 18px;
-    top: 77.724551%;
-    width: 100px;
-    height: 25px;
-    border-radius: 6px;
-    padding: 0 4px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 2px;
-  }
-
-  .wb-rail-footer {
-    background-color: var(--color-paper-sunk);
-    border: 1px solid var(--color-rule);
-  }
-
-  html[data-theme="dark"] .wb-rail-footer {
-    background-color: #152449;
-    border: 1px solid #23386b;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-main-zone {
-    position: relative;
-    flex: 1 1 0;
-    width: auto;
-    min-width: 1288px;
-    height: 100dvh;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-main-zone {
-    background-image:
-      linear-gradient(
-        180deg,
-        #081229 0%,
-        #071025 48.828125%,
-        #061023 97.656250%,
-        #061023 100%
-      );
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-topbar {
-    position: absolute !important;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 76px !important;
-    padding: 0 !important;
-    background: transparent !important;
-    border: 0 !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    z-index: 20;
-    pointer-events: none;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-topbar > * {
-    pointer-events: auto;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-search-btn {
-    position: absolute !important;
-    left: 0.854037%;
-    top: 18px;
-    width: 37.344720% !important;
-    height: 32px !important;
-    min-height: 32px !important;
-    border-radius: 999px !important;
-    padding: 0 14px 0 34px !important;
-    box-shadow: none !important;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-search-btn {
-    background: var(--color-paper-sunk) !important;
-    border: 1px solid var(--color-rule) !important;
-    color: var(--color-ink-soft) !important;
-  }
-
-  html[data-theme="dark"] .wb-shell-root:has(.wb-board) .wb-search-btn {
-    background: linear-gradient(90deg, #1d2b52 0%, #1c294b 45%, #1c294b 100%) !important;
-    border: 1px solid #223158 !important;
-    color: #9fb0cc !important;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-topbar-actions {
-    position: absolute;
-    left: 77.639752%;
-    top: 6px;
-    height: 28px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-main-scroll {
-    position: absolute;
-    left: 0;
-    top: 0;
-    right: 0;
-    width: auto;
-    height: 100%;
-    overflow-x: hidden !important;
-    /* the board never shrinks below the art's 1024 (height: max(100%, 1024px)), so at
-       exactly 1024 there is nothing to scroll and on a shorter window the last rows
-       stay reachable instead of being clipped */
-    overflow-y: auto !important;
-  }
-
-  /* Canvas coordinates inside wb-main-scroll:
-     global_x = 248 + local_x, global_y = local_y.
-     So global x=257 -> local left=9px;
-     global x=1054 -> local right=806px;
-     global x=1070 -> local left=822px;
-     global x=1237 -> local left=989px;
-     global x=1512 -> local right=1264px. */
-  /* Absolutely positioned on purpose: the board's box is the main column's padding box, whose
-     height is definite, so the slot percentages below resolve. A wrapper with height: auto
-     anywhere between the column and the board would make `height: max(100%, 1024px)` resolve to
-     nothing and collapse every slot (measured: 0px, 22/26 probes). The 1024 floor keeps the art
-     intact on a window shorter than the reference, where the column scrolls instead. */
-  .wb-board {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: max(100%, 1024px);
-    padding: 0 !important;
-    margin: 0 !important;
-  }
-
-  /* Slot A: Hero (global 257,0 -> 1512,233 => local left:9, top:0, w:1255, h:233) */
-  .wb-slot-a {
-    position: absolute;
-    left: 0.698758%;
-    top: 0px;
-    width: 97.437888%;
-    height: 22.753906%;
-    border-radius: 0 0 12px 12px;
-    border: 0 !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-a {
-    background-color: #111b3a;
-    background-image:
-      /* the ridge the art actually carries: local (743,100) #4962ad, (560,175) #31497f,
-         (943,55) #2b4172, all inside the 1255x233 band */
-      radial-gradient(27.091633% 44.635193% at 59.203187% 42.918455%, #47609f 0%, transparent 100%),
-      radial-gradient(23.904382% 54.935622% at 44.621514% 75.107296%, #31497f 0%, transparent 100%),
-      radial-gradient(19.920319% 37.768240% at 75.139442% 23.605150%, #2b4172 0%, transparent 100%),
-      radial-gradient(9.561753% 25.751073% at 0.239044% 2.145923%, #0b1631 0%, transparent 100%),
-      radial-gradient(14.342629% 25.751073% at 95.059761% 17.167382%, #0d1834 0%, transparent 100%),
-      radial-gradient(14.342629% 19.313305% at 35.298805% 30.042918%, #0e1a36 0%, transparent 100%),
-      radial-gradient(19.123506% 15.450644% at 35.298805% 45.064378%, #192649 0%, transparent 100%),
-      radial-gradient(12.749004% 14.592275% at 75.139442% 51.502146%, #1d2d59 0%, transparent 100%),
-      radial-gradient(9.561753% 21.459227% at 77.529880% 85.836910%, #0c1835 0%, transparent 100%),
-      radial-gradient(57.370518% 98.712446% at 63.745020% 70.815451%, #1b2a53 0%, transparent 100%),
-      linear-gradient(
-        180deg,
-        #101a38 0.000000%,
-        #111b3a 32.618026%,
-        #131e3f 53.648069%,
-        #111b3a 70.815451%,
-        #101a38 100.000000%
-      );
-  }
-  .wb-slot-a .wb-hero-banner {
-    position: absolute;
-    left: 0;
-    top: 30.042918%;
-    width: 77.290837%;
-    height: 36.480687%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 16px 0 24px;
-    z-index: 5;
-  }
-  .wb-slot-a .wb-status-card {
-    position: absolute;
-    left: 78.087649%;
-    top: 30.042918%;
-    width: 21.912351%;
-    height: 36.480687%;
-    display: flex;
-    align-items: center;
-    z-index: 5;
-  }
-
-  .wb-slot-a .wb-metric-chips {
-    position: absolute;
-    left: 0;
-    top: 66.523605%;
-    width: 77.290837%;
-    height: 33.476395%;
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 10px;
-    padding: 0 0 0 16px;
-    z-index: 5;
-  }
-
-  /* Slot B: Quick Actions (global 1237,163 -> 1512,361 => local left:989, top:163, w:275, h:198) */
-  .wb-slot-b {
-    position: absolute;
-    left: 76.785714%;
-    top: 15.917969%;
-    width: 21.350932%;
-    height: 19.335938%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    z-index: 10;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-b {
-    background: linear-gradient(180deg, #121c3a 0%, #121c3a 55%, #111a3a 100%) !important;
-    border: 1px solid #1a2749 !important;
-  }
-
-  /* Slot D: Traffic Overview (global 257,250 -> 1054,562 => local left:9, top:250, w:797, h:312) */
-  .wb-slot-d {
-    position: absolute;
-    left: 0.698758%;
-    top: 24.414062%;
-    width: 61.878882%;
-    height: 30.468750%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  /* The light theme's plate is the day plate: the panel keeps the kit's own
-     surface, because on paper the sea is the sheet and the countries are the
-     ink. Nothing is overridden here on purpose — `MAP_LIGHT` is what changes. */
-  html[data-theme="dark"] .wb-slot-d {
-    /* The panel ground *is* the sea (the map's canvas is transparent), and the
-       reference art lights it from the top: measured, the top edge runs #0a152d
-       at the left to #132449 at the right, and the bottom edge is #0b162d on
-       both. A linear ramp, because a radial wash on a dark surface is the
-       decorative halo the anti-pattern gate forbids. */
-    background: linear-gradient(200deg, #16264d 0%, #122142 14%, #0e1b38 40%, #0b162f 78%, #0a152d 100%) !important;
-    border: 1px solid #202d4c !important;
-  }
-
-  /* The plate is two columns: the map (501 of 797 px, 62.9%) and the region
-     table. The divider is the right column's own left border, so it is exactly
-     as tall as the panel and needs no element of its own. */
-  .wb-plate {
-    grid-template-columns: minmax(0, 62.9%) minmax(0, 1fr);
-  }
-
-  .wb-plate-side {
-    border-top: 0;
-    border-left: 1px solid var(--color-rule);
-  }
-
-  .wb-plate-head {
-    align-items: flex-end;
-    padding: 0 16px 6px 18px;
-  }
-
-  /* The reference panel titles are a step down from the kit's 14px: at 13px the
-     heading's cap top and baseline land where the art puts them (ink rows
-     25..33 measured). */
-  .wb-plate-head h2 {
-    font-size: 13px;
-  }
-
-  /* The panel's height is fixed by the board here, so the plate fills it. */
-  .wb-plate-map {
-    min-height: 0;
-  }
-
-  /* The reference header carries the title alone, and the rail beside the board
-     already reaches the node pool, so the plate's shortcut folds away at the
-     reference size rather than putting a control in the art's empty corner. It
-     stays in the DOM below 1536, where the board is a stack of panels and the
-     rail is the only other way there. */
-  .wb-plate-link {
-    display: none !important;
-  }
-
-  /* Slot E: Egress Tile (global 1070,250 -> 1221,361 => local left:822, top:250, w:151, h:111) */
-  .wb-slot-e {
-    position: absolute;
-    left: 63.819876%;
-    top: 24.414062%;
-    width: 11.723602%;
-    height: 10.839844%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-e {
-    background: #15284c !important;
-    border: 1px solid #1f3560 !important;
-  }
-
-  /* Slot F: Latency Profile (global 1070,378 -> 1512,579 => local left:822, top:378, w:442, h:201) */
-  .wb-slot-f {
-    position: absolute;
-    left: 63.819876%;
-    top: 36.914062%;
-    width: 34.316770%;
-    height: 19.628906%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-f {
-    background: #0d1832 !important;
-    border: 1px solid #1b2745 !important;
-  }
-
-  /* Slots G1..G4: KPI Row (global y: 579..688, h: 109) */
-  .wb-slot-g1,
-  .wb-slot-g2,
-  .wb-slot-g3,
-  .wb-slot-g4 {
-    position: absolute;
-    top: 56.542969%;
-    height: 10.644531%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  /* G1: 257..462 (w=206) => local left: 9px */
-  .wb-slot-g1 {
-    left: 0.698758%;
-    width: 15.993789%;
-  }
-  /* G2: 478..665 (w=188) => local left: 230px */
-  .wb-slot-g2 {
-    left: 17.857143%;
-    width: 14.596273%;
-  }
-  /* G3: 681..866 (w=186) => local left: 433px */
-  .wb-slot-g3 {
-    left: 33.618012%;
-    width: 14.440994%;
-  }
-  /* G4: 882..1054 (w=173) => local left: 634px */
-  .wb-slot-g4 {
-    left: 49.223602%;
-    width: 13.431677%;
-  }
-
-  html[data-theme="dark"] .wb-slot-g1,
-  html[data-theme="dark"] .wb-slot-g2,
-  html[data-theme="dark"] .wb-slot-g3,
-  html[data-theme="dark"] .wb-slot-g4 {
-    background: #0f1b37 !important;
-    border-top: 1px solid #182849 !important;
-    border-bottom: 1px solid #142240 !important;
-    border-left: 1px solid #101c38 !important;
-    border-right: 1px solid #101c38 !important;
-  }
-
-  /* Slot H: Recent Changes (global 1070,600 -> 1512,934 => local left:822, top:600, w:442, h:334) */
-  .wb-slot-h {
-    position: absolute;
-    left: 63.819876%;
-    top: 58.593750%;
-    width: 34.316770%;
-    height: 32.617188%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-h {
-    background: #0f1b35 !important;
-    border: 1px solid #182848 !important;
-  }
-
-  /*
-   * H's rows. The reference holds five of them between y620 and y905: two lines per row
-   * (27px), a 26px gap, so 54px apart, and the list reaches the card's bottom border. The
-   * design-system rhythm (44px) leaves the list short, and the acceptance probe that samples
-   * a between-rows pixel lands on a glyph instead of the fill.
-   *
-   * There is deliberately no slot for the region that earlier measurements recorded as a
-   * nested tile at 1136,704 -> 1237,855. Measured twice since (z119, z121): the ink there
-   * runs past x1237, the card's fill is continuous across it and no border separates it —
-   * it is H's own rows, and building a box for it would move the board away from the
-   * reference. The geometry notes in DESIGN.md carry the finding.
-   */
-  .wb-slot-h li {
-    min-height: 54px;
-  }
-
-  /* Slot I: Recently Added Nodes (global 257,704 -> 727,987 => local left:9, top:704, w:470, h:283) */
-  .wb-slot-i {
-    position: absolute;
-    left: 0.698758%;
-    top: 68.750000%;
-    width: 36.490683%;
-    height: 27.636719%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-i {
-    background: #0c1731 !important;
-    border: 1px solid #162544 !important;
-  }
-
-  /* Slot J: Platform Distribution (global 743,704 -> 1054,987 => local left:495, top:704, w:311, h:283) */
-  .wb-slot-j {
-    position: absolute;
-    left: 38.431677%;
-    top: 68.750000%;
-    width: 24.145963%;
-    height: 27.636719%;
-    border-radius: 11px !important;
-    box-shadow: none !important;
-    backdrop-filter: none !important;
-    overflow: hidden;
-  }
-
-  html[data-theme="dark"] .wb-slot-j {
-    background: #0d1730 !important;
-    border: 1px solid #162544 !important;
-  }
-
-  .wb-shell-root:has(.wb-board) .wb-j-donut svg {
-    width: 96px !important;
-    height: 96px !important;
-  }
-  /* --- board scaffolding: every slot is positioned against .wb-board ------------------ */
-  .wb-board-stack {
-    display: block !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    gap: 0 !important;
-  }
-
-  /* the four KPI tiles are board children, not cells of a nested grid */
-  .wb-kpi-row {
-    display: contents !important;
-  }
-
-  /* The reference board has nine content slots and this console has eleven blocks, so
-     two fold away at this breakpoint: instance health (its figures live in the rail
-     status block) and the latency profile (the hero carries window latency). The data
-     is not dropped - both panels render in full below 1536. See DESIGN.md. */
-  .wb-folded {
-    display: none !important;
-  }
-
-  .wb-slot-a,
-  .wb-slot-b,
-  .wb-slot-d,
-  .wb-slot-e,
-  .wb-slot-f,
-  .wb-slot-g1,
-  .wb-slot-g2,
-  .wb-slot-g3,
-  .wb-slot-g4,
-  .wb-slot-h,
-  .wb-slot-i,
-  .wb-slot-j {
-    display: flex;
-    flex-direction: column;
-  }
-  /* The console keeps the top band bare at this breakpoint: the reference band carries
-     only the brand and the search field. Refresh lives on the hero, theme/language/session
-     and the instance state live in the rail, so nothing is unreachable. */
-  .wb-topbar-actions {
-    display: none !important;
-  }
-
-  /* the traffic timeline is the hero chart of the right column: give it the band */
-  .wb-slot-f .panel-body {
-    min-height: 0;
-  }
-  /* Slot A carries the reference hero: the title's glyph box sits at y110..145 (measured
-     36 px tall, left edge 281 = band left + 24) and the readout row closes the band. */
-  .wb-slot-a h1 {
-    font-size: 34px !important;
-    line-height: 1.06 !important;
-    letter-spacing: -0.02em !important;
-  }
-
 }
 @media (prefers-reduced-motion: reduce) {
   *,

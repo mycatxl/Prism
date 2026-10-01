@@ -56,6 +56,9 @@ const RAIL_PATHS = [
 
 // Class tokens the redesign deleted. A trailing dash means "prefix". `card` is
 // matched as a whole token, because the kit's own utilities are named around it.
+// The board's replica classes are on the list too: their CSS went with the 1536px
+// layer, so a `wb-slot-*` or a `wb-folded` left in the DOM is a pane the grid does
+// not know about.
 const REMOVED_CLASS_TOKENS = [
   "content",
   "node-name",
@@ -69,6 +72,12 @@ const REMOVED_CLASS_TOKENS = [
   "toast-container",
   "nav-item",
   "workspace-bar",
+  "wb-slot-",
+  "wb-folded",
+  "wb-board-stack",
+  "wb-kpi-row",
+  "wb-rail-",
+  "wb-brand-",
 ];
 
 // The ground and the ink, read from the dark primitives in src/styles/design.css
@@ -451,6 +460,12 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
    *  - **Ink comes from the computed style**, because that is the colour the word is
    *    painted in; sampling glyph pixels would measure antialiasing instead.
    */
+  /*
+   * The selectors the board actually paints words with. The shell's rail replica
+   * (`.wb-brand-title`, `.wb-rail-top-item`, `.wb-rail-card-item`) is deliberately
+   * absent: it was the 1536px layer's own rail, it is gone with that layer, and a
+   * selector that matches nothing would quietly shrink this check.
+   */
   const TARGETS = [
     ".wb-hero-heading",
     ".wb-hero-desc",
@@ -463,9 +478,6 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
     ".wb-metric-badge-green",
     ".wb-metric-badge-up",
     ".wb-metric-badge-down",
-    ".wb-brand-title",
-    ".wb-rail-top-item",
-    ".wb-rail-card-item",
     ".wb-plate-head h2",
     ".wb-plate-head .label",
     ".wb-region-table thead th",
@@ -473,24 +485,25 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
   ];
 
   /*
-   * Shortfalls that are the reference art's own, measured rather than assumed, and
-   * left in place on purpose.
+   * The one shortfall that is a *decision* rather than an oversight, measured
+   * rather than assumed: `#60a5fa` on the blue badge wash inside the fourth metric
+   * chip renders 4.48:1, and that chip's wash is the reference art's own. The entry
+   * names the selector, the theme and the measured ratio, so the exemption cannot
+   * widen: change a colour and the number here stops matching and the check fails.
    *
-   * The board is a reproduction of an operator's art, and these three are its
-   * colours: `#8c9fc2` at 4.44:1, `#6da2cc` at 4.05:1 and `#60a5fa` on the blue
-   * badge wash at 4.48:1 all sit just under 4.5:1. "Fixing" them would mean
-   * repainting the reference, which is a different decision from matching it, and
-   * not one this file should make silently. Each entry names the selector, the theme
-   * and the measured ratio, so the exemption cannot widen: change a colour and the
-   * number here stops matching and the check fails.
+   * The list used to hold two more — the hero band's description (4.44:1) and the
+   * status line (4.05:1). Both were solved against the pane gradients the board
+   * carried when it was a pixel replica; the band is a panel on the board's own
+   * ground and the status line is a token surface now, so both read `--p-ink-soft`
+   * and clear 4.5:1 like every other pair. Their literals were removed from
+   * `design.css` in the same change, which is why the entries are gone rather than
+   * re-pinned.
    *
    * The light theme is held to the full standard, because the art has no light
    * theme to be faithful to — it is ours to solve.
    */
   const ART_EXEMPTIONS = [
     // selector, theme, ratio the art actually renders
-    { sel: ".wb-hero-desc", theme: "dark", ratio: 4.44 },
-    { sel: ".wb-status-desc", theme: "dark", ratio: 4.05 },
     { sel: ".wb-metric-badge-down", theme: "dark", ratio: 4.48 },
   ];
   const exemptionFor = (sel, theme) =>

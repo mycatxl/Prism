@@ -2,32 +2,38 @@
 /*
  * The responsive-layout gate for the console.
  *
- * The 1536 breakpoint layer in `src/styles/design.css` is a replica of the reference dashboard,
- * and it used to be a fixed 1288x1024 canvas: correct at exactly 1536x1024, and a board glued to
- * the top-left corner of the main column at every larger window (measured: 40% of a 2560x1440
- * window covered, 1048px of empty space to the right). The fix was to place every slot as a
- * percentage of the canvas, which is only correct as long as nobody writes a fixed length back
- * into that layer - and nothing in the repo could see that, because the browser regression needs
- * a browser and CI does not install one (`check-kit.mjs` made the same argument for the kit).
+ * What this gate used to protect: a `@media (min-width: 1536px)` layer in
+ * `src/styles/design.css` that reproduced an operator's reference dashboard as
+ * pixel geometry - unequal KPI widths, a quick-action card overlapping the hero, a
+ * rail replica and two panes folded away. The gate checked that every slot was a
+ * percentage of a 1288x1024 canvas and that the percentages resolved back to the
+ * measured art.
  *
- * This script reads the stylesheet and checks the layer directly. Rules:
- *   1. The canvas fills the window: the board is absolutely positioned with
- *      `height: max(100%, 1024px)` and `width: 100%`, and neither the board, the shell, the main
- *      column nor the rail column may carry a fixed pixel height there. (The `100%` only resolves
- *      because the board is positioned against the main column's padding box; a wrapper with
- *      `height: auto` between the column and the board silently collapses it - that happened, and
- *      every slot collapsed with it.)
- *   2. Every board slot places itself with percentages on both axes, and every rail anchor that
- *      moves with the window does too.
- *   3. Those percentages must resolve to the reference geometry at 1288x1024 (and to the card's
- *      835px height for the rail card's children), within 0.6px. The expected numbers are the
- *      measured reference positions, and the comments next to each rule must agree with them.
- *   4. Apart from a documented allow-list, no positional pixel value may appear in the layer:
- *      type, radii, borders, padding and the fixed 248px rail stay in px on purpose, because this
- *      is a dashboard that gets wider, not a screenshot that gets scaled.
+ * That layer is gone. The board is a responsive Bento grid: twelve columns at
+ * `xl`, panels that stack below it, and not one pixel of pane geometry in the
+ * stylesheet - the grid classes live in the JSX (`xl:grid-cols-12`,
+ * `xl:col-span-8`). The gate now protects *that*, which is a property of the
+ * stylesheet and therefore still decidable without a browser:
  *
- * Fails closed: a missing stylesheet, a missing media block, an implausible number of parsed
- * rules or an empty allow-list all exit non-zero.
+ *   1. No `@media (min-width: 1536px)` block reappears. A breakpoint layer that
+ *      positions panes is exactly the regression this file exists to catch.
+ *   2. No `.wb-board` / `.wb-shell-root` / `.wb-main-zone` rule carries a fixed
+ *      pixel height. These boxes must be fluid, and a fixed height is how the old
+ *      board collapsed and how it would collapse again. Today none of the three
+ *      carries a rule at all - their layout is utility classes in the JSX - so
+ *      this is a guard: the moment one is styled again, a pixel height on it
+ *      fails.
+ *   3. No board pane is absolutely positioned. Panes are grid and flex children,
+ *      so a `position: absolute` rule that names one is pane-positioning code
+ *      coming back. (Absolute positioning that is *not* a board pane - the range
+ *      picker's chevron, `.wb-timerange-icon` - is not board geometry and is not
+ *      flagged.)
+ *   4. The board's own rules are still present. A gate that passes because the
+ *      board's rules were deleted or renamed is a false clean, which is the one
+ *      failure mode a gate must not have.
+ *
+ * Fails closed: a missing stylesheet, an unparseable file, an implausible rule
+ * count, a missing board rule or an empty check set all exit non-zero.
  *
  * Usage: node scripts/check-responsive.mjs
  */
@@ -39,190 +45,110 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const cssPath = join(here, "..", "src", "styles", "design.css");
 
-/** Reference canvas, in css pixels, as measured off the reference dashboard. */
-const CANVAS = { width: 1288, height: 1024 };
-/** The rail card is a child of the rail column; the widgets inside it are children of the card. */
-const RAIL_CARD = { width: 215, height: 835 };
+/** The breakpoint layer whose return would undo the whole rework. */
+const FORBIDDEN_LAYER = /@media\s*\(\s*min-width\s*:\s*1536px\s*\)/;
 
-/** Slot -> reference geometry inside the canvas. */
-const SLOTS = {
-  ".wb-slot-a": { left: 9, top: 0, width: 1255, height: 233 },
-  ".wb-slot-b": { left: 989, top: 163, width: 275, height: 198 },
-  ".wb-slot-d": { left: 9, top: 250, width: 797, height: 312 },
-  ".wb-slot-e": { left: 822, top: 250, width: 151, height: 111 },
-  ".wb-slot-f": { left: 822, top: 378, width: 442, height: 201 },
-  ".wb-slot-g1": { left: 9, top: 579, width: 206, height: 109 },
-  ".wb-slot-g2": { left: 230, top: 579, width: 188, height: 109 },
-  ".wb-slot-g3": { left: 433, top: 579, width: 186, height: 109 },
-  ".wb-slot-g4": { left: 634, top: 579, width: 173, height: 109 },
-  ".wb-slot-h": { left: 822, top: 600, width: 442, height: 334 },
-  ".wb-slot-i": { left: 9, top: 704, width: 470, height: 283 },
-  ".wb-slot-j": { left: 495, top: 704, width: 311, height: 283 },
-};
+/**
+ * Boxes that must never be given a fixed height again.
+ *
+ * The board's own boxes carry no CSS rule today - their layout is utility classes
+ * in the JSX - so this is a guard rather than a measurement: the moment one of
+ * them is styled again, a pixel height on it is a regression.
+ */
+const FLUID_BOXES = /\.wb-(board|shell-root|main-zone)\b/;
 
-/** Rail anchors that move with the window, and the base their percentages resolve against. */
-const RAIL_ANCHORS = {
-  ".wb-rail-top-links": { base: CANVAS.height, top: 68 },
-  ".wb-rail-card": { base: CANVAS.height, top: 188, height: RAIL_CARD.height },
-  // both are children of .wb-rail-card (AppShell.tsx), so they scale with the card, not the column
-  ".wb-rail-status": { base: RAIL_CARD.height, top: 525 },
-  ".wb-rail-footer": { base: RAIL_CARD.height, top: 649 },
-};
+/**
+ * The board's panes. A `position: absolute` rule naming one of these is pane
+ * geometry: panes belong to the grid, and this list is the vocabulary the board
+ * actually uses.
+ */
+const PANES =
+  /\.wb-(board|board-stack|slot|folded|kpi|hero-banner|metric-chips|plate|plate-head|plate-side|plate-map|status-card|status-title|status-desc)\b/;
 
-/** Selectors whose box must never be a fixed height inside this layer. */
-const FLUID_BOXES = [
-  ".wb-board",
-  ".wb-shell-root:has(.wb-board) .wb-shell-root",
-  ".wb-shell-root:has(.wb-board) .wb-main-zone",
-  ".wb-rail-zone",
+/**
+ * Board rules that must still be in the stylesheet, matched by selector prefix.
+ *
+ * A gate that passes because the board's rules were renamed or deleted reads
+ * exactly like a gate that passes, so each of these must exist to be checked:
+ * the hero band and its chips, the status line, the map plate (`.wb-plate`,
+ * `.wb-plate-head`, `.wb-plate-map`) and the region table's `.wb-region-table …`
+ * group.
+ */
+const REQUIRED_RULES = [
+  ".wb-hero-banner",
+  ".wb-hero-heading",
+  ".wb-metric-chips",
+  ".wb-status-card",
+  ".wb-plate",
+  ".wb-region-table",
 ];
 
-/** Positional px that is deliberate. Everything else in the layer must be relative. */
-const ALLOWED_PX = new Set([
-  "min-width: 1536px",
-  "min-width: 1288px",
-  "width: 248px",
-  "height: 76px",
-  "left: 11px",
-  "width: 481px",
-  "top: 18px",
-  "height: 32px",
-  "min-height: 32px",
-  "top: 6px",
-  "height: 28px",
-  // rail furniture that stays put: brand, the two top links, the card's items and the widgets
-  "left: 50px",
-  "top: 34px",
-  "width: 13px",
-  "height: 13px",
-  "left: 75px",
-  "top: 33px",
-  "height: 14px",
-  "left: 20px",
-  "width: 215px",
-  "height: 112px",
-  "left: 8px",
-  "width: 199px",
-  "height: 36px",
-  "top: 0px",
-  "top: 74px",
-  "left: 18px",
-  "height: 13px",
-  "left: 37px",
-  "width: 146px",
-  "height: 102px",
-  "width: 100px",
-  "height: 25px",
-  "width: 96px",
-  "height: 96px",
-  "min-height: 54px",
-]);
-
 const failures = [];
-const notes = [];
+let parsedRules = 0;
+let boxChecks = 0;
+let paneChecks = 0;
 
 function fail(message) {
   failures.push(message);
 }
 
-function parseLayer(text) {
-  const lines = text.split("\n");
-  const start = lines.findIndex((line) => line.startsWith("@media (min-width: 1536px)"));
-  if (start === -1) return null;
-  let end = -1;
-  for (let i = start + 1; i < lines.length; i++) {
-    if (lines[i] === "}") {
-      end = i;
-      break;
-    }
-  }
-  if (end === -1) return null;
-  const body = lines.slice(start + 1, end);
-
+/**
+ * Every rule in the stylesheet, flattened.
+ *
+ * Comments are stripped first so a `{` inside prose cannot open a block. The scan
+ * keeps a stack of frames: an at-rule frame collects its prelude as it opens and
+ * its children are ordinary rules, which is all the structure this gate needs.
+ * A rule's `at` list is the at-rules it sits inside, so a future breakpoint layer
+ * is visible in the parse rather than only in a regex.
+ */
+function parseRules(source) {
+  const css = source.replace(/\/\*[\s\S]*?\*\//g, " ");
   const rules = [];
-  let pendingComment = [];
-  let selectorLines = [];
-  let bodyLines = [];
-  let inBlock = false;
-  let inComment = false;
-  for (const rawLine of body) {
-    const line = rawLine;
-    if (!inBlock) {
-      const trimmed = line.trim();
-      if (trimmed.startsWith("/*")) {
-        pendingComment.push(trimmed);
-        if (!trimmed.includes("*/")) inComment = true;
-        continue;
-      }
-      if (inComment) {
-        pendingComment.push(trimmed);
-        if (trimmed.includes("*/")) inComment = false;
-        continue;
-      }
-      if (trimmed === "") continue;
-      selectorLines.push(trimmed);
-      if (trimmed.endsWith("{")) {
-        inBlock = true;
-        bodyLines = [];
+  const stack = [];
+  let pending = "";
+
+  for (const character of css) {
+    if (character === "{") {
+      const head = pending.trim();
+      pending = "";
+      stack.push({
+        head,
+        isAtRule: head.startsWith("@"),
+        at: stack.filter((frame) => frame.isAtRule).map((frame) => frame.head),
+        body: "",
+      });
+      continue;
+    }
+    if (character === "}") {
+      const frame = stack.pop();
+      pending = "";
+      if (frame && !frame.isAtRule && frame.head) {
+        rules.push({ head: frame.head, at: frame.at, body: frame.body });
       }
       continue;
     }
-    if (line.trim() === "}" || line.trim() === "};") {
-      const selectors = selectorLines
-        .join(" ")
-        .replace(/\{$/, "")
-        .split(",")
-        .map((entry) => entry.trim().replace(/\s+/g, " "))
-        .filter(Boolean);
-      const declarations = {};
-      const withoutComments = bodyLines.join(" ").replace(/\/\*[\s\S]*?\*\//g, " ");
-      for (const chunk of withoutComments.split(";")) {
-        const index = chunk.indexOf(":");
-        if (index === -1) continue;
-        const property = chunk.slice(0, index).trim();
-        const value = chunk.slice(index + 1).trim().replace(/\s+/g, " ");
-        if (property && value) declarations[property] = value.replace(/ !important$/, "");
-      }
-      rules.push({ selectors, declarations, comment: pendingComment.join(" ") });
-      pendingComment = [];
-      selectorLines = [];
-      bodyLines = [];
-      inBlock = false;
-      continue;
+    const top = stack[stack.length - 1];
+    if (!top || top.isAtRule) {
+      pending += character;
+    } else {
+      top.body += character;
     }
-    bodyLines.push(line);
   }
+
   return rules;
 }
 
-function cascade(rules) {
-  const merged = new Map();
-  for (const rule of rules) {
-    for (const selector of rule.selectors) {
-      const existing = merged.get(selector) ?? { declarations: {}, comment: rule.comment };
-      merged.set(selector, {
-        declarations: { ...existing.declarations, ...rule.declarations },
-        comment: existing.comment || rule.comment,
-      });
-    }
+/** The declarations of one rule body, `!important` stripped. */
+function declarations(body) {
+  const out = new Map();
+  for (const chunk of body.split(";")) {
+    const index = chunk.indexOf(":");
+    if (index === -1) continue;
+    const property = chunk.slice(0, index).trim();
+    const value = chunk.slice(index + 1).trim().replace(/\s+/g, " ").replace(/ !important$/, "");
+    if (property && value) out.set(property, value);
   }
-  return merged;
-}
-
-function value(declarations, property) {
-  return declarations[property];
-}
-
-function length(valueText) {
-  if (typeof valueText !== "string") return null;
-  const match = /^(-?[\d.]+)px$/.exec(valueText.trim());
-  return match ? Number(match[1]) : null;
-}
-
-function percent(valueText) {
-  if (typeof valueText !== "string") return null;
-  const match = /^(-?[\d.]+)%$/.exec(valueText.trim().replace(/\s+/g, ""));
-  return match ? Number(match[1]) : null;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,173 +162,78 @@ try {
   process.exit(1);
 }
 
-const rules = parseLayer(css);
-if (!rules || rules.length === 0) {
-  console.error("check-responsive: the 1536px layer is missing or empty; the gate cannot run");
+if (FORBIDDEN_LAYER.test(css)) {
+  fail(
+    "rule 1: a `@media (min-width: 1536px)` block is back in design.css; the board is a responsive Bento grid and pane geometry in a breakpoint layer is the regression this gate exists to catch",
+  );
+}
+
+const rules = parseRules(css);
+parsedRules = rules.length;
+if (parsedRules < 100) {
+  console.error(
+    `check-responsive: only ${parsedRules} rules parsed from design.css; that is implausible, refusing to pass`,
+  );
   process.exit(1);
 }
-if (rules.length < 20) {
-  console.error(`check-responsive: only ${rules.length} rules parsed from the layer; that is implausible, refusing to pass`);
-  process.exit(1);
-}
-if (ALLOWED_PX.size === 0) {
-  console.error("check-responsive: the px allow-list is empty; the gate cannot run");
-  process.exit(1);
-}
 
-const bySelector = cascade(rules);
-notes.push(`layer parsed: ${rules.length} rules, ${bySelector.size} selectors`);
+const selectors = new Set();
+let inspections = 0;
+for (const rule of rules) {
+  const declarationsOfRule = declarations(rule.body);
+  for (const selector of rule.head.split(",").map((entry) => entry.trim()).filter(Boolean)) {
+    selectors.add(selector);
+    inspections += 1;
 
-// Rule 1: the canvas fills the window.
-for (const selector of FLUID_BOXES) {
-  const rule = bySelector.get(selector);
-  if (!rule) {
-    fail(`rule 1: ${selector} has no rule in the 1536 layer`);
-    continue;
-  }
-  const height = rule.declarations.height;
-  if (!height) {
-    fail(`rule 1: ${selector} declares no height`);
-  } else if (/^[\d.]+px$/.test(height)) {
-    fail(`rule 1: ${selector} has a fixed height (${height}); the canvas must fill the window`);
-  } else if (!/max\(\s*100%\s*,\s*[\d.]+px\s*\)/.test(height) && height !== "100%" && height !== "100dvh") {
-    fail(`rule 1: ${selector} has height ${height}, which neither fills the window nor keeps the reference floor`);
-  }
-}
+    // Rule 2: the board's own boxes stay fluid.
+    if (FLUID_BOXES.test(selector)) {
+      boxChecks += 1;
+      for (const property of ["height", "min-height", "max-height"]) {
+        const height = declarationsOfRule.get(property);
+        if (height && /^-?[\d.]+px$/.test(height)) {
+          fail(
+            `rule 2: ${selector} declares ${property}: ${height}; the board's boxes must be fluid, so a fixed pixel height here is a regression`,
+          );
+        }
+      }
+    }
 
-const board = bySelector.get(".wb-board");
-if (!board) {
-  fail("rule 1: .wb-board has no rule in the 1536 layer");
-} else {
-  if (board.declarations.position !== "absolute") {
-    fail(`rule 1: .wb-board is ${board.declarations.position ?? "static"}; a percentage height inside a wrapper with auto height collapses to 0, so the board must be absolutely positioned`);
-  }
-  if (value(board.declarations, "width") !== "100%") {
-    fail(`rule 1: .wb-board width is ${value(board.declarations, "width") ?? "(unset)"}, expected 100% so the art grows with the window`);
-  }
-  const height = value(board.declarations, "height") ?? "";
-  const floor = /max\(\s*100%\s*,\s*([\d.]+)px\s*\)/.exec(height);
-  if (!floor) {
-    fail(`rule 1: .wb-board height is ${height || "(unset)"}; expected max(100%, 1024px) so a short window keeps the art's height and scrolls`);
-  } else if (Number(floor[1]) !== CANVAS.height) {
-    fail(`rule 1: .wb-board floor is ${floor[1]}px, expected the reference height ${CANVAS.height}px`);
-  }
-}
-
-// Rule 2 + 3: slots and rail anchors are relative, and resolve to the reference geometry.
-for (const [selector, expected] of Object.entries(SLOTS)) {
-  const rule = bySelector.get(selector);
-  if (!rule) {
-    fail(`rule 2: ${selector} has no rule in the 1536 layer`);
-    continue;
-  }
-  const axes = [
-    ["left", CANVAS.width, expected.left],
-    ["width", CANVAS.width, expected.width],
-    ["top", CANVAS.height, expected.top],
-    ["height", CANVAS.height, expected.height],
-  ];
-  for (const [property, base, want] of axes) {
-    const declared = value(rule.declarations, property);
-    // a zero offset cannot drift with the window, so a length of 0 is fine either way
-    if (declared !== undefined && /^(0|0px|0%)$/.test(declared.trim())) continue;
-    const asPercent = percent(declared);
-    if (asPercent === null) {
-      const asLength = length(declared);
-      if (asLength !== null && Math.abs(asLength - want) < 0.6) {
-        fail(`rule 2: ${selector} ${property} is ${asLength}px; at the reference size that is right, but it will not grow with the window`);
+    // Rule 3: panes are grid children, never absolutely positioned.
+    const position = declarationsOfRule.get("position");
+    if (position === "absolute" || position === "fixed") {
+      if (PANES.test(selector)) {
+        fail(
+          `rule 3: ${selector} is ${position}; a board pane belongs to the grid or the flex stack, so pane positioning is back`,
+        );
       } else {
-        fail(`rule 2: ${selector} ${property} is ${declared ?? "(unset)"}, expected a percentage of the canvas`);
-      }
-      continue;
-    }
-    const resolved = (asPercent / 100) * base;
-    if (Math.abs(resolved - want) > 0.6) {
-      fail(`rule 3: ${selector} ${property} resolves to ${resolved.toFixed(2)}px at the reference size, expected ${want}px`);
-    }
-  }
-  const comment = rule.comment;
-  const stated = /left:\s*(-?[\d.]+),\s*top:\s*(-?[\d.]+),\s*w:\s*([\d.]+),\s*h:\s*([\d.]+)/.exec(comment);
-  if (stated) {
-    const [, left, top, width, height] = stated.map(Number);
-    if (left !== expected.left || top !== expected.top || width !== expected.width || height !== expected.height) {
-      fail(`rule 3: the comment on ${selector} says left:${left} top:${top} w:${width} h:${height}, but the reference geometry is left:${expected.left} top:${expected.top} w:${expected.width} h:${expected.height}`);
-    }
-  }
-}
-
-for (const [selector, expected] of Object.entries(RAIL_ANCHORS)) {
-  const rule = bySelector.get(selector);
-  if (!rule) {
-    fail(`rule 2: ${selector} has no rule in the 1536 layer`);
-    continue;
-  }
-  const top = percent(value(rule.declarations, "top"));
-  if (top === null) {
-    fail(`rule 2: ${selector} top is ${value(rule.declarations, "top") ?? "(unset)"}, expected a percentage`);
-  } else {
-    const resolved = (top / 100) * expected.base;
-    if (Math.abs(resolved - expected.top) > 0.6) {
-      fail(`rule 3: ${selector} top resolves to ${resolved.toFixed(2)}px, expected ${expected.top}px (base ${expected.base}px)`);
-    }
-  }
-  if (expected.height !== undefined) {
-    const height = percent(value(rule.declarations, "height"));
-    if (height === null) {
-      fail(`rule 2: ${selector} height is ${value(rule.declarations, "height") ?? "(unset)"}, expected a percentage`);
-    } else {
-      const resolved = (height / 100) * expected.base;
-      if (Math.abs(resolved - expected.height) > 0.6) {
-        fail(`rule 3: ${selector} height resolves to ${resolved.toFixed(2)}px, expected ${expected.height}px`);
+        paneChecks += 1;
       }
     }
   }
 }
 
-// Rule 4: no undocumented positional pixels.
-const POSITIONAL = new Set(["left", "top", "right", "bottom", "width", "height", "min-width", "max-width", "min-height", "max-height"]);
-let positionalChecked = 0;
-for (const rule of rules) {
-  for (const [property, declaredValue] of Object.entries(rule.declarations)) {
-    if (!POSITIONAL.has(property)) continue;
-    if (!/[\d.]px/.test(declaredValue)) continue;
-    positionalChecked++;
-    const entry = `${property}: ${declaredValue}`;
-    if (/max\(\s*100%\s*,/.test(declaredValue)) continue;
-    if (!ALLOWED_PX.has(entry)) {
-      fail(`rule 4: ${rule.selectors.join(", ")} sets ${entry}; positional pixels in the fluid layer must be allow-listed in this gate with a reason`);
-    }
+// Rule 4: the board's own rules must still be there to be checked at all.
+for (const required of REQUIRED_RULES) {
+  if (![...selectors].some((selector) => selector.startsWith(required))) {
+    fail(`rule 4: no \`${required}\` rule is left in design.css; the board's own rules are what this gate protects`);
   }
-}
-if (positionalChecked === 0) {
-  fail("rule 4: no pixel values were inspected; the gate cannot run");
 }
 
-// A gradient stop that keeps a px length is the same class of bug and is invisible to rule 4.
-// The value is inspected on its own, never together with the rest of the rule: a neighbouring
-// `padding: 0 14px` must not be read as a gradient stop.
-let gradientPx = 0;
-for (const rule of rules) {
-  for (const [property, declaredValue] of Object.entries(rule.declarations)) {
-    if (!/[a-z-]+gradient\(/.test(declaredValue)) continue;
-    if (!/[\d.]+px/.test(declaredValue)) continue;
-    if (/#0a152e 248px/.test(declaredValue) && /#071025 248px/.test(declaredValue)) continue;
-    gradientPx++;
-    fail(`rule 4: ${rule.selectors.join(", ")} ${property} keeps a pixel stop: ${declaredValue.slice(0, 90)}`);
-  }
+if (inspections === 0) {
+  fail("no rule was inspected at all; the gate cannot run");
 }
-if (gradientPx === 0 && !rules.some((rule) => Object.values(rule.declarations).some((declaredValue) => /[a-z-]+gradient\(/.test(declaredValue)))) {
-  fail("rule 4: no gradient declarations were inspected; the gate cannot run");
+if (paneChecks === 0) {
+  fail("rule 3: no positioned rule was inspected at all; the gate cannot run");
 }
 
 // ---------------------------------------------------------------------------
 
 if (failures.length > 0) {
-  console.error(`check-responsive: ${failures.length} problem(s) in the 1536 layer`);
+  console.error(`check-responsive: ${failures.length} problem(s) in design.css`);
   for (const failure of failures) console.error(`  - ${failure}`);
   process.exit(1);
 }
 
 console.log(
-  `check-responsive: ${notes[0]}; ${Object.keys(SLOTS).length} slots and ${Object.keys(RAIL_ANCHORS).length} rail anchors resolve to the reference geometry, ${positionalChecked} pixel values all allow-listed`,
+  `check-responsive: no 1536 layer, ${parsedRules} rules parsed, ${inspections} selectors inspected — ${boxChecks} board boxes carry a rule (their layout is utility classes), ${paneChecks} positioned rules and none of them a pane; the board carries no pane geometry`,
 );

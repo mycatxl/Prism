@@ -46,11 +46,17 @@ export function QuickSearch() {
         onClick={() => setOpen(true)}
         aria-label={t("快速定位")}
         title={t("快速定位")}
-        className="wb-search-btn hidden w-64 justify-start gap-2 rounded-control border border-glass-edge bg-glass px-3 text-xs font-normal text-ink-faint hover:border-glass-edge-strong hover:bg-glass-strong hover:text-ink-soft sm:flex lg:w-80 2xl:items-start 2xl:pt-[9px] 2xl:leading-[12px]"
+        /*
+         * One control at every width. The `2xl:` steps this used to carry
+         * (top-aligned text, a 9px top padding, a 12px leading and a hidden
+         * shortcut hint) existed to fit the 1536px replica's 32px top bar; the
+         * shell is the standard one everywhere now, so they are gone.
+         */
+        className="wb-search-btn hidden w-64 justify-start gap-2 rounded-control border border-glass-edge bg-glass px-3 text-xs font-normal text-ink-faint hover:border-glass-edge-strong hover:bg-glass-strong hover:text-ink-soft sm:flex lg:w-80"
       >
-        <Search size={12} aria-hidden className="shrink-0 text-ink-faint 2xl:mt-[1px]" />
-        <span className="min-w-0 flex-1 truncate text-left 2xl:text-[12px] 2xl:leading-[12px]">{t("搜索节点、平台、接入点...")}</span>
-        <kbd className="shrink-0 rounded-[6px] border border-glass-edge bg-paper-inset px-1.5 py-0.5 font-mono text-2xs text-ink-faint 2xl:hidden">
+        <Search size={12} aria-hidden className="shrink-0 text-ink-faint" />
+        <span className="min-w-0 flex-1 truncate text-left">{t("搜索节点、平台、接入点...")}</span>
+        <kbd className="shrink-0 rounded-[6px] border border-glass-edge bg-paper-inset px-1.5 py-0.5 font-mono text-2xs text-ink-faint">
           {shortcut}
         </kbd>
       </Button>

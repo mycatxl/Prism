@@ -252,37 +252,18 @@ function attribution(finding) {
   }
 
   /*
-   * The reference art lights its hero band, and the band reproduces that light with a
-   * handful of soft radial stops. The detector reads any such wash as a decorative AI
-   * halo, which is a fair default and wrong here. The exemption is narrow: our own
-   * shell, and only while the shell still carries the hero band itself (the rule that
-   * draws it holds `#0b1631` inside `.wb-slot-a`), so removing the band or changing
-   * that stop drops the excuse. The bound is in DESIGN.md and is enforced by the
-   * replica probes.
+   * There used to be a `radial-halo` excuse here: the reference board's hero band
+   * was drawn with a handful of soft radial stops, the detector read that wash as
+   * a decorative AI halo, and the excuse held only while the shell still carried
+   * that band (it looked for the stop inside `.wb-slot-a` in the source
+   * stylesheet).
+   *
+   * The band went with the 1536px replica layer, and the detector no longer
+   * reports the finding at all - measured, not assumed: the build scan is clean
+   * without it. So the excuse is gone rather than left pointing at a rule that no
+   * longer exists. If a radial halo does come back, it is an unexcused finding and
+   * fails the gate, which is the correct reading.
    */
-  if (finding.rule === "radial-halo" && /(^|\/)(ui\/index\.html|styles\/design\.css)$/.test(finding.file ?? "")) {
-    /*
-     * The excuse has to name the colour the engine named, and that colour has to sit inside
-     * the hero band's rule in the source stylesheet. The built shell links its stylesheet
-     * rather than inlining it, so the source is the only place the claim can be checked.
-     * Editing the band's stops, or moving them off the band, drops the excuse by itself.
-     */
-    const stop = /#([0-9a-f]{6})/i.exec(finding.text ?? "");
-    if (!stop) return null;
-    let css = "";
-    try {
-      css = readFileSync(new URL("../src/styles/design.css", import.meta.url), "utf8");
-    } catch {
-      return null;
-    }
-    const rule = /\.wb-slot-a[^{}]*\{[^}]*\}/g;
-    for (let hit = rule.exec(css); hit; hit = rule.exec(css)) {
-      if (new RegExp("#" + stop[1], "i").test(hit[0])) {
-        return "our own shell; the hero band reproduces the measured light field of the operator's reference art, bounded in DESIGN.md";
-      }
-    }
-    return null;
-  }
 
   return null;
 }

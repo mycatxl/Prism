@@ -10,12 +10,18 @@ import (
 )
 
 // SystemInfo contains version and runtime information.
+//
+// PanelEgressRegion/PanelEgressIP describe where the panel server itself
+// egresses from (see PanelEgress). Both are empty strings while unknown and are
+// never omitted or null, so the dashboard map can rely on their presence.
 type SystemInfo struct {
-	Version   string    `json:"version"`
-	GitCommit string    `json:"git_commit"`
-	BuildTime string    `json:"build_time"`
-	BuildTags []string  `json:"build_tags"`
-	StartedAt time.Time `json:"started_at"`
+	Version           string    `json:"version"`
+	GitCommit         string    `json:"git_commit"`
+	BuildTime         string    `json:"build_time"`
+	BuildTags         []string  `json:"build_tags"`
+	StartedAt         time.Time `json:"started_at"`
+	PanelEgressRegion string    `json:"panel_egress_region"`
+	PanelEgressIP     string    `json:"panel_egress_ip"`
 }
 
 // ProbeManager interface for probe operations.
