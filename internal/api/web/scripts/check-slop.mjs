@@ -100,7 +100,7 @@ const env = {
 /** Runs the detector and returns { code, output }. A finding exits 2, not 1. */
 function detect(targets) {
   try {
-    return { code: 0, output: execFileSync(engine, ["detect", ...targets], { encoding: "utf8", env }) };
+    return { code: 0, output: execFileSync(engine, ["detect", ...targets], { encoding: "utf8", env, stdio: ["pipe", "pipe", "pipe"] }) };
   } catch (error) {
     return { code: error.status ?? 1, output: `${error.stdout ?? ""}${error.stderr ?? ""}` };
   }

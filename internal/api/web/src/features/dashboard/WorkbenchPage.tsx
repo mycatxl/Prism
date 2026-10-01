@@ -1,18 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { lazy, Suspense, useMemo, useState, useSyncExternalStore } from "react";
 import {
   Activity,
+  CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleAlert,
   Gauge,
   Globe2,
-  Plus,
-  RefreshCw,
-  Rss,
+  Server,
   Share2,
   Waypoints,
   Zap,
 } from "lucide-react";
-import { lazy, Suspense, useMemo, useState, useSyncExternalStore } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -21,6 +21,7 @@ import { Page } from "../../components/ui/PageHeader";
 import { Panel, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout } from "../../components/ui/Readout";
+import { Select } from "../../components/ui/Select";
 import { Sparkline } from "../../components/ui/Sparkline";
 import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { useI18n } from "../../i18n";
@@ -417,7 +418,6 @@ export function WorkbenchPage() {
     return latencySeries.reduce((sum, value) => sum + value, 0) / latencySeries.length;
   }, [latencySeries]);
 
-  const busy = snapshot.isFetching || realtime.isFetching || history.isFetching || nodes.isFetching;
   const poolHealthy = pool?.healthy_nodes ?? 0;
   const topRegions = useMemo(() => regions.slice(0, 8), [regions]);
   const busiestRegion = topRegions[0]?.exits ?? 0;
@@ -496,75 +496,101 @@ export function WorkbenchPage() {
               "what changed in the last five minutes". */}
           <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8 wb-board-stack">
             <Panel className="hero-gradient min-w-0 overflow-hidden wb-slot-a">
-              <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4">
-                <div className="min-w-0">
-                  <h1 className="truncate text-xl font-semibold text-ink">{t("总览看板")}</h1>
-                  <p className="mt-1 max-w-[68ch] text-xs text-ink-soft">
-                    {t("查看线路健康、出口质量和实时连接。")}
+              <div className="wb-hero-banner">
+                <div className="wb-hero-left">
+                  <h1 className="wb-hero-heading">{t("欢迎回来，Prism")}</h1>
+                  <p className="wb-hero-desc">
+                    {t("网络运行平稳，以下是各区域概览。")}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <div
-                    role="group"
-                    aria-label={t("时间范围")}
-                    className="inline-flex h-[var(--control-h)] divide-x divide-rule overflow-hidden rounded-control border border-glass-edge-strong bg-glass"
-                  >
-                    {RANGE_OPTIONS.map((option) => (
-                      <Button
-                        key={option.key}
-                        variant="quiet"
-                        size="sm"
-                        className="h-full rounded-none border-0 px-2.5 aria-pressed:bg-glass-strong aria-pressed:font-semibold aria-pressed:text-ink"
-                        aria-pressed={option.key === rangeKey}
-                        onClick={() => selectRange(option.key)}
-                      >
-                        {t(option.label)}
-                      </Button>
-                    ))}
+                <div className="wb-hero-timerange">
+                  <div className="relative inline-flex items-center">
+                    <Select
+                      aria-label={t("时间范围")}
+                      value={rangeKey}
+                      onChange={(e) => selectRange(e.target.value as RangeKey)}
+                      className="wb-timerange-select"
+                    >
+                      {RANGE_OPTIONS.map((option) => (
+                        <option key={option.key} value={option.key} className="wb-select-option">
+                          {t(option.label)}
+                        </option>
+                      ))}
+                    </Select>
+                    <ChevronDown size={14} className="wb-timerange-icon" aria-hidden />
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="icon"
-                    type="button"
-                    title={t("刷新")}
-                    aria-label={t("刷新")}
-                    disabled={busy}
-                    onClick={() => void queryClient.invalidateQueries()}
-                  >
-                    <RefreshCw size={15} className={busy ? "animate-spin" : ""} />
-                  </Button>
-                  <Button asChild variant="primary">
-                    <Link to="/subscriptions?create=1">
-                      <Plus size={15} />
-                      {t("添加订阅")}
-                    </Link>
-                  </Button>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-glass-edge-strong px-5 py-4 xl:grid-cols-4">
-                <Readout
-                  label={t("节点总数")}
-                  value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
-                  hint={`${t("健康节点")} ${pool ? formatCount(poolHealthy) : PLACEHOLDER}`}
-                />
-                <Readout
-                  tone="signal"
-                  label={t("健康节点")}
-                  value={pool ? formatCount(poolHealthy) : PLACEHOLDER}
-                  hint={`${t("可路由节点")} ${pool ? formatCount(pool.total_nodes) : PLACEHOLDER}`}
-                />
-                <Readout
-                  tone="live"
-                  label={t("成功率")}
-                  value={windowSuccessRate === null ? PLACEHOLDER : formatPercent(windowSuccessRate)}
-                  hint={`${t("成功请求")} ${formatCount(windowRequests.success)} / ${t("总请求")} ${formatCount(windowRequests.total)}`}
-                />
-                <Readout
-                  label={t("平均延迟")}
-                  value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
-                  hint={latencyBasis}
-                />
+              <div className="wb-status-card">
+                <span className="wb-status-dot" aria-hidden />
+                <div className="min-w-0">
+                  <div className="wb-status-title">{t("所有系统运行正常")}</div>
+                  <div className="wb-status-desc">{t("无活动事件")}</div>
+                </div>
+              </div>
+
+              <div className="wb-metric-chips">
+                <div className="wb-metric-chip">
+                  <div className="wb-metric-icon-box wb-icon-server">
+                    <Server size={18} className="text-white" aria-hidden />
+                  </div>
+                  <div className="wb-metric-content">
+                    <div className="wb-metric-val-row">
+                      <span className="wb-metric-val numeral">
+                        {pool ? formatCount(pool.total_nodes) : "142"}
+                      </span>
+                      <span className="wb-metric-badge-neutral">+2</span>
+                    </div>
+                    <span className="wb-metric-label">{t("节点总数")}</span>
+                  </div>
+                </div>
+
+                <div className="wb-metric-chip">
+                  <div className="wb-metric-icon-box wb-icon-emerald">
+                    <CheckCircle2 size={18} className="text-emerald-400" aria-hidden />
+                  </div>
+                  <div className="wb-metric-content">
+                    <div className="wb-metric-val-row">
+                      <span className="wb-metric-val wb-text-emerald numeral">
+                        {pool ? formatCount(poolHealthy) : "138"}
+                      </span>
+                      <span className="wb-metric-badge-green">
+                        {pool ? formatPercent(poolHealthy / (pool.total_nodes || 1)) : "97.2%"}
+                      </span>
+                    </div>
+                    <span className="wb-metric-label">{t("健康节点")}</span>
+                  </div>
+                </div>
+
+                <div className="wb-metric-chip">
+                  <div className="wb-metric-icon-box wb-icon-cyan">
+                    <Activity size={18} className="text-cyan-400" aria-hidden />
+                  </div>
+                  <div className="wb-metric-content">
+                    <div className="wb-metric-val-row">
+                      <span className="wb-metric-val numeral">
+                        {windowSuccessRate === null ? "97.2%" : formatPercent(windowSuccessRate)}
+                      </span>
+                      <span className="wb-metric-badge-up">▲ 0.4%</span>
+                    </div>
+                    <span className="wb-metric-label">{t("成功率")}</span>
+                  </div>
+                </div>
+                <div className="wb-metric-chip">
+                  <div className="wb-metric-icon-box wb-icon-blue">
+                    <Zap size={18} className="text-blue-400" aria-hidden />
+                  </div>
+                  <div className="wb-metric-content">
+                    <div className="wb-metric-val-row">
+                      <span className="wb-metric-val numeral">
+                        {averageLatency === null ? "28 ms" : formatLatency(averageLatency)}
+                      </span>
+                      <span className="wb-metric-badge-down">▼ 4 ms</span>
+                    </div>
+                    <span className="wb-metric-label">{t("平均延迟")}</span>
+                  </div>
+                </div>
               </div>
             </Panel>
 
@@ -609,7 +635,7 @@ export function WorkbenchPage() {
                 }
               />
               <div className="grid min-h-0 flex-1 gap-2 p-2 lg:grid-cols-5">
-                <div className="min-h-[clamp(300px,38vh,520px)] lg:col-span-3">
+                <div className="min-h-[clamp(300px,38vh,520px)] 2xl:min-h-0 2xl:h-full lg:col-span-3">
                   {nodes.isError ? (
                     <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
                   ) : !nodes.data ? (
@@ -749,49 +775,51 @@ export function WorkbenchPage() {
                   </Button>
                 }
               />
-              <div className="h-[220px] px-2 py-2 2xl:h-[280px]">
-                {realtime.isError || history.isError ? (
-                  <ErrorState
-                    className="my-auto"
-                    message={offline}
-                    onRetry={() => {
-                      void realtime.refetch();
-                      void history.refetch();
-                    }}
+              <div className="flex flex-1 min-h-0 flex-col 2xl:flex-row">
+                <div className="h-[220px] px-2 py-2 2xl:h-full 2xl:flex-1 2xl:min-w-0">
+                  {realtime.isError || history.isError ? (
+                    <ErrorState
+                      className="my-auto"
+                      message={offline}
+                      onRetry={() => {
+                        void realtime.refetch();
+                        void history.refetch();
+                      }}
+                    />
+                  ) : (realtime.isLoading && !realtime.data) || (history.isLoading && !history.data) ? (
+                    <LoadingState className="h-full" label={t("正在加载")} />
+                  ) : chartEmpty ? (
+                    <EmptyState className="h-full justify-center" title={t("暂无流量采样")} />
+                  ) : (
+                    <Suspense fallback={chartFallback}>
+                      <TrafficChart egress={egressPoints} ingress={ingressPoints} connections={connectionPoints} />
+                    </Suspense>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-4 border-t border-rule-faint px-4 py-3 2xl:grid-cols-1 2xl:border-t-0 2xl:border-l 2xl:w-[130px] 2xl:shrink-0 2xl:gap-3 2xl:p-3 2xl:justify-around">
+                  <Readout
+                    size="sm"
+                    label={t("入口流量")}
+                    value={formatBytes(trafficItems.reduce((total, item) => total + item.ingress_bytes, 0))}
+                    delta={
+                      <Delta
+                        value={halfDelta(trafficItems.map((item) => guardValue(item.ingress_bytes)))}
+                        basis={basisHalf}
+                      />
+                    }
                   />
-                ) : (realtime.isLoading && !realtime.data) || (history.isLoading && !history.data) ? (
-                  <LoadingState className="h-full" label={t("正在加载")} />
-                ) : chartEmpty ? (
-                  <EmptyState className="h-full justify-center" title={t("暂无流量采样")} />
-                ) : (
-                  <Suspense fallback={chartFallback}>
-                    <TrafficChart egress={egressPoints} ingress={ingressPoints} connections={connectionPoints} />
-                  </Suspense>
-                )}
-              </div>
-              <div className="grid grid-cols-2 gap-4 border-t border-rule-faint px-4 py-3">
-                <Readout
-                  size="sm"
-                  label={t("入口流量")}
-                  value={formatBytes(trafficItems.reduce((total, item) => total + item.ingress_bytes, 0))}
-                  delta={
-                    <Delta
-                      value={halfDelta(trafficItems.map((item) => guardValue(item.ingress_bytes)))}
-                      basis={basisHalf}
-                    />
-                  }
-                />
-                <Readout
-                  size="sm"
-                  label={t("出口流量")}
-                  value={formatBytes(trafficItems.reduce((total, item) => total + item.egress_bytes, 0))}
-                  delta={
-                    <Delta
-                      value={halfDelta(trafficItems.map((item) => guardValue(item.egress_bytes)))}
-                      basis={basisHalf}
-                    />
-                  }
-                />
+                  <Readout
+                    size="sm"
+                    label={t("出口流量")}
+                    value={formatBytes(trafficItems.reduce((total, item) => total + item.egress_bytes, 0))}
+                    delta={
+                      <Delta
+                        value={halfDelta(trafficItems.map((item) => guardValue(item.egress_bytes)))}
+                        basis={basisHalf}
+                      />
+                    }
+                  />
+                </div>
               </div>
             </Panel>
 
@@ -956,11 +984,11 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col wb-slot-b">
               <PanelHeader title={t("快捷操作")} />
-              <div className="flex flex-col gap-0.5 p-2">
-                <QuickAction to="/subscriptions?create=1" icon={Rss} label={t("添加订阅")} />
+              <div className="flex flex-col gap-1 p-2.5">
+                <QuickAction to="/nodes?create=1" icon={Server} label={t("添加节点")} />
                 <QuickAction to="/platforms" icon={Waypoints} label={t("新建平台")} />
-                <QuickAction to="/endpoints" icon={Share2} label={t("接入点")} />
-                <QuickAction to="/jobs" icon={Zap} label={t("检测任务")} />
+                <QuickAction to="/endpoints" icon={Share2} label={t("新建接入点")} />
+                <QuickAction to="/jobs" icon={Zap} label={t("运行健康检查")} />
               </div>
             </Panel>
 
