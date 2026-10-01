@@ -53,6 +53,30 @@ async function parseErrorBody(response: Response): Promise<ApiErrorBody | null> 
   }
 }
 
+/**
+ * Whether this deployment needs an admin token, asked before one exists.
+ *
+ * The login page used to probe `GET /api/v1/system/info` without credentials and read
+ * 401 as "auth is on". The answer was right and the request was wrong: Chromium logs
+ * the 401 response itself, so the first screen of a secured deployment could never be
+ * console-clean, and the question was expressed as a failure. The SPA handler answers
+ * it directly at /ui/session.json.
+ *
+ * Fails closed: an unreadable answer means "a token is required", which is the safe
+ * default to show a stranger.
+ */
+export async function fetchAuthMode(signal?: AbortSignal): Promise<boolean> {
+  const response = await fetch(buildURL("/ui/session.json"), {
+    headers: { Accept: "application/json" },
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, "SESSION_MODE_UNAVAILABLE", "无法确定登录方式", null);
+  }
+  const body = (await response.json()) as { auth_required?: boolean };
+  return body.auth_required !== false;
+}
+
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, auth = true, token, signal } = options;
   if (method !== "GET" && !navigator.onLine) {

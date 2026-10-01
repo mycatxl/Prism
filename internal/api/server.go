@@ -89,7 +89,7 @@ func NewServerWithAddress(
 	// be registered without http.StripPrefix.
 	mux.Handle("/", newRootRedirectHandler())
 	mux.Handle("/ui", newUIRootRedirectHandler())
-	mux.Handle("/ui/", newWebUIHandler())
+	mux.Handle("/ui/", newWebUIHandler(adminToken != ""))
 
 	// Authenticated routes
 	authed := http.NewServeMux()

@@ -10,7 +10,7 @@ import { ErrorState } from "../../components/ui/QueryState";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { cn } from "../../lib/cn";
 import { useAuthStore } from "./auth-store";
-import { apiRequest, ApiError } from "../../lib/api-client";
+import { apiRequest, ApiError, fetchAuthMode } from "../../lib/api-client";
 import { useI18n } from "../../i18n";
 
 const formSchema = z.object({
@@ -66,11 +66,11 @@ export function LoginPage() {
 
     const checkAuthMode = async () => {
       try {
-        await apiRequest("/api/v1/system/info", {
-          auth: false,
-          signal: controller.signal,
-        });
-        if (!active) {
+        // Anonymous access is a property of the deployment, not a failed request: a
+        // tokenless probe of an authenticated endpoint answers 401, and the browser
+        // logs that response as a console error on this very page.
+        const authRequired = await fetchAuthMode(controller.signal);
+        if (!active || authRequired) {
           return;
         }
         navigate(next, { replace: true });

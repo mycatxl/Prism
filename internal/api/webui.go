@@ -23,14 +23,15 @@ var webFS embed.FS
 // newWebUIHandler builds the handler that serves the embedded SPA under /ui/.
 //
 // The handler is registered on "/ui/" and inspects the full request path, so it
-// must not be wrapped in http.StripPrefix.
-func newWebUIHandler() http.Handler {
+// must not be wrapped in http.StripPrefix. authRequired is reported at
+// /ui/session.json; see newWebUIHandlerFromFS for why it is served from here.
+func newWebUIHandler(authRequired bool) http.Handler {
 	distFS, err := fs.Sub(webFS, webDistDir)
 	if err != nil {
 		log.Printf("WebUI embed disabled: %v", err)
 		return newWebUINotBuiltHandler()
 	}
-	return newWebUIHandlerFromFS(distFS)
+	return newWebUIHandlerFromFS(distFS, authRequired)
 }
 
 func newWebUINotBuiltHandler() http.Handler {
@@ -41,7 +42,7 @@ func newWebUINotBuiltHandler() http.Handler {
 	})
 }
 
-func newWebUIHandlerFromFS(distFS fs.FS) http.Handler {
+func newWebUIHandlerFromFS(distFS fs.FS, authRequired bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
@@ -56,6 +57,19 @@ func newWebUIHandlerFromFS(distFS fs.FS) http.Handler {
 		assetPath := strings.TrimPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/ui/")), "/")
 		if assetPath == "" || assetPath == "." {
 			assetPath = "index.html"
+		}
+
+		// The console's own auth mode, answered here rather than from an authenticated
+		// endpoint. The login page needs the answer *before* it holds a token, and a 401
+		// there is a console error the operator cannot dismiss -- on the first screen of
+		// every secured deployment. /ui/ is already gated by the access point's
+		// allow_management (cmd/prism/inbound_mux.go), so this adds no reach the console
+		// does not already have, and it replaces an inference ("401 means auth is on")
+		// with the deployment stating the fact.
+		if assetPath == "session.json" {
+			w.Header().Set("Cache-Control", "no-store")
+			WriteJSON(w, http.StatusOK, map[string]bool{"auth_required": authRequired})
+			return
 		}
 
 		if info, err := fs.Stat(distFS, assetPath); err == nil && !info.IsDir() {

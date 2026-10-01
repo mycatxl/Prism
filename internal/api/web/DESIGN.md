@@ -167,7 +167,26 @@ range picker, refresh and import actions stay reachable without scrolling.
 | Focus is visible | `:focus-visible` draws 2px accent with 1px offset |
 | Reduced motion | The media query at the end of `design.css` |
 | The chart palette is current, not just present | `tests/chart-palette.test.mjs` — the mirror of `design.css` in `chartPalette.ts`, checked colour by colour, in the series order, on the band ramp's luminance spread and on the font families. In `make test-web` |
+| Every visible string is translated | `tests/i18n-coverage.test.mjs` — every `t("…")` literal against the dictionaries. Chinese **is** the key (`buildZhTranslations()` maps each key to itself), so a missing entry is invisible in the default locale and silently Chinese in English: 38 had accumulated that way, 30 of them in the platform criteria form, a page the rebuild never touched. The scan survives the three shapes that fooled its first version: bare CJK keys (`视图: "View"` is legal — CJK characters are identifier characters), URLs inside strings (`//user:pass@host`, which a `//`-strips-comments pass eats), and function names ending in `t` (`default("http:…")`). In `make test-web` → `make verify` |
 | Anti-patterns | `make test-slop` — see the detector section below. **It does not read `.tsx`**, which is why `check:kit` exists. Findings it prints are attributed (provenance or a recorded decision), never dropped, and the file-scoped rows it used to lose now fail the gate |
+
+### How the console learns whether it needs a token
+
+`/ui/session.json` answers `{"auth_required": bool}`, served by the SPA handler from
+the deployment's own admin token (`internal/api/webui.go`). The login page asks before
+it holds a token; the protected routes ask too, to tell an anonymous deployment from a
+secured one.
+
+The previous shape — an unauthenticated probe of `GET /api/v1/system/info`, reading
+401 as "auth is on" — gave the right answer through a request the browser itself logs
+as a console error, so the first screen of every secured deployment carried noise the
+operator could not clear. `/ui/` is already gated by the access point's
+`allow_management`, so the answer reaches exactly the callers that can load the console
+anyway, and the deployment states the fact instead of a client inferring it.
+
+Both answers are pinned by `TestWebUISessionModeAnswersBothWays`: a handler that only
+ever said `true` would send an anonymous deployment to a login form that cannot accept
+anything.
 
 ## Anti-patterns and how to check for them
 
