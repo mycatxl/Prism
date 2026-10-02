@@ -843,7 +843,7 @@ html[data-theme="dark"] .wb-metric-badge-down {
   min-height: var(--panel-header-h);
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 12px 16px 8px 16px;
 }
 
 /* The live dot beside the plate's title: the same signal the rail status uses,
@@ -867,12 +867,16 @@ html[data-theme="dark"] .wb-metric-badge-down {
   flex-shrink: 0;
 }
 
-/* The map's own body: the panel is as tall as its content, and a flex child with
-   `min-height: 0` would collapse the canvas to nothing, so the plate keeps a
-   floor of its own. */
-.wb-plate-map {
-  min-height: clamp(240px, 34vh, 460px);
-}
+/* The map's body carries its own height where every other pane's geometry lives:
+   `h-[380px] xl:h-[440px] 2xl:h-[500px]` on the wrapper in `WorkbenchPage.tsx`.
+   This rule used to hold a floor (`clamp(240px, 34vh, 460px)`) because the wrapper
+   was a `flex-1` child with `flex-basis: 0%` and no definite height in the flow
+   column, which is exactly the bug the wrapper's own height fixes: ECharts'
+   `h-full` had nothing to fill, and a `min-height` was the only thing giving the
+   canvas a size. The class stays as the pane's hook (the responsive gate's pane
+   vocabulary names it) and as the element the sea's token gradient is painted on.
+   The plate head above it sets the row's rhythm, `pt-3 pb-2` to the panel
+   header's `py-2.5`, so the two bands read as one column. */
 
 /* The reference table has no glass wash over its column heads, title-case labels
    rather than the kit's micro-caps, and rules a constant step above the panel
@@ -946,7 +950,7 @@ html[data-theme="dark"] .wb-metric-badge-down {
   align-items: center;
   gap: 12px;
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: 12px;
   border: 1px solid var(--color-rule-faint);
 }
 

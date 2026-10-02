@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useMemo, useSyncExternalStore } from "react";
+import { lazy, Suspense, useMemo, useState, useSyncExternalStore } from "react";
 import {
   Activity,
   CheckCircle2,
@@ -7,15 +7,25 @@ import {
   ChevronRight,
   CircleAlert,
   Gauge,
+  Maximize2,
   Server,
   Share2,
   Waypoints,
+  X,
   Zap,
   Plus,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
+import {
+  DialogClose,
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from "../../components/ui/Dialog";
 import { Donut } from "../../components/ui/Donut";
 import { Page } from "../../components/ui/PageHeader";
 import { Panel, PanelHeader } from "../../components/ui/Panel";
@@ -235,6 +245,11 @@ function QuickAction({ to, icon: Icon, label }: { to: string; icon: typeof Activ
 export function WorkbenchPage() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
+  /*
+   * The expanded plate is a state of the board, not a route: the operator opens it
+   * from the plate's own header and closes it with Escape, the scrim or the X.
+   */
+  const [mapExpanded, setMapExpanded] = useState(false);
   const rangeKey = parseRangeKey(params.get("range"));
   const queryClient = useQueryClient();
   const online = useSyncExternalStore(
@@ -512,7 +527,7 @@ export function WorkbenchPage() {
           {/* The main column: the data story, from "where does traffic leave from" to
               "what arrived last". */}
           <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8">
-            <Panel className="hero-gradient min-w-0 overflow-hidden">
+            <Panel className="hero-gradient min-w-0 overflow-hidden px-5 pt-4 pb-4">
               <div className="wb-hero-banner">
                 <div className="wb-hero-left">
                   <h1 className="wb-hero-heading">{t("欢迎回来，Prism")}</h1>
@@ -630,7 +645,7 @@ export function WorkbenchPage() {
                   <div className="wb-plate-head">
                     <span className="wb-live-dot" aria-hidden />
                     <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
-                      {t("全球流量")}
+                      {t("出口分布")}
                     </h2>
                     <span className="label shrink-0 whitespace-nowrap">
                       {formatCount(regions.length)} {t("地区")}
@@ -650,8 +665,27 @@ export function WorkbenchPage() {
                     <Button asChild variant="ghost" size="sm" className="wb-plate-link ml-auto shrink-0">
                       <Link to="/nodes">{t("查看节点池")}</Link>
                     </Button>
+                    {/* The plate, at a size the panel cannot give it: a second map in a
+                        dialog that exists only while it is open. */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      aria-label={t("展开大屏")}
+                      onClick={() => setMapExpanded(true)}
+                    >
+                      <Maximize2 size={15} aria-hidden />
+                    </Button>
                   </div>
-                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col">
+                  {/* The plate's body. The panel gives the map a definite height —
+                      the flow column has none of its own, which is what left the
+                      canvas with nothing to fill — and the ground under the
+                      transparent canvas is the sea: two tokens in a vertical
+                      gradient, a pale blue sheet on paper and deep navy at night.
+                      ECharts fits the projection into this box preserving its aspect
+                      ratio and centres it, so nothing is stretched and the sea shows
+                      either side of the continent group. */}
+                  <div className="wb-plate-map flex min-h-0 flex-col h-[380px] xl:h-[440px] 2xl:h-[500px] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
                     {nodes.isError ? (
                       <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
                     ) : !nodes.data ? (
@@ -688,7 +722,7 @@ export function WorkbenchPage() {
             <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-5">
               <Panel className="flex min-w-0 flex-col xl:col-span-3">
                 <PanelHeader
-                  title={t("最近加入节点")}
+                  title={t("新增节点")}
                   meta={
                     <>
                       {formatCount(recentNodes.data?.total ?? 0)} {t("节点")}
@@ -824,7 +858,7 @@ export function WorkbenchPage() {
                   }
                 />
               ) : (
-                <div className="flex flex-col gap-4 px-4 py-4">
+                <div className="flex flex-col gap-4 px-5 py-4">
                   <div aria-hidden className="flex h-2 w-full overflow-hidden rounded-[2px] bg-paper-sunk">
                     {[
                       { key: "enabled", count: subscriptionState.enabled, className: "bg-signal" },
@@ -909,14 +943,14 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("热门区域")}
+                title={t("区域分布")}
                 meta={
                   <>
                     {formatCount(topRegions.length)} {t("地区")}
                   </>
                 }
               />
-              <div className="min-h-0 flex-1">
+                <div className="min-h-0 flex-1 px-4 py-3">
                 {topRegions.length === 0 ? (
                   <EmptyState className="h-full justify-center" title={t("暂无出口数据")} />
                 ) : (
@@ -982,7 +1016,7 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("流量概览")}
+                title={t("流量走势")}
                 meta={
                   <>
                     {t("窗口累计")} {formatBytes(windowVolume)}
@@ -1048,7 +1082,7 @@ export function WorkbenchPage() {
               rectangles would say they are four separate stories.
             */}
             <Panel className="flex min-w-0 flex-col">
-              <PanelHeader title={t("运行概况")} />
+              <PanelHeader title={t("关键指标")} />
               <div className="flex flex-col gap-3 p-4">
                 <Kpi
                   icon={Activity}
@@ -1091,7 +1125,7 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("最近变更")}
+                title={t("操作记录")}
                 actions={
                   <Button asChild variant="ghost" size="sm">
                     <Link to="/audit">{t("查看全部")}</Link>
@@ -1105,7 +1139,7 @@ export function WorkbenchPage() {
               ) : events.data.items.length === 0 ? (
                 <EmptyState className="flex-1 justify-center" title={t("暂无变更记录")} />
               ) : (
-                <ul className="flex flex-col px-2 py-1.5">
+                <ul className="flex flex-col px-4 py-3">
                   {events.data.items.map((entry) => {
                     const [method, route] = entry.action.split(" ");
                     const tone =
@@ -1147,14 +1181,14 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("节点延迟分布")}
+                title={t("延迟分布")}
                 meta={
                   <>
                     {t("节点数")} {formatCount(latency?.sample_count ?? 0)}
                   </>
                 }
               />
-              <div className="flex-1 py-1">
+              <div className="flex-1 px-4 py-3">
                 {snapshot.isError ? (
                   <ErrorState className="mx-4 my-3" message={offline} onRetry={() => void snapshot.refetch()} />
                 ) : !latency ? (
@@ -1171,6 +1205,40 @@ export function WorkbenchPage() {
           </div>
         </div>
       </div>
+      {/*
+        The expanded plate. It is the same map again at a size the panel cannot give
+        it, and it exists only while it is open: Radix mounts the portal on open and
+        gives it back on close, and `EgressMap` inits and disposes its chart with its
+        own mount. The two instances share the module-level outline cache, so the
+        second one draws without a second fetch.
+      */}
+      <DialogRoot open={mapExpanded} onOpenChange={setMapExpanded}>
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="flex min-h-[var(--panel-header-h)] items-center justify-between gap-3 border-b border-rule-faint px-4 py-2.5">
+              <DialogTitle>{t("出口分布")}</DialogTitle>
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon" aria-label={t("关闭")}>
+                  <X size={16} aria-hidden />
+                </Button>
+              </DialogClose>
+            </div>
+            {/* The same sea the plate draws on, under the same transparent canvas. */}
+            <div className="h-[min(72vh,640px)] w-[min(92vw,1160px)] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+              <Suspense fallback={chartFallback}>
+                <EgressMap
+                  regions={regions}
+                  origin={{
+                    region: info.data?.panel_egress_region,
+                    ip: info.data?.panel_egress_ip,
+                  }}
+                />
+              </Suspense>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
     </Page>
   );
 }

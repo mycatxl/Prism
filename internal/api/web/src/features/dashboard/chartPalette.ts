@@ -84,12 +84,15 @@ export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular",
  * sky, and a chart that read `--p-canvas` there would draw a pale rectangle inside
  * a dark panel.
  *
- * There is deliberately no sea colour here. The map's canvas is transparent, so
- * the panel's own ground *is* the sea and the world has no frame drawn around it;
- * that ground belongs to the pane itself (`.panel`), which is where a panel's
- * surface belongs. `land` and `coast` are the two values that are art rather than
- * token — the plate is read at three metres, and the gap between the filled
- * country and the sea is what makes the footprint legible at that distance.
+ * There is deliberately no sea colour here. The map's canvas is transparent, and
+ * the sea is painted *under* it: the plate's wrapper carries a two-token linear
+ * gradient (`--color-paper-inset` → `--color-live-wash`), which is a faintly blue
+ * sheet on paper and a deep navy one on the night board. So the ground belongs to
+ * the pane, where a panel's surface belongs, and it follows the theme — a sea
+ * colour declared here would be a literal that could not. `land` and `coast` are
+ * the two values that are art rather than token — the plate is read at three
+ * metres, and the gap between the filled country and the sea is what makes the
+ * footprint legible at that distance.
  * Everything a reader has to *interpret* — the tooltip's ink, the healthy signal —
  * is a dark-theme token, so the two halves stay one edit apart.
  */
@@ -149,9 +152,9 @@ export const MAP_DARK: MapPalette = {
   hubStroke: "rgba(11, 22, 47, 0.85)",
   origin: CHART_ACCENT_DARK,
   originStroke: "rgba(11, 22, 47, 0.85)",
-  originSize: 16,
-  hubMin: 6,
-  hubMax: 15,
+  originSize: 12,
+  hubMin: 4.5,
+  hubMax: 10,
   line: "#7fd6f0",
   lineTrail: "#d8f4ff",
   linePeriod: 5,
@@ -179,9 +182,9 @@ export const MAP_LIGHT: MapPalette = {
   hubStroke: "rgba(255, 255, 255, 0.9)",
   origin: CHART_ACCENT,
   originStroke: "rgba(255, 255, 255, 0.9)",
-  originSize: 16,
-  hubMin: 6,
-  hubMax: 15,
+  originSize: 12,
+  hubMin: 4.5,
+  hubMax: 10,
   line: "#2f6fa8",
   lineTrail: "#0b111e",
   linePeriod: 5,
