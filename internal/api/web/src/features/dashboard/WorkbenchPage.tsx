@@ -132,6 +132,90 @@ function stepDelta(values: number[]): number | null {
   return (latest - previous) / previous;
 }
 
+/** The write methods the audit trail can record. */
+type AlertMethod = "POST" | "PATCH" | "PUT" | "DELETE";
+
+/**
+ * The 告警 feed reads the audit log, so its sentences come from the write routes the
+ * API actually records — this is the audit trail, not a synthetic alert stream.
+ *
+ * The middleware stores `METHOD <route pattern>` verbatim (`auditAction` in
+ * `internal/api/audit.go`, e.g. `PATCH /api/v1/platforms/{id}`), so every key below is
+ * that pattern's own text, braces and all: the table matches the router literally and
+ * cannot drift from it. Each pattern maps the methods it accepts to one whole phrase
+ * key, because a composed "verb + noun" would have to borrow the noun's plural, unit
+ * and article from the dictionary, and those keys already carry the meaning the page
+ * that owns them needs.
+ */
+const ALERT_ACTIONS: Record<string, Partial<Record<AlertMethod, string>>> = {
+  // Subscriptions: the refresh and the circuit-open cleanup, then the record itself.
+  "/subscriptions/{id}/actions/refresh": { POST: "刷新订阅" },
+  "/subscriptions/{id}/actions/cleanup-circuit-open-nodes": { POST: "清理订阅熔断节点" },
+  "/subscriptions/{id}": { PATCH: "更新订阅", DELETE: "删除订阅" },
+  "/subscriptions": { POST: "新建订阅" },
+
+  // Nodes: the four single-node probes, and the probe that belongs to a shared IP.
+  "/nodes/{hash}/actions/probe-egress": { POST: "探测节点出口" },
+  "/nodes/{hash}/actions/probe-latency": { POST: "探测节点延迟" },
+  "/nodes/{hash}/actions/probe-quality": { POST: "探测节点质量" },
+  "/nodes/{hash}/actions/review-ippure": { POST: "复核节点纯净度" },
+  "/quality/ip/{ip}/actions/probe": { POST: "探测 IP 质量" },
+
+  // Platforms: the previews, the derived view, the reset and the leases.
+  "/platforms/preview-filter": { POST: "预览平台筛选" },
+  "/platforms/preview-scope": { POST: "预览平台范围" },
+  "/platforms/{id}/actions/reset-to-default": { POST: "重置平台" },
+  "/platforms/{id}/actions/rebuild-routable-view": { POST: "重建平台路由" },
+  "/platforms/{id}/leases/{account}/actions/rotate": { POST: "轮换平台租约" },
+  "/platforms/{id}/leases/{account}": { DELETE: "删除平台租约" },
+  "/platforms/{id}/leases": { DELETE: "清空平台租约" },
+  "/platforms/{id}": { PATCH: "更新平台", DELETE: "删除平台" },
+  "/platforms": { POST: "新建平台" },
+
+  // Intel: the jobs, the providers behind them and the checks they run.
+  "/intel/jobs/{id}/actions/cancel": { POST: "取消情报任务" },
+  "/intel/jobs/{id}/actions/retry-failed": { POST: "重试情报任务" },
+  "/intel/jobs": { POST: "新建情报任务" },
+  "/intel/providers/{id}/actions/resume": { POST: "恢复情报来源" },
+  "/intel/providers/{id}/actions/refresh": { POST: "刷新情报来源" },
+  "/intel/providers/{id}": { PATCH: "更新情报来源" },
+  "/intel/checks/{id}": { PATCH: "更新检测项" },
+
+  // The export profiles and the GeoIP dataset.
+  "/export-profiles/{id}/actions/rotate-token": { POST: "轮换导出令牌" },
+  "/export-profiles/{id}": { PATCH: "更新导出配置", DELETE: "删除导出配置" },
+  "/export-profiles": { POST: "新建导出配置" },
+  "/geoip/actions/update-now": { POST: "更新 GeoIP 数据" },
+  "/geoip/lookup": { POST: "查询 GeoIP" },
+
+  // The console's own settings and the account-header rules.
+  "/system/config": { PATCH: "更新系统配置" },
+  "/account-header-rules:resolve": { POST: "解析规则" },
+  "/account-header-rules/{prefix...}": { PUT: "更新规则", DELETE: "删除规则" },
+
+  // Endpoints last: their patterns share no prefix with anything above.
+  "/endpoints/{id}": { PATCH: "更新接入点", DELETE: "删除接入点" },
+  "/endpoints": { POST: "新建接入点" },
+};
+
+/**
+ * Splits an audit entry's `METHOD /api/v1/path` into the method chip and the phrase an
+ * operator reads. `phrase` is itself a translation key. A route the table does not know
+ * falls back to the route text with the API prefix stripped, so an unlisted endpoint
+ * still reads as itself rather than as a guessed verb.
+ */
+function alertPhrase(action: string): { method: AlertMethod | ""; phrase: string } {
+  const raw = action.trim();
+  if (!raw) {
+    return { method: "", phrase: "" };
+  }
+  const separator = raw.indexOf(" ");
+  const method = (separator < 0 ? raw : raw.slice(0, separator)) as AlertMethod | "";
+  const route = (separator < 0 ? "" : raw.slice(separator + 1).trim()).replace(/^\/api\/v1/, "");
+  const known = method === "" ? undefined : ALERT_ACTIONS[route]?.[method];
+  return { method, phrase: known ?? (route || raw) };
+}
+
 function subscribeOnline(callback: () => void) {
   window.addEventListener("online", callback);
   window.addEventListener("offline", callback);
@@ -227,19 +311,22 @@ function QuickAction({ to, icon: Icon, label }: { to: string; icon: typeof Activ
 /**
  * The overview: a bento board for the whole inventory.
  *
- * The composition is the F-scan the operators of Stripe, Linear and Vercel converge on:
- * the greeting band at the full width, then the four KPIs it is about as a strip of four
- * cards, then the chart that explains them, then the detail tables, then the band. Below
- * that top band the grid splits twelve columns eight/four: the main column is the data
- * story — where traffic leaves from and where it lands, what arrived last, how the
- * subscriptions are doing — and the side column holds the small, always-on panes:
- * instance state, the four destinations an operator reaches for mid-incident, the top
- * regions, the window's timeline, the latency shape and the change log. The asymmetry is
- * the point: a board of twelve equal rectangles makes every fact look equally important,
- * which is the same as saying nothing. The four KPIs used to be the last card in the side
- * column, which put the page's own headline figures in its least prominent place. The two
- * columns stack below `xl`, and every pane is a plain responsive panel — the board has no
- * pixel geometry of its own.
+ * The composition is the one the operator's reference board carries: the greeting band
+ * and its four chips at the full width, then a twelve-column split. The main column
+ * (eight) is the data story in the order a reader asks for it — where traffic leaves
+ * from (全球流量), the four KPI cards about that traffic (总请求数, 平均延迟, 错误率,
+ * 活跃租约) directly under the plate, then the newest arrivals and the subscription
+ * band. The side column (four) holds the small, always-on panes: instance state, the
+ * four destinations an operator reaches for mid-incident, 热门区域, 流量概览, the
+ * platform ring, the 告警 feed and 延迟分布. The asymmetry is the point: a board of
+ * twelve equal rectangles makes every fact look equally important, which is the same as
+ * saying nothing. The two columns stack below `xl`, and every pane is a plain responsive
+ * panel — the board has no pixel geometry of its own.
+ *
+ * Two lines of it live outside this file: the "所有系统运行正常" pill sits in the
+ * shell's own top bar (where the reference puts it, and where it shows on every route),
+ * and the 告警 feed is the audit log rendered as sentences rather than as
+ * `METHOD /path` — the phrase table above is that translation.
  *
  * Every figure here is fetched. A panel with nothing behind it renders its empty
  * state instead of a placeholder number, and every trend states its basis, because
@@ -640,60 +727,14 @@ export function WorkbenchPage() {
             </Panel>
           </div>
 
-          {/*
-            The four KPIs, out of the side column and into a full-width strip directly
-            under the hero: the board reads greeting → the four numbers → the chart that
-            explains them → the detail tables → the band. They used to be a four-row card
-            in the side column, which buried the page's own headline figures in its least
-            prominent place. Four cards across at `xl`, two at `sm`, stacked below that.
-          */}
-          <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 sm:grid-cols-2 xl:col-span-12 xl:grid-cols-4">
-            <Kpi
-              icon={Activity}
-              tone="accent"
-              label={t("总请求数")}
-              value={formatCount(windowRequests.total)}
-              trend={halfDelta(requestSeries)}
-              basis={basisHalf}
-              series={requestSeries}
-            />
-            <Kpi
-              icon={Gauge}
-              tone="live"
-              label={t("平均延迟")}
-              value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
-              trend={halfDelta(latencySeries)}
-              basis={latencyBasis}
-              series={latencySeries}
-            />
-            <Kpi
-              icon={CircleAlert}
-              tone="alert"
-              label={t("错误率")}
-              value={errorRate === null ? PLACEHOLDER : formatPercent(errorRate)}
-              trend={halfDelta(errorSeries)}
-              basis={basisHalf}
-              series={errorSeries}
-            />
-            <Kpi
-              icon={Zap}
-              tone="signal"
-              label={t("活跃租约")}
-              value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
-              trend={stepDelta(leaseSeries)}
-              basis={basisStep}
-              series={leaseSeries}
-            />
-          </div>
-
-          {/* The main column: the data story, from "where does traffic leave from" to
-              "what arrived last". */}
+          {/* The main column: the map, the four numbers about the traffic it draws, the
+              newest arrivals and the subscription band — the data story, from "where does
+              traffic leave from" to "what arrived last". */}
           <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8">
             {/*
-              The plate, at the main column's full width. The region table that reads
-              the same six rows lives in its own panel in the side column: the map is
-              the summary and the table is the data, and the two are still one story,
-              but neither is squeezed into half a pane to say so.
+              The plate, at the main column's full width. The region table that reads the
+              same six rows is its own panel in the side column: the map is the summary and
+              the table is the data, and the two are still one story.
             */}
             <Panel className="flex min-w-0 flex-col">
               <div className="wb-plate grid min-h-0 flex-1">
@@ -701,7 +742,7 @@ export function WorkbenchPage() {
                   <div className="wb-plate-head">
                     <span className="wb-live-dot" aria-hidden />
                     <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
-                      {t("出口分布")}
+                      {t("全球流量")}
                     </h2>
                     <span className="label shrink-0 whitespace-nowrap">
                       {formatCount(regions.length)} {t("地区")}
@@ -773,114 +814,124 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            {/* The two table-shaped panes share one row: the newest nodes, and the
-                platforms the pool is grouped by. */}
-            <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-5">
-              <Panel className="flex min-w-0 flex-col xl:col-span-3">
-                <PanelHeader
-                  title={t("新增节点")}
-                  meta={
-                    <>
-                      {formatCount(recentNodes.data?.total ?? 0)} {t("节点")}
-                    </>
-                  }
-                  actions={
-                    <Button asChild variant="ghost" size="sm">
-                      <Link to="/nodes">{t("查看全部")}</Link>
-                    </Button>
-                  }
-                />
-                {recentNodes.isError ? (
-                  <ErrorState className="my-4 mx-4" message={offline} onRetry={() => void recentNodes.refetch()} />
-                ) : !recentNodes.data ? (
-                  <LoadingState className="my-6" label={t("正在加载")} />
-                ) : recentNodes.data.items.length === 0 ? (
-                  <EmptyState className="flex-1 justify-center" title={t("建立你的第一个节点池")} />
-                ) : (
-                  <TableWrap>
-                    <Table>
-                      <THead>
-                        <TR>
-                          <TH>{t("节点")}</TH>
-                          <TH>{t("地区")}</TH>
-                          <TH>{t("出口 IP")}</TH>
-                          <TH className="text-right">{t("延迟")}</TH>
-                          <TH className="text-right">{t("失败次数")}</TH>
-                          <TH>{t("状态")}</TH>
-                        </TR>
-                      </THead>
-                      <TBody>
-                        {recentNodes.data.items.map((node) => {
-                          const state = node.circuit_open_since
-                            ? { tone: "alert" as const, label: t("熔断") }
-                            : !node.enabled
-                              ? { tone: "neutral" as const, label: t("已停用") }
-                              : !node.has_outbound
-                                ? { tone: "warn" as const, label: t("无出口") }
-                                : { tone: "signal" as const, label: t("正常") };
-                          return (
-                            <TR key={node.node_hash}>
-                              <TDClip className="max-w-[16rem] font-medium" title={node.display_tag ?? node.node_hash}>
-                                {node.display_tag || node.node_hash.slice(0, 12)}
-                              </TDClip>
-                              <TD className="text-ink-soft">{node.region || PLACEHOLDER}</TD>
-                              <TD className="readout text-ink-soft">{node.egress_ip || PLACEHOLDER}</TD>
-                              <TDNum>
-                                {node.reference_latency_ms === undefined
-                                  ? PLACEHOLDER
-                                  : formatLatency(node.reference_latency_ms)}
-                              </TDNum>
-                              <TDNum className="text-ink-faint">{formatCount(node.failure_count)}</TDNum>
-                              <TD>
-                                <Badge tone={state.tone} dot>
-                                  {state.label}
-                                </Badge>
-                              </TD>
-                            </TR>
-                          );
-                        })}
-                      </TBody>
-                    </Table>
-                  </TableWrap>
-                )}
-              </Panel>
-
-              <Panel className="flex min-w-0 flex-col xl:col-span-2">
-                <PanelHeader
-                  title={t("平台分布")}
-                  meta={
-                    <>
-                      {formatCount(platforms.data?.total ?? 0)} {t("平台")}
-                    </>
-                  }
-                  actions={
-                    <Button asChild variant="ghost" size="sm">
-                      <Link to="/platforms">{t("查看全部")}</Link>
-                    </Button>
-                  }
-                />
-                {platforms.isError ? (
-                  <ErrorState className="mx-4 my-3" message={offline} onRetry={() => void platforms.refetch()} />
-                ) : !platforms.data ? (
-                  <LoadingState className="my-6" label={t("正在加载")} />
-                ) : platformSlices.length === 0 ? (
-                  <EmptyState
-                    className="flex-1 justify-center"
-                    title={t("无平台")}
-                    hint={t("创建平台以聚合节点")}
-                    action={
-                      <Button asChild variant="primary">
-                        <Link to="/platforms">{t("创建平台")}</Link>
-                      </Button>
-                    }
-                  />
-                ) : (
-                  <div className="px-4 py-3">
-                    <Donut slices={platformSlices} centerValue={formatCount(platforms.data.total)} centerLabel={t("平台")} />
-                  </div>
-                )}
-              </Panel>
+            {/*
+              The four KPIs, in the main column directly under the plate: the board reads
+              greeting → where traffic leaves from → the four numbers about that traffic →
+              the tables → the band. They used to be a full-width strip between the hero and
+              the split; the reference board carries them under the map, in the map's own
+              column, and that is where they read as the plate's own figures. Four across at
+              `xl`, two at `sm`, stacked below that.
+            */}
+            <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 sm:grid-cols-2 xl:grid-cols-4">
+              <Kpi
+                icon={Activity}
+                tone="accent"
+                label={t("总请求数")}
+                value={formatCount(windowRequests.total)}
+                trend={halfDelta(requestSeries)}
+                basis={basisHalf}
+                series={requestSeries}
+              />
+              <Kpi
+                icon={Gauge}
+                tone="live"
+                label={t("平均延迟")}
+                value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
+                trend={halfDelta(latencySeries)}
+                basis={latencyBasis}
+                series={latencySeries}
+              />
+              <Kpi
+                icon={CircleAlert}
+                tone="alert"
+                label={t("错误率")}
+                value={errorRate === null ? PLACEHOLDER : formatPercent(errorRate)}
+                trend={halfDelta(errorSeries)}
+                basis={basisHalf}
+                series={errorSeries}
+              />
+              <Kpi
+                icon={Zap}
+                tone="signal"
+                label={t("活跃租约")}
+                value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
+                trend={stepDelta(leaseSeries)}
+                basis={basisStep}
+                series={leaseSeries}
+              />
             </div>
+
+            {/* The newest arrivals, at the main column's full width: the plate above is
+                the pool summarised, and this table is the rows it grew by — the newest
+                nodes the API returned, newest first, each one a real record. */}
+            <Panel className="flex min-w-0 flex-col">
+              <PanelHeader
+                title={t("最近加入节点")}
+                meta={
+                  <>
+                    {formatCount(recentNodes.data?.total ?? 0)} {t("节点")}
+                  </>
+                }
+                actions={
+                  <Button asChild variant="ghost" size="sm">
+                    <Link to="/nodes">{t("查看全部")}</Link>
+                  </Button>
+                }
+              />
+              {recentNodes.isError ? (
+                <ErrorState className="my-4 mx-4" message={offline} onRetry={() => void recentNodes.refetch()} />
+              ) : !recentNodes.data ? (
+                <LoadingState className="my-6" label={t("正在加载")} />
+              ) : recentNodes.data.items.length === 0 ? (
+                <EmptyState className="flex-1 justify-center" title={t("建立你的第一个节点池")} />
+              ) : (
+                <TableWrap>
+                  <Table>
+                    <THead>
+                      <TR>
+                        <TH>{t("节点")}</TH>
+                        <TH>{t("地区")}</TH>
+                        <TH>{t("出口 IP")}</TH>
+                        <TH className="text-right">{t("延迟")}</TH>
+                        <TH className="text-right">{t("失败次数")}</TH>
+                        <TH>{t("状态")}</TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {recentNodes.data.items.map((node) => {
+                        const state = node.circuit_open_since
+                          ? { tone: "alert" as const, label: t("熔断") }
+                          : !node.enabled
+                            ? { tone: "neutral" as const, label: t("已停用") }
+                            : !node.has_outbound
+                              ? { tone: "warn" as const, label: t("无出口") }
+                              : { tone: "signal" as const, label: t("正常") };
+                        return (
+                          <TR key={node.node_hash}>
+                            <TDClip className="max-w-[16rem] font-medium" title={node.display_tag ?? node.node_hash}>
+                              {node.display_tag || node.node_hash.slice(0, 12)}
+                            </TDClip>
+                            <TD className="text-ink-soft">{node.region || PLACEHOLDER}</TD>
+                            <TD className="readout text-ink-soft">{node.egress_ip || PLACEHOLDER}</TD>
+                            <TDNum>
+                              {node.reference_latency_ms === undefined
+                                ? PLACEHOLDER
+                                : formatLatency(node.reference_latency_ms)}
+                            </TDNum>
+                            <TDNum className="text-ink-faint">{formatCount(node.failure_count)}</TDNum>
+                            <TD>
+                              <Badge tone={state.tone} dot>
+                                {state.label}
+                              </Badge>
+                            </TD>
+                          </TR>
+                        );
+                      })}
+                    </TBody>
+                  </Table>
+                </TableWrap>
+              )}
+            </Panel>
 
             {/* The subscription band, at the main column's full width: the bar reads
                 as one proportion and the three readouts state its parts. */}
@@ -945,20 +996,14 @@ export function WorkbenchPage() {
           {/* The side column: the always-on panes. */}
           <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-4">
             {/*
-              Instance state, in one card: the plain-language status line, the
-              badge the shell also shows, the version, the two pool readouts and
-              when the snapshot was taken. The figures used to be split between
-              this pane and a folded one; they are one region now.
+              Instance state, in one compact card: the badge the shell also shows, the
+              version, the two pool readouts and when the snapshot was taken. The
+              plain-language "all systems operational" line that used to head this pane
+              lives in the top bar now, where the reference board carries it — the same
+              sentence on every route, in the one place a reader already looks.
             */}
             <Panel className="min-w-0 p-4">
-              <div className="wb-status-card">
-                <span className="wb-status-dot" aria-hidden />
-                <div className="min-w-0">
-                  <div className="wb-status-title">{t("所有系统运行正常")}</div>
-                  <div className="wb-status-desc">{t("无活动事件")}</div>
-                </div>
-              </div>
-              <div className="mt-3 flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5">
                 <Badge tone={instanceState.tone} dot>
                   {instanceState.label}
                 </Badge>
@@ -999,7 +1044,7 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("区域分布")}
+                title={t("热门区域")}
                 meta={
                   <>
                     {formatCount(topRegions.length)} {t("地区")}
@@ -1072,7 +1117,7 @@ export function WorkbenchPage() {
 
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("流量走势")}
+                title={t("流量概览")}
                 meta={
                   <>
                     {t("窗口累计")} {formatBytes(windowVolume)}
@@ -1132,9 +1177,53 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
+            {/* The platform ring, under the window's timeline and above the alert feed: it
+                summarises how the pool is grouped, one slice per platform. */}
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
-                title={t("操作记录")}
+                title={t("平台分布")}
+                meta={
+                  <>
+                    {formatCount(platforms.data?.total ?? 0)} {t("平台")}
+                  </>
+                }
+                actions={
+                  <Button asChild variant="ghost" size="sm">
+                    <Link to="/platforms">{t("查看全部")}</Link>
+                  </Button>
+                }
+              />
+              {platforms.isError ? (
+                <ErrorState className="mx-4 my-3" message={offline} onRetry={() => void platforms.refetch()} />
+              ) : !platforms.data ? (
+                <LoadingState className="my-6" label={t("正在加载")} />
+              ) : platformSlices.length === 0 ? (
+                <EmptyState
+                  className="flex-1 justify-center"
+                  title={t("无平台")}
+                  hint={t("创建平台以聚合节点")}
+                  action={
+                    <Button asChild variant="primary">
+                      <Link to="/platforms">{t("创建平台")}</Link>
+                    </Button>
+                  }
+                />
+              ) : (
+                <div className="px-4 py-3">
+                  <Donut slices={platformSlices} centerValue={formatCount(platforms.data.total)} centerLabel={t("平台")} />
+                </div>
+              )}
+            </Panel>
+
+            {/*
+              The 告警 feed: the audit log, newest first, each row a phrase an operator reads
+              instead of a route pattern. Every entry is a write the API actually recorded —
+              this is the audit trail, not a synthetic alert stream — and the raw
+              `METHOD /path` record stays in the row's own `title` for anyone who wants it.
+            */}
+            <Panel className="flex min-w-0 flex-col">
+              <PanelHeader
+                title={t("告警")}
                 actions={
                   <Button asChild variant="ghost" size="sm">
                     <Link to="/audit">{t("查看全部")}</Link>
@@ -1150,11 +1239,14 @@ export function WorkbenchPage() {
               ) : (
                 <ul className="flex flex-col px-4 py-3">
                   {events.data.items.map((entry) => {
-                    const [method, route] = entry.action.split(" ");
+                    const { method, phrase } = alertPhrase(entry.action);
+                    /* The method's own tone, kept: a deletion is the one row that can be a
+                       loss, so it reads in `alert`; the writes that create or update state
+                       read in `signal`, and everything else in `live`. */
                     const tone =
                       method === "DELETE"
                         ? ("alert" as const)
-                        : method === "POST"
+                        : method === "POST" || method === "PUT"
                           ? ("signal" as const)
                           : ("live" as const);
                     const toneClass = {
@@ -1165,15 +1257,14 @@ export function WorkbenchPage() {
                     return (
                       <li
                         key={entry.id}
+                        title={entry.action}
                         className="flex items-start gap-2.5 rounded-control px-2 py-1.5 transition-colors hover:bg-glass"
                       >
                         <span aria-hidden className={`readout shrink-0 pt-0.5 text-2xs ${toneClass}`}>
                           {method || PLACEHOLDER}
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs text-ink" title={route ?? ""}>
-                            {route ? route.replace(/^\/api\/v1\//, "") : entry.action}
-                          </span>
+                          <span className="block truncate text-xs text-ink">{t(phrase)}</span>
                           <span className="block truncate text-2xs text-ink-faint">
                             {entry.target || entry.remote_addr || PLACEHOLDER}
                           </span>
@@ -1226,7 +1317,7 @@ export function WorkbenchPage() {
           <DialogOverlay />
           <DialogContent>
             <div className="flex min-h-[var(--panel-header-h)] items-center justify-between gap-3 border-b border-rule-faint px-4 py-2.5">
-              <DialogTitle>{t("出口分布")}</DialogTitle>
+              <DialogTitle>{t("全球流量")}</DialogTitle>
               <DialogClose asChild>
                 <Button variant="ghost" size="icon" aria-label={t("关闭")}>
                   <X size={16} aria-hidden />
