@@ -181,6 +181,8 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Panel egress",
   "流量从这里分发到各节点区域。":
     "Traffic dispatches from here to the node regions.",
+  "地图展示真实出口区域与节点关系。":
+    "The map shows real egress regions and node relationships.",
   /* The plate's own control: the same map again, in the dialog at full size. */
   "展开大屏":
     "Expand view",
