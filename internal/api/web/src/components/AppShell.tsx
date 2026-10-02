@@ -297,10 +297,10 @@ export function AppShell() {
 
   return (
     <div className="wb-shell-root flex h-dvh overflow-hidden bg-transparent text-ink">
-      <div className="hidden lg:flex">{rail}</div>
+      <div className="hidden min-[1024px]:flex">{rail}</div>
 
       {mobileNavOpen && (
-        <div className="fixed inset-0 z-50 flex lg:hidden">
+        <div className="fixed inset-0 z-50 flex min-[1024px]:hidden">
           <div className="w-[var(--shell-rail-w)]">{rail}</div>
           <button
             type="button"
@@ -316,7 +316,7 @@ export function AppShell() {
           <Button
             variant="ghost"
             size="icon"
-            className="lg:hidden"
+            className="min-[1024px]:hidden"
             onClick={() => setMobileNavOpen((open) => !open)}
             aria-label={t("打开导航")}
             aria-expanded={mobileNavOpen}

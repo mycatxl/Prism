@@ -157,7 +157,7 @@ export function Readout({
           <span className={cn("numeral", sizeClass, toneClass)}>{value}</span>
         )}
         {unit && <span className="label readout">{unit}</span>}
-        {delta && <span className="ml-auto shrink-0">{delta}</span>}
+        {delta && <span className="ml-auto shrink-0 text-right">{delta}</span>}
       </div>
       {hint && <div className="mt-1 truncate text-xs text-ink-faint">{hint}</div>}
     </div>
@@ -172,9 +172,8 @@ export function ReadoutStrip({ children, className }: { children: ReactNode; cla
     <div className={cn("panel flex flex-wrap divide-x divide-rule-faint overflow-hidden", className)}>
       {children}
     </div>
-  );
-}
-
+    );
+  }
 export function ReadoutCell({ children, className }: { children: ReactNode; className?: string }) {
   return <div className={cn("min-w-[9.5rem] flex-1 px-4 py-3.5", className)}>{children}</div>;
 }

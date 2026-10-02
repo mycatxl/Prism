@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useMemo, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
   Activity,
-  CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   Gauge,
+  CheckCircle2,
   Maximize2,
   Server,
   Share2,
@@ -291,6 +291,36 @@ function Kpi({
       </div>
       <Sparkline values={series} tone={tone} className="mt-2" />
     </Panel>
+  );
+}
+
+/** A hero readout uses the shared KPI primitive without inventing a trend. */
+function HeroMetric({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  icon: typeof Activity;
+  label: ReactNode;
+  value: ReactNode;
+  hint?: ReactNode;
+  tone: "accent" | "signal" | "live" | "alert";
+}) {
+  const iconTone = {
+    accent: "bg-accent-wash text-accent",
+    signal: "bg-signal-wash text-signal",
+    live: "bg-live-wash text-live",
+    alert: "bg-alert-wash text-alert",
+  }[tone];
+  return (
+    <div className="wb-metric-chip">
+      <span aria-hidden className={`wb-metric-icon-box ${iconTone}`}>
+        <Icon size={17} />
+      </span>
+      <Readout className="min-w-0 flex-1" label={label} value={value} hint={hint} size="sm" />
+    </div>
   );
 }
 
@@ -663,66 +693,31 @@ export function WorkbenchPage() {
               </div>
 
               <div className="wb-metric-chips">
-                <div className="wb-metric-chip">
-                  <div className="wb-metric-icon-box wb-icon-server">
-                    <Server size={18} className="text-white" aria-hidden />
-                  </div>
-                  <div className="wb-metric-content">
-                    <div className="wb-metric-val-row">
-                      <span className="wb-metric-val numeral">
-                        {pool ? formatCount(pool.total_nodes) : "142"}
-                      </span>
-                      <span className="wb-metric-badge-neutral">+2</span>
-                    </div>
-                    <span className="wb-metric-label">{t("节点总数")}</span>
-                  </div>
-                </div>
-
-                <div className="wb-metric-chip">
-                  <div className="wb-metric-icon-box wb-icon-emerald">
-                    <CheckCircle2 size={18} className="text-emerald-400" aria-hidden />
-                  </div>
-                  <div className="wb-metric-content">
-                    <div className="wb-metric-val-row">
-                      <span className="wb-metric-val wb-text-emerald numeral">
-                        {pool ? formatCount(poolHealthy) : "138"}
-                      </span>
-                      <span className="wb-metric-badge-green">
-                        {pool ? formatPercent(poolHealthy / (pool.total_nodes || 1)) : "97.2%"}
-                      </span>
-                    </div>
-                    <span className="wb-metric-label">{t("健康节点")}</span>
-                  </div>
-                </div>
-
-                <div className="wb-metric-chip">
-                  <div className="wb-metric-icon-box wb-icon-cyan">
-                    <Activity size={18} className="text-cyan-400" aria-hidden />
-                  </div>
-                  <div className="wb-metric-content">
-                    <div className="wb-metric-val-row">
-                      <span className="wb-metric-val numeral">
-                        {windowSuccessRate === null ? "97.2%" : formatPercent(windowSuccessRate)}
-                      </span>
-                      <span className="wb-metric-badge-up">▲ 0.4%</span>
-                    </div>
-                    <span className="wb-metric-label">{t("成功率")}</span>
-                  </div>
-                </div>
-                <div className="wb-metric-chip">
-                  <div className="wb-metric-icon-box wb-icon-blue">
-                    <Zap size={18} className="text-blue-400" aria-hidden />
-                  </div>
-                  <div className="wb-metric-content">
-                    <div className="wb-metric-val-row">
-                      <span className="wb-metric-val numeral">
-                        {averageLatency === null ? "28 ms" : formatLatency(averageLatency)}
-                      </span>
-                      <span className="wb-metric-badge-down">▼ 4 ms</span>
-                    </div>
-                    <span className="wb-metric-label">{t("平均延迟")}</span>
-                  </div>
-                </div>
+                <HeroMetric
+                  icon={Server}
+                  tone="accent"
+                  label={t("节点总数")}
+                  value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
+                />
+                <HeroMetric
+                  icon={CheckCircle2}
+                  tone="signal"
+                  label={t("健康节点")}
+                  value={pool ? formatCount(poolHealthy) : PLACEHOLDER}
+                  hint={pool ? formatPercent(poolHealthy / (pool.total_nodes || 1)) : undefined}
+                />
+                <HeroMetric
+                  icon={Activity}
+                  tone="live"
+                  label={t("成功率")}
+                  value={windowSuccessRate === null ? PLACEHOLDER : formatPercent(windowSuccessRate)}
+                />
+                <HeroMetric
+                  icon={Zap}
+                  tone="accent"
+                  label={t("平均延迟")}
+                  value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
+                />
               </div>
             </Panel>
           </div>

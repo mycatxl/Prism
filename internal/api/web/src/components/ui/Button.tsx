@@ -14,20 +14,20 @@ import { cn } from "../../lib/cn";
  *   loading   the `loading` prop: a spinner *and* `disabled` *and* `aria-busy`
  */
 const button = cva(
-  "action inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-control font-medium select-none disabled:pointer-events-none disabled:opacity-45",
+  "action inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-control border border-transparent font-medium select-none disabled:pointer-events-none disabled:opacity-45",
   {
     variants: {
       variant: {
         primary:
           "bg-accent text-on-accent shadow-xs hover:bg-accent-deep active:bg-accent-deep",
         secondary:
-          "border border-glass-edge bg-glass text-ink shadow-[inset_0_1px_0_0_var(--color-glass-highlight)] hover:border-glass-edge-strong hover:bg-glass-strong active:border-glass-edge-strong active:bg-glass-strong",
+          "border-glass-edge bg-glass text-ink shadow-[inset_0_1px_0_0_var(--color-glass-highlight)] hover:border-glass-edge-strong hover:bg-glass-strong active:border-glass-edge-strong active:bg-glass-strong",
         ghost:
-          "bg-transparent text-ink-soft hover:bg-glass hover:text-ink active:bg-glass-strong active:text-ink",
+          "bg-transparent text-ink-soft hover:border-glass-edge hover:bg-glass hover:text-ink active:bg-glass-strong active:text-ink",
         danger:
-          "bg-alert text-on-alert shadow-xs hover:brightness-95 active:brightness-90",
+          "border-alert/40 bg-alert text-on-alert shadow-xs hover:brightness-95 active:brightness-90",
         quiet:
-          "border border-transparent text-ink-soft hover:text-ink active:text-ink",
+          "border-transparent text-ink-soft hover:border-glass-edge hover:text-ink active:text-ink",
       },
       size: {
         sm: "h-[var(--control-h-sm)] px-2.5 text-xs",
