@@ -360,18 +360,24 @@ function buildOption({
       roam: false,
       silent: false,
       /*
-       * No insets and no explicit box. With all four sides left unset, ECharts fits
-       * the projection into the panel preserving its aspect ratio and centres it,
-       * which is what the plate wants now that it spans the main column: the sea
-       * shows either side of the continent group and nothing is stretched.
+       * The four sides are pinned to zero on purpose. With all four set, ECharts
+       * stretches the projection to fill the box instead of fitting it into it — which
+       * is only safe because the box already carries the map's own ratio
+       * (`aspect-[259/100]` on the wrapper in `WorkbenchPage.tsx`). At that ratio
+       * "stretch to the box" and "fit the projection" are the same operation, so the
+       * world fills the card edge to edge with no dead sea at the flanks, no distortion,
+       * and no auto-fit padding ECharts would otherwise leave around the outline.
        *
-       * What this replaced: four percentage insets measured for the old half-column
-       * plate. Their whole point was to make the panel's box *be* the land bounding
-       * box — with all four set, ECharts stretches the projection to fill the box
-       * instead of fitting it. At the column's full width the same numbers were a
-       * stretch factor: the projection widened with the panel and the southern
-       * edge ran out of the plate.
+       * What this replaced: four left-unset sides, which made ECharts fit the projection
+       * preserving its aspect ratio and centre it — the right answer while the box was a
+       * fixed height that could not track the width. Before that, four measured percentage
+       * insets made the panel's box *be* the land bounding box, and at the column's full
+       * width the same numbers widened the world and cut off its southern edge.
        */
+      left: 0,
+      top: 0,
+      right: 0,
+      bottom: 0,
       itemStyle: {
         areaColor: palette.land,
         borderColor: palette.coast,

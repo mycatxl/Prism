@@ -236,9 +236,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Estimated from the histogram's bin upper bounds",
   "流量走势":
     "Traffic trend",
-  // The KPI card: four readings of one window, in one card.
-  "关键指标":
-    "Key metrics",
   "窗口累计":
     "Window total",
   "入口流量":

@@ -60,7 +60,8 @@ export function DialogOverlay({ className, ...rest }: ComponentProps<typeof Dial
 }
 
 /**
- * The surface: an elevated glass sheet, centred, with generous radius.
+ * The surface: an elevated glass sheet, centred, at `--radius-panel` — the same 20px a
+ * pane carries, so an overlay opened from a pane reads as the same material.
  *
  * It takes the width of its own body rather than naming one — a dialog that holds
  * a chart is as wide as that chart's frame, and a dialog that holds a sentence is
@@ -71,7 +72,7 @@ export function DialogContent({ className, ...rest }: ComponentProps<typeof Dial
   return (
     <DialogPrimitive.Content
       className={cn(
-        "fixed top-1/2 left-1/2 z-50 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-xl border border-glass-edge bg-paper-elevated shadow-lg focus:outline-none",
+        "fixed top-1/2 left-1/2 z-50 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-panel border border-glass-edge bg-paper-elevated shadow-lg focus:outline-none",
         className,
       )}
       {...rest}

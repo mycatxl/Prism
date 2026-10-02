@@ -56,15 +56,22 @@ bound a reviewer can check, and the bound is the rule — not the technique.
 
 - **Glass.** Blur has one job: separating a pane from the ground. **Two values are
   sanctioned, both declared in `design.css`** — the card blur `--p-glass-blur`
-  (`blur(14px) saturate(…)`, used by `.panel`, `.glass-bar`, `.glass-rail`,
-  `.glass-elevated` and the sticky `.data-grid` head) and the chrome-strip blur
-  (`backdrop-blur-md`, 12px) on the two bands that float over scrolling content, the
-  page header and the toast. A third value is a bug.
+  (`blur(24px) saturate(140%)` on paper, `blur(22px) saturate(160%)` at night: one
+  material, tighter and more saturated over a near-black ground, and used by `.panel`,
+  `.glass-bar`, `.glass-rail`, `.glass-elevated` and the sticky `.data-grid` head) and
+  the chrome-strip blur (`backdrop-blur-md`, 12px) on the two bands that float over
+  scrolling content, the page header and the toast. A third value is a bug. The
+  frosted-glass pass is the reason the fills are as faint as they are: a pane is a
+  *frosted* card, so it shows the ground through it (0.58 white on paper, 0.085 at
+  night), it carries the 1px inner top rim-light that reads as the lit lip of the
+  glass, and what it frosts is the ambient colour wash painted *behind* it
+  (`--p-ground-glow`, on the body's own ground).
 - **Lift.** Soft shadows are real in both themes, because a pane floats over a lit
   ground: `shadow-md` on a pane, `shadow-lg` on an overlay. The step is a hierarchy
   decision, never a per-page one.
 - **Gradient fill, on exactly two surfaces**: the ground glow (`--p-ground-glow`,
-  radial washes at ≤8% alpha, fixed attachment) and the hero pane
+  radial washes at ≤8% alpha on paper and ≤11% at night, fixed attachment — the
+  ambient wash behind the glass, not a halo) and the hero pane
   (`.hero-gradient`, 135°). Anywhere else a fill is flat, and text is never filled.
 - **The KPI row.** A row of large numerals is allowed *because* every figure in it is a
   fetched value with a named basis, and its card also carries the series or the
@@ -95,7 +102,7 @@ there is no flash of the wrong ground.
 ### The contrast truth rule
 
 A glass pane is translucent, and a contrast gate cannot measure
-`rgba(255,255,255,0.045)`. So the six surface primitives — `canvas`, `sunk`, `raised`,
+`rgba(255,255,255,0.085)`. So the six surface primitives — `canvas`, `sunk`, `raised`,
 `inset`, `rail`, `elevated` — are **opaque hex values equal to the composited glass over
 the canvas**:
 
@@ -103,27 +110,35 @@ the canvas**:
 surface = fill_alpha × fill_color + (1 − fill_alpha) × canvas      (rounded to #rrggbb)
 ```
 
+Each pane surface is the *same glass* as the pane's own fill at a fixed fraction of its
+alpha — `raised` is `glass`, `rail` 7/8 of it, `inset` 3/4 of it, `elevated` is
+`glass-strong` — which keeps the surfaces' ordering intact when an alpha moves instead of
+letting a nested pane out-opaque its parent. `sunk` is the exception: on paper it is a
+3.5% wash of `#101828` (a recess is *darker* than the ground) and at night it is 0.8 of
+`glass-strong` (a recess is *lighter* there), so it reads no fill alpha and survives an
+alpha change unchanged.
+
 The gate in `scripts/check-contrast.mjs` then measures the ink against what the
 operator actually sees, and the translucent `--p-glass*` tokens are used for fills
-only. Changing a glass alpha means re-solving the surface pair, and the gate is what
-tells you.
+only. Changing a glass alpha means re-solving the surfaces beside it, and the gate is
+what tells you.
 
 ### Surfaces, material and rules
 
 | Token | Light | Dark | Purpose |
 |---|---|---|---|
 | `canvas` | `#f4f6fb` | `#070d1a` | The ground the panes float over |
-| `sunk` | `#eceef4` | `#161c28` | Sunk areas: wells, insets |
-| `raised` | `#fcfcfe` | `#121824` | The pane's own composited fill |
-| `inset` | `#fafbfd` | `#0e1420` | Chart and map ground |
-| `rail` | `#fbfcfd` | `#101522` | **Second neutral layer**: navigation |
-| `elevated` | `#fefeff` | `#1a1f2b` | Overlays: sheet, palette, tooltip |
-| `glass` | `rgba(255,255,255,.72)` | `rgba(255,255,255,.045)` | A pane's fill (translucent) |
-| `glass-strong` | `rgba(255,255,255,.88)` | `rgba(255,255,255,.075)` | Chrome bands, sticky table head |
-| `glass-edge` | `rgba(16,24,40,.08)` | `rgba(255,255,255,.09)` | The pane's 1px edge. **A region is bordered** |
-| `glass-edge-strong` | `rgba(16,24,40,.15)` | `rgba(255,255,255,.16)` | Edge on hover, overlay edges |
-| `glass-highlight` | `rgba(255,255,255,.86)` | `rgba(255,255,255,.06)` | Inner top highlight: the pane's lip |
-| `ground-glow` | indigo/violet radials ≤6% | indigo/violet radials ≤8% | The ground's light |
+| `sunk` | `#eceef4` | `#212632` | Sunk areas: wells, insets |
+| `raised` | `#fafbfd` | `#1c222d` | The pane's own composited fill |
+| `inset` | `#f9fafd` | `#141a26` | Chart and map ground |
+| `rail` | `#fafbfd` | `#171d29` | **Second neutral layer**: navigation |
+| `elevated` | `#fdfdfe` | `#272c38` | Overlays: sheet, palette, tooltip |
+| `glass` | `rgba(255,255,255,.58)` | `rgba(255,255,255,.085)` | A pane's fill (translucent) |
+| `glass-strong` | `rgba(255,255,255,.78)` | `rgba(255,255,255,.13)` | Chrome bands, sticky table head |
+| `glass-edge` | `rgba(16,24,40,.09)` | `rgba(255,255,255,.11)` | The pane's 1px edge. **A region is bordered** |
+| `glass-edge-strong` | `rgba(16,24,40,.16)` | `rgba(255,255,255,.19)` | Edge on hover, overlay edges |
+| `glass-highlight` | `rgba(255,255,255,.86)` | `rgba(255,255,255,.11)` | The inner top rim-light: the pane's lit lip, drawn as `inset 0 1px 0 0` ahead of the elevation |
+| `ground-glow` | indigo/violet radials ≤8% | indigo/violet radials ≤11% | The ambient colour wash *behind* the glass, painted on the ground |
 | `rule` | `#d5dbe6` | `#2a3447` | Hairline |
 | `rule-strong` | `#9fa9ba` | `#46556e` | Emphasis rule |
 | `rule-faint` | `#e4e8f1` | `#1f2737` | Barely-there rule |
@@ -147,7 +162,7 @@ tells you.
 | `alert` | `#a42214` | `#e68277` | Risk, failure |
 | `accent` | `#4338ca` | `#818cf8` | **Interaction only**: primary action, current selection, focus ring |
 | `accent-deep` | `#312e81` | `#6875f5` | Accent pressed / emphasised |
-| `accent-wash` | `#e6e8fc` | `#191f45` | Tinted ground for a selection |
+| `accent-wash` | `#e6e8fc` | `#1c2456` | Tinted ground for a selection. The night value moved with the frosted pass: the pane's own fill got lighter (`raised`), and a selection wash that measures 1.005:1 against the pane is not a fill — it is the pane. It now sits 1.09:1 from `raised`, in step with the four state washes (1.08–1.12:1), with the accent on it at 4.90:1 |
 | `accent-lift` | `#6d28d9` | `#a78bfa` | The hero gradient's far stop. **Never text, never a state** |
 | `*-wash` | `#dbf0e8` `#dcecf6` `#f7ecd4` `#f9e3df` | `#0d2f23` `#0d2e3f` `#382609` `#491812` | Tinted ground for a state |
 | `on-*` | `#ffffff` | `#070d1a` | Text **on** a filled state colour. A token, not a constant: a bright accent takes the dark ground's ink |
@@ -185,7 +200,9 @@ inventory with per-component detail is in
 What the set establishes, and what a new component must not break:
 
 - **Structure comes from a pane and a type size**: one glass edge, one blur, one
-  radius, the smallest step of lift. A pane is not decorated into importance.
+  radius (20px, and the same on an overlay so a dialog and the pane it opened from agree),
+  the inner top rim-light, and the smallest step of lift. A pane is not decorated into
+  importance.
 - **`Badge` is the only fully round shape in the system**, so the shape itself carries
   "this is a state". A second pill-shaped thing spends that signal.
 - **`Table` is a data grid, not a table**: fixed row heights 32/28/36, a sticky glass
@@ -230,9 +247,11 @@ a kicker and is prohibited.
 
 ## Geometry
 
-An 8px grid. `radius-control` 10 · `radius-card-sm` 12 · `radius-panel` 16 ·
+An 8px grid. `radius-control` 10 · `radius-card-sm` 12 · `radius-panel` **20** ·
 `radius-chip` 999. The generous radii are the mockup's, kept because they are what
-separates a pane from a rule.
+separates a pane from a rule; the pane's 20px is the Apple-card step, and the panel's
+inner top rim-light (`inset 0 1px 0 0 var(--color-glass-highlight)`, first in the
+shadow list) is what makes the glass read as a lit lip rather than a flat fill.
 
 Chrome heights are **one decision for the whole console, never a per-page one**:
 `--shell-bar-h` 56 · `--page-header-h` 52 (a minimum; the band grows with its
@@ -288,7 +307,7 @@ control that does not do what its label says.
 | Series separable in greyscale | The same gate: adjacent relative luminance ≥1.15 |
 | The console composes the kit and nothing else | `npm run check:kit`: native controls outside `src/components/ui/`, hard-coded control heights, and the pill shape outside `Badge` — over every `.tsx` in `src/`. Wired into `make test-web` |
 | The board is a responsive Bento grid, not a pixel replica | `npm run check:responsive` reads `design.css` and fails if the geometry comes back: a `@media (min-width: 1536px)` block, a fixed pixel height on `.wb-board`/`.wb-shell-root`/`.wb-main-zone`, a `position: absolute` rule naming a board pane, or a missing board rule (the gate proves it read the right stylesheet rather than passing on an empty one). In `make test-web` → `make verify`, so the rule holds in CI even though CI installs no browser |
-| Row height and panel geometry match this file | DOM audit over the live pages: `--row-h`, pane radius 16, rail 248/64, the ground's glow, both themes |
+| Row height and panel geometry match this file | DOM audit over the live pages: `--row-h`, pane radius 20, rail 248/64, the ground's glow, both themes |
 | The chart palette is a copy, and it is current | `tests/chart-palette.test.mjs` (in `npm test` → `make test-web`) reads `design.css` and `chartPalette.ts` and fails on any pair that disagrees, on a series out of order, on a band ramp that is not separable in greyscale, or on a font that is not the token's family |
 | Focus visible | `:focus-visible` draws accent at 2px with 1px offset |
 | `prefers-reduced-motion` honoured | Media query at the end of `design.css` |
@@ -353,12 +372,22 @@ What replaced it is a twelve-column grid at `xl` whose classes live in the JSX
 (`xl:grid-cols-12`, `xl:col-span-8`, `xl:grid-cols-5`) — no pane geometry in the stylesheet at
 all:
 
-| Column | Panes, top to bottom |
+| Band | Panes, top to bottom |
 |---|---|
-| Main (`xl:col-span-8`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · 出口分布: the egress plate at the column's full width · 新增节点 and 平台分布 side by side (3/5 and 2/5) · the 订阅状态 band |
-| Side (`xl:col-span-4`) | 运行状态 (status line, instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 区域分布 (the region table, each row carrying its share as a bar in the region's own colour) · 流量走势 · 关键指标 (the four readings as four rows of one card) · 操作记录 · 延迟分布 |
+| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · the **KPI strip**: 总请求数, 平均延迟, 错误率 and 活跃租约 as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each carrying its sparkline and the basis of its trend |
+| Main (`xl:col-span-8`) | 出口分布: the egress plate at the column's full width · 新增节点 and 平台分布 side by side (3/5 and 2/5) · the 订阅状态 band |
+| Side (`xl:col-span-4`) | 运行状态 (status line, instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 区域分布 (the region table, each row carrying its share as a bar in the region's own colour) · 流量走势 · 操作记录 · 延迟分布 |
 
-Below `xl` the two columns stack; below `sm` the panes inside them do. Type, radii and borders stay
+Read top to bottom the board is the F-scan the dense-console operators converge on: greeting,
+the four numbers it is about, the chart that explains them, the detail tables, the band. The
+hero band and the KPI strip each take a full-width row (`xl:col-span-12`) of the same
+twelve-column grid, so the two keep the board's own gap rhythm at every width; the split into the data story and
+the always-on panes happens below them. The four KPIs used to be a four-row card at the bottom
+of the side column (关键指标), which buried the page's own headline figures in its least
+prominent place — that card is gone, and the strip is where its readings live.
+
+Below `xl` the two columns stack; below `sm` the panes inside them do, and the KPI strip goes
+two across and then one. Type, radii and borders stay
 in px — this is a dashboard that gets wider, not a screenshot that gets scaled — but nothing about
 a pane's *position* is a fixed length any more. The hero heading is 26px in its own rule: that is
 the breakpoint layer's 34px folded back into the base, so the band keeps its presence at every
@@ -372,15 +401,27 @@ are the dispatch relationship and not a measurement: converging them on whicheve
 be busiest was a fact nobody took. The origin marker is the one mark on the plate that is not a
 region, and it is not sized by node count.
 
-**The plate's own ground and its full size.** The body carries a definite responsive height
-(`h-[380px] xl:h-[440px] 2xl:h-[500px]` on the wrapper in `WorkbenchPage.tsx`) because the flow
-column gives it none: the wrapper used to be a `flex-1` child with `flex-basis: 0%`, so the canvas
-had nothing to fill and a `min-height` in the stylesheet was the only thing giving it a size. Under
+**The plate fills its own box.** The body is width-driven — `aspect-[259/100]` on the wrapper in
+`WorkbenchPage.tsx`, with `min-h-[240px]` as the guard for the narrow stacked layout — and the
+ratio is the map's own: 360° of longitude by the ~139° of latitude Antarctica's removal leaves is
+≈2.59:1. At the map's own ratio the projection fills the card edge to edge at every column width,
+with no small centred world and dead sea at the flanks and no distortion, because "fill the box"
+and "fit the projection" are the same operation there. That is why the plate's `geo` pins
+`left`/`top`/`right`/`bottom` to `0` (`features/dashboard/EgressMap.tsx`): with all four set ECharts
+stretches the projection into the box rather than fitting it inside.
+
+What that replaced: a definite `h-[380px] xl:h-[440px] 2xl:h-[500px]` height. It existed because
+the wrapper used to be a `flex-1` child with `flex-basis: 0%`, so the canvas had nothing to fill and
+a `min-height` was the only thing giving it a size — but a fixed height cannot track the column
+width, so the world was fitted and centred inside whatever box the height produced. Before that the
+plate carried four measured percentage insets that made the panel's box *be* the land bounding box;
+at the column's full width the same numbers widened the world and cut off its southern edge. Under
 that canvas the sea is a two-token vertical gradient (`--color-paper-inset` → `--color-live-wash`),
 which is why `MAP_DARK`/`MAP_LIGHT` carry no sea colour; the countries that carry exits are filled in
 their region's own series colour at a low opacity, restating the hub and the table row rather than
 adding a figure; and the header's expand control opens the same map in a centred dialog
-(`components/ui/Dialog.tsx`) whose portal exists only while it is open.
+(`components/ui/Dialog.tsx`) at the same ratio (`w-[min(92vw,1160px)] aspect-[259/100]`) whose portal
+exists only while it is open.
 
 **What stayed, because it was the design and not the replica**: the hero band's light field
 (`.hero-gradient`, the pane's own two stops), the metric-chip row, the plate's header, live dot and

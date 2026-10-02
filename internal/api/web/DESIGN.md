@@ -42,8 +42,12 @@ knowing before editing:
   `--p-glass*` primitives are the only translucent ones, and the six *surface*
   primitives are opaque hex equal to the composited glass over the canvas — that is
   what lets the contrast gate measure what the operator sees (the rule is stated in
-  the root `DESIGN.md`). The blur lives in `--p-glass-blur` and is applied through the
-  glass classes; a fifth place that blurs is a bug, not a variation.
+  the root `DESIGN.md`). It is a *frosted* material: the fill is faint (`glass` 0.58 on
+  paper, 0.085 at night), the inner top rim-light is what makes the pane's edge read as
+  a lit lip, and the ambient colour it frosts is the ground's own wash
+  (`--p-ground-glow`, painted on `body`). The blur lives in `--p-glass-blur`
+  (`blur(24px) saturate(140%)` on paper, `blur(22px) saturate(160%)` at night) and is
+  applied through the glass classes; a fifth place that blurs is a bug, not a variation.
 
 That split is what makes a theme switch cost one attribute on `<html>` instead of a
 second stylesheet. Adding a colour means adding a primitive in *both* blocks and a
@@ -80,14 +84,14 @@ these; it does not invent a control.
 | Component | Purpose |
 |---|---|
 | `Page` / `PageHeader` / `PageMeta` | Page skeleton. The header band is **52px at minimum, never a fixed height**: the description line and the tab strip both live inside it, so it is applied as `min-h` and grows. Title 18/600, description 12px at ≤68ch, actions on the right |
-| `Panel` / `PanelHeader` / `PanelToolbar` / `PanelBody` / `PanelFooter` | A region: one glass pane (`.panel`), radius 16, blur 14px, `shadow-md`. Header 44px, padding 16, title 14/600. **Actions are visible, never hover-revealed** — an action behind `opacity: 0` does not exist on a touch screen |
+| `Panel` / `PanelHeader` / `PanelToolbar` / `PanelBody` / `PanelFooter` | A region: one glass pane (`.panel`), radius 20 (`--radius-panel`, the same value the dialog content takes), `--p-glass-blur`, the inner top rim-light (`inset 0 1px 0 0 var(--color-glass-highlight)` first in the shadow list), `shadow-md`. Header 44px, padding 16, title 14/600. **Actions are visible, never hover-revealed** — an action behind `opacity: 0` does not exist on a touch screen |
 | `Table` / `THead` / `TH` / `TBody` / `TR` / `TD` / `TDNum` / `TDClip` | The data grid. Fixed row heights 32/28/36, sticky head, **row rules only, no cell borders**; long text must use `TDClip` |
 | `Readout` / `ReadoutStrip` / `ReadoutCell` / `Numeral` | Instrument readings and the count-up. `Readout` takes `size` (sm/md/lg/xl) and an optional `delta` slot, for a trend chip whose basis is named in its own `title` |
 | `Button` / `Input` / `Textarea` / `Select` / `Checkbox` / `Switch` | Controls, 28px tall (sm 24 / lg 32; `Button` also has `xl` 36, which is what the shell's search field uses). Every one ships default / hover / focus / active / disabled / loading / error — see the state table below |
 | `Badge` | Status. The only fully-round shape in the system, so the shape itself says "this is a state" |
 | `Sparkline` | A series as a hairline beside the number it belongs to. Never the only place a value is stated: it is `aria-hidden` and the reading sits next to it |
 | `Donut` | A share-of-total ring with its legend as text (label, count, percentage). Also never the only statement: the ring summarises, the list is the data |
-| `Dialog` / `Sheet` / `Tabs` / `Tooltip` / `Toast` | Overlays and feedback. `Dialog` is the composed Radix surface — root, trigger, portal, overlay, content, title, close — and its portal mounts only while it is open, so a dialog may hold a chart. The overlay is the `bg-ink/45` scrim; the content is glass on `bg-paper-elevated` and takes the width of its own body |
+| `Dialog` / `Sheet` / `Tabs` / `Tooltip` / `Toast` | Overlays and feedback. `Dialog` is the composed Radix surface — root, trigger, portal, overlay, content, title, close — and its portal mounts only while it is open, so a dialog may hold a chart. The overlay is the `bg-ink/45` scrim; the content is glass on `bg-paper-elevated` at `--radius-panel` (20px, so an overlay matches the pane it opened from) and takes the width of its own body |
 | `LoadingState` / `ErrorState` / `EmptyState` | The three states, identical everywhere |
 
 **Radix owns behaviour; this repository owns appearance.**
@@ -142,9 +146,11 @@ marker is the one mark on the plate that is not a region, and it is not sized by
 panel's ground is the sea: the canvas is transparent, so what a reader sees is what is painted *under*
 it, and the plate's body paints a two-token vertical gradient there — `--color-paper-inset` →
 `--color-live-wash`, a pale blue sheet on paper and deep navy on the night board. That is why neither
-`MAP_DARK` nor `MAP_LIGHT` carries a sea colour, and it is also why the body names a definite
-responsive height (`h-[380px] xl:h-[440px] 2xl:h-[500px]` in `WorkbenchPage.tsx`): the canvas is
-`h-full`, and the flow column gives the wrapper nothing of its own to fill.
+`MAP_DARK` nor `MAP_LIGHT` carries a sea colour, and it is also why the body is a *width-driven*
+box: `aspect-[259/100] min-h-[240px]` in `WorkbenchPage.tsx`, whose ratio is the map's own (360° of
+longitude by the ~139° of latitude Antarctica's removal leaves ≈ 2.59:1), so the projection fills
+the card edge to edge with no dead sea at the flanks. The canvas is `h-full`; the `min-h` is the
+guard for the narrow stacked layout only.
 
 The plate follows the theme, like every other chart: `MAP_DARK` is the night plate and
 `MAP_LIGHT` the day one, and the two read in opposite directions on purpose — on the dark
@@ -155,12 +161,15 @@ theme's series tokens.
 **The footprint is drawn, and the plate expands.** A country that carries exits is filled in its
 region's series colour at a low opacity (`geo.regions`), the same colour its hub dot and its row in the
 region table carry, so the plate shows where the pool leaves from rather than only marking it; every
-country without exits keeps `land`. The plate no longer carries the four percentage insets it was drawn
-with at half a column's width: with all four set, ECharts stretches the projection to fill the box, so
-at full width they widened the world and cut off its southern edge. Fitting the projection into the
-body instead preserves its aspect ratio and centres it. The header's expand control opens the same map
-in a centred dialog (`components/ui/Dialog.tsx`, built on Radix) at `min(92vw, 1160px)` by
-`min(72vh, 640px)`; the portal exists only while it is open, so the second `EgressMap` mounts and
+country without exits keeps `land`. The plate's `geo` pins `left`/`top`/`right`/`bottom` to `0`: with
+all four set, ECharts stretches the projection into the box instead of fitting it inside, which is
+only safe because the box already holds the projection's own ratio — at that ratio the two operations
+are the same one, so the world fills the card instead of sitting centred in it. What that replaced:
+four percentage insets measured for the old half-column plate (at full width the same numbers widened
+the world and cut off its southern edge), and then four left-unset sides, which made ECharts fit and
+centre the projection inside a fixed-height box. The header's expand control opens the same map in a
+centred dialog (`components/ui/Dialog.tsx`, built on Radix) at the same ratio — `w-[min(92vw, 1160px)]`
+by `aspect-[259/100]`; the portal exists only while it is open, so the second `EgressMap` mounts and
 disposes its chart with the dialog, and the two instances share the module-level outline cache.
 
 ## Layout
@@ -194,17 +203,23 @@ disposes its chart with the dialog, and the two instances share the module-level
 ### The board
 
 The dashboard is the console's reference composition, and the only page with a layout of its own.
-It is **two columns of glass panes** on a twelve-column grid rather than a uniform card wall,
-because a board of thirteen equal rectangles makes every fact look equally important. Every pane is
-a plain responsive panel — the board carries no pixel geometry of its own, and no breakpoint layer
-positions anything:
+It is **a top band over two columns of glass panes** on a twelve-column grid rather than a uniform
+card wall, because a board of thirteen equal rectangles makes every fact look equally important.
+Every pane is a plain responsive panel — the board carries no pixel geometry of its own, and no
+breakpoint layer positions anything:
 
-| Column | Panes, in order |
+| Band | Panes, in order |
 |---|---|
-| Main (`xl:col-span-8`) | the egress-distribution plate at the column's full width: hero (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · the plate itself, with its expand control · new nodes and the platform distribution ring side by side (3/5 and 2/5) · the subscription band |
-| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: status line, badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the region-distribution table, each row carrying its share as a bar in the region's own colour · the traffic-trend pane with the ingress/egress totals · the key metrics (requests, latency, error rate, active leases) as four rows of one card, each with its sparkline and its trend basis · the activity log from the audit log · the latency distribution |
+| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · the KPI strip: total requests, average latency, error rate and active leases as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each with its sparkline and its trend basis |
+| Main (`xl:col-span-8`) | the egress-distribution plate at the column's full width, with its expand control · new nodes and the platform distribution ring side by side (3/5 and 2/5) · the subscription band |
+| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: status line, badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the region-distribution table, each row carrying its share as a bar in the region's own colour · the traffic-trend pane with the ingress/egress totals · the activity log from the audit log · the latency distribution |
 
-Below `xl` the two columns stack; below `sm` the panes inside them do. What the board may
+The order is the F-scan: greeting, the four numbers it is about, the chart that explains them,
+the detail tables, the band. The four KPIs used to be the last card of the side column
+(关键指标), which put the page's own headline figures in its least prominent place; that card is
+deleted and its readings are the strip.
+
+Below `xl` the two columns stack; below `sm` the panes inside them do, and the KPI strip goes two across and then one. What the board may
 **not** do, and what the design system checks: no pane states a figure it did not fetch
 (a pane with nothing behind it renders its empty state), every trend names its basis in
 text as well as in its `title`, a sparkline never stands in for its number, and the
@@ -225,11 +240,11 @@ range picker, refresh and import actions stay reachable without scrolling.
 | Floor | How it is checked |
 |---|---|
 | Contrast and series separation, both themes | `npm run check:contrast` — **100 pairs**, light and dark, including the hero pane's two stops. In `make test-web` → `make verify`, so a palette regression fails CI like a Go test |
-| The *rendered page* is legible in both themes | `npm run test:e2e` → "every theme is legible, not just the one the art was drawn in". `check:contrast` reads the `--p-*` primitives, so a colour written into a component's own rule is invisible to it — and the workbench was full of them. This check screenshots each theme with the words made transparent, samples the **painted** ground under every text element, and grades the computed ink against it at WCAG 1.4.3. **One** shortfall is exempted as the reference art's own value (4.48:1, the blue badge wash), pinned to the ratio it renders so the exemption cannot quietly widen; the two the board used to carry (4.44:1 on the hero description, 4.05:1 on the status line) went with the pixel replica, because the band and the status line are token surfaces now and clear 4.5:1 on them |
+| The *rendered page* is legible in both themes | `npm run test:e2e` → "every theme is legible, not just the one the art was drawn in". `check:contrast` reads the `--p-*` primitives, so a colour written into a component's own rule is invisible to it — and the workbench was full of them. This check screenshots each theme with the words made transparent, samples the **painted** ground under every text element, and grades the computed ink against it at WCAG 1.4.3. **One** shortfall is exempted as the reference art's own value (4.43:1, the blue badge wash in the hero's fourth chip), pinned to the ratio it renders so the exemption cannot quietly widen — the number is `.wb-metric-badge-down` in `ART_EXEMPTIONS`, and the chip's opaque night gradient is why the frosted-glass pass did not move it; the two the board used to carry (4.44:1 on the hero description, 4.05:1 on the status line) went with the pixel replica, because the band and the status line are token surfaces now and clear 4.5:1 on them |
 | The kit is the only source of controls | `npm run check:kit` reads the `.tsx` sources: native `<select>`/`<input>`/`<button>`/`<textarea>` outside `src/components/ui/`, hard-coded control heights **anywhere** (a page that sizes a control has made the same per-page decision the kit may not make), and `rounded-full` anywhere but `Badge`. In `make test-web` → `make verify` |
 | The board stays a responsive Bento grid | `npm run check:responsive` reads `design.css` and fails if the geometry comes back: a `@media (min-width: 1536px)` block, a fixed pixel height on `.wb-board`/`.wb-shell-root`/`.wb-main-zone`, a `position: absolute` rule naming a board pane, or a board rule that has been renamed or deleted (so the gate cannot pass on an empty stylesheet). In `make test-web` → `make verify`; the browser-side legibility and geometry measurements are `npm run test:e2e` and the root `DESIGN.md` |
 | The kit's own invariants | `tests/kit.test.mjs` — the `Button` single-child rule, token heights, the pill reservation, that the height rule carries no scope guard, and that no control renders with an empty `onChange`. Each with the reason it exists |
-| Row height and panel geometry | DOM audit of the live pages: `--row-h`, pane radius 16, rail width 248/64, the top bar at 56, and the ground's glow |
+| Row height and panel geometry | DOM audit of the live pages: `--row-h`, pane radius 20, rail width 248/64, the top bar at 56, and the ground's glow |
 | Types are really checked | `npm run check:types` runs `tsc -p tsconfig.app.json --noEmit`. **`npx tsc --noEmit` at the repo root is a no-op** — `tsconfig.json` is a solution file with `files: []` — so it proves nothing |
 | Focus is visible | `:focus-visible` draws 2px accent with 1px offset |
 | Reduced motion | The media query at the end of `design.css` |
