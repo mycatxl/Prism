@@ -2,8 +2,9 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * A panel is the console's glass framing primitive: a region with a 1px glass edge,
- * inner top highlight, backdrop blur, and soft shadow elevation (`--radius-panel`).
+ * A panel is the console's glass framing primitive: a region with radius
+ * `--radius-panel` (20px), a 1px glass edge, the inner top rim-light, backdrop blur,
+ * and soft shadow elevation.
  */
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("panel", className)} {...rest} />;

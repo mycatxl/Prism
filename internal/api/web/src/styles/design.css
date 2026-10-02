@@ -94,26 +94,39 @@
 
 /* ---- the light theme ----------------------------------------------------- */
 /* Contrast truth rule: `--p-canvas/sunk/raised/inset/rail/elevated` are opaque hex
-   equal to the composited glass over `#f4f6fb` (`fill_alpha * fill + (1 - fill_alpha) * canvas`). */
+  equal to the composited glass over `#f4f6fb` (`fill_alpha * fill + (1 - fill_alpha) * canvas`).
+
+  The frosted-glass pass moved the fill and the blur together: the pane's alpha is
+  fainter (0.58) and its blur longer (24px, saturation 1.4), so the light theme reads
+  more of its ground *through* the glass. Every white fill is a fraction of the pane's
+  own alpha — `raised` is `glass` itself, `rail` 7/8 of it, `inset` 3/4 of it, and
+  `elevated` is `glass-strong` — which is what keeps the surfaces' *ordering* legible
+  after the move instead of letting a nested pane out-opaque its parent. `sunk` is the
+  one surface that is a dark wash rather than white glass (3.5% of `#101828`), so it
+  reads no fill alpha and its hex survives the pass unchanged.
+
+  `rail` and `raised` land on the same hex: at the pale end of the ramp a 0.07 step in
+  alpha is worth less than one 8-bit level, and the hue step the rail carries in the
+  dark theme has no counterpart on paper. */
 :root {
   --p-canvas: #f4f6fb;
   --p-sunk: #eceef4;
-  --p-raised: #fcfcfe;
-  --p-inset: #fafbfd;
-  --p-rail: #fbfcfd;
-  --p-elevated: #fefeff;
+  --p-raised: #fafbfd;
+  --p-inset: #f9fafd;
+  --p-rail: #fafbfd;
+  --p-elevated: #fdfdfe;
 
-  --p-glass: rgba(255, 255, 255, 0.72);
-  --p-glass-strong: rgba(255, 255, 255, 0.88);
-  --p-glass-edge: rgba(16, 24, 40, 0.08);
-  --p-glass-edge-strong: rgba(16, 24, 40, 0.15);
+  --p-glass: rgba(255, 255, 255, 0.58);
+  --p-glass-strong: rgba(255, 255, 255, 0.78);
+  --p-glass-edge: rgba(16, 24, 40, 0.09);
+  --p-glass-edge-strong: rgba(16, 24, 40, 0.16);
   --p-glass-highlight: rgba(255, 255, 255, 0.86);
-  --p-glass-blur: blur(14px) saturate(120%);
+  --p-glass-blur: blur(24px) saturate(140%);
 
   --p-ground-glow:
-    radial-gradient(64rem 40rem at 10% -6%, rgba(79, 70, 229, 0.055), transparent 68%),
-    radial-gradient(56rem 38rem at 90% -4%, rgba(124, 58, 237, 0.05), transparent 66%),
-    radial-gradient(88rem 52rem at 50% 38%, rgba(99, 102, 241, 0.035), transparent 74%);
+    radial-gradient(64rem 40rem at 10% -6%, rgba(79, 70, 229, 0.077), transparent 68%),
+    radial-gradient(56rem 38rem at 90% -4%, rgba(124, 58, 237, 0.07), transparent 66%),
+    radial-gradient(88rem 52rem at 50% 38%, rgba(99, 102, 241, 0.049), transparent 74%);
 
   --p-rule: #d5dbe6;
   --p-rule-strong: #9fa9ba;
@@ -168,26 +181,33 @@
 
 /* ---- the dark theme ------------------------------------------------------ */
 /* Contrast truth rule: `--p-canvas/sunk/raised/inset/rail/elevated` are opaque hex
-   equal to the composited glass over `#070d1a` (`fill_alpha * fill + (1 - fill_alpha) * canvas`). */
+   equal to the composited glass over `#070d1a` (`fill_alpha * fill + (1 - fill_alpha) * canvas`).
+
+   The night board keeps its own step between the surfaces: every one of the five is
+   white glass over the canvas, at a fixed fraction of the pane's new alpha —
+   `raised` is `glass` (0.085), `rail` 7/8 of it, `inset` 3/4 of it, `sunk` 0.8 of
+   `glass-strong` (which is how the night board lifts a well *above* the pane rather
+   than sinking it), and `elevated` is `glass-strong` itself (0.13). The ordering the
+   art had is preserved: inset < rail < raised < sunk < elevated. */
 [data-theme="dark"] {
   --p-canvas: #070d1a;
-  --p-sunk: #161c28;
-  --p-raised: #121824;
-  --p-inset: #0e1420;
-  --p-rail: #101522;
-  --p-elevated: #1a1f2b;
+  --p-sunk: #212632;
+  --p-raised: #1c222d;
+  --p-inset: #141a26;
+  --p-rail: #171d29;
+  --p-elevated: #272c38;
 
-  --p-glass: rgba(255, 255, 255, 0.045);
-  --p-glass-strong: rgba(255, 255, 255, 0.075);
-  --p-glass-edge: rgba(255, 255, 255, 0.09);
-  --p-glass-edge-strong: rgba(255, 255, 255, 0.16);
-  --p-glass-highlight: rgba(255, 255, 255, 0.06);
-  --p-glass-blur: blur(14px) saturate(140%);
+  --p-glass: rgba(255, 255, 255, 0.085);
+  --p-glass-strong: rgba(255, 255, 255, 0.13);
+  --p-glass-edge: rgba(255, 255, 255, 0.11);
+  --p-glass-edge-strong: rgba(255, 255, 255, 0.19);
+  --p-glass-highlight: rgba(255, 255, 255, 0.11);
+  --p-glass-blur: blur(22px) saturate(160%);
 
   --p-ground-glow:
-    radial-gradient(64rem 40rem at 10% -6%, rgba(99, 102, 241, 0.078), transparent 68%),
-    radial-gradient(56rem 38rem at 90% -4%, rgba(139, 92, 246, 0.072), transparent 66%),
-    radial-gradient(88rem 52rem at 50% 38%, rgba(79, 70, 229, 0.045), transparent 74%);
+    radial-gradient(64rem 40rem at 10% -6%, rgba(99, 102, 241, 0.109), transparent 68%),
+    radial-gradient(56rem 38rem at 90% -4%, rgba(139, 92, 246, 0.101), transparent 66%),
+    radial-gradient(88rem 52rem at 50% 38%, rgba(79, 70, 229, 0.063), transparent 74%);
 
   --p-rule: #2a3447;
   --p-rule-strong: #46556e;
@@ -210,7 +230,13 @@
   --p-alert-wash: #491812;
   --p-accent: #818cf8;
   --p-accent-deep: #6875f5;
-  --p-accent-wash: #191f45;
+  /* Lifted with the glass. A selection's wash has to read as a fill against the pane it
+     sits on, and the frosted pass made the pane itself lighter (`raised` #121824 →
+     #1c222d), which left the old #191f45 1.005:1 from it — indistinguishable, and
+     `check-contrast.mjs` fails that pair below 1.05:1. #1c2456 holds the art's hue at
+     1.09:1 from the pane, in step with the four state washes beside it (1.08–1.12:1),
+     and keeps the accent on it at 4.90:1. */
+  --p-accent-wash: #1c2456;
   --p-accent-lift: #a78bfa;
 
   /* The hero pane's two gradient stops; see the light theme for why they are hex. */
@@ -257,7 +283,7 @@
   --spacing: 0.25rem;
   --radius-control: 10px;
   --radius-card-sm: 12px;
-  --radius-panel: 16px;
+  --radius-panel: 20px;
   --radius-chip: 999px;
 
   /* Chrome heights and geometry tokens. */
@@ -442,8 +468,11 @@
     border-bottom: 1px solid var(--color-rule-faint);
   }
 
-  /* A panel is the console's glass framing primitive: radius `--radius-panel`,
-     1px glass edge, inner top highlight, backdrop blur, and soft elevation. */
+  /* A panel is the console's glass framing primitive: radius `--radius-panel`
+     (20px — the Apple-card step, and the same radius an overlay takes so a dialog
+     and the pane it opened from agree), 1px glass edge, the inner top rim-light
+     (`inset 0 1px 0 0 var(--color-glass-highlight)`, ahead of the elevation in the
+     same shadow list), backdrop blur, and soft elevation. */
   .panel {
     background-color: var(--color-glass);
     border: 1px solid var(--color-glass-edge);
@@ -867,16 +896,22 @@ html[data-theme="dark"] .wb-metric-badge-down {
   flex-shrink: 0;
 }
 
-/* The map's body carries its own height where every other pane's geometry lives:
-   `h-[380px] xl:h-[440px] 2xl:h-[500px]` on the wrapper in `WorkbenchPage.tsx`.
-   This rule used to hold a floor (`clamp(240px, 34vh, 460px)`) because the wrapper
-   was a `flex-1` child with `flex-basis: 0%` and no definite height in the flow
-   column, which is exactly the bug the wrapper's own height fixes: ECharts'
-   `h-full` had nothing to fill, and a `min-height` was the only thing giving the
-   canvas a size. The class stays as the pane's hook (the responsive gate's pane
-   vocabulary names it) and as the element the sea's token gradient is painted on.
-   The plate head above it sets the row's rhythm, `pt-3 pb-2` to the panel
-   header's `py-2.5`, so the two bands read as one column. */
+/* The map's body carries its own geometry where every other pane's geometry lives:
+   `aspect-[259/100] min-h-[240px]` on the wrapper in `WorkbenchPage.tsx`. The box is
+   *width-driven* and holds the equirectangular world's own ratio (360° of longitude by
+   the ~139° of latitude Antarctica's removal leaves ≈ 2.59:1), so the projection fills
+   the card edge to edge at every column width with no dead sea at the flanks and no
+   stretch: at the map's own ratio, "fill the box" and "fit the projection" are the same
+   operation. The `min-h` is the one guard left, and it exists only for the narrow
+   stacked layout, where a width-driven box would otherwise collapse to a strip.
+   This rule used to hold a floor (`clamp(240px, 34vh, 460px)`) because the wrapper was
+   a `flex-1` child with `flex-basis: 0%` and no definite height in the flow column,
+   which is exactly the bug a definite size on the wrapper fixed: ECharts' `h-full` had
+   nothing to fill, and a `min-height` was the only thing giving the canvas a size.
+   The class stays as the pane's hook (the responsive gate's pane vocabulary names it)
+   and as the element the sea's token gradient is painted on. The plate head above it
+   sets the row's rhythm, `pt-3 pb-2` to the panel header's `py-2.5`, so the two bands
+   read as one column. */
 
 /* The reference table has no glass wash over its column heads, title-case labels
    rather than the kit's micro-caps, and rules a constant step above the panel

@@ -227,15 +227,19 @@ function QuickAction({ to, icon: Icon, label }: { to: string; icon: typeof Activ
 /**
  * The overview: a bento board for the whole inventory.
  *
- * A twelve-column grid of glass panes, split eight/four: the main column is the data
+ * The composition is the F-scan the operators of Stripe, Linear and Vercel converge on:
+ * the greeting band at the full width, then the four KPIs it is about as a strip of four
+ * cards, then the chart that explains them, then the detail tables, then the band. Below
+ * that top band the grid splits twelve columns eight/four: the main column is the data
  * story — where traffic leaves from and where it lands, what arrived last, how the
  * subscriptions are doing — and the side column holds the small, always-on panes:
- * instance state, the four destinations an operator reaches for mid-incident, the
- * top regions, the window's timeline, the four readings as four rows, the latency
- * shape and the change log. The asymmetry is the point: a board of twelve equal
- * rectangles makes every fact look equally important, which is the same as saying
- * nothing. The two columns stack below `xl`, and every pane is a plain responsive
- * panel — the board has no pixel geometry of its own.
+ * instance state, the four destinations an operator reaches for mid-incident, the top
+ * regions, the window's timeline, the latency shape and the change log. The asymmetry is
+ * the point: a board of twelve equal rectangles makes every fact look equally important,
+ * which is the same as saying nothing. The four KPIs used to be the last card in the side
+ * column, which put the page's own headline figures in its least prominent place. The two
+ * columns stack below `xl`, and every pane is a plain responsive panel — the board has no
+ * pixel geometry of its own.
  *
  * Every figure here is fetched. A panel with nothing behind it renders its empty
  * state instead of a placeholder number, and every trend states its basis, because
@@ -524,9 +528,11 @@ export function WorkbenchPage() {
         {snapshot.isError && <ErrorState message={offline} onRetry={() => void snapshot.refetch()} />}
 
         <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-12">
-          {/* The main column: the data story, from "where does traffic leave from" to
-              "what arrived last". */}
-          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8">
+          {/* The board's top band: the greeting, the range picker, the refresh and add
+              controls, and the hero's four chips — at the full board width, because it is
+              the first thing read and the four figures it carries are the ones the rest of
+              the page explains. */}
+          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-12">
             <Panel className="hero-gradient min-w-0 overflow-hidden px-5 pt-4 pb-4">
               <div className="wb-hero-banner">
                 <div className="wb-hero-left">
@@ -632,7 +638,57 @@ export function WorkbenchPage() {
                 </div>
               </div>
             </Panel>
+          </div>
 
+          {/*
+            The four KPIs, out of the side column and into a full-width strip directly
+            under the hero: the board reads greeting → the four numbers → the chart that
+            explains them → the detail tables → the band. They used to be a four-row card
+            in the side column, which buried the page's own headline figures in its least
+            prominent place. Four cards across at `xl`, two at `sm`, stacked below that.
+          */}
+          <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 sm:grid-cols-2 xl:col-span-12 xl:grid-cols-4">
+            <Kpi
+              icon={Activity}
+              tone="accent"
+              label={t("总请求数")}
+              value={formatCount(windowRequests.total)}
+              trend={halfDelta(requestSeries)}
+              basis={basisHalf}
+              series={requestSeries}
+            />
+            <Kpi
+              icon={Gauge}
+              tone="live"
+              label={t("平均延迟")}
+              value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
+              trend={halfDelta(latencySeries)}
+              basis={latencyBasis}
+              series={latencySeries}
+            />
+            <Kpi
+              icon={CircleAlert}
+              tone="alert"
+              label={t("错误率")}
+              value={errorRate === null ? PLACEHOLDER : formatPercent(errorRate)}
+              trend={halfDelta(errorSeries)}
+              basis={basisHalf}
+              series={errorSeries}
+            />
+            <Kpi
+              icon={Zap}
+              tone="signal"
+              label={t("活跃租约")}
+              value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
+              trend={stepDelta(leaseSeries)}
+              basis={basisStep}
+              series={leaseSeries}
+            />
+          </div>
+
+          {/* The main column: the data story, from "where does traffic leave from" to
+              "what arrived last". */}
+          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8">
             {/*
               The plate, at the main column's full width. The region table that reads
               the same six rows lives in its own panel in the side column: the map is
@@ -677,15 +733,15 @@ export function WorkbenchPage() {
                       <Maximize2 size={15} aria-hidden />
                     </Button>
                   </div>
-                  {/* The plate's body. The panel gives the map a definite height —
-                      the flow column has none of its own, which is what left the
-                      canvas with nothing to fill — and the ground under the
-                      transparent canvas is the sea: two tokens in a vertical
-                      gradient, a pale blue sheet on paper and deep navy at night.
-                      ECharts fits the projection into this box preserving its aspect
-                      ratio and centres it, so nothing is stretched and the sea shows
-                      either side of the continent group. */}
-                  <div className="wb-plate-map flex min-h-0 flex-col h-[380px] xl:h-[440px] 2xl:h-[500px] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+                  {/* The plate's body. The box is *width-driven* — `aspect-[259/100]`,
+                      the equirectangular world's own ratio once Antarctica is dropped, with
+                      `min-h-[240px]` only as the guard for the narrow stacked layout — so the
+                      map fills the card edge to edge at every column width: no small globe
+                      with dead sea at the flanks, and no stretch, because at the map's own
+                      ratio "fill the box" and "fit the projection" are the same operation.
+                      The ground under the transparent canvas is the sea: two tokens in a
+                      vertical gradient, a pale blue sheet on paper and deep navy at night. */}
+                  <div className="wb-plate-map flex min-h-0 flex-col aspect-[259/100] min-h-[240px] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
                     {nodes.isError ? (
                       <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
                     ) : !nodes.data ? (
@@ -1076,53 +1132,6 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            {/*
-              The four KPIs as four rows of one card rather than four cards: they
-              are four readings of the same window, and a grid of four equal
-              rectangles would say they are four separate stories.
-            */}
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader title={t("关键指标")} />
-              <div className="flex flex-col gap-3 p-4">
-                <Kpi
-                  icon={Activity}
-                  tone="accent"
-                  label={t("总请求数")}
-                  value={formatCount(windowRequests.total)}
-                  trend={halfDelta(requestSeries)}
-                  basis={basisHalf}
-                  series={requestSeries}
-                />
-                <Kpi
-                  icon={Gauge}
-                  tone="live"
-                  label={t("平均延迟")}
-                  value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
-                  trend={halfDelta(latencySeries)}
-                  basis={latencyBasis}
-                  series={latencySeries}
-                />
-                <Kpi
-                  icon={CircleAlert}
-                  tone="alert"
-                  label={t("错误率")}
-                  value={errorRate === null ? PLACEHOLDER : formatPercent(errorRate)}
-                  trend={halfDelta(errorSeries)}
-                  basis={basisHalf}
-                  series={errorSeries}
-                />
-                <Kpi
-                  icon={Zap}
-                  tone="signal"
-                  label={t("活跃租约")}
-                  value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
-                  trend={stepDelta(leaseSeries)}
-                  basis={basisStep}
-                  series={leaseSeries}
-                />
-              </div>
-            </Panel>
-
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
                 title={t("操作记录")}
@@ -1224,8 +1233,10 @@ export function WorkbenchPage() {
                 </Button>
               </DialogClose>
             </div>
-            {/* The same sea the plate draws on, under the same transparent canvas. */}
-            <div className="h-[min(72vh,640px)] w-[min(92vw,1160px)] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+            {/* The same sea the plate draws on, under the same transparent canvas — and the
+                same width-driven box, so the expanded map fills its dialog instead of
+                centring a small world inside it. */}
+            <div className="w-[min(92vw,1160px)] aspect-[259/100] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
               <Suspense fallback={chartFallback}>
                 <EgressMap
                   regions={regions}

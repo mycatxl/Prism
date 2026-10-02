@@ -15,8 +15,14 @@
  */
 export const CHART_PAPER = "#f4f6fb";
 export const CHART_PAPER_SUNK = "#eceef4";
-export const CHART_PAPER_RAISED = "#fcfcfe";
-export const CHART_PAPER_INSET = "#fafbfd";
+/*
+ * The pane surfaces are the frosted-glass fills: `raised` is `--p-raised` (#fafbfd, the
+ * pane's own composite over the canvas) and `inset` is `--p-inset` (#f9fafd, the chart's
+ * ground). They moved with the light theme's alpha pass and must move with it again —
+ * `tests/chart-palette.test.mjs` fails the moment they disagree.
+ */
+export const CHART_PAPER_RAISED = "#fafbfd";
+export const CHART_PAPER_INSET = "#f9fafd";
 export const CHART_RULE = "#d5dbe6";
 export const CHART_RULE_STRONG = "#9fa9ba";
 export const CHART_INK = "#0b111e";
