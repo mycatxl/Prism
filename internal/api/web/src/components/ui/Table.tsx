@@ -9,7 +9,7 @@ import { cn } from "../../lib/cn";
 export type Density = "compact" | "comfortable";
 
 export function TableWrap({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("w-full overflow-x-auto", className)} {...rest} />;
+  return <div className={cn("table-wrap w-full min-w-0 overflow-x-auto overscroll-x-contain", className)} {...rest} />;
 }
 
 export function Table({

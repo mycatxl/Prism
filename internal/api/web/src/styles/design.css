@@ -638,222 +638,243 @@
     line-height: 1.05;
     font-weight: 600;
   }
+  /* ---- shared interaction states ----------------------------------------- */
+  .table-wrap {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-color: var(--color-rule-strong) transparent;
+    scrollbar-width: thin;
+  }
+
+  .table-wrap:focus-within {
+    outline: 1px solid color-mix(in srgb, var(--color-accent) 48%, transparent);
+    outline-offset: -1px;
+  }
+
+  .table-wrap::-webkit-scrollbar {
+    height: 0.5rem;
+  }
+
+  .table-wrap::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .table-wrap::-webkit-scrollbar-thumb {
+    background: var(--color-rule-strong);
+    border: 2px solid transparent;
+    border-radius: var(--radius-chip);
+    background-clip: padding-box;
+  }
+
+  .table-wrap > .data-grid {
+    min-width: var(--data-grid-min);
+  }
+
+  .data-grid caption {
+    padding: 0.75rem 1rem;
+    color: var(--color-ink-faint);
+    font-size: var(--text-xs);
+    text-align: left;
+  }
+
+  .data-grid th:focus-within,
+  .data-grid td:focus-within {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+
+  .data-grid tbody tr:focus-within {
+    background-color: color-mix(in srgb, var(--color-accent-wash) 30%, var(--color-glass));
+  }
+
+  .data-grid tbody tr[data-selected="true"] td:first-child {
+    box-shadow: inset 2px 0 0 var(--color-accent);
+  }
+
+  .action:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  .action[aria-disabled="true"],
+  .action:disabled {
+    cursor: not-allowed;
+    filter: saturate(0.7);
+  }
+
+  .panel:focus-within {
+    border-color: color-mix(in srgb, var(--color-glass-edge-strong) 72%, var(--color-accent));
+  }
+
+  .panel-actions > .action,
+  .panel-actions > button,
+  .panel-actions > a {
+    min-width: 0;
+  }
+
+  .glass-rail a:focus-visible,
+  .glass-bar button:focus-visible,
+  .glass-bar a:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .glass-rail a[aria-current="page"] {
+    box-shadow:
+      inset 2px 0 0 var(--color-accent),
+      var(--shadow-xs);
+  }
+
+  .glass-rail a:not([aria-current="page"]):hover {
+    box-shadow: inset 1px 0 0 var(--color-glass-edge-strong);
+  }
+
+  input[aria-invalid="true"],
+  select[aria-invalid="true"],
+  textarea[aria-invalid="true"] {
+    border-color: var(--color-alert);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-alert) 20%, transparent);
+  }
+
+  input:disabled,
+  select:disabled,
+  textarea:disabled {
+    background-color: var(--color-paper-sunk);
+    cursor: not-allowed;
+  }
+
+  [data-state="checked"]:focus-visible,
+  [data-state="active"]:focus-visible,
+  [role="switch"]:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 3px;
+  }
+
+  .wb-shell-root {
+    isolation: isolate;
+  }
+
+  .wb-main-zone,
+  .wb-main-scroll {
+    min-width: 0;
+  }
+
+  .wb-main-scroll {
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .wb-topbar {
+    background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-accent-wash) 22%, transparent), transparent 42%);
+  }
+
+  .wb-topbar-actions > * {
+    min-width: 0;
+  }
+
+  .wb-search-btn {
+    box-shadow: inset 0 1px 0 0 var(--color-glass-highlight);
+  }
+
+  .wb-hero-add:hover,
+  .wb-hero-refresh:hover,
+  .wb-plate-link:hover {
+    transform: translateY(-1px);
+  }
+
+  .wb-metric-chip {
+    transition:
+      border-color var(--dur-fast) var(--ease-instrument),
+      background-color var(--dur-fast) var(--ease-instrument),
+      transform var(--dur-fast) var(--ease-instrument);
+  }
+
+  .wb-metric-chip:hover,
+  .wb-metric-chip:focus-within {
+    border-color: var(--color-glass-edge-strong);
+    background-color: var(--color-glass-strong);
+    transform: translateY(-1px);
+  }
+
+  .wb-region-table tbody tr:hover td:first-child {
+    color: var(--color-ink);
+  }
+
+  .wb-status-card [role="status"] {
+    min-width: 0;
+  }
+
 }
 
 
-/* ---- The night board, restated -------------------------------------------
-   Every rule below this point that reads a token exists so the *light* theme has
-   something to read; the art is a dark board, so its measured literals are put
-   back here. Keeping them in one block, rather than as a second copy beside each
-   token, is what makes it possible to see at a glance that the dark theme is
-   unchanged: this block and the tokens are the whole delta.
-
-   Where a token's night value already *is* the measured value, nothing is
-   restated — the token is the art. Two restatements are deliberately absent: the
-   hero band's description and the status line's, whose literals (`#8c9fc2`,
-   `#6da2cc`) were solved against the pane gradients the replica carried. The band
-   is a panel on the board's ground and the status line is a token surface now, and
-   on those grounds the token (`--p-ink-soft`) is the legible value, so those two
-   read the token in both themes. */
-html[data-theme="dark"] .wb-hero-heading {
-  color: #f8fafc;
-}
-
-html[data-theme="dark"] .wb-status-title {
-  color: #f1f5f9;
-}
-
-html[data-theme="dark"] .wb-metric-val {
-  color: #f8fafc;
-}
-
-html[data-theme="dark"] .wb-metric-label {
-  color: #8c9fc2;
-}
-
-html[data-theme="dark"] .wb-text-emerald {
-  color: #34d399 !important;
-}
-
-html[data-theme="dark"] .wb-status-dot {
-  background-color: #34d399;
-}
-
-html[data-theme="dark"] .wb-region-table thead th {
-  border-bottom-color: rgba(255, 255, 255, 0.09);
-}
-
-html[data-theme="dark"] .wb-region-table tbody td {
-  border-bottom-color: rgba(255, 255, 255, 0.05);
-}
-
-html[data-theme="dark"] .wb-metric-chip {
-  border-color: #1a2958;
-}
-
-html[data-theme="dark"] .wb-timerange-select {
-  background-color: #334985 !important;
-  border: 1px solid #445e9f !important;
-  color: #dbe4f8 !important;
-}
-
-html[data-theme="dark"] .wb-timerange-select:hover {
-  border-color: #5572bd !important;
-  background-color: #3b5499 !important;
-}
-
-html[data-theme="dark"] .wb-timerange-icon {
-  color: #9eb4e0;
-}
-
-html[data-theme="dark"] .wb-select-option {
-  background-color: #0d1733;
-  color: #e2e8f0;
-}
-
-html[data-theme="dark"] .wb-icon-server {
-  background: rgba(53, 94, 155, 0.7);
-  border: 1px solid rgba(96, 165, 250, 0.3);
-  color: #93c5fd;
-}
-
-html[data-theme="dark"] .wb-icon-emerald {
-  background: rgba(20, 41, 94, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  color: #34d399;
-}
-
-html[data-theme="dark"] .wb-icon-cyan {
-  background: rgba(36, 55, 114, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  color: #22d3ee;
-}
-
-html[data-theme="dark"] .wb-icon-blue {
-  background: rgba(25, 42, 88, 0.8);
-  border: 1px solid rgba(59, 130, 246, 0.25);
-  color: #60a5fa;
-}
-
-html[data-theme="dark"] .wb-metric-badge-neutral {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.12);
-  border-color: rgba(148, 163, 184, 0.2);
-}
-
-html[data-theme="dark"] .wb-metric-badge-green {
-  color: #34d399;
-  background-color: rgba(5, 78, 59, 0.45);
-  border-color: rgba(16, 185, 129, 0.25);
-}
-
-html[data-theme="dark"] .wb-metric-badge-up {
-  color: #34d399;
-  background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.2);
-}
-
-html[data-theme="dark"] .wb-metric-badge-down {
-  color: #60a5fa;
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.2);
-}
-
-/* ---- the workbench board: the hero band, the status line and the metric chips -- */
-.wb-search-pill {
-  border-radius: 999px;
-}
-
-/* ---- Slot A Hero, Status Card & Metric Chips ---- */
+/* ---- dashboard composition ----------------------------------------------- */
+/*
+ * The board owns composition, not a second visual language. These hooks keep the
+ * dashboard's map and hero responsive while every surface, state and focus treatment
+ * continues to come from the shared tokens above.
+ */
 .wb-hero-banner {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 12px 16px;
-  padding: 12px 16px;
+  gap: 1rem 1.5rem;
+  padding: 0.5rem 0.25rem 1.25rem;
 }
 
 .wb-hero-left {
   display: flex;
+  min-width: min(100%, 28rem);
+  flex: 1 1 20rem;
   flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  min-width: 0;
-  padding-top: 14px;
+  gap: 0.4rem;
 }
 
 .wb-hero-heading {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: -0.01em;
   color: var(--color-ink);
-  margin: 0;
-  white-space: nowrap;
-}
-/* The status row of the 运行状态 card. Its plain-language line moved into the shell's
-   top bar, so nothing renders these three classes any more; they are retained as one
-   residue because `check-responsive.mjs` names `.wb-status-card` in REQUIRED_RULES,
-   and splitting the set would leave the checked rule explaining a trio it no longer
-   has. */
-.wb-status-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-width: 0;
-}
-
-.wb-status-dot {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background-color: var(--color-signal);
-  border: 2px solid var(--color-signal-wash);
-  flex-shrink: 0;
+  font-size: clamp(1.5rem, 1.15rem + 1vw, 2rem);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
 }
 
 .wb-hero-desc {
+  max-width: 48ch;
   margin: 0;
-  font-size: 12px;
-  line-height: 1.3;
   color: var(--color-ink-soft);
-  white-space: nowrap;
+  font-size: var(--text-sm);
 }
 
 .wb-hero-timerange {
   display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  flex-shrink: 0;
+  gap: 0.5rem;
 }
 
 .wb-timerange-select {
+  min-width: 7.5rem;
   appearance: none;
   cursor: pointer;
-  background-color: var(--color-accent-wash) !important;
-  border: 1px solid var(--color-rule-strong) !important;
-  color: var(--color-accent-deep) !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  padding: 0 28px 0 12px !important;
-  height: var(--control-h) !important;
-  border-radius: 8px !important;
-  box-shadow: none !important;
+  padding-right: 2rem !important;
+  background-color: var(--color-glass-strong) !important;
+  border-color: var(--color-glass-edge-strong) !important;
+  color: var(--color-ink) !important;
 }
 
 .wb-timerange-select:hover {
+  background-color: var(--color-paper-elevated) !important;
   border-color: var(--color-accent) !important;
-  background-color: var(--color-paper-raised) !important;
 }
 
 .wb-timerange-icon {
   position: absolute;
-  right: 8px;
-  color: var(--color-accent);
+  right: 0.625rem;
   pointer-events: none;
+  color: var(--color-ink-faint);
 }
 
 .wb-select-option {
@@ -861,281 +882,126 @@ html[data-theme="dark"] .wb-metric-badge-down {
   color: var(--color-ink);
 }
 
-
-/* The traffic plate: the map pane and the header band above it. The region table
-   that reads the same six rows lives in its own panel beside the plate, so the
-   plate is a single column at every width. */
-.wb-plate {
+.wb-metric-chips {
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 0;
+  gap: 0.75rem;
+}
+
+.wb-metric-chip {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background-color: var(--color-paper-inset);
+  border: 1px solid var(--color-glass-edge);
+  border-radius: var(--radius-card-sm);
+  box-shadow: inset 0 1px 0 0 var(--color-glass-highlight);
+}
+
+.wb-metric-icon-box {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 24%, transparent);
+  border-radius: var(--radius-control);
+}
+
+.wb-plate {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .wb-plate-head {
   display: flex;
   min-height: var(--panel-header-h);
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px 8px 16px;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem 0.5rem;
 }
 
-/* The live dot beside the plate's title: the same signal the rail status uses,
-   at the size the reference header carries. */
 .wb-live-dot {
   display: inline-block;
-  width: 9px;
-  height: 9px;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--color-signal-deep);
   border-radius: 50%;
-  background-color: var(--p-signal);
-  border: 1px solid var(--p-signal-deep);
-  flex-shrink: 0;
+  background-color: var(--color-signal);
 }
 
-/* A region's colour, as a dot: the table's half of the map's legend. */
+.wb-plate-map {
+  min-height: 15rem;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--color-paper-inset), var(--color-live-wash));
+  border-top: 1px solid var(--color-rule-faint);
+}
+
 .wb-region-dot {
   display: inline-block;
-  width: 9px;
-  height: 9px;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: 0 0 auto;
   border-radius: 50%;
-  flex-shrink: 0;
 }
 
-/* The map's body carries its own geometry where every other pane's geometry lives:
-   `aspect-[259/100] min-h-[240px]` on the wrapper in `WorkbenchPage.tsx`. The box is
-   *width-driven* and holds the equirectangular world's own ratio (360° of longitude by
-   the ~139° of latitude Antarctica's removal leaves ≈ 2.59:1), so the projection fills
-   the card edge to edge at every column width with no dead sea at the flanks and no
-   stretch: at the map's own ratio, "fill the box" and "fit the projection" are the same
-   operation. The `min-h` is the one guard left, and it exists only for the narrow
-   stacked layout, where a width-driven box would otherwise collapse to a strip.
-   This rule used to hold a floor (`clamp(240px, 34vh, 460px)`) because the wrapper was
-   a `flex-1` child with `flex-basis: 0%` and no definite height in the flow column,
-   which is exactly the bug a definite size on the wrapper fixed: ECharts' `h-full` had
-   nothing to fill, and a `min-height` was the only thing giving the canvas a size.
-   The class stays as the pane's hook (the responsive gate's pane vocabulary names it)
-   and as the element the sea's token gradient is painted on. The plate head above it
-   sets the row's rhythm, `pt-3 pb-2` to the panel header's `py-2.5`, so the two bands
-   read as one column. */
-
-/* The reference table has no glass wash over its column heads, title-case labels
-   rather than the kit's micro-caps, and rules a constant step above the panel
-   ground — so the kit's sticky glass band is replaced here rather than in the
-   shared component. The rules are a translucent white rather than a fixed colour
-   because the ground itself fades toward the bottom of the panel: a constant
-   colour would read as a rule that fades out, which is not the art. */
 .wb-region-table thead th {
   background-color: transparent;
-  backdrop-filter: none;
-  border-bottom: 1px solid var(--color-rule);
+  border-bottom-color: var(--color-rule);
   color: var(--color-ink-faint);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0.01em;
   text-transform: none;
-  padding-left: 17px;
-}
-
-.wb-region-table thead th:last-child {
-  padding-right: 20px;
-}
-
-.wb-region-table tbody td {
-  border-bottom-color: var(--color-row-rule);
-}
-
-.wb-region-table tbody td:first-child {
-  padding-left: 17px;
-}
-
-.wb-region-table tbody td:last-child {
-  padding-right: 20px;
 }
 
 .wb-region-table tbody tr:last-child td {
   border-bottom-color: transparent;
 }
 
-/* Retained with `.wb-status-card` above; no component composes these two any more. */
-.wb-status-title {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--color-ink);
-  letter-spacing: -0.01em;
+/* Kept as a semantic hook for any status pane that is added later; it carries no
+ * dashboard geometry and therefore cannot become another fixed reference layout. */
+.wb-status-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-.wb-status-desc {
-  margin-top: 3px;
-  font-size: 12px;
-  line-height: 1.2;
-  color: var(--color-ink-soft);
+@media (min-width: 36rem) {
+  .wb-metric-chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-/* Metric Chips */
-.wb-metric-chips {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  padding: 8px 24px 16px 24px;
-}
-
-@media (min-width: 1024px) {
+@media (min-width: 60rem) {
   .wb-metric-chips {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
-.wb-metric-chip {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
-  border-radius: 8px;
-  padding: 12px;
-  border: 1px solid var(--color-rule-faint);
+@media (max-width: 39.99rem) {
+  .wb-hero-banner {
+    align-items: stretch;
+  }
+
+  .wb-hero-timerange {
+    justify-content: flex-start;
+  }
+
+  .wb-hero-timerange > * {
+    flex: 1 1 auto;
+  }
+
+  .wb-timerange-select {
+    width: 100%;
+  }
 }
 
-html[data-theme="dark"] .wb-metric-chip {
-  box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.04);
-}
-
-html[data-theme="dark"] .wb-metric-chip:nth-child(1) {
-  background: linear-gradient(180deg, #111a3c 0%, #0e1633 100%);
-  border-color: #121c40;
-}
-
-html[data-theme="dark"] .wb-metric-chip:nth-child(2) {
-  background: linear-gradient(180deg, #15234e 0%, #111c40 100%);
-  border-color: #15234e;
-}
-
-html[data-theme="dark"] .wb-metric-chip:nth-child(3) {
-  background: linear-gradient(180deg, #172856 0%, #132147 100%);
-  border-color: #24376c;
-}
-
-html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
-  background: linear-gradient(180deg, #1b3168 0%, #152754 100%);
-  border-color: #1f366e;
-}
-
-.wb-metric-icon-box {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-/* The day tiles read the design system's own wash for each meaning — neutral,
-   healthy, live, accent — so the four stay distinguishable on paper instead of
-   collapsing into four near-identical blues. */
-.wb-icon-server {
-  background: var(--color-paper-sunk);
-  border: 1px solid var(--color-rule);
-  color: var(--color-accent-deep);
-}
-
-.wb-icon-emerald {
-  background: var(--color-signal-wash);
-  border: 1px solid var(--color-rule);
-  color: var(--color-signal-deep);
-}
-
-.wb-icon-cyan {
-  background: var(--color-live-wash);
-  border: 1px solid var(--color-rule);
-  color: var(--color-live);
-}
-
-.wb-icon-blue {
-  background: var(--color-accent-wash);
-  border: 1px solid var(--color-rule);
-  color: var(--color-accent-deep);
-}
-.wb-metric-content {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  min-width: 0;
-  flex: 1;
-  gap: 2px;
-}
-
-.wb-metric-val-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.wb-metric-val {
-  font-size: 20px;
-  font-weight: 700;
-  line-height: 1.1;
-  color: var(--color-ink);
-  font-family: var(--font-mono);
-  letter-spacing: -0.02em;
-}
-
-.wb-text-emerald {
-  color: var(--color-signal) !important;
-}
-
-.wb-metric-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--color-ink-soft);
-  white-space: nowrap;
-}
-
-.wb-metric-badge-neutral {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-ink-soft);
-  background: var(--color-paper-sunk);
-  border: 1px solid var(--color-rule);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  line-height: 1.2;
-}
-
-.wb-metric-badge-green {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-signal-deep);
-  background-color: var(--color-signal-wash);
-  border: 1px solid var(--color-rule);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  line-height: 1.2;
-}
-
-.wb-metric-badge-up {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-signal-deep);
-  background: var(--color-signal-wash);
-  border: 1px solid var(--color-rule);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  line-height: 1.2;
-}
-
-.wb-metric-badge-down {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-live);
-  background: var(--color-live-wash);
-  border: 1px solid var(--color-rule);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-family: var(--font-mono);
-  line-height: 1.2;
-}
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,
@@ -1146,7 +1012,3 @@ html[data-theme="dark"] .wb-metric-chip:nth-child(4) {
     scroll-behavior: auto !important;
   }
 }
-
-
-
-

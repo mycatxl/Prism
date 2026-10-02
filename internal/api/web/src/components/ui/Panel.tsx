@@ -7,7 +7,7 @@ import { cn } from "../../lib/cn";
  * and soft shadow elevation.
  */
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("panel", className)} {...rest} />;
+  return <div className={cn("panel isolate overflow-hidden", className)} {...rest} />;
 }
 
 /**
@@ -35,7 +35,7 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        "flex min-h-[var(--panel-header-h)] items-center gap-3 border-b border-rule-faint px-4 py-2.5",
+        "flex min-h-[var(--panel-header-h)] items-center gap-3 border-b border-rule-faint bg-glass/35 px-4 py-2.5",
         className,
       )}
     >

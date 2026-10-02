@@ -23,7 +23,8 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "sticky top-0 z-20 flex min-h-[var(--page-header-h)] flex-col justify-center gap-1 border-b border-glass-edge bg-glass px-[var(--page-gutter)] py-2 backdrop-blur-md",
+        "glass-bar sticky top-0 z-20 flex min-h-[var(--page-header-h)] flex-col justify-center gap-1 border-b border-glass-edge px-[var(--page-gutter)] py-2",
+        "supports-[backdrop-filter]:bg-glass-strong/80",
         className,
       )}
     >
