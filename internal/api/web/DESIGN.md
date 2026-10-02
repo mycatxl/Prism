@@ -87,7 +87,7 @@ these; it does not invent a control.
 | `Badge` | Status. The only fully-round shape in the system, so the shape itself says "this is a state" |
 | `Sparkline` | A series as a hairline beside the number it belongs to. Never the only place a value is stated: it is `aria-hidden` and the reading sits next to it |
 | `Donut` | A share-of-total ring with its legend as text (label, count, percentage). Also never the only statement: the ring summarises, the list is the data |
-| `Tabs` / `Tooltip` / `Sheet` / `Toast` | Overlays and feedback |
+| `Dialog` / `Sheet` / `Tabs` / `Tooltip` / `Toast` | Overlays and feedback. `Dialog` is the composed Radix surface — root, trigger, portal, overlay, content, title, close — and its portal mounts only while it is open, so a dialog may hold a chart. The overlay is the `bg-ink/45` scrim; the content is glass on `bg-paper-elevated` and takes the width of its own body |
 | `LoadingState` / `ErrorState` / `EmptyState` | The three states, identical everywhere |
 
 **Radix owns behaviour; this repository owns appearance.**
@@ -139,14 +139,29 @@ nobody measured. When the panel reports no egress region, or the outline does no
 reports, the plate draws **no origin and no lines** — hubs on their own are the honest picture, and
 converging the lines on whichever hub happened to be busiest was a fact nobody took. The origin
 marker is the one mark on the plate that is not a region, and it is not sized by node count. The
-panel's ground is the sea (the map's canvas is transparent), which is why the ground is the pane's
-own `.panel` surface rather than a colour in `MAP_DARK`.
+panel's ground is the sea: the canvas is transparent, so what a reader sees is what is painted *under*
+it, and the plate's body paints a two-token vertical gradient there — `--color-paper-inset` →
+`--color-live-wash`, a pale blue sheet on paper and deep navy on the night board. That is why neither
+`MAP_DARK` nor `MAP_LIGHT` carries a sea colour, and it is also why the body names a definite
+responsive height (`h-[380px] xl:h-[440px] 2xl:h-[500px]` in `WorkbenchPage.tsx`): the canvas is
+`h-full`, and the flow column gives the wrapper nothing of its own to fill.
 
 The plate follows the theme, like every other chart: `MAP_DARK` is the night plate and
 `MAP_LIGHT` the day one, and the two read in opposite directions on purpose — on the dark
 board the countries are lighter than the sea, on paper they are darker than the sheet.
 `tests/chart-palette.test.mjs` asserts both directions and that each plate spends its own
 theme's series tokens.
+
+**The footprint is drawn, and the plate expands.** A country that carries exits is filled in its
+region's series colour at a low opacity (`geo.regions`), the same colour its hub dot and its row in the
+region table carry, so the plate shows where the pool leaves from rather than only marking it; every
+country without exits keeps `land`. The plate no longer carries the four percentage insets it was drawn
+with at half a column's width: with all four set, ECharts stretches the projection to fill the box, so
+at full width they widened the world and cut off its southern edge. Fitting the projection into the
+body instead preserves its aspect ratio and centres it. The header's expand control opens the same map
+in a centred dialog (`components/ui/Dialog.tsx`, built on Radix) at `min(92vw, 1160px)` by
+`min(72vh, 640px)`; the portal exists only while it is open, so the second `EgressMap` mounts and
+disposes its chart with the dialog, and the two instances share the module-level outline cache.
 
 ## Layout
 
@@ -186,8 +201,8 @@ positions anything:
 
 | Column | Panes, in order |
 |---|---|
-| Main (`xl:col-span-8`) | hero (`hero-gradient`) with the range picker, refresh, add-subscription and the four-readout strip · the egress plate (global traffic) at the column's full width · recently added nodes and the platform distribution ring side by side (3/5 and 2/5) · the subscription band |
-| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: status line, badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the top-region table, each row carrying its share as a bar in the region's own colour · traffic overview with the ingress/egress totals · the four readings (requests, latency, error rate, active leases) as four rows of one card, each with its sparkline and its trend basis · recent changes from the audit log · node latency distribution |
+| Main (`xl:col-span-8`) | the egress-distribution plate at the column's full width: hero (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · the plate itself, with its expand control · new nodes and the platform distribution ring side by side (3/5 and 2/5) · the subscription band |
+| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: status line, badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the region-distribution table, each row carrying its share as a bar in the region's own colour · the traffic-trend pane with the ingress/egress totals · the key metrics (requests, latency, error rate, active leases) as four rows of one card, each with its sparkline and its trend basis · the activity log from the audit log · the latency distribution |
 
 Below `xl` the two columns stack; below `sm` the panes inside them do. What the board may
 **not** do, and what the design system checks: no pane states a figure it did not fetch

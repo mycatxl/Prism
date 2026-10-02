@@ -469,7 +469,6 @@ Note: Once enabled, requests without authentication information are rejected ins
   "节点的网络出口、探测状态以及失败历史。":
     "Node network egress, probe status, and failure history.",
   "节点分配策略": "Node allocation policy",
-  "节点延迟分布": "Node latency distribution",
   "节点延迟分布（实时快照）": "Node latency distribution (realtime snapshot)",
   "节点延迟最大测试间隔": "Max node latency probe interval",
   "节点状态": "Node status",

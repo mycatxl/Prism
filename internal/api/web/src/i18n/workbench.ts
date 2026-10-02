@@ -79,7 +79,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   暂无记录: "No records yet",
   添加订阅: "Add subscription",
   总览视图: "Overview views",
-  运行概况: "Overview",
   历史趋势: "Trends",
   库存节点: "Nodes in pool",
   查看节点池: "View node pool",
@@ -150,10 +149,10 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "No exit data yet",
 
   // The traffic plate and the region table beside it.
-  "全球流量":
-    "Global traffic",
-  "热门区域":
-    "Top regions",
+  "出口分布":
+    "Egress distribution",
+  "区域分布":
+    "Region distribution",
   "占比":
     "Share",
   "亚太":
@@ -176,6 +175,9 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Panel egress",
   "流量从这里分发到各节点区域。":
     "Traffic dispatches from here to the node regions.",
+  /* The plate's own control: the same map again, in the dialog at full size. */
+  "展开大屏":
+    "Expand view",
 
   // The redesigned shell and dashboard.
   "实例在线":
@@ -232,8 +234,11 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "vs previous sample",
   "按直方图分箱上界估算":
     "Estimated from the histogram's bin upper bounds",
-  "流量概览":
-    "Traffic overview",
+  "流量走势":
+    "Traffic trend",
+  // The KPI card: four readings of one window, in one card.
+  "关键指标":
+    "Key metrics",
   "窗口累计":
     "Window total",
   "入口流量":
@@ -242,8 +247,10 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Egress",
   "出口":
     "Exits",
-  "最近加入节点":
-    "Recently added nodes",
+  "新增节点":
+    "New nodes",
+  "延迟分布":
+    "Latency distribution",
   "延迟":
     "Latency",
   "失败次数":
@@ -266,8 +273,8 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Create a platform to group nodes",
   "其他":
     "Others",
-  "最近变更":
-    "Recent changes",
+  "操作记录":
+    "Activity log",
   "暂无变更记录":
     "No changes recorded",
   "最近 1 小时": "Last 1 hour",

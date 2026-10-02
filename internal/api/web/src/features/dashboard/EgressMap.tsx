@@ -90,12 +90,15 @@ function paletteFor(theme: "dark" | "light"): MapPalette {
  *
  * A hub sits on the region's **busiest member country** (`hubFor`), so every
  * marker is a place the pool really exits from rather than a decorative point
- * near a number. Countries with no exits keep the sea colour: the filled area
- * *is* the footprint, and a faint coastline is the honest way to say "nothing
- * here".
+ * near a number. That country is *filled* in its region's colour as well, at a low
+ * opacity, so the plate draws the footprint and not only the marker: the lit area
+ * is where the pool leaves from, and every country without exits keeps `land`.
+ * The fill restates the hub's own colour — the same colour the table row beside
+ * the plate carries — so it is a second reading of one fact, never a second fact.
  *
- * The canvas is transparent, so the panel's own ground is the sea and the world
- * has no frame drawn around it.
+ * The canvas is transparent, so the sea is the ground painted under it: the
+ * wrapper's two-token gradient in `WorkbenchPage.tsx`. The world has no frame
+ * drawn around it.
  */
 export default function EgressMap({
   regions,
@@ -210,10 +213,10 @@ export default function EgressMap({
     const animate = !reducedMotion && !hasDrawnRef.current;
     hasDrawnRef.current = true;
     chart.setOption(
-      buildOption({ regions: placed, origin: placedOrigin, nameIndex, palette, isEnglish, t, animate }),
+      buildOption({ regions: placed, origin: placedOrigin, nameIndex, palette, theme, isEnglish, t, animate }),
       { notMerge: true },
     );
-  }, [placed, placedOrigin, geo, nameIndex, centroidIndex, palette, isEnglish, reducedMotion, t]);
+  }, [placed, placedOrigin, geo, nameIndex, centroidIndex, palette, theme, isEnglish, reducedMotion, t]);
 
   if (failed) {
     return (
@@ -232,7 +235,7 @@ export default function EgressMap({
     return <LoadingState className="h-full" label={t("正在加载")} />;
   }
 
-  return <div ref={containerRef} className="h-full w-full" role="img" aria-label={t("全球流量")} />;
+  return <div ref={containerRef} className="h-full w-full" role="img" aria-label={t("出口分布")} />;
 }
 
 type TooltipParam = { name?: string; seriesType?: string; data?: unknown };
@@ -244,6 +247,7 @@ function buildOption({
   palette,
   isEnglish,
   t,
+  theme,
   animate,
 }: {
   regions: PlacedRegion[];
@@ -251,6 +255,13 @@ function buildOption({
   nameIndex: Map<string, { en: string; zh: string }>;
   palette: MapPalette;
   isEnglish: boolean;
+  /**
+   * Which plate was chosen, explicitly rather than inferred from the palette's
+   * identity: the lit footprint's opacity is a per-theme decision, and reading it
+   * off the palette object would make an unrelated refactor of `paletteFor` change
+   * the map's art.
+   */
+  theme: "dark" | "light";
   t: (text: string, options?: Record<string, unknown>) => string;
   animate: boolean;
 }): ChartOption {
@@ -349,15 +360,18 @@ function buildOption({
       roam: false,
       silent: false,
       /*
-       * The insets hold the plate's proportions as the board grows. With all four
-       * set, ECharts stretches the projection to fill the box instead of fitting
-       * it — which is what makes the box *be* the land bounding box rather than
-       * something the aspect ratio decides.
+       * No insets and no explicit box. With all four sides left unset, ECharts fits
+       * the projection into the panel preserving its aspect ratio and centres it,
+       * which is what the plate wants now that it spans the main column: the sea
+       * shows either side of the continent group and nothing is stretched.
+       *
+       * What this replaced: four percentage insets measured for the old half-column
+       * plate. Their whole point was to make the panel's box *be* the land bounding
+       * box — with all four set, ECharts stretches the projection to fill the box
+       * instead of fitting it. At the column's full width the same numbers were a
+       * stretch factor: the projection widened with the panel and the southern
+       * edge ran out of the plate.
        */
-      left: "0.8%",
-      right: "3.2%",
-      top: "0.4%",
-      bottom: "13.1%",
       itemStyle: {
         areaColor: palette.land,
         borderColor: palette.coast,
@@ -369,6 +383,23 @@ function buildOption({
         label: { show: false },
       },
       select: { disabled: true, itemStyle: { areaColor: palette.land } },
+      /*
+       * The lit footprint: one entry per placed region, filled in that region's own
+       * series colour at a low opacity — the same colour that region's hub dot and
+       * its row in the region table carry, so the map and the table beside it agree
+       * about what a colour means. A country the pool exits from is therefore drawn
+       * as well as marked, and every country with no exits keeps `areaColor` above.
+       * The fill restates the marker; it is not a second figure.
+       */
+      regions: regions.map((region) => ({
+        name: region.hubIso,
+        itemStyle: {
+          areaColor: colorOf.get(region.id) ?? palette.series[0],
+          opacity: theme === "dark" ? 0.32 : 0.22,
+          borderColor: palette.coast,
+          borderWidth: 0.5,
+        },
+      })),
     },
     series: [
       {
@@ -402,7 +433,7 @@ function buildOption({
           // knob ECharts exposes, and zero draws none.
           number: animate ? 3 : 0,
           period: 3.4,
-          scale: 2.6,
+          scale: 2.2,
           brushType: "stroke",
         },
         symbolSize: (value: unknown) => hubSize(Number((value as [number, number, number])[2] ?? 0)),
@@ -431,7 +462,7 @@ function buildOption({
         rippleEffect: {
           number: animate ? 3 : 0,
           period: 3,
-          scale: 3,
+          scale: 2.6,
           brushType: "stroke",
         },
         symbolSize: palette.originSize,

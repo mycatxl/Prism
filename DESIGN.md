@@ -355,8 +355,8 @@ all:
 
 | Column | Panes, top to bottom |
 |---|---|
-| Main (`xl:col-span-8`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · 全球流量: the egress plate at the column's full width · 最近加入节点 and 平台分布 side by side (3/5 and 2/5) · the 订阅状态 band |
-| Side (`xl:col-span-4`) | 运行状态 (status line, instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 热门区域 (the region table, each row carrying its share as a bar in the region's own colour) · 流量概览 · the four readings as four rows of one card · 最近变更 · 节点延迟分布 |
+| Main (`xl:col-span-8`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · 出口分布: the egress plate at the column's full width · 新增节点 and 平台分布 side by side (3/5 and 2/5) · the 订阅状态 band |
+| Side (`xl:col-span-4`) | 运行状态 (status line, instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 区域分布 (the region table, each row carrying its share as a bar in the region's own colour) · 流量走势 · 关键指标 (the four readings as four rows of one card) · 操作记录 · 延迟分布 |
 
 Below `xl` the two columns stack; below `sm` the panes inside them do. Type, radii and borders stay
 in px — this is a dashboard that gets wider, not a screenshot that gets scaled — but nothing about
@@ -371,6 +371,16 @@ exits. A missing or unresolvable egress region draws **no origin and no lines**,
 are the dispatch relationship and not a measurement: converging them on whichever hub happened to
 be busiest was a fact nobody took. The origin marker is the one mark on the plate that is not a
 region, and it is not sized by node count.
+
+**The plate's own ground and its full size.** The body carries a definite responsive height
+(`h-[380px] xl:h-[440px] 2xl:h-[500px]` on the wrapper in `WorkbenchPage.tsx`) because the flow
+column gives it none: the wrapper used to be a `flex-1` child with `flex-basis: 0%`, so the canvas
+had nothing to fill and a `min-height` in the stylesheet was the only thing giving it a size. Under
+that canvas the sea is a two-token vertical gradient (`--color-paper-inset` → `--color-live-wash`),
+which is why `MAP_DARK`/`MAP_LIGHT` carry no sea colour; the countries that carry exits are filled in
+their region's own series colour at a low opacity, restating the hub and the table row rather than
+adding a figure; and the header's expand control opens the same map in a centred dialog
+(`components/ui/Dialog.tsx`) whose portal exists only while it is open.
 
 **What stayed, because it was the design and not the replica**: the hero band's light field
 (`.hero-gradient`, the pane's own two stops), the metric-chip row, the plate's header, live dot and
