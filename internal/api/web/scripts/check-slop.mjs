@@ -229,9 +229,10 @@ function attribution(finding) {
   };
 
   if (finding.rule === "layout-transition") {
-    if (!/useReducedMotion-[A-Za-z0-9_-]+\.js$/.test(finding.file ?? "")) return null;
+    const file = finding.file ?? "";
+    if (!/(?:^|[\\/])(?:useReducedMotion|TrafficChart)-[A-Za-z0-9_-]+\.js$/.test(file)) return null;
     return /echarts/i.test(read())
-      ? "ECharts' own bundled code (a Vite shared chunk named after the module the split happened on). Recorded in DESIGN.md"
+      ? "ECharts' own bundled code (a Vite shared chunk whose name can follow either the chart or reduced-motion module). Recorded in DESIGN.md"
       : null;
   }
 

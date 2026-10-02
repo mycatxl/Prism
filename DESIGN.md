@@ -218,11 +218,7 @@ What the set establishes, and what a new component must not break:
   behind `opacity: 0` does not exist.
 - **Loading, error and empty are the same three components everywhere**, so a state is
   never invented per page.
-- **Charts are ECharts**, with the palette literals mirrored in
-  `src/features/dashboard/chartPalette.ts` because canvas cannot read CSS variables.
-  The egress plate is a 2D world map with its outline read from the repository's own
-  GeoJSON — no added asset, no network call to anyone but the panel. A chart's ground
-  is the pane's inset, never a second card.
+- **Charts use the renderer that fits the evidence.** ECharts remains the canvas renderer for the traffic timeline and other series charts, with palette literals mirrored in `src/features/dashboard/chartPalette.ts`. The egress plate is different: it is an offline SVG world map rendered from the repository's own GeoJSON with `d3-geo`, so projection fitting and accessible map marks remain inspectable and stable. A chart's ground is the pane's inset, never a second card.
 
 ## Typography
 
@@ -345,7 +341,7 @@ fails the build. Recorded for the current tree:
 
 | Finding | Where | Why it stands |
 |---|---|---|
-| `[layout-transition] transition: padding` | ECharts' own bundled code, in a Vite shared chunk (`useReducedMotion-*.js` names the module the split happened on, not its contents) | **Provenance.** It is third-party; Prism cannot fix it without forking ECharts. The gate re-reads the chunk and only excuses it while the file still contains ECharts |
+| `[layout-transition] transition: padding` | ECharts' own bundled code, in a Vite shared chunk (`TrafficChart-*.js` or `useReducedMotion-*.js` may name the split, not its contents) | **Provenance.** It is third-party; Prism cannot fix it without forking ECharts. The gate re-reads the chunk and only excuses it while the file still contains ECharts |
 | `[ai-color-palette] Purple/violet accent colors detected` | the built `ui/index.html`, i.e. this console's own palette | **Decision.** The accent is an indigo→violet pair, because the operator pinned that look in a mockup. The bound: two gradient stops on one pane, one ground wash, one accent token pair, no gradient text, no glow and no second accent hue — see [What is deliberate now, and its bound](#what-is-deliberate-now-and-its-bound). A second palette finding still fails the gate |
 | `[radial-halo] radial-gradient halo (<stop> → transparent) on dark page` | none — the finding is gone | **Not applicable any more.** The finding was the hero band's radial stops, and the band went with the 1536px replica layer. Measured: the build scan is clean without it, and `check-slop.mjs` no longer carries the excuse, so a radial halo that comes back is an unexcused finding and fails the gate |
 
@@ -375,8 +371,8 @@ all:
 | Band | Panes, top to bottom |
 |---|---|
 | Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips |
-| Main (`xl:col-span-8`) | 全球流量: the egress plate at the column's full width · the **KPI strip**: 总请求数, 平均延迟, 错误率 and 活跃租约 as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each carrying its sparkline and the basis of its trend, directly under the plate · 最近加入节点 (the newest arrivals, at the column's full width) · the 订阅状态 band |
-| Side (`xl:col-span-4`) | 运行状态 (instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 热门区域 (the region table, each row carrying its share as a bar in the region's own colour) · 流量概览 · 平台分布 (the donut) · 告警 · 延迟分布 |
+| Main (`xl:col-span-8`) | 全球流量: the egress plate at the column's full width · the **KPI strip**: 总请求数, 平均延迟, 错误率 and 活跃租约 as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`) · 延迟分布: the full-width streaming latency profile · 最近加入节点 · the 订阅状态 band |
+| Side (`xl:col-span-4`) | 运行状态 (instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 热门区域 (the region table, each row carrying its share as a bar in the region's own colour) · 流量概览 · 平台分布 (the donut) · 告警 |
 
 Read top to bottom the board is the composition the operator's reference carries: greeting, then
 where traffic leaves from, then the four numbers about that traffic, then the detail tables, then
@@ -413,36 +409,16 @@ are the dispatch relationship and not a measurement: converging them on whicheve
 be busiest was a fact nobody took. The origin marker is the one mark on the plate that is not a
 region, and it is not sized by node count.
 
-**The plate fills its own box.** The body is width-driven — `aspect-[259/100]` on the wrapper in
-`WorkbenchPage.tsx`, with `min-h-[240px]` as the guard for the narrow stacked layout — and the
-ratio is the map's own: 360° of longitude by the ~139° of latitude Antarctica's removal leaves is
-≈2.59:1. At the map's own ratio the projection fills the card edge to edge at every column width,
-with no small centred world and dead sea at the flanks and no distortion, because "fill the box"
-and "fit the projection" are the same operation there. That is why the plate's `geo` pins
-`left`/`top`/`right`/`bottom` to `0` (`features/dashboard/EgressMap.tsx`): with all four set ECharts
-stretches the projection into the box rather than fitting it inside.
+**The plate is fit, not stretched.** `EgressMap.tsx` renders the vendored world outline with `d3-geo`'s `geoNaturalEarth1` and `geoPath`. A `ResizeObserver` measures the actual map stage, `fitExtent` recomputes the projection for that stage, and the SVG uses a matching `viewBox` with `preserveAspectRatio="xMidYMid meet"`. The normal dashboard wrapper is a content-driven `.wb-plate-map` with a fluid `clamp()` minimum height, not a reference-image aspect ratio, so the world keeps its proportions on wide, narrow and stacked layouts.
 
-What that replaced: a definite `h-[380px] xl:h-[440px] 2xl:h-[500px]` height. It existed because
-the wrapper used to be a `flex-1` child with `flex-basis: 0%`, so the canvas had nothing to fill and
-a `min-height` was the only thing giving it a size — but a fixed height cannot track the column
-width, so the world was fitted and centred inside whatever box the height produced. Before that the
-plate carried four measured percentage insets that made the panel's box *be* the land bounding box;
-at the column's full width the same numbers widened the world and cut off its southern edge. Under
-that canvas the sea is a two-token vertical gradient (`--color-paper-inset` → `--color-live-wash`),
-which is why `MAP_DARK`/`MAP_LIGHT` carry no sea colour; the countries that carry exits are filled in
-their region's own series colour at a low opacity, restating the hub and the table row rather than
-adding a figure. In light that fill is 22% — a wash over the land, not a solid — and the two
-graticule-adjacent tokens were solved as a pair for it: land `#d3ddec` (a touch lighter than the
-light sea's own end, `#dcecf6`, so a lit country still separates from the water) and the coast
-hairline `#a9b8d0` (crisper than the sea it draws against). The header's expand control opens the
-same map in a centred dialog
-adding a figure; and the header's expand control opens the same map in a centred dialog
-(`components/ui/Dialog.tsx`) at the same ratio (`w-[min(92vw,1160px)] aspect-[259/100]`) whose portal
-exists only while it is open.
+The map layers remain explicit: the transparent SVG sits on the pane's two-token sea gradient; country paths carry the offline outline and region footprint; constant-width paths connect the panel egress to real hubs when the API supplies a resolvable origin; hub and origin marks expose labels, tooltips and keyboard focus. No network tiles, guessed origin, synthetic metric or runtime map service is introduced.
 
-**What stayed, because it was the design and not the replica**: the hero band's light field
-(`.hero-gradient`, the pane's own two stops), the metric-chip row, the plate's header, live dot and
-region-table rules, and every colour pair the contrast gate measures.
+The expand control opens the same component in a viewport-level Radix dialog. The dialog is a flex column sized from the current viewport; its header stays visible and the map body is `flex: 1` with `min-height: 0`. The map therefore measures the available dialog area instead of mounting inside a small centered ratio box, while Escape, scrim dismissal, focus capture and focus return remain Radix behavior.
+
+The latency profile follows ordinary document flow. The API buckets and overflow count are grouped into six readable bands; each band is a grid row containing its label, proportional bar and count. Summary values stack below the bars on narrow screens, and the panel sits in the main evidence column rather than being squeezed into the side rail.
+
+What stayed, because it was the design and not the replica: the hero band's light field (`.hero-gradient`, the pane's own two stops), the metric-chip row, the plate's header, live dot and region-table rules, and every colour pair the contrast gate measures.
+
 
 **The gate's new contract.** `npm run check:responsive` no longer resolves percentages against a
 canvas; it fails if the geometry comes back. It reads `design.css` and fails when (1) a

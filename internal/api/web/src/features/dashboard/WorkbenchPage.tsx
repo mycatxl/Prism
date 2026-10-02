@@ -769,15 +769,8 @@ export function WorkbenchPage() {
                       <Maximize2 size={15} aria-hidden />
                     </Button>
                   </div>
-                  {/* The plate's body. The box is *width-driven* — `aspect-[259/100]`,
-                      the equirectangular world's own ratio once Antarctica is dropped, with
-                      `min-h-[240px]` only as the guard for the narrow stacked layout — so the
-                      map fills the card edge to edge at every column width: no small globe
-                      with dead sea at the flanks, and no stretch, because at the map's own
-                      ratio "fill the box" and "fit the projection" are the same operation.
-                      The ground under the transparent canvas is the sea: two tokens in a
-                      vertical gradient, a pale blue sheet on paper and deep navy at night. */}
-                  <div className="wb-plate-map flex min-h-0 flex-col aspect-[259/100] min-h-[240px] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+                  {/* The map owns a fluid vertical stage instead of inheriting a reference-image ratio. */}
+                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
                     {nodes.isError ? (
                       <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
                     ) : !nodes.data ? (
@@ -855,6 +848,29 @@ export function WorkbenchPage() {
                 series={leaseSeries}
               />
             </div>
+            <Panel className="wb-latency-panel flex min-w-0 flex-col">
+              <PanelHeader
+                title={t("延迟分布")}
+                meta={
+                  <>
+                    {t("节点数")} {formatCount(latency?.sample_count ?? 0)}
+                  </>
+                }
+              />
+              <div className="min-w-0 flex-1 px-4 py-4 sm:px-5">
+                {snapshot.isError ? (
+                  <ErrorState className="my-3" message={offline} onRetry={() => void snapshot.refetch()} />
+                ) : !latency ? (
+                  <LoadingState className="my-6" label={t("正在加载")} />
+                ) : (
+                  <LatencyProfile
+                    buckets={latency.buckets}
+                    overflowCount={latency.overflow_count}
+                    overflowMs={latency.overflow_ms}
+                  />
+                )}
+              </div>
+            </Panel>
 
             {/* The newest arrivals, at the main column's full width: the plate above is
                 the pool summarised, and this table is the rows it grew by — the newest
@@ -1274,29 +1290,6 @@ export function WorkbenchPage() {
               )}
             </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("延迟分布")}
-                meta={
-                  <>
-                    {t("节点数")} {formatCount(latency?.sample_count ?? 0)}
-                  </>
-                }
-              />
-              <div className="flex-1 px-4 py-3">
-                {snapshot.isError ? (
-                  <ErrorState className="mx-4 my-3" message={offline} onRetry={() => void snapshot.refetch()} />
-                ) : !latency ? (
-                  <LoadingState className="my-6" label={t("正在加载")} />
-                ) : (
-                  <LatencyProfile
-                    buckets={latency.buckets}
-                    overflowCount={latency.overflow_count}
-                    overflowMs={latency.overflow_ms}
-                  />
-                )}
-              </div>
-            </Panel>
           </div>
         </div>
       </div>
@@ -1310,8 +1303,8 @@ export function WorkbenchPage() {
       <DialogRoot open={mapExpanded} onOpenChange={setMapExpanded}>
         <DialogPortal>
           <DialogOverlay />
-          <DialogContent>
-            <div className="flex min-h-[var(--panel-header-h)] items-center justify-between gap-3 border-b border-rule-faint px-4 py-2.5">
+          <DialogContent className="wb-map-dialog flex h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] max-w-[calc(100vw-1rem)] flex-col">
+            <div className="flex min-h-[var(--panel-header-h)] shrink-0 items-center justify-between gap-3 border-b border-rule-faint px-4 py-2.5 sm:px-5">
               <DialogTitle>{t("全球流量")}</DialogTitle>
               <DialogClose asChild>
                 <Button variant="ghost" size="icon" aria-label={t("关闭")}>
@@ -1319,10 +1312,7 @@ export function WorkbenchPage() {
                 </Button>
               </DialogClose>
             </div>
-            {/* The same sea the plate draws on, under the same transparent canvas — and the
-                same width-driven box, so the expanded map fills its dialog instead of
-                centring a small world inside it. */}
-            <div className="w-[min(92vw,1160px)] aspect-[259/100] bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+            <div className="wb-map-dialog__body min-h-0 flex-1 bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
               <Suspense fallback={chartFallback}>
                 <EgressMap
                   regions={regions}

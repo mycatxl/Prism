@@ -123,59 +123,17 @@ Two consequences worth stating, because they are the ones that drifted before:
   inside a `<label>` that carries the click area, so the 14px box is the visual
   and the label is the target.
 
-Charts are ECharts. The egress plate is a 2D world map whose outline is read at runtime
-from the repository's own `public/world-110m.geo.json` — no added asset, no network
-call to anyone but the panel. ECharts' `geo`, `lines` and `effectScatter` series are
-registered in `echartsCore.ts`; there is no WebGL path and no extension pack, so the
-plate draws everywhere the canvas does.
+Charts use the renderer that fits the evidence. ECharts remains the canvas renderer for the traffic timeline and other series charts. The egress plate is a separate offline SVG world map: it reads `public/world-110m.geo.json`, uses `d3-geo`'s `geoNaturalEarth1`/`geoPath`, and makes no map-service request. There is no WebGL path or extension pack.
 
-The plate is one panel of its own, and the region table beside it in the side column reads the same
-six rows: the map carries one hub per region and the table carries the region's latency and its
-share of the pool. A hub sits on the region's **busiest member country** rather than on a
-hand-picked label position, so every marker is a place the pool really exits from.
+The map is a content region inside the main dashboard panel. Its country paths, hub marks, origin mark and relationship lines are separate SVG layers. A hub sits on the region's **busiest member country** rather than on a hand-picked label position, so every marker remains a place the pool really exits from. The existing region table beside it reads the same aggregate rows.
 
-**The flow runs outward.** The plate's origin is the panel's own egress —
-`panel_egress_region` / `panel_egress_ip` on `/system/info`, resolved through the same centroid
-index the hubs use — and one constant-width flight line runs from that origin to every hub with
-exits. It is drawn as a constant-width relationship, never as a volume: the inventory does not say
-which node talks to which, and a line that implied otherwise would be the one figure on the board
-nobody measured. When the panel reports no egress region, or the outline does not carry the one it
-reports, the plate draws **no origin and no lines** — hubs on their own are the honest picture, and
-converging the lines on whichever hub happened to be busiest was a fact nobody took. The origin
-marker is the one mark on the plate that is not a region, and it is not sized by node count. The
-panel's ground is the sea: the canvas is transparent, so what a reader sees is what is painted *under*
-it, and the plate's body paints a two-token vertical gradient there — `--color-paper-inset` →
-`--color-live-wash`, a pale blue sheet on paper and deep navy on the night board. That is why neither
-`MAP_DARK` nor `MAP_LIGHT` carries a sea colour, and it is also why the body is a *width-driven*
-box: `aspect-[259/100] min-h-[240px]` in `WorkbenchPage.tsx`, whose ratio is the map's own (360° of
-longitude by the ~139° of latitude Antarctica's removal leaves ≈ 2.59:1), so the projection fills
-the card edge to edge with no dead sea at the flanks. The canvas is `h-full`; the `min-h` is the
-guard for the narrow stacked layout only.
+**The projection follows the stage.** `ResizeObserver` measures the actual `.egress-map` box; `fitExtent` computes a new projection for that size; SVG `viewBox` plus `preserveAspectRatio="xMidYMid meet"` preserves the world outline without stretching or cropping. The normal map wrapper uses a fluid minimum height and ordinary flex flow rather than `aspect-[259/100]` or fixed dashboard coordinates. This is deliberate: the map may leave a little sea around the outline, but it cannot tear when the column changes width.
 
-The plate follows the theme, like every other chart: `MAP_DARK` is the night plate and
-`MAP_LIGHT` the day one, and the two read in opposite directions on purpose — on the dark
-board the countries are lighter than the sea, on paper they are darker than the sheet.
-`tests/chart-palette.test.mjs` asserts both directions and that each plate spends its own
-theme's series tokens.
+**The flow runs outward.** The plate's origin is the panel's own egress — `panel_egress_region` / `panel_egress_ip` on `/system/info`, resolved through the same centroid index the hubs use — and one constant-width flight line runs from that origin to every hub with exits. It is a relationship, never a volume. When the panel reports no resolvable origin, the plate draws no origin and no lines. The origin marker is not a region and is not sized by node count. Country fills, hubs and table dots spend the same region series colour.
 
-**The footprint is drawn, and the plate expands.** A country that carries exits is filled in its
-region's series colour at a low opacity (`geo.regions`), the same colour its hub dot and its row in the
-region table carry, so the plate shows where the pool leaves from rather than only marking it; every
-country without exits keeps `land`. The light plate's two tokens were solved for that fill: land
-`#d3ddec` is a touch lighter than the light sea's own end (`--p-live-wash #dcecf6`), so a lit country
-still separates from the water, and the coast hairline `#a9b8d0` is crisper than the sea it draws
-against; the fill itself stays at 22% in both themes — a wash over the land, not a solid. The plate's
-`geo` pins `left`/`top`/`right`/`bottom` to `0`: with
-country without exits keeps `land`. The plate's `geo` pins `left`/`top`/`right`/`bottom` to `0`: with
-all four set, ECharts stretches the projection into the box instead of fitting it inside, which is
-only safe because the box already holds the projection's own ratio — at that ratio the two operations
-are the same one, so the world fills the card instead of sitting centred in it. What that replaced:
-four percentage insets measured for the old half-column plate (at full width the same numbers widened
-the world and cut off its southern edge), and then four left-unset sides, which made ECharts fit and
-centre the projection inside a fixed-height box. The header's expand control opens the same map in a
-centred dialog (`components/ui/Dialog.tsx`, built on Radix) at the same ratio — `w-[min(92vw, 1160px)]`
-by `aspect-[259/100]`; the portal exists only while it is open, so the second `EgressMap` mounts and
-disposes its chart with the dialog, and the two instances share the module-level outline cache.
+The expanded plate is a viewport-level Radix dialog. Its content is a flex column sized from the current viewport; the header is shrink-wrapped and the map body is `min-height: 0; flex: 1`, so the second `EgressMap` measures the available dialog area instead of inheriting a small fixed ratio. The portal exists only while it is open, and Radix retains Escape, scrim dismissal, focus capture and focus return.
+
+The latency profile is also ordinary flow: API buckets and overflow are grouped into six bands, each rendered as a label/bar/count grid row. The panel lives in the main evidence column, and its summary stacks on narrow screens so it cannot be squeezed into the side rail.
 
 ## Layout
 
@@ -216,8 +174,8 @@ breakpoint layer positions anything:
 | Band | Panes, in order |
 |---|---|
 | Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips |
-| Main (`xl:col-span-8`) | the Global Traffic plate at the column's full width, with its expand control · the KPI strip: total requests, average latency, error rate and active leases as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each with its sparkline and its trend basis, directly under the plate · Recently added nodes, at the column's full width · the subscription band |
-| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the Top Regions table, each row carrying its share as a bar in the region's own colour · the Traffic overview pane with the ingress/egress totals · the platform-distribution ring · the Alerts feed from the audit log · the latency distribution |
+| Main (`xl:col-span-8`) | the Global Traffic plate at the column's full width, with its expand control · the KPI strip: total requests, average latency, error rate and active leases as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`) · the streaming latency profile · Recently added nodes · the subscription band |
+| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the Top Regions table, each row carrying its share as a bar in the region's own colour · the Traffic overview pane with the ingress/egress totals · the platform-distribution ring · the Alerts feed from the audit log |
 
 The order is the reference board's: greeting, then where traffic leaves from, then the four numbers
 about that traffic, then the detail tables, then the band. Only the hero is full width; the KPI
