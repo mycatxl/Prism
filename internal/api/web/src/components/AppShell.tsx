@@ -345,6 +345,18 @@ export function AppShell() {
               <RefreshCw size={15} />
             </Button>
 
+            {/*
+              The instance's own "all systems operational" pill, in the top bar where the
+              reference board carries it. It is the same state the shell has always shown
+              (the status badge beside it is the *instance* badge: token, connection,
+              version) — this one says what the board's status line used to say in its own
+              card, which is why that line left the side column. `hidden sm:inline-flex`
+              because the bar has five other things to fit on a phone.
+            */}
+            <Badge tone="signal" dot className="hidden sm:inline-flex">
+              {t("所有系统运行正常")}
+            </Badge>
+
             <div className="hidden items-center gap-1.5 sm:flex">
               <ThemeSwitcher />
               <LanguageSwitcher />

@@ -161,6 +161,11 @@ theme's series tokens.
 **The footprint is drawn, and the plate expands.** A country that carries exits is filled in its
 region's series colour at a low opacity (`geo.regions`), the same colour its hub dot and its row in the
 region table carry, so the plate shows where the pool leaves from rather than only marking it; every
+country without exits keeps `land`. The light plate's two tokens were solved for that fill: land
+`#d3ddec` is a touch lighter than the light sea's own end (`--p-live-wash #dcecf6`), so a lit country
+still separates from the water, and the coast hairline `#a9b8d0` is crisper than the sea it draws
+against; the fill itself stays at 22% in both themes — a wash over the land, not a solid. The plate's
+`geo` pins `left`/`top`/`right`/`bottom` to `0`: with
 country without exits keeps `land`. The plate's `geo` pins `left`/`top`/`right`/`bottom` to `0`: with
 all four set, ECharts stretches the projection into the box instead of fitting it inside, which is
 only safe because the box already holds the projection's own ratio — at that ratio the two operations
@@ -210,16 +215,25 @@ breakpoint layer positions anything:
 
 | Band | Panes, in order |
 |---|---|
-| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · the KPI strip: total requests, average latency, error rate and active leases as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each with its sparkline and its trend basis |
-| Main (`xl:col-span-8`) | the egress-distribution plate at the column's full width, with its expand control · new nodes and the platform distribution ring side by side (3/5 and 2/5) · the subscription band |
-| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: status line, badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the region-distribution table, each row carrying its share as a bar in the region's own colour · the traffic-trend pane with the ingress/egress totals · the activity log from the audit log · the latency distribution |
+| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips |
+| Main (`xl:col-span-8`) | the Global Traffic plate at the column's full width, with its expand control · the KPI strip: total requests, average latency, error rate and active leases as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each with its sparkline and its trend basis, directly under the plate · Recently added nodes, at the column's full width · the subscription band |
+| Side (`xl:col-span-4`) | instance state, in one card (the shell's own `system/info` query, reused: badge, version, the two pool readouts, sync line) · quick actions to four real destinations · the Top Regions table, each row carrying its share as a bar in the region's own colour · the Traffic overview pane with the ingress/egress totals · the platform-distribution ring · the Alerts feed from the audit log · the latency distribution |
 
-The order is the F-scan: greeting, the four numbers it is about, the chart that explains them,
-the detail tables, the band. The four KPIs used to be the last card of the side column
-(关键指标), which put the page's own headline figures in its least prominent place; that card is
-deleted and its readings are the strip.
+The order is the reference board's: greeting, then where traffic leaves from, then the four numbers
+about that traffic, then the detail tables, then the band. Only the hero is full width; the KPI
+strip sits inside the main column, under the plate. The four KPIs used to be the last card of the
+side column (关键指标), then a full-width strip between the hero and the split — the strip moved
+into the main column when the reference put it under the map.
 
-Below `xl` the two columns stack; below `sm` the panes inside them do, and the KPI strip goes two across and then one. What the board may
+Two of the board's lines are not panes. The "All Systems Operational" pill is a signal `Badge` in
+the shell's own top bar, so every route carries it: the instance card's plain-language status line
+moved there, and the card kept the badge, the version, the two pool readouts and the sync line. The
+Alerts feed is the audit log rendered as sentences — `alertPhrase()` in
+`src/features/dashboard/WorkbenchPage.tsx` maps the recorded route pattern (`METHOD /api/v1/...`,
+braces and all) to a whole-phrase translation key, falling back to the trimmed path for a route the
+table does not know, so a row reads "Node egress probed" and not "POST
+/api/v1/nodes/{hash}/actions/probe-egress". It is the audit trail, not a synthetic alert stream;
+the method chip keeps its tone colour and the raw record stays in the row's `title`.
 **not** do, and what the design system checks: no pane states a figure it did not fetch
 (a pane with nothing behind it renders its empty state), every trend names its basis in
 text as well as in its `title`, a sparkline never stands in for its number, and the

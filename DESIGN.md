@@ -138,7 +138,7 @@ what tells you.
 | `glass-edge` | `rgba(16,24,40,.09)` | `rgba(255,255,255,.11)` | The pane's 1px edge. **A region is bordered** |
 | `glass-edge-strong` | `rgba(16,24,40,.16)` | `rgba(255,255,255,.19)` | Edge on hover, overlay edges |
 | `glass-highlight` | `rgba(255,255,255,.86)` | `rgba(255,255,255,.11)` | The inner top rim-light: the pane's lit lip, drawn as `inset 0 1px 0 0` ahead of the elevation |
-| `ground-glow` | indigo/violet radials ≤8% | indigo/violet radials ≤11% | The ambient colour wash *behind* the glass, painted on the ground |
+| `ground-glow` | indigo/violet radials ≤10% | indigo/violet radials ≤11% | The ambient colour wash *behind* the glass, painted on the ground. The light stops were raised ×1.25 when the light panes got their frosted pass: at ≤8% the wash sat under a `.58`-alpha white glass and the board read flat |
 | `rule` | `#d5dbe6` | `#2a3447` | Hairline |
 | `rule-strong` | `#9fa9ba` | `#46556e` | Emphasis rule |
 | `rule-faint` | `#e4e8f1` | `#1f2737` | Barely-there rule |
@@ -369,22 +369,34 @@ wears the same shell as every other route, and its composition is the point rath
 geometry.
 
 What replaced it is a twelve-column grid at `xl` whose classes live in the JSX
-(`xl:grid-cols-12`, `xl:col-span-8`, `xl:grid-cols-5`) — no pane geometry in the stylesheet at
+(`xl:grid-cols-12`, `xl:col-span-8`, `xl:col-span-4`) — no pane geometry in the stylesheet at
 all:
 
 | Band | Panes, top to bottom |
 |---|---|
-| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips · the **KPI strip**: 总请求数, 平均延迟, 错误率 and 活跃租约 as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each carrying its sparkline and the basis of its trend |
-| Main (`xl:col-span-8`) | 出口分布: the egress plate at the column's full width · 新增节点 and 平台分布 side by side (3/5 and 2/5) · the 订阅状态 band |
-| Side (`xl:col-span-4`) | 运行状态 (status line, instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 区域分布 (the region table, each row carrying its share as a bar in the region's own colour) · 流量走势 · 操作记录 · 延迟分布 |
+| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips |
+| Main (`xl:col-span-8`) | 全球流量: the egress plate at the column's full width · the **KPI strip**: 总请求数, 平均延迟, 错误率 and 活跃租约 as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`), each carrying its sparkline and the basis of its trend, directly under the plate · 最近加入节点 (the newest arrivals, at the column's full width) · the 订阅状态 band |
+| Side (`xl:col-span-4`) | 运行状态 (instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 热门区域 (the region table, each row carrying its share as a bar in the region's own colour) · 流量概览 · 平台分布 (the donut) · 告警 · 延迟分布 |
 
-Read top to bottom the board is the F-scan the dense-console operators converge on: greeting,
-the four numbers it is about, the chart that explains them, the detail tables, the band. The
-hero band and the KPI strip each take a full-width row (`xl:col-span-12`) of the same
-twelve-column grid, so the two keep the board's own gap rhythm at every width; the split into the data story and
-the always-on panes happens below them. The four KPIs used to be a four-row card at the bottom
-of the side column (关键指标), which buried the page's own headline figures in its least
-prominent place — that card is gone, and the strip is where its readings live.
+Read top to bottom the board is the composition the operator's reference carries: greeting, then
+where traffic leaves from, then the four numbers about that traffic, then the detail tables, then
+the band. Only the hero takes a full-width row (`xl:col-span-12`); the KPI strip sits inside the
+main column, under the plate, so the split into the data story and the always-on panes begins
+immediately below the greeting. The four KPIs used to be a four-row card at the bottom of the side
+column (关键指标), and then a full-width strip between the hero and the split; the reference puts
+them under the map, where they read as the plate's own figures.
+
+Two of the board's lines live outside the grid. The **"所有系统运行正常" pill** is a `Badge
+tone="signal"` in the shell's own top bar (`components/AppShell.tsx`), so it shows on every route:
+the 运行状态 card's plain-language status line moved there when the reference board put it there,
+and the side card kept the instance badge, the version, the two pool readouts and the sync line.
+The **告警 feed** is the audit log (`/api/v1/audit-logs`) rendered as sentences:
+`alertPhrase()` in `WorkbenchPage.tsx` maps the route pattern the middleware recorded
+(`METHOD /api/v1/...`, braces and all) to a whole-phrase translation key, with a route the table
+does not know falling back to its own trimmed path — so a row reads "探测节点出口 / Node egress
+probed" rather than "POST /api/v1/nodes/{hash}/actions/probe-egress". It is the audit trail, not a
+synthetic alert stream; the method chip keeps its tone colour (a DELETE is the one row that can be
+a loss) and the raw record stays in the row's own `title`.
 
 Below `xl` the two columns stack; below `sm` the panes inside them do, and the KPI strip goes
 two across and then one. Type, radii and borders stay
@@ -419,6 +431,11 @@ at the column's full width the same numbers widened the world and cut off its so
 that canvas the sea is a two-token vertical gradient (`--color-paper-inset` → `--color-live-wash`),
 which is why `MAP_DARK`/`MAP_LIGHT` carry no sea colour; the countries that carry exits are filled in
 their region's own series colour at a low opacity, restating the hub and the table row rather than
+adding a figure. In light that fill is 22% — a wash over the land, not a solid — and the two
+graticule-adjacent tokens were solved as a pair for it: land `#d3ddec` (a touch lighter than the
+light sea's own end, `#dcecf6`, so a lit country still separates from the water) and the coast
+hairline `#a9b8d0` (crisper than the sea it draws against). The header's expand control opens the
+same map in a centred dialog
 adding a figure; and the header's expand control opens the same map in a centred dialog
 (`components/ui/Dialog.tsx`) at the same ratio (`w-[min(92vw,1160px)] aspect-[259/100]`) whose portal
 exists only while it is open.
@@ -435,7 +452,10 @@ the three carries a rule at all, so this is a guard against the old geometry ret
 `position: absolute` rule names a board pane (the range picker's chevron is not a pane and is not
 flagged), or (4) one of the board's own rules — `.wb-hero-banner`, `.wb-hero-heading`,
 `.wb-metric-chips`, `.wb-status-card`, `.wb-plate`, `.wb-region-table` — has been renamed or
-deleted, because a gate that passes on an empty stylesheet is a false clean. It fails closed on a
+deleted, because a gate that passes on an empty stylesheet is a false clean. `.wb-status-card` is
+the one entry nothing composes any more — the 运行状态 card's status line moved into the shell's top
+bar — and it is kept, with `.wb-status-dot`, `.wb-status-title` and `.wb-status-desc`, as the
+residue this rule names. It fails closed on a
 missing or unparseable file, an implausible rule count or an empty check set, and prints a
 one-line summary when it passes.
 

@@ -481,6 +481,7 @@ export function NodesPage() {
               )}
             </div>
             <Select
+              className="w-full sm:w-40"
               value={mode}
               aria-label={t("状态")}
               onChange={(event) => update("status", event.target.value)}
@@ -540,6 +541,7 @@ export function NodesPage() {
 
             <PanelToolbar>
             <Select
+              className="w-full sm:w-40"
               aria-label={t("IP 类型")}
               value={filter.ip_type}
               onChange={event => update("ip_type", event.target.value)}
@@ -550,6 +552,7 @@ export function NodesPage() {
               ))}
             </Select>
             <Select
+              className="w-full sm:w-40"
               aria-label={t("连接协议")}
               value={filter.protocol}
               onChange={event => update("protocol", event.target.value)}
@@ -560,6 +563,7 @@ export function NodesPage() {
               ))}
             </Select>
             <Select
+              className="w-full sm:w-40"
               aria-label={t("质量状态")}
               value={filter.quality_state}
               onChange={event => update("quality_state", event.target.value)}
@@ -569,6 +573,7 @@ export function NodesPage() {
               ))}
             </Select>
             <Select
+              className="w-full sm:w-40"
               aria-label={t("纯净度分级")}
               value={filter.purity_band}
               onChange={event => update("purity_band", event.target.value)}
@@ -581,6 +586,7 @@ export function NodesPage() {
               <option value="unknown">{t("评级未知")}</option>
             </Select>
             <Select
+              className="w-full sm:w-40"
               aria-label={t("排序")}
               value={sort}
               onChange={event => update("sort", event.target.value)}
@@ -596,6 +602,7 @@ export function NodesPage() {
               ].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
             </Select>
             <Select
+              className="w-full sm:w-40"
               aria-label={t("排序方向")}
               value={order}
               onChange={event => update("order", event.target.value)}
@@ -611,7 +618,7 @@ export function NodesPage() {
 
             {advanced && (
             <div
-              className="grid grid-cols-1 gap-x-4 gap-y-3 border-b border-rule-faint px-4 py-3 sm:grid-cols-2 lg:grid-cols-4"
+              className="grid grid-cols-1 gap-x-4 gap-y-3 border-b border-rule-faint px-4 py-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
               id="node-filters"
             >
               <Fieldset label={t("平台")}>
@@ -768,7 +775,9 @@ export function NodesPage() {
                   placeholder={t("格式 检测项:结果，如 chatgpt:available")}
                 />
               </Fieldset>
-              <div className="flex items-start">
+              {/* The reset is the panel's own action, not a condition, so it takes the
+                  grid's trailing row rather than a field's cell. */}
+              <div className="flex items-center justify-end sm:col-span-2 xl:col-span-3 2xl:col-span-4">
                 <Button
                   variant="ghost"
                   onClick={() => setParams({}, { replace: true })}
@@ -778,7 +787,7 @@ export function NodesPage() {
                 </Button>
               </div>
               {(platforms.isError || subscriptions.isError) && (
-                <div className="sm:col-span-2 lg:col-span-4">
+                <div className="sm:col-span-2 xl:col-span-3 2xl:col-span-4">
                   <ErrorState
                     message={t("数据暂时不可用")}
                     onRetry={() => {

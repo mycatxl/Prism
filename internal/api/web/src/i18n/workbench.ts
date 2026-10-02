@@ -148,11 +148,17 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   "暂无出口数据":
     "No exit data yet",
 
-  // The traffic plate and the region table beside it.
-  "出口分布":
-    "Egress distribution",
-  "区域分布":
-    "Region distribution",
+  // The traffic plate, the region table beside it and the newest-arrivals table.
+  "全球流量":
+    "Global Traffic",
+  "热门区域":
+    "Top Regions",
+  "最近加入节点":
+    "Recently added nodes",
+  "流量概览":
+    "Traffic overview",
+  "告警":
+    "Alerts",
   "占比":
     "Share",
   "亚太":
@@ -234,8 +240,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "vs previous sample",
   "按直方图分箱上界估算":
     "Estimated from the histogram's bin upper bounds",
-  "流量走势":
-    "Traffic trend",
   "窗口累计":
     "Window total",
   "入口流量":
@@ -244,8 +248,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Egress",
   "出口":
     "Exits",
-  "新增节点":
-    "New nodes",
   "延迟分布":
     "Latency distribution",
   "延迟":
@@ -270,11 +272,49 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Create a platform to group nodes",
   "其他":
     "Others",
-  "操作记录":
-    "Activity log",
   "暂无变更记录":
     "No changes recorded",
   "最近 1 小时": "Last 1 hour",
   "最近 6 小时": "Last 6 hours",
   "最近 24 小时": "Last 24 hours",
+
+  /*
+   * The 告警 feed's sentences. Its rows come from the audit log, so the key is the
+   * write action and the value has to read as a completed event ("Node egress
+   * probed"), not as the imperative a toolbar uses. The eight keys the rest of the
+   * console already carries (新建订阅, 删除平台, …) are deliberately absent: they
+   * resolve from this same dictionary and already read correctly in a feed.
+   */
+  "刷新订阅": "Subscription refreshed",
+  "清理订阅熔断节点": "Subscription circuit-open nodes cleared",
+  "更新订阅": "Subscription updated",
+  "探测节点出口": "Node egress probed",
+  "探测节点延迟": "Node latency probed",
+  "探测节点质量": "Node quality probed",
+  "复核节点纯净度": "Node purity review requested",
+  "探测 IP 质量": "IP quality probed",
+  "预览平台筛选": "Platform filter previewed",
+  "预览平台范围": "Platform scope previewed",
+  "重置平台": "Platform reset to default",
+  "重建平台路由": "Platform routing rebuilt",
+  "轮换平台租约": "Lease rotated",
+  "删除平台租约": "Lease deleted",
+  "清空平台租约": "All leases deleted",
+  "更新平台": "Platform updated",
+  "取消情报任务": "Intel job cancelled",
+  "重试情报任务": "Intel job retried",
+  "新建情报任务": "Intel job created",
+  "恢复情报来源": "Intel provider resumed",
+  "刷新情报来源": "Intel provider refreshed",
+  "更新情报来源": "Intel provider updated",
+  "更新检测项": "Intel check updated",
+  "轮换导出令牌": "Export token rotated",
+  "更新导出配置": "Export profile updated",
+  "删除导出配置": "Export profile deleted",
+  "更新 GeoIP 数据": "GeoIP data updated",
+  "查询 GeoIP": "GeoIP lookup",
+  "更新系统配置": "System config updated",
+  "解析规则": "Rule resolved",
+  "更新规则": "Rule updated",
+  "更新接入点": "Endpoint updated",
 };

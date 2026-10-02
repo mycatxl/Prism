@@ -416,7 +416,7 @@ check("the dashboard hero renders", async ({ origin, page }) => {
   // reader's choice (the globe is the default). Asserting on either label keeps
   // the check about "the hero drew something" rather than about which tab is
   // selected; the dashboard's default view has changed once already.
-  const map = page.locator('main [role="img"][aria-label="出口分布"]').first();
+  const map = page.locator('main [role="img"][aria-label="全球流量"]').first();
   await map.waitFor({ state: "visible", timeout: 20000 });
   const canvas = map.locator("canvas").first();
   await canvas.waitFor({ state: "attached", timeout: 20000 });
@@ -470,8 +470,6 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
     ".wb-hero-heading",
     ".wb-hero-desc",
     ".wb-timerange-select",
-    ".wb-status-title",
-    ".wb-status-desc",
     ".wb-metric-val",
     ".wb-metric-label",
     ".wb-metric-badge-neutral",

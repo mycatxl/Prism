@@ -179,10 +179,19 @@ export const MAP_DARK: MapPalette = {
  * `land` is therefore a filled step *below* the paper rather than a lit one above
  * it: on the dark plate the countries glow and the sea is the absence; on paper
  * the countries are the ink and the sea is the sheet.
+ *
+ * The two paper values were solved against the sea's own gradient end
+ * (`--p-live-wash` `#dcecf6` at the foot of the plate, `--p-paper-inset` `#f9fafd` at
+ * its head): `land` sits far enough below both ends to separate from the sheet without
+ * turning into ink, and `coast` is the crisper hairline that keeps two neighbouring
+ * countries — or a country and the sea — from fusing at a glance. A lit country re-fills
+ * its own footprint in the region's series colour at 0.22 (see `EgressMap.tsx`), which
+ * lands at roughly `#aeb4d1` over this `land` for `series-1`: a tint of the ground, not
+ * a solid, which is the point of that opacity.
  */
 export const MAP_LIGHT: MapPalette = {
-  land: "#c9d4e6",
-  coast: "#aab9d2",
+  land: "#d3ddec",
+  coast: "#a9b8d0",
   ink: CHART_INK,
   series: CHART_SERIES,
   hubStroke: "rgba(255, 255, 255, 0.9)",

@@ -235,7 +235,7 @@ export default function EgressMap({
     return <LoadingState className="h-full" label={t("正在加载")} />;
   }
 
-  return <div ref={containerRef} className="h-full w-full" role="img" aria-label={t("出口分布")} />;
+  return <div ref={containerRef} className="h-full w-full" role="img" aria-label={t("全球流量")} />;
 }
 
 type TooltipParam = { name?: string; seriesType?: string; data?: unknown };
