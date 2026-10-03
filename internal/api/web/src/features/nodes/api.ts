@@ -24,6 +24,28 @@ type ApiNodeSummary = Omit<NodeSummary, "tags"> & {
   last_egress_update_attempt?: string | null;
 };
 
+type ApiNodePage = {
+  items?: ApiNodeSummary[] | null;
+  total?: number | string | null;
+  limit?: number | string | null;
+  offset?: number | string | null;
+  unique_egress_ips?: number | string | null;
+  unique_healthy_egress_ips?: number | string | null;
+};
+
+function parseNonNegativeInteger(value: unknown): number | null {
+  const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function normalizeCount(value: unknown, fallback: number): number {
+  return parseNonNegativeInteger(value) ?? fallback;
+}
+
+function normalizeOptionalCount(value: unknown): number | null {
+  return parseNonNegativeInteger(value);
+}
+
 function normalizeNode(raw: ApiNodeSummary): NodeSummary {
   const { reference_latency_ms, ...rest } = raw;
   const normalized: NodeSummary = {
@@ -128,10 +150,15 @@ export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): P
     query.set("enabled", String(filters.enabled));
   }
 
-  const data = await apiRequest<PageResponse<ApiNodeSummary>>(`${basePath}?${query.toString()}`, { signal });
+  const data = await apiRequest<ApiNodePage | null>(`${basePath}?${query.toString()}`, { signal });
+  const items = Array.isArray(data?.items) ? data.items : [];
   return {
-    ...data,
-    items: data.items.map(normalizeNode),
+    items: items.map(normalizeNode),
+    total: normalizeCount(data?.total, items.length),
+    limit: normalizeCount(data?.limit, filters.limit ?? 50),
+    offset: normalizeCount(data?.offset, filters.offset ?? 0),
+    unique_egress_ips: normalizeOptionalCount(data?.unique_egress_ips),
+    unique_healthy_egress_ips: normalizeOptionalCount(data?.unique_healthy_egress_ips),
   };
 }
 

@@ -13,26 +13,25 @@
  * timeline is the day chart; the egress map carries its own palette, because it is
  * the one surface that paints a night sky rather than paper.
  */
-export const CHART_PAPER = "#f4f6fb";
-export const CHART_PAPER_SUNK = "#eceef4";
+export const CHART_PAPER = "#f5f7fb";
+export const CHART_PAPER_SUNK = "#edf0f5";
 /*
- * The pane surfaces are the frosted-glass fills: `raised` is `--p-raised` (#fafbfd, the
- * pane's own composite over the canvas) and `inset` is `--p-inset` (#f9fafd, the chart's
- * ground). They moved with the light theme's alpha pass and must move with it again —
- * `tests/chart-palette.test.mjs` fails the moment they disagree.
+ * The pane surfaces are the paper-first day theme: a cool canvas, a quiet inset
+ * well and an elevated white surface. `tests/chart-palette.test.mjs` keeps these
+ * literals synchronized with the CSS primitives.
  */
-export const CHART_PAPER_RAISED = "#fafbfd";
-export const CHART_PAPER_INSET = "#f9fafd";
-export const CHART_RULE = "#d5dbe6";
-export const CHART_RULE_STRONG = "#9fa9ba";
-export const CHART_INK = "#0b111e";
-export const CHART_INK_SOFT = "#364152";
-export const CHART_INK_FAINT = "#526075";
+export const CHART_PAPER_RAISED = "#fcfdff";
+export const CHART_PAPER_INSET = "#f1f4f8";
+export const CHART_RULE = "#d7dee9";
+export const CHART_RULE_STRONG = "#a6b2c2";
+export const CHART_INK = "#0f1728";
+export const CHART_INK_SOFT = "#425168";
+export const CHART_INK_FAINT = "#5b6a80";
 export const CHART_SIGNAL = "#086a50";
 export const CHART_SIGNAL_DEEP = "#054937";
 export const CHART_LIVE = "#0a5d88";
-export const CHART_GRID = "#e6eaf2";
-export const CHART_AXIS = "#556274";
+export const CHART_GRID = "#e7ecf3";
+export const CHART_AXIS = "#5a687b";
 
 /*
  * The accent, which the map spends on exactly one thing: the panel's own egress
@@ -40,7 +39,7 @@ export const CHART_AXIS = "#556274";
  * on the plate that never means "a region". Both values are `--p-accent` from
  * their own theme.
  */
-export const CHART_ACCENT = "#4338ca";
+export const CHART_ACCENT = "#3157c7";
 export const CHART_ACCENT_DARK = "#818cf8";
 
 /**
@@ -91,14 +90,12 @@ export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular",
  * a dark panel.
  *
  * There is deliberately no sea colour here. The map's canvas is transparent, and
- * the sea is painted *under* it: the plate's wrapper carries a two-token linear
- * gradient (`--color-paper-inset` → `--color-live-wash`), which is a faintly blue
- * sheet on paper and a deep navy one on the night board. So the ground belongs to
- * the pane, where a panel's surface belongs, and it follows the theme — a sea
- * colour declared here would be a literal that could not. `land` and `coast` are
- * the two values that are art rather than token — the plate is read at three
- * metres, and the gap between the filled country and the sea is what makes the
- * footprint legible at that distance.
+ * the sea is painted *under* it by the map wrapper's paper inset surface. The
+ * wrapper owns the ground because a panel surface owns its material and follows
+ * the active theme; a sea colour declared here would be a literal that could not.
+ * `land` and `coast` are the two values that are art rather than token — the plate
+ * is read at three metres, and the gap between the filled country and the sea is
+ * what makes the footprint legible at that distance.
  * Everything a reader has to *interpret* — the tooltip's ink, the healthy signal —
  * is a dark-theme token, so the two halves stay one edit apart.
  */
@@ -176,18 +173,14 @@ export const MAP_DARK: MapPalette = {
  * the one thing the board's own rule ("a chart's ground is the pane's inset")
  * exists to prevent.
  *
- * `land` is therefore a filled step *below* the paper rather than a lit one above
- * it: on the dark plate the countries glow and the sea is the absence; on paper
- * the countries are the ink and the sea is the sheet.
- *
- * The two paper values were solved against the sea's own gradient end
- * (`--p-live-wash` `#dcecf6` at the foot of the plate, `--p-paper-inset` `#f9fafd` at
- * its head): `land` sits far enough below both ends to separate from the sheet without
- * turning into ink, and `coast` is the crisper hairline that keeps two neighbouring
- * countries — or a country and the sea — from fusing at a glance. A lit country re-fills
- * its own footprint in the region's series colour at 0.22 (see `EgressMap.tsx`), which
- * lands at roughly `#aeb4d1` over this `land` for `series-1`: a tint of the ground, not
- * a solid, which is the point of that opacity.
+ * `land` is therefore a filled step below the wrapper's paper inset surface rather
+ * than a lit one above it: on the dark plate the countries glow and the sea is the
+ * absence; on paper the countries are the ink and the sea is the sheet. `coast` is
+ * the crisper hairline that keeps two neighbouring countries — or a country and the
+ * sea — from fusing at a glance. A lit country re-fills its own footprint in the
+ * region's series colour at 0.22 (see `EgressMap.tsx`), which lands at roughly
+ * `#aeb4d1` over this `land` for `series-1`: a tint of the ground, not a solid,
+ * which is the point of that opacity.
  */
 export const MAP_LIGHT: MapPalette = {
   land: "#d3ddec",
