@@ -1502,7 +1502,7 @@ export function ExportsPage() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+      <div className="page-content page-content--fill">
         <div className="mb-3 flex items-start gap-2 border border-warn/30 bg-warn-wash px-3 py-2 text-xs text-warn">
           <Info size={14} aria-hidden className="mt-0.5 shrink-0" />
           <span className="max-w-[68ch]">

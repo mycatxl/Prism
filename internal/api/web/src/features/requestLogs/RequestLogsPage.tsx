@@ -695,11 +695,11 @@ export function RequestLogsPage() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+      <div className="page-content page-content--fill">
         <Panel className="flex min-w-0 flex-col">
           <PanelHeader title={t("请求日志")} />
 
-          <PanelToolbar className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <PanelToolbar className="filter-toolbar filter-toolbar--dense grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <FilterField id="logs-from" label={t("开始时间")} warning={rangeInvalid ? t("时间范围错误：开始时间必须早于结束时间，已暂不应用结束时间筛选。") : undefined}>
               <Input
                 id="logs-from"

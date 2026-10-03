@@ -35,19 +35,17 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        "flex min-h-[var(--panel-header-h)] items-center gap-3 border-b border-rule-faint bg-glass/35 px-4 py-2.5",
+        "panel-header flex min-h-[var(--panel-header-h)] items-start gap-4",
         className,
       )}
     >
-      <div className="flex min-w-0 flex-1 items-baseline gap-2">
-        <As className="truncate text-sm font-semibold tracking-tight text-ink">{title}</As>
-        {meta && <span className="label shrink-0 whitespace-nowrap">{meta}</span>}
+      <div className="panel-header__main min-w-0 flex-1">
+        <div className="panel-header__title-row flex min-w-0 items-baseline gap-2">
+          <As className="panel-header__title min-w-0 truncate text-sm font-semibold tracking-tight text-ink">{title}</As>
+          {meta && <span className="panel-header__meta label shrink-0 whitespace-nowrap">{meta}</span>}
+        </div>
+        {description && <p className="panel-header__description mt-1 max-w-[58ch] text-xs leading-relaxed text-ink-faint">{description}</p>}
       </div>
-      {description && (
-        <p className="hidden min-w-0 max-w-[46ch] truncate text-xs text-ink-faint xl:block">
-          {description}
-        </p>
-      )}
       {actions && <div className="panel-actions flex shrink-0 items-center gap-1.5">{actions}</div>}
     </div>
   );
@@ -67,7 +65,7 @@ export function PanelToolbar({
   return (
     <div
       className={cn(
-        "flex min-h-[var(--toolbar-h)] flex-wrap items-center gap-2 border-b border-rule-faint bg-paper-inset/60 px-4 py-2",
+        "panel-toolbar flex min-h-[var(--toolbar-h)] flex-wrap items-center gap-2",
         className,
       )}
     >
@@ -78,7 +76,7 @@ export function PanelToolbar({
 
 /** The body of a panel: the 16px gutter every panel shares. */
 export function PanelBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("px-4 py-3.5", className)}>{children}</div>;
+  return <div className={cn("panel-body", className)}>{children}</div>;
 }
 
 /** A panel footer for totals, pagination and bulk actions. */
@@ -92,7 +90,7 @@ export function PanelFooter({
   return (
     <div
       className={cn(
-        "flex min-h-11 flex-wrap items-center gap-3 border-t border-rule-faint px-4 py-2.5 text-xs text-ink-faint",
+        "panel-footer flex min-h-11 flex-wrap items-center gap-3 text-xs",
         className,
       )}
     >

@@ -23,22 +23,22 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "glass-bar sticky top-0 z-20 flex min-h-[var(--page-header-h)] flex-col justify-center gap-1 border-b border-glass-edge px-[var(--page-gutter)] py-2",
-        "supports-[backdrop-filter]:bg-glass-strong/80",
+        "page-header glass-bar sticky top-0 z-20",
+        "supports-[backdrop-filter]:bg-glass-strong/88",
         className,
       )}
     >
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-        <h1 className="shrink-0">{title}</h1>
-        {meta && (
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">{meta}</div>
-        )}
-        {actions && <div className="ml-auto flex shrink-0 items-center gap-2">{actions}</div>}
+      <div className="page-header__inner">
+        <div className="page-header__title-row">
+          <div className="page-header__identity">
+            <h1 className="page-header__title shrink-0">{title}</h1>
+            {meta && <div className="page-header__meta">{meta}</div>}
+          </div>
+          {actions && <div className="page-header__actions">{actions}</div>}
+        </div>
+        {description && <p className="page-header__description">{description}</p>}
+        {tabs && <div className="page-header__tabs">{tabs}</div>}
       </div>
-      {description && (
-        <p className="mt-0.5 line-clamp-1 max-w-[68ch] text-xs text-ink-faint">{description}</p>
-      )}
-      {tabs && <div className="mt-1.5">{tabs}</div>}
     </header>
   );
 }
@@ -71,8 +71,8 @@ export function Page({
   return (
     <section
       className={cn(
-        "flex min-h-full flex-col",
-        bleed ? "px-0" : "px-[var(--page-gutter)] py-3.5 2xl:py-5",
+        "page-shell flex min-h-full flex-col",
+        bleed ? "px-0" : "px-[var(--page-gutter)] py-4 lg:py-5",
         className,
       )}
     >

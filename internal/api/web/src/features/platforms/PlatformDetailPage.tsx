@@ -490,7 +490,7 @@ export function PlatformDetailPage() {
 
           <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-          <div className="flex flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:gap-4 2xl:px-6 2xl:py-5">
+          <div className="page-content page-content--fill">
             {!platformId ? (
               <Panel>
                 <PanelBody>

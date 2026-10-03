@@ -122,7 +122,7 @@ export function GeoIPPage() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="grid gap-3 px-4 py-3 lg:grid-cols-2 lg:px-5 lg:py-4 2xl:gap-4 2xl:px-6 2xl:py-5">
+      <div className="page-content page-content--split">
         <Panel className="min-w-0">
           <PanelHeader
             title={t("数据库状态")}

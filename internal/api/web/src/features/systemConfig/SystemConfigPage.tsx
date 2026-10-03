@@ -598,7 +598,7 @@ export function SystemConfigPage() {
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+      <div className="page-content page-content--fill">
         {!form ? (
           <Panel className="max-w-3xl">
             <PanelBody>
@@ -616,7 +616,7 @@ export function SystemConfigPage() {
         ) : (
           <div className="space-y-3">
             {!category && (
-              <Panel className="flex min-w-0 flex-col">
+              <Panel className="config-directory panel-group flex min-w-0 flex-col">
                 <PanelHeader title={t("所有配置")} description={t("选择一类设置，集中查看和调整。")} />
                 <PanelToolbar>
                   <label className="relative block w-full sm:w-72">

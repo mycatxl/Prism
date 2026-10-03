@@ -641,10 +641,10 @@ export function WorkbenchPage() {
 
   return (
     <Page bleed>
-      <div className="flex flex-col gap-3 px-[var(--page-gutter)] py-3.5 lg:gap-4 2xl:gap-5 2xl:py-5 wb-board">
+      <div className="page-content page-content--dashboard wb-board">
         {snapshot.isError && <ErrorState message={offline} onRetry={() => void snapshot.refetch()} />}
 
-        <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-12">
+        <div className="dashboard-grid grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-12">
           {/* The board's top band: the greeting, the range picker, the refresh and add
               controls, and the hero's four chips — at the full board width, because it is
               the first thing read and the four figures it carries are the ones the rest of

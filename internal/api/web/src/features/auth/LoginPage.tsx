@@ -114,10 +114,10 @@ export function LoginPage() {
   const fieldErrorId = "token-error";
 
   return (
-    <main className="flex min-h-dvh flex-col bg-paper lg:flex-row">
+    <main className="login-shell ground flex min-h-dvh flex-col lg:flex-row">
       <section
         aria-label="Prism"
-        className="flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14"
+        className="login-intro flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14"
       >
         <div className="flex items-center gap-2.5">
           <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" className="size-10" />
@@ -139,8 +139,8 @@ export function LoginPage() {
         <p className="text-xs text-ink-faint">{t("节点、出口与质量，一处掌握。")}</p>
       </section>
 
-      <section className="flex w-full shrink-0 items-center border-t border-rule bg-paper-raised px-6 py-10 lg:w-[420px] lg:border-t-0 lg:border-l lg:px-8">
-        <div className="mx-auto w-full max-w-xs">
+      <section className="login-card-shell flex w-full shrink-0 items-center border-t border-rule bg-paper-inset px-6 py-10 lg:w-[min(42vw,32rem)] lg:border-t-0 lg:border-l lg:px-8">
+        <div className="login-card panel mx-auto w-full max-w-md p-6 sm:p-8">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-lg">{t("欢迎回来")}</h2>
