@@ -90,6 +90,10 @@ function integer(value: string | null, fallback: number) {
   return value !== null && Number.isSafeInteger(n) && n >= 0 ? n : fallback;
 }
 
+function formatCount(value: number | null | undefined) {
+  return value == null ? "--" : value.toLocaleString();
+}
+
 // optionalInteger reads a numeric filter input. An empty or invalid value means
 // "no filter" and is left out of the request entirely.
 function optionalInteger(value: string): number | undefined {
@@ -388,13 +392,11 @@ export function NodesPage() {
             <>
               <PageMeta
                 label={t("节点总数")}
-                value={nodesQuery.data ? nodesQuery.data.total.toLocaleString() : "--"}
+                value={formatCount(nodesQuery.data?.total)}
               />
               <PageMeta
                 label={t("独立出口")}
-                value={
-                  nodesQuery.data ? nodesQuery.data.unique_egress_ips.toLocaleString() : "--"
-                }
+                value={formatCount(nodesQuery.data?.unique_egress_ips)}
               />
             </>
           }

@@ -55,17 +55,21 @@ Every item below was refused outright by the previous world. It is allowed now w
 bound a reviewer can check, and the bound is the rule — not the technique.
 
 - **Glass.** Blur has one job: separating a pane from the ground. **Two values are
-  sanctioned, both declared in `design.css`** — the card blur `--p-glass-blur`
-  (`blur(24px) saturate(140%)` on paper, `blur(22px) saturate(160%)` at night: one
-  material, tighter and more saturated over a near-black ground, and used by `.panel`,
-  `.glass-bar`, `.glass-rail`, `.glass-elevated` and the sticky `.data-grid` head) and
-  the chrome-strip blur (`backdrop-blur-md`, 12px) on the two bands that float over
-  scrolling content, the page header and the toast. A third value is a bug. The
-  frosted-glass pass is the reason the fills are as faint as they are: a pane is a
-  *frosted* card, so it shows the ground through it (0.58 white on paper, 0.085 at
-  night), it carries the 1px inner top rim-light that reads as the lit lip of the
-  glass, and what it frosts is the ambient colour wash painted *behind* it
-  (`--p-ground-glow`, on the body's own ground).
+  sanctioned, both declared in `design.css`** — the card blur
+  `--p-glass-blur` (`blur(18px) saturate(118%)` on paper,
+  `blur(22px) saturate(160%)` at night: one material, tighter and more saturated
+  over a near-black ground, and used by `.panel`, `.glass-bar`, `.glass-rail`,
+  `.glass-elevated` and the sticky `.data-grid` head) and the chrome-strip blur
+  (`backdrop-blur-md`, 12px) on the two bands that float over scrolling content,
+  the page header and the toast. A third value is a bug. The frosted-glass pass is
+  the reason the fills are restrained rather than luminous: a pane is a near-paper
+  surface in light (`.78` white) and a faint glass surface at night (`.085` white),
+  it carries the 1px inner top rim-light that reads as the lit lip, and what it
+  frosts is the ambient colour wash painted *behind* it (`--p-ground-glow`, on the
+  body's own ground).
+
+  This is intentionally paper-first in light mode: the glass vocabulary remains for
+  hierarchy, but it must not reduce text or data readability.
 - **Lift.** Soft shadows are real in both themes, because a pane floats over a lit
   ground: `shadow-md` on a pane, `shadow-lg` on an overlay. The step is a hierarchy
   decision, never a per-page one.
@@ -110,47 +114,43 @@ the canvas**:
 surface = fill_alpha × fill_color + (1 − fill_alpha) × canvas      (rounded to #rrggbb)
 ```
 
-Each pane surface is the *same glass* as the pane's own fill at a fixed fraction of its
-alpha — `raised` is `glass`, `rail` 7/8 of it, `inset` 3/4 of it, `elevated` is
-`glass-strong` — which keeps the surfaces' ordering intact when an alpha moves instead of
-letting a nested pane out-opaque its parent. `sunk` is the exception: on paper it is a
-3.5% wash of `#101828` (a recess is *darker* than the ground) and at night it is 0.8 of
-`glass-strong` (a recess is *lighter* there), so it reads no fill alpha and survives an
-alpha change unchanged.
+Each pane surface is authored as the opaque value the contrast gate expects to measure. The
+surface ordering remains intentional — `inset` is the map/chart well, `rail` is the navigation
+layer, `raised` is the pane surface, and `elevated` is reserved for overlays — while the
+translucent `--p-glass*` values remain fill material only. Changing a glass alpha means
+re-solving the corresponding opaque surfaces beside it, and the gate is what tells you.
 
-The gate in `scripts/check-contrast.mjs` then measures the ink against what the
-operator actually sees, and the translucent `--p-glass*` tokens are used for fills
-only. Changing a glass alpha means re-solving the surfaces beside it, and the gate is
-what tells you.
+The gate in `scripts/check-contrast.mjs` measures the ink against those rendered surfaces;
+the translucent `--p-glass*` tokens are used for fills only.
 
 ### Surfaces, material and rules
 
 | Token | Light | Dark | Purpose |
 |---|---|---|---|
-| `canvas` | `#f4f6fb` | `#070d1a` | The ground the panes float over |
-| `sunk` | `#eceef4` | `#212632` | Sunk areas: wells, insets |
-| `raised` | `#fafbfd` | `#1c222d` | The pane's own composited fill |
-| `inset` | `#f9fafd` | `#141a26` | Chart and map ground |
-| `rail` | `#fafbfd` | `#171d29` | **Second neutral layer**: navigation |
-| `elevated` | `#fdfdfe` | `#272c38` | Overlays: sheet, palette, tooltip |
-| `glass` | `rgba(255,255,255,.58)` | `rgba(255,255,255,.085)` | A pane's fill (translucent) |
-| `glass-strong` | `rgba(255,255,255,.78)` | `rgba(255,255,255,.13)` | Chrome bands, sticky table head |
-| `glass-edge` | `rgba(16,24,40,.09)` | `rgba(255,255,255,.11)` | The pane's 1px edge. **A region is bordered** |
-| `glass-edge-strong` | `rgba(16,24,40,.16)` | `rgba(255,255,255,.19)` | Edge on hover, overlay edges |
-| `glass-highlight` | `rgba(255,255,255,.86)` | `rgba(255,255,255,.11)` | The inner top rim-light: the pane's lit lip, drawn as `inset 0 1px 0 0` ahead of the elevation |
-| `ground-glow` | indigo/violet radials ≤10% | indigo/violet radials ≤11% | The ambient colour wash *behind* the glass, painted on the ground. The light stops were raised ×1.25 when the light panes got their frosted pass: at ≤8% the wash sat under a `.58`-alpha white glass and the board read flat |
-| `rule` | `#d5dbe6` | `#2a3447` | Hairline |
-| `rule-strong` | `#9fa9ba` | `#46556e` | Emphasis rule |
-| `rule-faint` | `#e4e8f1` | `#1f2737` | Barely-there rule |
-| `row-rule` | `#e9edf5` | `#1d2535` | Table row separator |
+| `canvas` | `#f5f7fb` | `#070d1a` | The ground the panes float over |
+| `sunk` | `#edf0f5` | `#212632` | Sunk areas: wells, insets |
+| `raised` | `#fcfdff` | `#1c222d` | The pane's own composited fill |
+| `inset` | `#f1f4f8` | `#141a26` | Chart and map ground |
+| `rail` | `#fbfcfe` | `#171d29` | **Second neutral layer**: navigation |
+| `elevated` | `#ffffff` | `#272c38` | Overlays: sheet, palette, tooltip |
+| `glass` | `rgba(255,255,255,.78)` | `rgba(255,255,255,.085)` | A pane's fill (translucent) |
+| `glass-strong` | `rgba(255,255,255,.92)` | `rgba(255,255,255,.13)` | Chrome bands, sticky table head |
+| `glass-edge` | `rgba(15,23,42,.10)` | `rgba(255,255,255,.11)` | The pane's 1px edge. **A region is bordered** |
+| `glass-edge-strong` | `rgba(15,23,42,.18)` | `rgba(255,255,255,.19)` | Edge on hover, overlay edges |
+| `glass-highlight` | `rgba(255,255,255,.94)` | `rgba(255,255,255,.11)` | The inner top rim-light: the pane's lit lip, drawn as `inset 0 1px 0 0` ahead of the elevation |
+| `ground-glow` | cool-blue radials ≤4.5% | indigo/violet radials ≤11% | The ambient colour wash *behind* the glass, painted on the ground; light mode keeps purple environmental light deliberately weak |
+| `rule` | `#d7dee9` | `#2a3447` | Hairline |
+| `rule-strong` | `#a6b2c2` | `#46556e` | Emphasis rule |
+| `rule-faint` | `#e6ebf2` | `#1f2737` | Barely-there rule |
+| `row-rule` | `#e9eef5` | `#1d2535` | Table row separator |
 
 ### Ink
 
 | Token | Light | Dark | Purpose |
 |---|---|---|---|
-| `ink` | `#0b111e` | `#f1f3f7` | Body and headings |
-| `ink-soft` | `#364152` | `#aeb9cb` | Secondary |
-| `ink-faint` | `#526075` | `#8494ad` | Meta. Still ≥4.5:1 on every surface above |
+| `ink` | `#0f1728` | `#f1f3f7` | Body and headings |
+| `ink-soft` | `#425168` | `#aeb9cb` | Secondary |
+| `ink-faint` | `#5b6a80` | `#8494ad` | Meta. Still ≥4.5:1 on every surface above |
 
 ### State and interaction
 
@@ -160,13 +160,12 @@ what tells you.
 | `live` | `#0a5d88` | `#38a8df` | In flight, queued |
 | `warn` | `#7c4900` | `#d49426` | Degraded, stale |
 | `alert` | `#a42214` | `#e68277` | Risk, failure |
-| `accent` | `#4338ca` | `#818cf8` | **Interaction only**: primary action, current selection, focus ring |
-| `accent-deep` | `#312e81` | `#6875f5` | Accent pressed / emphasised |
-| `accent-wash` | `#e6e8fc` | `#1c2456` | Tinted ground for a selection. The night value moved with the frosted pass: the pane's own fill got lighter (`raised`), and a selection wash that measures 1.005:1 against the pane is not a fill — it is the pane. It now sits 1.09:1 from `raised`, in step with the four state washes (1.08–1.12:1), with the accent on it at 4.90:1 |
-| `accent-lift` | `#6d28d9` | `#a78bfa` | The hero gradient's far stop. **Never text, never a state** |
-| `*-wash` | `#dbf0e8` `#dcecf6` `#f7ecd4` `#f9e3df` | `#0d2f23` `#0d2e3f` `#382609` `#491812` | Tinted ground for a state |
+| `accent` | `#3157c7` | `#818cf8` | **Interaction only**: primary action, current selection, focus ring |
+| `accent-deep` | `#24439f` | `#6875f5` | Accent pressed / emphasised |
+| `accent-wash` | `#e8eefc` | `#1c2456` | Tinted ground for a selection. The light value is a cool blue paper wash; the dark value keeps the night-board hierarchy |
+| `accent-lift` | `#5577d4` | `#a78bfa` | The hero gradient's far stop. **Never text, never a state** |
+| `*-wash` | `#d9efe8` `#dcecf6` `#f7ecd4` `#f9e3df` | `#0d2f23` `#0d2e3f` `#382609` `#491812` | Tinted ground for a state |
 | `on-*` | `#ffffff` | `#070d1a` | Text **on** a filled state colour. A token, not a constant: a bright accent takes the dark ground's ink |
-
 ### Data series
 
 Six categorical colours, one meaning each, never reused for decoration.
@@ -184,7 +183,7 @@ Two constraints hold at once, both enforced by the contrast gate:
    viewing from three metres all leave lightness as the only surviving channel.
    **Reordering the series means running the gate.**
 
-Chart grid and axis: `chart-grid` `#e6eaf2` / `#253042`, `chart-axis` `#556274` /
+Chart grid and axis: `chart-grid` `#e7ecf3` / `#253042`, `chart-axis` `#5a687b` /
 `#8596af` (the axis label is text, so ≥4.5:1). Canvas cannot read CSS variables, so
 these literals are duplicated in
 [`src/features/dashboard/chartPalette.ts`](internal/api/web/src/features/dashboard/chartPalette.ts) —
@@ -411,7 +410,7 @@ region, and it is not sized by node count.
 
 **The plate is fit, not stretched.** `EgressMap.tsx` renders the vendored world outline with `d3-geo`'s `geoNaturalEarth1` and `geoPath`. A `ResizeObserver` measures the actual map stage, `fitExtent` recomputes the projection for that stage, and the SVG uses a matching `viewBox` with `preserveAspectRatio="xMidYMid meet"`. The normal dashboard wrapper is a content-driven `.wb-plate-map` with a fluid `clamp()` minimum height, not a reference-image aspect ratio, so the world keeps its proportions on wide, narrow and stacked layouts.
 
-The map layers remain explicit: the transparent SVG sits on the pane's two-token sea gradient; country paths carry the offline outline and region footprint; constant-width paths connect the panel egress to real hubs when the API supplies a resolvable origin; hub and origin marks expose labels, tooltips and keyboard focus. No network tiles, guessed origin, synthetic metric or runtime map service is introduced.
+The map layers remain explicit: the transparent SVG sits on the theme-bound paper inset surface; country paths carry the offline outline and region footprint; constant-width paths connect the panel egress to real hubs when the API supplies a resolvable origin; hub and origin marks expose labels, tooltips and keyboard focus. No network tiles, guessed origin, synthetic metric or runtime map service is introduced.
 
 The expand control opens the same component in a viewport-level Radix dialog. The dialog is a flex column sized from the current viewport; its header stays visible and the map body is `flex: 1` with `min-height: 0`. The map therefore measures the available dialog area instead of mounting inside a small centered ratio box, while Escape, scrim dismissal, focus capture and focus return remain Radix behavior.
 

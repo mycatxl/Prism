@@ -300,6 +300,37 @@ check("no removed class token survives in the DOM", async ({ origin, page }) => 
   assert.deepEqual(failures, [], "removed class tokens found:\n  " + failures.join("\n  "));
 });
 
+check("legacy node envelopes do not crash the node pool", async ({ origin, page, errors }) => {
+  const legacyItems = [{
+    node_hash: "legacy-node",
+    created_at: "2026-01-01T00:00:00Z",
+    enabled: true,
+    has_outbound: true,
+    failure_count: 0,
+    tags: [],
+  }];
+  const nodesRoute = /\/api\/v1\/nodes(?:\?|$)/;
+  await page.route(nodesRoute, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ total: 1, items: legacyItems }),
+    });
+  });
+  try {
+    errors.reset("/ui/nodes legacy envelope");
+    await page.goto(origin + NODES + "?legacy_smoke=1");
+    await rendered(page);
+    await page.waitForTimeout(250);
+    const text = await page.locator("main").innerText();
+    assert.match(text, /节点池/);
+    assert.doesNotMatch(text, /界面渲染失败|toLocaleString/);
+    assert.deepEqual(errors.drain(), [], "legacy node envelope must not emit a render error");
+  } finally {
+    await page.unroute(nodesRoute);
+  }
+});
+
 check("the design tokens are the ones actually applied", async ({ origin, page }) => {
   await page.goto(origin + DASHBOARD);
   await rendered(page);
@@ -412,16 +443,14 @@ check("the dashboard hero renders", async ({ origin, page }) => {
   await page.goto(origin + DASHBOARD);
   await rendered(page);
 
-  // The exit view is one of two ECharts surfaces, and which one mounts is the
-  // reader's choice (the globe is the default). Asserting on either label keeps
-  // the check about "the hero drew something" rather than about which tab is
-  // selected; the dashboard's default view has changed once already.
-  const map = page.locator('main [role="img"][aria-label="全球流量"]').first();
+  // The exit plate is an offline SVG projection. Assert the rendered surface
+  // rather than an implementation-specific canvas node.
+  const map = page.locator("main .egress-map").first();
   await map.waitFor({ state: "visible", timeout: 20000 });
-  const canvas = map.locator("canvas").first();
-  await canvas.waitFor({ state: "attached", timeout: 20000 });
-  const box = await canvas.boundingBox();
-  assert(box && box.width > 0 && box.height > 0, "the exit map must draw a canvas with a real size");
+  const svg = map.locator("svg").first();
+  await svg.waitFor({ state: "attached", timeout: 20000 });
+  const box = await svg.boundingBox();
+  assert(box && box.width > 0 && box.height > 0, "the exit map must draw an SVG with a real size");
 
   // The instrument strip is the ReadoutStrip: a row of cells divided by hairlines.
   // Each cell's number is a `Numeral`, which is the class that carries the value
@@ -470,12 +499,8 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
     ".wb-hero-heading",
     ".wb-hero-desc",
     ".wb-timerange-select",
-    ".wb-metric-val",
-    ".wb-metric-label",
-    ".wb-metric-badge-neutral",
-    ".wb-metric-badge-green",
-    ".wb-metric-badge-up",
-    ".wb-metric-badge-down",
+    ".wb-metric-chip .micro",
+    ".wb-metric-chip .numeral",
     ".wb-plate-head h2",
     ".wb-plate-head .label",
     ".wb-region-table thead th",
@@ -483,36 +508,12 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
   ];
 
   /*
-   * The one shortfall that is a *decision* rather than an oversight, measured
-   * rather than assumed: `#60a5fa` on the blue badge wash inside the fourth metric
-   * chip renders 4.43:1, and that chip's wash is the reference art's own. The entry
-   * names the selector, the theme and the measured ratio, so the exemption cannot
-   * widen: change a colour and the number here stops matching and the check fails.
-   *
-   * The number moves when the *ground under the word* moves, and the board's polish
-   * moved it: the chips take a square 12px inset instead of `10px 14px`, and the
-   * hero band around them gained its own gutter, so the badge's text lands on a
-   * different pixel of the same wash. The ink, the wash and the art are unchanged;
-   * the pixel under the glyphs is what moved. Re-pinned to what the chip renders
-   * now, because a stale exemption is itself a failure — and 4.43 is not a ratio
-   * anyone would choose, so the entry still fails the moment the colour or the wash
-   * is re-solved.
-   *
-   * The list used to hold two more — the hero band's description (4.44:1) and the
-   * status line (4.05:1). Both were solved against the pane gradients the board
-   * carried when it was a pixel replica; the band is a panel on the board's own
-   * ground and the status line is a token surface now, so both read `--p-ink-soft`
-   * and clear 4.5:1 like every other pair. Their literals were removed from
-   * `design.css` in the same change, which is why the entries are gone rather than
-   * re-pinned.
-   *
-   * The light theme is held to the full standard, because the art has no light
-   * theme to be faithful to — it is ours to solve.
+   * The current board uses shared Readout components and token-bound surfaces.
+   * Keep this list empty: every collected target must meet its WCAG floor. If a
+   * future reference exception is required, it must name the selector, theme and
+   * measured ratio so the exemption cannot silently widen.
    */
-  const ART_EXEMPTIONS = [
-    // selector, theme, ratio the art actually renders
-    { sel: ".wb-metric-badge-down", theme: "dark", ratio: 4.43 },
-  ];
+  const ART_EXEMPTIONS = [];
   const exemptionFor = (sel, theme) =>
     ART_EXEMPTIONS.find((entry) => entry.sel === sel && entry.theme === theme);
 

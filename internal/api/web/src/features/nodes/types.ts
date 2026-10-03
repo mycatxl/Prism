@@ -56,8 +56,8 @@ export type PageResponse<T> = {
   total: number;
   limit: number;
   offset: number;
-  unique_egress_ips: number;
-  unique_healthy_egress_ips: number;
+  unique_egress_ips: number | null;
+  unique_healthy_egress_ips: number | null;
 };
 
 export type NodeSortBy =

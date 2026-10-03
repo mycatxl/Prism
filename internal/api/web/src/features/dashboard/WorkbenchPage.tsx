@@ -770,7 +770,7 @@ export function WorkbenchPage() {
                     </Button>
                   </div>
                   {/* The map owns a fluid vertical stage instead of inheriting a reference-image ratio. */}
-                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col bg-paper-inset" style={{ backgroundImage: "none" }}>
                     {nodes.isError ? (
                       <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
                     ) : !nodes.data ? (
@@ -1312,7 +1312,7 @@ export function WorkbenchPage() {
                 </Button>
               </DialogClose>
             </div>
-            <div className="wb-map-dialog__body min-h-0 flex-1 bg-[linear-gradient(180deg,var(--color-paper-inset)_0%,var(--color-live-wash)_100%)]">
+            <div className="wb-map-dialog__body min-h-0 flex-1 bg-paper-inset">
               <Suspense fallback={chartFallback}>
                 <EgressMap
                   regions={regions}

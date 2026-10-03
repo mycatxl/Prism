@@ -93,71 +93,65 @@
 }
 
 /* ---- the light theme ----------------------------------------------------- */
-/* Contrast truth rule: `--p-canvas/sunk/raised/inset/rail/elevated` are opaque hex
-  equal to the composited glass over `#f4f6fb` (`fill_alpha * fill + (1 - fill_alpha) * canvas`).
-
-  The frosted-glass pass moved the fill and the blur together: the pane's alpha is
-  fainter (0.58) and its blur longer (24px, saturation 1.4), so the light theme reads
-  more of its ground *through* the glass. Every white fill is a fraction of the pane's
-  own alpha — `raised` is `glass` itself, `rail` 7/8 of it, `inset` 3/4 of it, and
-  `elevated` is `glass-strong` — which is what keeps the surfaces' *ordering* legible
-  after the move instead of letting a nested pane out-opaque its parent. `sunk` is the
-  one surface that is a dark wash rather than white glass (3.5% of `#101828`), so it
-  reads no fill alpha and its hex survives the pass unchanged.
-
-  `rail` and `raised` land on the same hex: at the pale end of the ramp a 0.07 step in
-  alpha is worth less than one 8-bit level, and the hue step the rail carries in the
-  dark theme has no counterpart on paper. */
+/*
+  Light surfaces are authored as paper first: the composited hex values below stay
+  opaque for the contrast gate, while the live glass fills remain nearly opaque and
+  let only a restrained amount of the ground show through. The ordering is quiet
+  rather than luminous, so hierarchy comes from spacing, ink and hairlines.
+*/
+/*
+ * Daylight is authored as a paper surface, not as a white inversion of the night
+ * board. The ground stays cool and quiet, panes are nearly opaque, and the blue
+ * cast is reserved for hierarchy and interaction. The material still has a slight
+ * translucency so the shared glass vocabulary survives, but content wins over the
+ * effect.
+ */
 :root {
-  --p-canvas: #f4f6fb;
-  --p-sunk: #eceef4;
-  --p-raised: #fafbfd;
-  --p-inset: #f9fafd;
-  --p-rail: #fafbfd;
-  --p-elevated: #fdfdfe;
+  --p-canvas: #f5f7fb;
+  --p-sunk: #edf0f5;
+  --p-raised: #fcfdff;
+  --p-inset: #f1f4f8;
+  --p-rail: #fbfcfe;
+  --p-elevated: #ffffff;
 
-  --p-glass: rgba(255, 255, 255, 0.58);
-  --p-glass-strong: rgba(255, 255, 255, 0.78);
-  --p-glass-edge: rgba(16, 24, 40, 0.09);
-  --p-glass-edge-strong: rgba(16, 24, 40, 0.16);
-  --p-glass-highlight: rgba(255, 255, 255, 0.86);
-  --p-glass-blur: blur(24px) saturate(140%);
+  --p-glass: rgba(255, 255, 255, 0.78);
+  --p-glass-strong: rgba(255, 255, 255, 0.92);
+  --p-glass-edge: rgba(15, 23, 42, 0.1);
+  --p-glass-edge-strong: rgba(15, 23, 42, 0.18);
+  --p-glass-highlight: rgba(255, 255, 255, 0.94);
+  --p-glass-blur: blur(18px) saturate(118%);
 
   --p-ground-glow:
-    radial-gradient(64rem 40rem at 10% -6%, rgba(79, 70, 229, 0.096), transparent 68%),
-    radial-gradient(56rem 38rem at 90% -4%, rgba(124, 58, 237, 0.0875), transparent 66%),
-    radial-gradient(88rem 52rem at 50% 38%, rgba(99, 102, 241, 0.0613), transparent 74%);
+    radial-gradient(70rem 44rem at 0% -8%, rgba(84, 114, 198, 0.045), transparent 68%),
+    radial-gradient(64rem 42rem at 100% -6%, rgba(118, 132, 196, 0.035), transparent 66%),
+    radial-gradient(90rem 54rem at 50% 42%, rgba(201, 211, 232, 0.028), transparent 74%);
 
-  --p-rule: #d5dbe6;
-  --p-rule-strong: #9fa9ba;
-  --p-rule-faint: #e4e8f1;
-  --p-panel-edge: rgba(16, 24, 40, 0.08);
-  --p-row-rule: #e9edf5;
+  --p-rule: #d7dee9;
+  --p-rule-strong: #a6b2c2;
+  --p-rule-faint: #e6ebf2;
+  --p-panel-edge: rgba(15, 23, 42, 0.08);
+  --p-row-rule: #e9eef5;
 
-  --p-ink: #0b111e;
-  --p-ink-soft: #364152;
-  --p-ink-faint: #526075;
+  --p-ink: #0f1728;
+  --p-ink-soft: #425168;
+  --p-ink-faint: #5b6a80;
 
   --p-signal: #086a50;
   --p-signal-deep: #054937;
-  --p-signal-wash: #dbf0e8;
+  --p-signal-wash: #d9efe8;
   --p-live: #0a5d88;
   --p-live-wash: #dcecf6;
   --p-warn: #7c4900;
   --p-warn-wash: #f7ecd4;
   --p-alert: #a42214;
   --p-alert-wash: #f9e3df;
-  --p-accent: #4338ca;
-  --p-accent-deep: #312e81;
-  --p-accent-wash: #e6e8fc;
-  --p-accent-lift: #6d28d9;
+  --p-accent: #3157c7;
+  --p-accent-deep: #24439f;
+  --p-accent-wash: #e8eefc;
+  --p-accent-lift: #5577d4;
 
-  /* The hero pane's two gradient stops, as the composited result of mixing the accent
-     into the glass over the canvas. They are opaque primitives rather than a
-     `color-mix` in the class because the pane is a surface, and a surface the gate
-     cannot read is a contrast failure nobody measures. */
-  --p-hero: #d5d2f3;
-  --p-hero-lift: #e2d6f7;
+  --p-hero: #dbe5fa;
+  --p-hero-lift: #e8eafb;
 
   --p-on-accent: #ffffff;
   --p-on-signal: #ffffff;
@@ -170,13 +164,13 @@
   --p-series-4: #dd2408;
   --p-series-5: #6d1eb5;
   --p-series-6: #0393c9;
-  --p-chart-grid: #e6eaf2;
-  --p-chart-axis: #556274;
+  --p-chart-grid: #e7ecf3;
+  --p-chart-axis: #5a687b;
 
-  --p-shadow-xs: 0 1px 2px 0 rgb(16 24 40 / 0.04);
-  --p-shadow-sm: 0 2px 8px -2px rgb(16 24 40 / 0.07), 0 1px 3px -1px rgb(16 24 40 / 0.05);
-  --p-shadow-md: 0 8px 24px -6px rgb(16 24 40 / 0.08), 0 2px 6px -2px rgb(16 24 40 / 0.05);
-  --p-shadow-lg: 0 16px 40px -8px rgb(16 24 40 / 0.12), 0 4px 12px -4px rgb(16 24 40 / 0.06);
+  --p-shadow-xs: 0 1px 2px 0 rgb(15 23 42 / 0.04);
+  --p-shadow-sm: 0 2px 8px -2px rgb(15 23 42 / 0.07), 0 1px 3px -1px rgb(15 23 42 / 0.05);
+  --p-shadow-md: 0 10px 28px -8px rgb(15 23 42 / 0.1), 0 2px 6px -2px rgb(15 23 42 / 0.05);
+  --p-shadow-lg: 0 18px 44px -10px rgb(15 23 42 / 0.14), 0 4px 12px -4px rgb(15 23 42 / 0.06);
 }
 
 /* ---- the dark theme ------------------------------------------------------ */
@@ -721,13 +715,21 @@
   }
 
   .glass-rail a[aria-current="page"] {
-    box-shadow:
-      inset 2px 0 0 var(--color-accent),
-      var(--shadow-xs);
+    box-shadow: var(--shadow-xs);
   }
 
   .glass-rail a:not([aria-current="page"]):hover {
-    box-shadow: inset 1px 0 0 var(--color-glass-edge-strong);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .wb-main-zone,
+  .wb-main-scroll {
+    min-width: 0;
+  }
+
+  .wb-main-scroll {
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
   }
 
   input[aria-invalid="true"],
@@ -755,19 +757,7 @@
     isolation: isolate;
   }
 
-  .wb-main-zone,
-  .wb-main-scroll {
-    min-width: 0;
-  }
 
-  .wb-main-scroll {
-    overscroll-behavior-y: contain;
-    scrollbar-gutter: stable;
-  }
-
-  .wb-topbar {
-    background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-accent-wash) 22%, transparent), transparent 42%);
-  }
 
   .wb-topbar-actions > * {
     min-width: 0;
@@ -939,7 +929,7 @@
   min-width: 0;
   min-height: clamp(18rem, 34vw, 32rem);
   overflow: hidden;
-  background: linear-gradient(180deg, var(--color-paper-inset), var(--color-live-wash));
+  background-color: var(--color-paper-inset);
   border-top: 1px solid var(--color-rule-faint);
 }
 
