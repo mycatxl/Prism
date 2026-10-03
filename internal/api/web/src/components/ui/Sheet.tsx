@@ -32,12 +32,11 @@ export function Sheet({
         <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-xs" />
         <DialogPrimitive.Content
           className={cn(
-            "glass-elevated fixed inset-y-0 right-0 z-50 flex w-full flex-col rounded-l-panel border-l border-glass-edge-strong bg-paper-elevated",
-            "focus:outline-none",
+            "sheet-shell glass-elevated fixed right-0 z-50 flex w-full flex-col focus:outline-none",
             widthClass,
           )}
         >
-          <header className="flex items-start justify-between gap-4 border-b border-rule-faint px-5 py-3.5">
+          <header className="sheet-header flex items-start justify-between gap-4">
             <div className="min-w-0">
               <DialogPrimitive.Title className="truncate text-base font-semibold text-ink">
                 {title}
@@ -56,10 +55,10 @@ export function Sheet({
             </DialogPrimitive.Close>
           </header>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+          <div className="sheet-body min-h-0 flex-1 overflow-y-auto">{children}</div>
 
           {footer && (
-            <footer className="border-t border-rule-faint px-5 py-3.5">{footer}</footer>
+            <footer className="sheet-footer">{footer}</footer>
           )}
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

@@ -814,7 +814,7 @@ export function SubscriptionPage() {
         }
       />
 
-      <div className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+      <div className="page-content page-content--fill">
         <Panel className="flex min-w-0 flex-col">
           <PanelHeader title={t("订阅列表")} />
 

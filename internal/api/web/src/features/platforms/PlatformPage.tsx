@@ -253,7 +253,7 @@ export function PlatformPage() {
 
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-        <div className="px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5">
+        <div className="page-content page-content--fill">
           <Panel className="flex min-w-0 flex-col">
             <PanelHeader
               title={t("平台列表")}

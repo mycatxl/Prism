@@ -440,14 +440,14 @@ export function NodesPage() {
 
         <TabsContent
           value="exits"
-          className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5"
+          className="page-content page-content--fill"
         >
           <ExitRecordsPanel />
         </TabsContent>
 
         <TabsContent
           value="nodes"
-          className="flex min-w-0 flex-1 flex-col gap-3 px-4 py-3 lg:px-5 lg:py-4 2xl:px-6 2xl:py-5"
+          className="page-content page-content--fill"
         >
           <PurityGuide />
 
@@ -455,7 +455,7 @@ export function NodesPage() {
               空/错误状态在面板体内，分页落在 PanelFooter。 */}
           <Panel className="flex min-w-0 flex-col">
             <PanelHeader title={t("节点线路")} />
-            <PanelToolbar>
+            <PanelToolbar className="filter-toolbar">
             <div className="relative w-full min-w-48 sm:w-64">
               <Search
                 size={14}
@@ -541,7 +541,7 @@ export function NodesPage() {
             ) : null}
             </PanelToolbar>
 
-            <PanelToolbar>
+            <PanelToolbar className="filter-toolbar filter-toolbar--advanced">
             <Select
               className="w-full sm:w-40"
               aria-label={t("IP 类型")}
