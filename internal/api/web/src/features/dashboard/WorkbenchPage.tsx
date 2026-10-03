@@ -3,17 +3,13 @@ import { lazy, Suspense, useMemo, useState, useSyncExternalStore, type ReactNode
 import {
   Activity,
   ChevronDown,
-  ChevronRight,
   CircleAlert,
   Gauge,
   CheckCircle2,
   Maximize2,
   Server,
-  Share2,
-  Waypoints,
   X,
   Zap,
-  Plus,
 } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
@@ -324,44 +320,10 @@ function HeroMetric({
   );
 }
 
-/** One row of the quick-action list: a real destination, never a fake button. */
-function QuickAction({ to, icon: Icon, label }: { to: string; icon: typeof Activity; label: string }) {
-  return (
-    <Link
-      to={to}
-      className="action flex min-h-[var(--control-h-xl)] items-center gap-2.5 rounded-control px-2.5 text-sm text-ink-soft hover:bg-glass hover:text-ink"
-    >
-      <Icon size={15} aria-hidden className="shrink-0 text-ink-faint" />
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      <ChevronRight size={14} aria-hidden className="shrink-0 text-ink-faint" />
-    </Link>
-  );
-}
-
 /**
- * The overview: a bento board for the whole inventory.
- *
- * The composition is the one the operator's reference board carries: the greeting band
- * and its four chips at the full width, then a twelve-column split. The main column
- * (eight) is the data story in the order a reader asks for it — where traffic leaves
- * from (全球流量), the four KPI cards about that traffic (总请求数, 平均延迟, 错误率,
- * 活跃租约) directly under the plate, then the newest arrivals and the subscription
- * band. The side column (four) holds the small, always-on panes: instance state, the
- * four destinations an operator reaches for mid-incident, 热门区域, 流量概览, the
- * platform ring, the 告警 feed and 延迟分布. The asymmetry is the point: a board of
- * twelve equal rectangles makes every fact look equally important, which is the same as
- * saying nothing. The two columns stack below `xl`, and every pane is a plain responsive
- * panel — the board has no pixel geometry of its own.
- *
- * Two lines of it live outside this file: the "所有系统运行正常" pill sits in the
- * shell's own top bar (where the reference puts it, and where it shows on every route),
- * and the 告警 feed is the audit log rendered as sentences rather than as
- * `METHOD /path` — the phrase table above is that translation.
- *
- * Every figure here is fetched. A panel with nothing behind it renders its empty
- * state instead of a placeholder number, and every trend states its basis, because
- * the two failure modes of a dashboard are a number nobody measured and a direction
- * nobody can check.
+ * The overview board keeps the primary traffic evidence in a golden-ratio reading lane
+ * and the supporting evidence in a narrower side lane. Every figure is fetched; empty
+ * panels render shared empty states rather than invented KPI values.
  */
 export function WorkbenchPage() {
   const { t } = useI18n();
@@ -562,12 +524,18 @@ export function WorkbenchPage() {
   }, [latencySeries]);
 
   const poolHealthy = pool?.healthy_nodes ?? 0;
+  const mapActivity = Boolean(
+    info.data?.panel_egress_region &&
+      ((realtime.data?.realtime_throughput.items.at(-1)?.ingress_bps ?? 0) > 0 ||
+        (realtime.data?.realtime_throughput.items.at(-1)?.egress_bps ?? 0) > 0 ||
+        (realtime.data?.realtime_connections.items.at(-1)?.inbound_connections ?? 0) > 0 ||
+        (realtime.data?.realtime_connections.items.at(-1)?.outbound_connections ?? 0) > 0),
+  );
   /*
    * The plate and the table read the same six rows: the map is the summary and
    * the table is the data, so they cannot disagree about a region. `regions` is
    * already ranked by node count, which is the order the table reads in.
    */
-  const topRegions = useMemo(() => regions.slice(0, 6), [regions]);
 
   const windowSuccessRate = windowRequests.total > 0 ? windowRequests.success / windowRequests.total : null;
   const errorRate = windowSuccessRate === null ? null : 1 - windowSuccessRate;
@@ -641,30 +609,42 @@ export function WorkbenchPage() {
 
   return (
     <Page bleed>
+      <h1 className="sr-only">{t("总览看板")}</h1>
       <div className="page-content page-content--dashboard wb-board">
         {snapshot.isError && <ErrorState message={offline} onRetry={() => void snapshot.refetch()} />}
 
-        <div className="dashboard-grid grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 xl:grid-cols-12">
-          {/* The board's top band: the greeting, the range picker, the refresh and add
-              controls, and the hero's four chips — at the full board width, because it is
-              the first thing read and the four figures it carries are the ones the rest of
-              the page explains. */}
-          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-12">
-            <Panel className="hero-gradient min-w-0 overflow-hidden px-5 pt-4 pb-4">
-              <div className="wb-hero-banner">
-                <div className="wb-hero-left">
-                  <h1 className="wb-hero-heading">{t("欢迎回来，Prism")}</h1>
-                  <p className="wb-hero-desc">
-                    {t("网络运行平稳，以下是各区域概览。")}
-                  </p>
+        <div className="dashboard-grid grid min-w-0 gap-3 lg:gap-4 2xl:gap-5">
+          <div className="dashboard-summary-slot flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5">
+            <Panel className="dashboard-summary min-w-0 overflow-hidden px-5 py-4">
+              <div className="dashboard-summary__row">
+                <div className="wb-metric-chips dashboard-summary__metrics">
+                  <HeroMetric
+                    icon={Server}
+                    tone="accent"
+                    label={t("节点总数")}
+                    value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
+                  />
+                  <HeroMetric
+                    icon={CheckCircle2}
+                    tone="signal"
+                    label={t("健康节点")}
+                    value={pool ? formatCount(poolHealthy) : PLACEHOLDER}
+                    hint={pool ? formatPercent(poolHealthy / (pool.total_nodes || 1)) : undefined}
+                  />
+                  <HeroMetric
+                    icon={Activity}
+                    tone="live"
+                    label={t("成功率")}
+                    value={windowSuccessRate === null ? PLACEHOLDER : formatPercent(windowSuccessRate)}
+                  />
+                  <HeroMetric
+                    icon={Zap}
+                    tone="accent"
+                    label={t("平均延迟")}
+                    value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
+                  />
                 </div>
-                <div className="wb-hero-timerange">
-                  <Button asChild variant="secondary" size="sm" className="wb-hero-add">
-                    <Link to="/subscriptions?create=1">
-                      <Plus size={14} aria-hidden />
-                      {t("添加订阅")}
-                    </Link>
-                  </Button>
+                <div className="wb-hero-timerange dashboard-summary__actions">
                   <Button
                     variant="secondary"
                     size="sm"
@@ -691,126 +671,14 @@ export function WorkbenchPage() {
                   </div>
                 </div>
               </div>
-
-              <div className="wb-metric-chips">
-                <HeroMetric
-                  icon={Server}
-                  tone="accent"
-                  label={t("节点总数")}
-                  value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
-                />
-                <HeroMetric
-                  icon={CheckCircle2}
-                  tone="signal"
-                  label={t("健康节点")}
-                  value={pool ? formatCount(poolHealthy) : PLACEHOLDER}
-                  hint={pool ? formatPercent(poolHealthy / (pool.total_nodes || 1)) : undefined}
-                />
-                <HeroMetric
-                  icon={Activity}
-                  tone="live"
-                  label={t("成功率")}
-                  value={windowSuccessRate === null ? PLACEHOLDER : formatPercent(windowSuccessRate)}
-                />
-                <HeroMetric
-                  icon={Zap}
-                  tone="accent"
-                  label={t("平均延迟")}
-                  value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
-                />
-              </div>
             </Panel>
           </div>
 
-          {/* The main column: the map, the four numbers about the traffic it draws, the
-              newest arrivals and the subscription band — the data story, from "where does
-              traffic leave from" to "what arrived last". */}
-          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-8">
-            {/*
-              The plate, at the main column's full width. The region table that reads the
-              same six rows is its own panel in the side column: the map is the summary and
-              the table is the data, and the two are still one story.
-            */}
-            <Panel className="flex min-w-0 flex-col">
-              <div className="wb-plate grid min-h-0 flex-1">
-                <div className="flex min-w-0 flex-col">
-                  <div className="wb-plate-head">
-                    <span className="wb-live-dot" aria-hidden />
-                    <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
-                      {t("全球流量")}
-                    </h2>
-                    <span className="label shrink-0 whitespace-nowrap">
-                      {formatCount(regions.length)} {t("地区")}
-                    </span>
-                    {/*
-                      Nodes whose egress has not been located are outside the
-                      shares, so the count is stated rather than folded into a
-                      row: a reader comparing the column against 100% needs to
-                      know what it was taken over.
-                    */}
-                    {unknown > 0 && (
-                      <span className="label shrink-0 whitespace-nowrap">
-                        {t("未定位")}
-                        <span className="readout ml-1 text-ink-soft">{formatCount(unknown)}</span>
-                      </span>
-                    )}
-                    <Button asChild variant="ghost" size="sm" className="wb-plate-link ml-auto shrink-0">
-                      <Link to="/nodes">{t("查看节点池")}</Link>
-                    </Button>
-                    {/* The plate, at a size the panel cannot give it: a second map in a
-                        dialog that exists only while it is open. */}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="shrink-0"
-                      aria-label={t("展开大屏")}
-                      onClick={() => setMapExpanded(true)}
-                    >
-                      <Maximize2 size={15} aria-hidden />
-                    </Button>
-                  </div>
-                  {/* The map owns a fluid vertical stage instead of inheriting a reference-image ratio. */}
-                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col bg-paper-inset" style={{ backgroundImage: "none" }}>
-                    {nodes.isError ? (
-                      <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
-                    ) : !nodes.data ? (
-                      <LoadingState className="h-full" label={t("正在加载")} />
-                    ) : nodeFacts.length === 0 ? (
-                      <EmptyState
-                        className="h-full justify-center"
-                        title={t("建立你的第一个节点池")}
-                        hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
-                        action={
-                          <Button asChild variant="primary">
-                            <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
-                          </Button>
-                        }
-                      />
-                    ) : (
-                      <Suspense fallback={chartFallback}>
-                        <EgressMap
-                          regions={regions}
-                          origin={{
-                            region: info.data?.panel_egress_region,
-                            ip: info.data?.panel_egress_ip,
-                          }}
-                        />
-                      </Suspense>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </Panel>
-
-            {/*
-              The four KPIs, in the main column directly under the plate: the board reads
-              greeting → where traffic leaves from → the four numbers about that traffic →
-              the tables → the band. They used to be a full-width strip between the hero and
-              the split; the reference board carries them under the map, in the map's own
-              column, and that is where they read as the plate's own figures. Four across at
-              `xl`, two at `sm`, stacked below that.
-            */}
-            <div className="grid min-w-0 gap-3 lg:gap-4 2xl:gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          {/* The main column keeps the dashboard's primary evidence in a golden-ratio
+              reading lane; the side column carries the compact supporting evidence. */}
+          <div className="dashboard-main flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5">
+            {/* The four traffic KPIs sit immediately before the map they describe. */}
+            <div className="dashboard-kpi-grid grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <Kpi
                 icon={Activity}
                 tone="accent"
@@ -848,6 +716,70 @@ export function WorkbenchPage() {
                 series={leaseSeries}
               />
             </div>
+
+            <Panel className="flex min-w-0 flex-col">
+              <div className="wb-plate grid min-h-0 flex-1">
+                <div className="flex min-w-0 flex-col">
+                  <div className="wb-plate-head">
+                    <span className="wb-live-dot" aria-hidden />
+                    <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
+                      {t("全球流量")}
+                    </h2>
+                    <span className="label shrink-0 whitespace-nowrap">
+                      {formatCount(regions.length)} {t("地区")}
+                    </span>
+                    {unknown > 0 && (
+                      <span className="label shrink-0 whitespace-nowrap">
+                        {t("未定位")}
+                        <span className="readout ml-1 text-ink-soft">{formatCount(unknown)}</span>
+                      </span>
+                    )}
+                    <Button asChild variant="ghost" size="sm" className="wb-plate-link ml-auto shrink-0">
+                      <Link to="/nodes">{t("查看节点池")}</Link>
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      aria-label={t("展开大屏")}
+                      onClick={() => setMapExpanded(true)}
+                    >
+                      <Maximize2 size={15} aria-hidden />
+                    </Button>
+                  </div>
+                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col bg-paper-inset" style={{ backgroundImage: "none" }}>
+                    {nodes.isError ? (
+                      <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
+                    ) : !nodes.data ? (
+                      <LoadingState className="h-full" label={t("正在加载")} />
+                    ) : nodeFacts.length === 0 ? (
+                      <EmptyState
+                        className="h-full justify-center"
+                        title={t("建立你的第一个节点池")}
+                        hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
+                        action={
+                          <Button asChild variant="primary">
+                            <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
+                          </Button>
+                        }
+                      />
+                    ) : (
+                      <Suspense fallback={chartFallback}>
+                        <EgressMap
+                          activity={mapActivity}
+                          regions={regions}
+                          origin={{
+                            region: info.data?.panel_egress_region,
+                            ip: info.data?.panel_egress_ip,
+                          }}
+                        />
+                      </Suspense>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Panel>
+
             <Panel className="wb-latency-panel flex min-w-0 flex-col">
               <PanelHeader
                 title={t("延迟分布")}
@@ -872,9 +804,8 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            {/* The newest arrivals, at the main column's full width: the plate above is
-                the pool summarised, and this table is the rows it grew by — the newest
-                nodes the API returned, newest first, each one a real record. */}
+            {/* The newest arrivals and subscription state remain real evidence cards below
+                the primary map story. */}
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
                 title={t("最近加入节点")}
@@ -944,8 +875,6 @@ export function WorkbenchPage() {
               )}
             </Panel>
 
-            {/* The subscription band, at the main column's full width: the bar reads
-                as one proportion and the three readouts state its parts. */}
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
                 title={t("订阅状态")}
@@ -1004,15 +933,7 @@ export function WorkbenchPage() {
             </Panel>
           </div>
 
-          {/* The side column: the always-on panes. */}
-          <div className="flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5 xl:col-span-4">
-            {/*
-              Instance state, in one compact card: the badge the shell also shows, the
-              version, the two pool readouts and when the snapshot was taken. The
-              plain-language "all systems operational" line that used to head this pane
-              lives in the top bar now, where the reference board carries it — the same
-              sentence on every route, in the one place a reader already looks.
-            */}
+          <div className="dashboard-side flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5">
             <Panel className="min-w-0 p-4">
               <div className="flex items-center gap-2.5">
                 <Badge tone={instanceState.tone} dot>
@@ -1041,89 +962,6 @@ export function WorkbenchPage() {
                 {pool?.generated_at ? formatRelativeTime(pool.generated_at) : PLACEHOLDER}
                 {pool?.generated_at && <span className="readout">· {rangeOption(rangeKey).label}</span>}
               </p>
-            </Panel>
-
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader title={t("快捷操作")} />
-              <div className="flex flex-col gap-1 p-2.5">
-                <QuickAction to="/nodes?create=1" icon={Server} label={t("添加节点")} />
-                <QuickAction to="/platforms" icon={Waypoints} label={t("新建平台")} />
-                <QuickAction to="/endpoints" icon={Share2} label={t("新建接入点")} />
-                <QuickAction to="/jobs" icon={Zap} label={t("运行健康检查")} />
-              </div>
-            </Panel>
-
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("热门区域")}
-                meta={
-                  <>
-                    {formatCount(topRegions.length)} {t("地区")}
-                  </>
-                }
-              />
-                <div className="min-h-0 flex-1 px-4 py-3">
-                {topRegions.length === 0 ? (
-                  <EmptyState className="h-full justify-center" title={t("暂无出口数据")} />
-                ) : (
-                  <TableWrap>
-                    <Table className="min-w-0 wb-region-table" density="comfortable">
-                      <THead>
-                        <TR>
-                          <TH>{t("地区")}</TH>
-                          <TH className="text-right">{t("延迟")}</TH>
-                          <TH className="text-right">{t("占比")}</TH>
-                        </TR>
-                      </THead>
-                      <TBody>
-                        {topRegions.map((region, index) => (
-                          <TR key={region.id}>
-                            <TD className="font-medium">
-                              <div className="flex flex-col gap-1.5">
-                                <span className="inline-flex min-w-0 items-center gap-2">
-                                  {/*
-                                    The dot is the region's colour, spent in
-                                    table order — the same sequence, in the
-                                    same order, the plate's hubs use, so a
-                                    colour means one region on both halves.
-                                  */}
-                                  <span
-                                    aria-hidden
-                                    className="wb-region-dot"
-                                    style={{ backgroundColor: `var(--color-series-${(index % 6) + 1})` }}
-                                  />
-                                  <span className="truncate">{t(region.name)}</span>
-                                </span>
-                                {/*
-                                  The row's share, drawn: the same figure the
-                                  占比 column states, so the bar restates a
-                                  number rather than introducing one.
-                                */}
-                                <span
-                                  aria-hidden
-                                  className="block h-1 w-full overflow-hidden rounded-[2px] bg-rule-faint"
-                                >
-                                  <span
-                                    className="block h-full"
-                                    style={{
-                                      width: `${Math.min(1, Math.max(0, region.share)) * 100}%`,
-                                      backgroundColor: `var(--color-series-${(index % 6) + 1})`,
-                                    }}
-                                  />
-                                </span>
-                              </div>
-                            </TD>
-                            <TDNum className="text-ink-soft">
-                              {region.latency === null ? PLACEHOLDER : formatLatency(region.latency)}
-                            </TDNum>
-                            <TDNum>{formatPercent(region.share)}</TDNum>
-                          </TR>
-                        ))}
-                      </TBody>
-                    </Table>
-                  </TableWrap>
-                )}
-              </div>
             </Panel>
 
             <Panel className="flex min-w-0 flex-col">
@@ -1188,8 +1026,6 @@ export function WorkbenchPage() {
               </div>
             </Panel>
 
-            {/* The platform ring, under the window's timeline and above the alert feed: it
-                summarises how the pool is grouped, one slice per platform. */}
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
                 title={t("平台分布")}
@@ -1226,12 +1062,6 @@ export function WorkbenchPage() {
               )}
             </Panel>
 
-            {/*
-              The 告警 feed: the audit log, newest first, each row a phrase an operator reads
-              instead of a route pattern. Every entry is a write the API actually recorded —
-              this is the audit trail, not a synthetic alert stream — and the raw
-              `METHOD /path` record stays in the row's own `title` for anyone who wants it.
-            */}
             <Panel className="flex min-w-0 flex-col">
               <PanelHeader
                 title={t("告警")}
@@ -1251,9 +1081,6 @@ export function WorkbenchPage() {
                 <ul className="flex flex-col px-4 py-3">
                   {events.data.items.map((entry) => {
                     const { method, phrase } = alertPhrase(entry.action);
-                    /* The method's own tone, kept: a deletion is the one row that can be a
-                       loss, so it reads in `alert`; the writes that create or update state
-                       read in `signal`, and everything else in `live`. */
                     const tone =
                       method === "DELETE"
                         ? ("alert" as const)
@@ -1289,16 +1116,13 @@ export function WorkbenchPage() {
                 </ul>
               )}
             </Panel>
-
           </div>
         </div>
       </div>
       {/*
-        The expanded plate. It is the same map again at a size the panel cannot give
-        it, and it exists only while it is open: Radix mounts the portal on open and
-        gives it back on close, and `EgressMap` inits and disposes its chart with its
-        own mount. The two instances share the module-level outline cache, so the
-        second one draws without a second fetch.
+        The expanded plate uses the same data and activity signal as the inline map.
+        It is mounted in a viewport-level dialog so the map can grow without inheriting
+        the dashboard's column geometry.
       */}
       <DialogRoot open={mapExpanded} onOpenChange={setMapExpanded}>
         <DialogPortal>
@@ -1315,6 +1139,7 @@ export function WorkbenchPage() {
             <div className="wb-map-dialog__body min-h-0 flex-1 bg-paper-inset">
               <Suspense fallback={chartFallback}>
                 <EgressMap
+                  activity={mapActivity}
                   regions={regions}
                   origin={{
                     region: info.data?.panel_egress_region,

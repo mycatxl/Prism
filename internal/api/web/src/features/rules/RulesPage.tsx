@@ -4,7 +4,7 @@ import { type FormEvent, useCallback, useMemo, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Sheet } from "../../components/ui/Sheet";
@@ -193,8 +193,6 @@ export function RulesPage() {
     <Page bleed>
       <PageHeader
         title={t("请求头规则")}
-        description={t("为不同地址设置请求头规则，并先测试后应用。")}
-        meta={<PageMeta label={t("规则列表")} value={t("共 {{count}} 条", { count: rules.length })} />}
       />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
@@ -203,7 +201,6 @@ export function RulesPage() {
         <Panel className="flex min-w-0 flex-col">
           <PanelHeader
             title={t("规则列表")}
-            meta={t("共 {{count}} 条", { count: rules.length })}
           />
           <PanelToolbar>
             <label htmlFor="rules-search" className="relative block min-w-48 sm:w-64">

@@ -13,25 +13,24 @@
  * timeline is the day chart; the egress map carries its own palette, because it is
  * the one surface that paints a night sky rather than paper.
  */
-export const CHART_PAPER = "#f5f7fb";
-export const CHART_PAPER_SUNK = "#edf0f5";
+export const CHART_PAPER = "#e4ebf3";
+export const CHART_PAPER_SUNK = "#d4dfe9";
 /*
- * The pane surfaces are the paper-first day theme: a cool canvas, a quiet inset
- * well and an elevated white surface. `tests/chart-palette.test.mjs` keeps these
- * literals synchronized with the CSS primitives.
+ * Fog-blue graphite day surfaces. These literals mirror design.css so canvas
+ * charts keep the same material as the rest of the console.
  */
-export const CHART_PAPER_RAISED = "#fcfdff";
-export const CHART_PAPER_INSET = "#f1f4f8";
-export const CHART_RULE = "#d7dee9";
-export const CHART_RULE_STRONG = "#a6b2c2";
-export const CHART_INK = "#0f1728";
-export const CHART_INK_SOFT = "#425168";
-export const CHART_INK_FAINT = "#5b6a80";
+export const CHART_PAPER_RAISED = "#edf3f8";
+export const CHART_PAPER_INSET = "#dae5ef";
+export const CHART_RULE = "#becbd8";
+export const CHART_RULE_STRONG = "#8fa2b6";
+export const CHART_INK = "#162338";
+export const CHART_INK_SOFT = "#3f536a";
+export const CHART_INK_FAINT = "#435a71";
 export const CHART_SIGNAL = "#086a50";
 export const CHART_SIGNAL_DEEP = "#054937";
 export const CHART_LIVE = "#0a5d88";
-export const CHART_GRID = "#e7ecf3";
-export const CHART_AXIS = "#5a687b";
+export const CHART_GRID = "#ced9e5";
+export const CHART_AXIS = "#53677c";
 
 /*
  * The accent, which the map spends on exactly one thing: the panel's own egress
@@ -143,9 +142,8 @@ export type MapPalette = {
 };
 
 /**
- * The night plate, which is the map's home: the board is read in a dark room, on
- * glass, and a bright world would be the only thing on it that has to be squinted
- * at.
+ * The night plate. Its land is lighter than the dark inset so the footprint reads
+ * without competing with the route pulses.
  */
 export const MAP_DARK: MapPalette = {
   land: "#1a3458",
@@ -156,8 +154,8 @@ export const MAP_DARK: MapPalette = {
   origin: CHART_ACCENT_DARK,
   originStroke: "rgba(11, 22, 47, 0.85)",
   originSize: 12,
-  hubMin: 4.5,
-  hubMax: 10,
+  hubMin: 5.5,
+  hubMax: 5.5,
   line: "#7fd6f0",
   lineTrail: "#d8f4ff",
   linePeriod: 5,
@@ -165,36 +163,23 @@ export const MAP_DARK: MapPalette = {
 };
 
 /**
- * The day plate, for the light theme.
- *
- * The map follows the theme because its ground *is* the panel's own surface: on
- * the dark board that surface is a night sky, and on paper it is paper. A plate
- * that stayed dark in the light theme would be a night sky inside a pale panel —
- * the one thing the board's own rule ("a chart's ground is the pane's inset")
- * exists to prevent.
- *
- * `land` is therefore a filled step below the wrapper's paper inset surface rather
- * than a lit one above it: on the dark plate the countries glow and the sea is the
- * absence; on paper the countries are the ink and the sea is the sheet. `coast` is
- * the crisper hairline that keeps two neighbouring countries — or a country and the
- * sea — from fusing at a glance. A lit country re-fills its own footprint in the
- * region's series colour at 0.22 (see `EgressMap.tsx`), which lands at roughly
- * `#aeb4d1` over this `land` for `series-1`: a tint of the ground, not a solid,
- * which is the point of that opacity.
+ * The fog-blue graphite day plate. The sea is the inset surface behind the SVG;
+ * land is deliberately darker and bluer than that surface so an empty map still
+ * has a readable geographic footprint without inventing activity.
  */
 export const MAP_LIGHT: MapPalette = {
-  land: "#d3ddec",
-  coast: "#a9b8d0",
+  land: "#b8c8da",
+  coast: "#8da3bc",
   ink: CHART_INK,
   series: CHART_SERIES,
-  hubStroke: "rgba(255, 255, 255, 0.9)",
+  hubStroke: "rgba(228, 235, 243, 0.96)",
   origin: CHART_ACCENT,
-  originStroke: "rgba(255, 255, 255, 0.9)",
+  originStroke: "rgba(228, 235, 243, 0.96)",
   originSize: 12,
-  hubMin: 4.5,
-  hubMax: 10,
-  line: "#2f6fa8",
-  lineTrail: "#0b111e",
+  hubMin: 5.5,
+  hubMax: 5.5,
+  line: "#326d9a",
+  lineTrail: "#1b426e",
   linePeriod: 5,
   tooltipSignal: CHART_SIGNAL_DEEP,
 };

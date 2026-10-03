@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
@@ -673,23 +673,17 @@ export function RequestLogsPage() {
     <Page bleed>
       <PageHeader
         title={t("请求日志")}
-        description={t("按条件检索请求记录，快速定位问题。")}
         meta={
-          <>
-            <PageMeta label={t("每页")} value={filters.limit} />
-            {!configQuery.isLoading && configQuery.data && (
-              <Link
-                to="/system-config"
-                className="flex shrink-0 items-center transition-opacity hover:opacity-80"
-              >
-                <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
-                  {configQuery.data.request_log_enabled
-                    ? t("当前实时日志记录已开启")
-                    : t("当前实时日志记录未开启")}
-                </Badge>
-              </Link>
-            )}
-          </>
+          !configQuery.isLoading && configQuery.data ? (
+            <Link
+              to="/system-config"
+              className="flex shrink-0 items-center transition-opacity hover:opacity-80"
+            >
+              <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
+                {configQuery.data.request_log_enabled ? t("已开启") : t("未开启")}
+              </Badge>
+            </Link>
+          ) : undefined
         }
       />
 

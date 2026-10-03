@@ -4,7 +4,7 @@ import { type FormEvent, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, SectionTitle } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Select } from "../../components/ui/Select";
@@ -579,13 +579,6 @@ export function EndpointsPage() {
     <Page bleed>
       <PageHeader
         title={t("接入点")}
-        description={t("管理监听端口及其可用的接入能力。")}
-        meta={
-          <>
-            <PageMeta label={t("接入点列表")} value={t("共 {{count}} 个接入点", { count: totalEndpoints })} />
-            <PageMeta label={t("每页")} value={pageSize} />
-          </>
-        }
       />
 
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
@@ -594,7 +587,6 @@ export function EndpointsPage() {
         <Panel className="flex min-w-0 flex-col">
         <PanelHeader
           title={t("接入点列表")}
-          description={t("共 {{count}} 个接入点", { count: totalEndpoints })}
           actions={
             <>
               <Button variant="secondary" size="sm" onClick={openCreateModal}>

@@ -4,7 +4,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
@@ -944,8 +944,6 @@ export function JobsPage() {
 
       <PageHeader
         title={t("检测任务")}
-        description={t("批量检测任务的排队、进度与逐节点结果。")}
-        meta={<PageMeta label={t("任务")} value={total.toLocaleString()} />}
         actions={
           <>
             <Button size="sm" onClick={() => setCreateOpen(true)}>

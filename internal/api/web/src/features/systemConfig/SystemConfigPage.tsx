@@ -300,13 +300,11 @@ function ConfigField({
 function ConfigSwitch({
   label,
   checked,
-  disabled,
   restore,
   onChange,
 }: {
   label: string;
   checked: boolean;
-  disabled?: boolean;
   restore?: ReactNode;
   onChange: (checked: boolean) => void;
 }) {
@@ -315,7 +313,7 @@ function ConfigSwitch({
       <span className="min-w-0 text-sm text-ink">{label}</span>
       <span className="flex shrink-0 items-center gap-1.5">
         {restore}
-        <Switch checked={checked} disabled={disabled} aria-label={label} onCheckedChange={onChange} />
+        <Switch checked={checked} aria-label={label} onCheckedChange={onChange} />
       </span>
     </div>
   );
@@ -1050,23 +1048,16 @@ export function SystemConfigPage() {
                           )}
 
                           {activeCategory === "deployment" && (
-                            <div className="space-y-1.5">
-                              <SectionTitle>{t("服务鉴权状态")}</SectionTitle>
-                              <div className="divide-y divide-rule-faint border-y border-rule-faint">
-                                <ConfigSwitch
-                                  label={t("已配置管理端令牌")}
-                                  checked={envBaseline.admin_token_set}
-                                  disabled
-                                  onChange={() => undefined}
-                                />
-                                <ConfigSwitch
-                                  label={t("已配置代理令牌")}
-                                  checked={envBaseline.proxy_token_set}
-                                  disabled
-                                  onChange={() => undefined}
-                                />
-                              </div>
-                            </div>
+                            <StaticGroup title={t("服务鉴权状态")}>
+                              <StaticRow
+                                label={t("已配置管理端令牌")}
+                                value={envBaseline.admin_token_set ? t("已配置") : t("未配置")}
+                              />
+                              <StaticRow
+                                label={t("已配置代理令牌")}
+                                value={envBaseline.proxy_token_set ? t("已配置") : t("未配置")}
+                              />
+                            </StaticGroup>
                           )}
                         </PanelBody>
                       </Panel>

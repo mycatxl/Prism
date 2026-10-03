@@ -8,7 +8,7 @@ import { cn } from "../../lib/cn";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
@@ -1474,8 +1474,6 @@ export function ExportsPage() {
     <Page bleed>
       <PageHeader
         title={t("导出与订阅")}
-        description={t("把节点池导出成客户端配置，或用一次性令牌把配置发布成订阅。")}
-        meta={<PageMeta label={t("导出配置")} value={totalProfiles.toLocaleString()} />}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={() => setExportTarget({ profile: null })}>
@@ -1513,7 +1511,6 @@ export function ExportsPage() {
         <Panel className="flex min-w-0 flex-col">
           <PanelHeader
             title={t("导出配置列表")}
-            description={t("共 {{count}} 个导出配置", { count: totalProfiles })}
           />
 
           {profilesQuery.isPending ? (
