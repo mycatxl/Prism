@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Select } from "../../components/ui/Select";
@@ -187,13 +187,6 @@ export function AuditLogsPage() {
     <Page bleed>
       <PageHeader
         title={t("审计日志")}
-        description={t("记录管理员对配置的写操作，仅成功的写操作会被记录（保留 90 天，最多 100000 条）。")}
-        meta={
-          <>
-            <PageMeta label={t("每页")} value={pageSize} />
-            <PageMeta label={t("结果")} value={t("成功")} />
-          </>
-        }
         actions={
           <Button
             variant="secondary"

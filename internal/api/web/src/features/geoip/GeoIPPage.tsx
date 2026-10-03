@@ -86,7 +86,6 @@ export function GeoIPPage() {
     <Page bleed>
       <PageHeader
         title={t("资源")}
-        description={t("查询 IP 所在地区，并维护 GeoIP 数据库。")}
         meta={
           <>
             <PageMeta

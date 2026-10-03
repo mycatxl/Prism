@@ -31,7 +31,6 @@ import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import {
   Panel,
   PanelBody,
-  PanelFooter,
   PanelHeader,
   PanelToolbar,
   SectionTitle,
@@ -58,7 +57,6 @@ import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
 import { getQualityStatus, inspectNode, qualityPollingInterval } from "./quality/api";
 import { NetworkSignals, QualityDetails, VerdictBadge } from "./quality/QualityDetails";
 import { ExitRecordsPanel } from "./quality/ExitRecordsPanel";
-import { PurityGuide } from "./quality/PurityGuide";
 import { purityBands, typeLabels } from "./quality/presentation";
 import { NodeIntelCell, NodeIntelPanel, NodeLabels } from "./NodeIntel";
 
@@ -387,7 +385,6 @@ export function NodesPage() {
       >
         <PageHeader
           title={t("节点池")}
-          description={t("按线路查看健康，按出口查看质量。")}
           meta={
             <>
               <PageMeta
@@ -449,7 +446,6 @@ export function NodesPage() {
           value="nodes"
           className="page-content page-content--fill"
         >
-          <PurityGuide />
 
           {/* 列表自身的筛选与分页都归这个 Panel：工具条在上，表格与
               空/错误状态在面板体内，分页落在 PanelFooter。 */}
@@ -539,6 +535,72 @@ export function NodesPage() {
                 <Link to="/jobs">{t("查看检测任务")}</Link>
               </Button>
             ) : null}
+            <div className="nodes-toolbar__pagination ml-auto flex flex-wrap items-center gap-2">
+              {nodesQuery.data && (
+                <span className="readout text-xs text-ink-soft">
+                  {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+                    page: currentPage + 1,
+                    pages: totalPages,
+                    start: nodesQuery.data.total ? currentPage * pageSize + 1 : 0,
+                    end: Math.min((currentPage + 1) * pageSize, nodesQuery.data.total),
+                    total: nodesQuery.data.total,
+                  })}
+                </span>
+              )}
+              <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                <span>{t("每页")}</span>
+                <Select
+                  value={pageSize}
+                  disabled={nodesQuery.isFetching}
+                  aria-label={t("每页")}
+                  onChange={(event) => update("size", event.target.value)}
+                >
+                  {sizes.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                <span>{t("跳至")}</span>
+                <Input
+                  key={currentPage}
+                  className="readout w-16 text-center"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={totalPages}
+                  defaultValue={currentPage + 1}
+                  aria-label={t("选择页码")}
+                  disabled={nodesQuery.isFetching}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") jumpToPage(event.currentTarget.value);
+                  }}
+                  onBlur={(event) => jumpToPage(event.currentTarget.value)}
+                />
+              </label>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t("上一页")}
+                title={t("上一页")}
+                disabled={nodesQuery.isFetching || currentPage === 0}
+                onClick={() => update("page", String(currentPage - 1))}
+              >
+                <ChevronLeft size={16} />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={t("下一页")}
+                title={t("下一页")}
+                disabled={nodesQuery.isFetching || currentPage >= totalPages - 1}
+                onClick={() => update("page", String(currentPage + 1))}
+              >
+                <ChevronRight size={16} />
+              </Button>
+            </div>
             </PanelToolbar>
 
             <PanelToolbar className="filter-toolbar filter-toolbar--advanced">
@@ -860,7 +922,7 @@ export function NodesPage() {
 
           {nodes.length > 0 && (
             <TableWrap aria-busy={nodesQuery.isFetching}>
-              <Table className="min-w-[920px]">
+              <Table className="nodes-table min-w-[1040px]">
                 <THead>
                   <TR>
                     {sortableTH("tag", "节点名称")}
@@ -966,74 +1028,6 @@ export function NodesPage() {
             </TableWrap>
           )}
 
-          {nodesQuery.data && (
-            <PanelFooter className="justify-between">
-              <p className="readout text-xs text-ink-soft">
-                {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
-                  page: currentPage + 1,
-                  pages: totalPages,
-                  start: nodesQuery.data.total ? currentPage * pageSize + 1 : 0,
-                  end: Math.min((currentPage + 1) * pageSize, nodesQuery.data.total),
-                  total: nodesQuery.data.total,
-                })}
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                  <span>{t("每页")}</span>
-                  <Select
-                    value={pageSize}
-                    disabled={nodesQuery.isFetching}
-                    aria-label={t("每页")}
-                    onChange={(event) => update("size", event.target.value)}
-                  >
-                    {sizes.map((size) => (
-                      <option key={size} value={size}>
-                        {size}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-                <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                  <span>{t("跳至")}</span>
-                  <Input
-                    key={currentPage}
-                    className="readout w-16 text-center"
-                    type="number"
-                    inputMode="numeric"
-                    min={1}
-                    max={totalPages}
-                    defaultValue={currentPage + 1}
-                    aria-label={t("选择页码")}
-                    disabled={nodesQuery.isFetching}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") jumpToPage(event.currentTarget.value);
-                    }}
-                    onBlur={(event) => jumpToPage(event.currentTarget.value)}
-                  />
-                </label>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("上一页")}
-                  title={t("上一页")}
-                  disabled={nodesQuery.isFetching || currentPage === 0}
-                  onClick={() => update("page", String(currentPage - 1))}
-                >
-                  <ChevronLeft size={16} />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("下一页")}
-                  title={t("下一页")}
-                  disabled={nodesQuery.isFetching || currentPage >= totalPages - 1}
-                  onClick={() => update("page", String(currentPage + 1))}
-                >
-                  <ChevronRight size={16} />
-                </Button>
-              </div>
-            </PanelFooter>
-          )}
           </Panel>
         </TabsContent>
       </Tabs>

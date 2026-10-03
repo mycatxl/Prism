@@ -10,7 +10,7 @@ import { cn } from "../../lib/cn";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
@@ -792,8 +792,6 @@ export function SubscriptionPage() {
 
       <PageHeader
         title={t("订阅管理")}
-        description={t("保障订阅按计划更新，异常时可一键刷新。")}
-        meta={<PageMeta label={t("订阅")} value={totalSubscriptions.toLocaleString()} />}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>

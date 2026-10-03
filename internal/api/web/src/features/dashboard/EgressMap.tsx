@@ -9,6 +9,7 @@ import {
   type MapPalette,
 } from "./chartPalette";
 import { formatCount, formatLatency } from "./format";
+import { useReducedMotion } from "./useReducedMotion";
 import type { RegionTraffic } from "./types";
 import {
   buildRegionCentroidIndex,
@@ -69,11 +70,15 @@ function regionLabel(
 export default function EgressMap({
   regions,
   origin,
+  activity = false,
 }: {
   regions: RegionTraffic[];
   origin?: PanelEgress;
+  /** True only when the realtime series reports current activity. */
+  activity?: boolean;
 }) {
   const { t, isEnglish } = useI18n();
+  const reducedMotion = useReducedMotion();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">(readMapTheme);
   const [geo, setGeo] = useState<WorldGeoJson | null>(null);
@@ -160,17 +165,13 @@ export default function EgressMap({
     () => new Map(placed.map((region, index) => [region.id, palette.series[index % palette.series.length]])),
     [placed, palette],
   );
-  const maxExits = useMemo(
-    () => placed.reduce((max, region) => Math.max(max, region.exits), 0),
-    [placed],
-  );
 
   const projection = useMemo(() => {
     if (!featureCollection) {
       return null;
     }
     const padding = Math.max(18, Math.min(size.width, size.height) * 0.055);
-    return geoNaturalEarth1().fitExtent(
+    return geoNaturalEarth1().rotate([-32, 0]).fitExtent(
       [
         [padding, padding],
         [Math.max(padding + 1, size.width - padding), Math.max(padding + 1, size.height - padding)],
@@ -271,13 +272,14 @@ export default function EgressMap({
   const originPoint = placedOrigin ? projection(placedOrigin.coords) : null;
   const lines = placedOrigin
     ? placed
-        .filter((region) => region.exits > 0)
+        .filter((region) => region.exits > 0 && region.hubIso !== placedOrigin.region)
         .flatMap((region) => {
           const line: LineString = { type: "LineString", coordinates: [placedOrigin.coords, region.hub] };
           const d = pathGenerator(line);
           return d ? [{ region, d }] : [];
         })
     : [];
+  const animateRoutes = activity && !reducedMotion && lines.length > 0;
 
   return (
     <div ref={containerRef} className="egress-map relative h-full w-full" role="group" aria-label={t("全球流量")}>
@@ -317,15 +319,32 @@ export default function EgressMap({
             );
           })}
         </g>
-        <g className="egress-map__routes" fill="none" stroke={palette.line} strokeOpacity="0.6" strokeWidth="1.1">
+        <g className="egress-map__routes" fill="none" stroke={palette.line} strokeOpacity="0.58" strokeWidth="1.1">
           {lines.map(({ region, d }) => (
             <path key={`line-${region.id}`} d={d} vectorEffect="non-scaling-stroke" />
           ))}
         </g>
+        {animateRoutes && (
+          <g className="egress-map__route-pulses" fill="none" stroke={palette.lineTrail} strokeLinecap="round" strokeWidth="2.4">
+            {lines.map(({ region, d }, index) => (
+              <path
+                key={`pulse-${region.id}`}
+                d={d}
+                pathLength="1"
+                className="egress-map__route-pulse"
+                style={{
+                  animationDuration: `${palette.linePeriod}s`,
+                  animationDelay: `${index * -0.85}s`,
+                }}
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </g>
+        )}
         <g className="egress-map__hubs">
           {hubPoints.map(({ region, point }) => {
             const content = regionTooltip(region);
-            const radius = maxExits > 0 ? 4 + Math.sqrt(region.exits / maxExits) * 8 : 4;
+            const radius = palette.hubMin;
             return (
               <circle
                 className="egress-map__hub"
@@ -351,9 +370,9 @@ export default function EgressMap({
         {originPoint && originTooltip && (
           <circle
             className="egress-map__origin"
+            r={palette.originSize / 2}
             cx={originPoint[0]}
             cy={originPoint[1]}
-            r={8}
             fill={palette.origin}
             stroke={palette.originStroke}
             strokeWidth="2"

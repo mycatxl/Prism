@@ -6,7 +6,7 @@ import { useForm, useWatch } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Page, PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Select } from "../../components/ui/Select";
@@ -229,8 +229,6 @@ export function PlatformPage() {
       <Page bleed>
         <PageHeader
           title={t("平台管理")}
-          description={t("导入资源，设置筛选规则，查看运行状态。")}
-          meta={<PageMeta label={t("平台")} value={totalPlatforms.toLocaleString()} />}
           actions={
             <>
               <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
@@ -257,7 +255,6 @@ export function PlatformPage() {
           <Panel className="flex min-w-0 flex-col">
             <PanelHeader
               title={t("平台列表")}
-              description={t("共 {{count}} 个平台", { count: totalPlatforms })}
             />
 
             <PanelToolbar>
