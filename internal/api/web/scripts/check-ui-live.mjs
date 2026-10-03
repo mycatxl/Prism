@@ -301,14 +301,19 @@ check("no removed class token survives in the DOM", async ({ origin, page }) => 
 });
 
 check("legacy node envelopes do not crash the node pool", async ({ origin, page, errors }) => {
-  const legacyItems = [{
-    node_hash: "legacy-node",
-    created_at: "2026-01-01T00:00:00Z",
-    enabled: true,
-    has_outbound: true,
-    failure_count: 0,
-    tags: [],
-  }];
+  const legacyItems = [
+    null,
+    42,
+    { node_hash: "incomplete-node" },
+    {
+      node_hash: "legacy-node",
+      created_at: "2026-01-01T00:00:00Z",
+      enabled: true,
+      has_outbound: true,
+      failure_count: 0,
+      tags: [],
+    },
+  ];
   const nodesRoute = /\/api\/v1\/nodes(?:\?|$)/;
   await page.route(nodesRoute, async (route) => {
     await route.fulfill({

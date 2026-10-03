@@ -25,13 +25,28 @@ type ApiNodeSummary = Omit<NodeSummary, "tags"> & {
 };
 
 type ApiNodePage = {
-  items?: ApiNodeSummary[] | null;
+  items?: unknown;
   total?: number | string | null;
   limit?: number | string | null;
   offset?: number | string | null;
   unique_egress_ips?: number | string | null;
   unique_healthy_egress_ips?: number | string | null;
 };
+
+function isApiNodeSummary(value: unknown): value is ApiNodeSummary {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const item = value as Record<string, unknown>;
+  return (
+    typeof item.node_hash === "string" &&
+    item.node_hash.trim().length > 0 &&
+    typeof item.created_at === "string" &&
+    typeof item.has_outbound === "boolean" &&
+    typeof item.failure_count === "number" &&
+    Number.isFinite(item.failure_count)
+  );
+}
 
 function parseNonNegativeInteger(value: unknown): number | null {
   const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : NaN;
@@ -151,7 +166,7 @@ export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): P
   }
 
   const data = await apiRequest<ApiNodePage | null>(`${basePath}?${query.toString()}`, { signal });
-  const items = Array.isArray(data?.items) ? data.items : [];
+  const items = Array.isArray(data?.items) ? data.items.filter(isApiNodeSummary) : [];
   return {
     items: items.map(normalizeNode),
     total: normalizeCount(data?.total, items.length),
