@@ -495,21 +495,25 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
    *    painted in; sampling glyph pixels would measure antialiasing instead.
    */
   /*
-   * The selectors the board actually paints words with. The shell's rail replica
-   * (`.wb-brand-title`, `.wb-rail-top-item`, `.wb-rail-card-item`) is deliberately
-   * absent: it was the 1536px layer's own rail, it is gone with that layer, and a
-   * selector that matches nothing would quietly shrink this check.
+   * The board now uses the Precision Glass composition: a context band, a
+   * freshness bar, panel headers, Pool Snapshot cells and traffic readouts.
+   * These semantic hooks are stable across loading and populated fixtures, and
+   * they cover the words operators actually read in both authored themes.
    */
   const TARGETS = [
-    ".wb-hero-heading",
-    ".wb-hero-desc",
-    ".wb-timerange-select",
-    ".wb-metric-chip .micro",
-    ".wb-metric-chip .numeral",
-    ".wb-plate-head h2",
-    ".wb-plate-head .label",
-    ".wb-region-table thead th",
-    ".wb-region-table tbody td",
+    ".dashboard-context__title",
+    ".dashboard-context__description",
+    ".data-freshness-bar__range .micro",
+    ".data-freshness-bar__age .micro",
+    ".data-freshness-bar__age .readout",
+    ".panel-header__title",
+    ".panel-header__meta",
+    ".pool-snapshot-cell .micro",
+    ".pool-snapshot-cell .numeral",
+    ".dashboard-traffic-readouts .micro",
+    ".dashboard-traffic-readouts .numeral",
+    ".dashboard-region-row",
+    ".dashboard-change-row",
   ];
 
   /*

@@ -127,19 +127,6 @@ for (const theme of themes) {
     check(`focus ${name} on canvas`, contrast(token(name), token("canvas")), 3);
   }
 
-  /*
-   * The hero pane is the console's one gradient surface, and it is not one of the six
-   * composited surface primitives — it is a separate fill with its own two stops, so it
-   * is checked as its own pair set. `ink` and `ink-soft` are what the pane carries (a
-   * 20px heading and a 12px description). `ink-faint` is deliberately not checked here
-   * and must not be placed on the hero: it measures 4.3:1 on the darker stop, which is
-   * exactly the kind of near-miss this file exists to catch when the pair *is* used.
-   */
-  for (const stop of ["hero", "hero-lift"]) {
-    for (const fg of ["ink", "ink-soft"]) {
-      check(`${fg} on ${stop}`, contrast(token(fg), token(stop)), 4.5);
-    }
-  }
 
   // Chart series are graphical objects: WCAG 1.4.11 asks for 3:1 against the ground.
   for (const name of SERIES) {

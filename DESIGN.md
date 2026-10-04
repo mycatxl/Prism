@@ -1,480 +1,187 @@
 ---
 id: prism-console-visual
 type: module-design
-title: Prism console visual system
-status: draft
+title: Prism Precision Glass console visual system
+status: active
 parent: prism-product
 tags:
   - frontend
   - visual-system
+  - precision-glass
 ---
-# Prism design system
 
-The visual system of record for the console. A page's look is decided here; the
-implementation detail (component inventory, layout, copy rules, acceptance table)
-lives in [internal/api/web/DESIGN.md](internal/api/web/DESIGN.md). The architecture
-of the server is a different subject and lives in [docs/DESIGN.md](docs/DESIGN.md).
+# Prism Precision Glass
 
-Every rule below is mechanically checkable. When this file and the code disagree,
-the code is wrong and a check is missing — see [Verification](#verification).
+Prism is an operator console for measured node egress, traffic, quality and routing.
+The visual system makes that evidence easy to scan without turning the application into a
+wall of decorative cards.
 
-## Concept
+> **Design claim.** Use light glass to frame context, use a small number of unequal Bento
+> regions to express real priority, and let tables, charts and forms carry the work.
 
-**A lit board on a night ground.** The console is a set of glass panes standing over a
-deep navy ground lit from two distant sources: indigo at the far left, violet at the
-far right. The ground is the room, and it stays near-black; the panes are the work.
-Inside a pane the light belongs to the readings, and one accent hue means only
-"interactive".
+This is an Operate surface. Familiar affordances, truthful data, durable reading rhythm
+and complete keyboard/touch operation outrank visual novelty.
 
-Light is the same room at noon — pale indigo-lit paper, identical geometry — solved
-separately rather than derived, so neither theme is an inversion of the other.
+## Product truth
 
-This world replaced an earlier, deliberately austere one: flat bordered panels, no
-blur, no lift, no KPI row. The replacement is a decision, not drift. The refusals
-below are what survived it, and they are now narrowed to the techniques that actually
-cost legibility rather than to a general taste for plainness.
+- Prism is single-user and self-hosted. Do not add tenant, plan, avatar, notification or
+  marketing chrome.
+- A displayed value must come from an existing API response or a documented calculation.
+  Show age, source or statistical basis when the value can otherwise be misread.
+- Dashboard is an all-day monitoring wall. Its first evidence is traffic and connections;
+  it is not an entity search surface.
+- The console supports Chinese and English, light and dark themes, loading/error/empty
+  states, keyboard focus, reduced motion and complete mobile operation.
 
-### Five refusals that survived
+## Visual world
 
-- **No gradient text.** A gradient belongs to a *surface* — the ground glow and the
-  hero pane — never to glyphs.
-- **No looping decorative motion.** No pulsing status dots, blinking cursors,
-  marquees, radar sweeps, or the same fade-and-rise on every section. A status dot is
-  static or it reports a real value.
-- **Colour never carries meaning alone.** Every state also carries a word, a shape, a
-  position, or a number.
-- **`signal` and `accent` stay separate colours.** Merged into one hue, "healthy" and
-  "clickable" become indistinguishable in a dense table.
-- **No invented chrome.** No notification bell, avatar or user identity this console
-  does not have, no status sentence the backend does not report, no count that was not
-  fetched. The console's honesty is part of its look.
+### Material
 
-### What is deliberate now, and its bound
+**Precision Glass** is a quiet SaaS workspace, not a glassmorphism demo.
 
-Every item below was refused outright by the previous world. It is allowed now with a
-bound a reviewer can check, and the bound is the rule — not the technique.
+- The canvas is an opaque blue-grey mist in light mode and deep ink-blue in dark mode.
+- Chrome (rail, top bar and overlays) may use a restrained translucent surface with a
+  10–12px blur and a one-pixel hairline. It must have an opaque fallback.
+- Dashboard lead evidence panes may use the same light glass treatment. Their charts and
+  maps always sit on an opaque inset well so data stays legible.
+- Ordinary data and configuration pages use opaque work surfaces with no backdrop blur.
+- A pane is a region containing a real table, chart, form or state list. A pane may not
+  exist only to wrap another pane.
+- Main panes use a 16px radius, inset wells 12px, controls 8px. Shadows are quiet on
+  ordinary panes and stronger only on Sheet/Dialog/Tooltip overlays.
+- No hero gradient, gradient text, ground halo, decorative icon tile, zero-offset glow,
+  or full-screen purple wash.
 
-- **Glass.** Blur has one job: separating a pane from the ground. **Two values are
-  sanctioned, both declared in `design.css`** — the card blur
-  `--p-glass-blur` (`blur(18px) saturate(118%)` on paper,
-  `blur(22px) saturate(160%)` at night: one material, tighter and more saturated
-  over a near-black ground, and used by `.panel`, `.glass-bar`, `.glass-rail`,
-  `.glass-elevated` and the sticky `.data-grid` head) and the chrome-strip blur
-  (`backdrop-blur-md`, 12px) on the two bands that float over scrolling content,
-  the page header and the toast. A third value is a bug. The frosted-glass pass is
-  the reason the fills are restrained rather than luminous: a pane is a near-paper
-  surface in light (`.78` white) and a faint glass surface at night (`.085` white),
-  it carries the 1px inner top rim-light that reads as the lit lip, and what it
-  frosts is the ambient colour wash painted *behind* it (`--p-ground-glow`, on the
-  body's own ground).
+### Palette
 
-  This is intentionally paper-first in light mode: the glass vocabulary remains for
-  hierarchy, but it must not reduce text or data readability.
-- **Lift.** Soft shadows are real in both themes, because a pane floats over a lit
-  ground: `shadow-md` on a pane, `shadow-lg` on an overlay. The step is a hierarchy
-  decision, never a per-page one.
-- **Gradient fill, on exactly two surfaces**: the ground glow (`--p-ground-glow`,
-  radial washes at ≤8% alpha on paper and ≤11% at night, fixed attachment — the
-  ambient wash behind the glass, not a halo) and the hero pane
-  (`.hero-gradient`, 135°). Anywhere else a fill is flat, and text is never filled.
-- **The KPI row.** A row of large numerals is allowed *because* every figure in it is a
-  fetched value with a named basis, and its card also carries the series or the
-  definition behind it. A large number with nothing behind it is still prohibited.
-- **Sparklines and rings are support, never content.** They may accompany a stated
-  value; they may not stand in for it. Every one is `aria-hidden`, and its numbers are
-  stated in text beside it.
-- **Bento.** A page is a grid of unequal panes: the asymmetry is the point. A pane may
-  contain a *region* — a table, a chart — drawn as an inset well; a pane whose only
-  content is another decorative pane is still prohibited.
+These are the starting primitives. Contrast checks are authoritative and may require a
+value to be solved while preserving the role.
 
-## Colors and themes
-
-Dark is the default; light is a click away in the rail. Neither is an inversion of the
-other — each value was solved for its own contrast target against its own surfaces,
-because on a dark ground the ink must clear 4.5:1 against a *near-black* pane, the
-washes must sit *between* the pane and the state colour rather than above it, and a
-filled button needs dark text rather than white (white on a bright accent fails).
-
-One token set, two definitions. Every colour is a primitive (`--p-*`) defined twice —
-`:root` for light, `[data-theme="dark"]` for dark — and the Tailwind utilities are
-bound to those primitives through `@theme inline` in
-[`src/styles/design.css`](internal/api/web/src/styles/design.css). That indirection is
-the only reason a runtime theme switch costs one attribute instead of a second
-stylesheet. The theme is set before first paint by an inline script in `index.html`, so
-there is no flash of the wrong ground.
-
-### The contrast truth rule
-
-A glass pane is translucent, and a contrast gate cannot measure
-`rgba(255,255,255,0.085)`. So the six surface primitives — `canvas`, `sunk`, `raised`,
-`inset`, `rail`, `elevated` — are **opaque hex values equal to the composited glass over
-the canvas**:
-
-```
-surface = fill_alpha × fill_color + (1 − fill_alpha) × canvas      (rounded to #rrggbb)
-```
-
-Each pane surface is authored as the opaque value the contrast gate expects to measure. The
-surface ordering remains intentional — `inset` is the map/chart well, `rail` is the navigation
-layer, `raised` is the pane surface, and `elevated` is reserved for overlays — while the
-translucent `--p-glass*` values remain fill material only. Changing a glass alpha means
-re-solving the corresponding opaque surfaces beside it, and the gate is what tells you.
-
-The gate in `scripts/check-contrast.mjs` measures the ink against those rendered surfaces;
-the translucent `--p-glass*` tokens are used for fills only.
-
-### Surfaces, material and rules
-
-| Token | Light | Dark | Purpose |
+| Token | Light | Dark | Role |
 |---|---|---|---|
-| `canvas` | `#f5f7fb` | `#070d1a` | The ground the panes float over |
-| `sunk` | `#edf0f5` | `#212632` | Sunk areas: wells, insets |
-| `raised` | `#fcfdff` | `#1c222d` | The pane's own composited fill |
-| `inset` | `#f1f4f8` | `#141a26` | Chart and map ground |
-| `rail` | `#fbfcfe` | `#171d29` | **Second neutral layer**: navigation |
-| `elevated` | `#ffffff` | `#272c38` | Overlays: sheet, palette, tooltip |
-| `glass` | `rgba(255,255,255,.78)` | `rgba(255,255,255,.085)` | A pane's fill (translucent) |
-| `glass-strong` | `rgba(255,255,255,.92)` | `rgba(255,255,255,.13)` | Chrome bands, sticky table head |
-| `glass-edge` | `rgba(15,23,42,.10)` | `rgba(255,255,255,.11)` | The pane's 1px edge. **A region is bordered** |
-| `glass-edge-strong` | `rgba(15,23,42,.18)` | `rgba(255,255,255,.19)` | Edge on hover, overlay edges |
-| `glass-highlight` | `rgba(255,255,255,.94)` | `rgba(255,255,255,.11)` | The inner top rim-light: the pane's lit lip, drawn as `inset 0 1px 0 0` ahead of the elevation |
-| `ground-glow` | cool-blue radials ≤4.5% | indigo/violet radials ≤11% | The ambient colour wash *behind* the glass, painted on the ground; light mode keeps purple environmental light deliberately weak |
-| `rule` | `#d7dee9` | `#2a3447` | Hairline |
-| `rule-strong` | `#a6b2c2` | `#46556e` | Emphasis rule |
-| `rule-faint` | `#e6ebf2` | `#1f2737` | Barely-there rule |
-| `row-rule` | `#e9eef5` | `#1d2535` | Table row separator |
+| `canvas` | `#e8eef6` | `#0a1220` | page ground |
+| `rail/chrome` | `#f3f7fb` | `#101a2a` | navigation and top chrome |
+| `surface` | `#f5f8fc` | `#182438` | selected/lead work surface |
+| `inset` | `#dce6f0` | `#121d2e` | chart, map, table and code well |
+| `elevated` | `#ffffff` | `#1d2b40` | overlay fallback |
+| `ink` | `#142033` | `#f1f4f8` | primary text |
+| `ink-soft` | `#4c5c72` | `#aab7c9` | secondary text |
+| `accent` | `#3e5db8` | `#8294ff` | action, selection and focus only |
+| `signal` | `#087254` | `#42c396` | healthy/success |
+| `live` | `#0879a5` | `#58bfea` | current/in flight |
+| `warn` | `#8a5700` | `#e1a13d` | stale/degraded |
+| `alert` | `#b4382c` | `#f18a7e` | error/risk |
 
-### Ink
+Accent never means healthy. State colour never stands alone: pair it with text, a shape,
+position or a number. Chart series are separate from state colours and remain separable in
+greyscale.
 
-| Token | Light | Dark | Purpose |
-|---|---|---|---|
-| `ink` | `#0f1728` | `#f1f3f7` | Body and headings |
-| `ink-soft` | `#425168` | `#aeb9cb` | Secondary |
-| `ink-faint` | `#5b6a80` | `#8494ad` | Meta. Still ≥4.5:1 on every surface above |
+### Type and density
 
-### State and interaction
+- Manrope remains the UI/body face; IBM Plex Mono is reserved for IPs, hashes, ports,
+  timestamps, JSON and values that are compared.
+- Body is 14–15px, page title 20–22px, pane title 14–16px, primary readings 24–30px.
+  Sentence case is the default; micro labels are for table heads and compact metadata,
+  not decorative eyebrows.
+- Use an 8px rhythm with 4px adjustments. Page gutters are 24px at wide desktop, 16px
+  around 1280px and 12px at 390px. Normal section gaps are 16px; tight groups are 12px;
+  pane content is normally 16px.
+- Whitespace must separate a heading from its evidence and preserve a reading rhythm. Do
+  not use 40–60px empty bands to imply luxury, and do not compress unrelated controls into
+  one dense strip.
 
-| Token | Light | Dark | Purpose |
-|---|---|---|---|
-| `signal` | `#086a50` | `#34b888` | Healthy. `signal-deep` `#054937` / `#299e73` |
-| `live` | `#0a5d88` | `#38a8df` | In flight, queued |
-| `warn` | `#7c4900` | `#d49426` | Degraded, stale |
-| `alert` | `#a42214` | `#e68277` | Risk, failure |
-| `accent` | `#3157c7` | `#818cf8` | **Interaction only**: primary action, current selection, focus ring |
-| `accent-deep` | `#24439f` | `#6875f5` | Accent pressed / emphasised |
-| `accent-wash` | `#e8eefc` | `#1c2456` | Tinted ground for a selection. The light value is a cool blue paper wash; the dark value keeps the night-board hierarchy |
-| `accent-lift` | `#5577d4` | `#a78bfa` | The hero gradient's far stop. **Never text, never a state** |
-| `*-wash` | `#d9efe8` `#dcecf6` `#f7ecd4` `#f9e3df` | `#0d2f23` `#0d2e3f` `#382609` `#491812` | Tinted ground for a state |
-| `on-*` | `#ffffff` | `#070d1a` | Text **on** a filled state colour. A token, not a constant: a bright accent takes the dark ground's ink |
-### Data series
+## Shell and navigation
 
-Six categorical colours, one meaning each, never reused for decoration.
+- The top bar contains current location, the one authoritative instance connection state,
+  token warning when real, theme, language and logout. It does not contain global search,
+  an unscoped refresh button or a hard-coded "all systems operational" statement.
+- Dashboard has no search. Search belongs beside the table or workflow that owns the
+  entity: nodes, subscriptions, platforms, request logs, jobs, audit, rules and config.
+- Navigation groups destinations by work: Workspace (overview, nodes, subscriptions,
+  platforms, jobs, exports) and Observability & Settings (request logs, endpoints, rules,
+  GeoIP, system config, audit).
+- Expanded rail is about 232–248px; below 1440px it may collapse to an icon rail, and
+  below 1024px it becomes a drawer. The active destination uses a quiet filled wash and
+  text weight, never a thick coloured side tab.
 
-| | 1 | 2 | 3 | 4 | 5 | 6 |
-|---|---|---|---|---|---|---|
-| Light | `#2b2470` | `#04745c` | `#b86c04` | `#dd2408` | `#6d1eb5` | `#0393c9` |
-| Dark | `#4f5de2` | `#248f75` | `#bf841f` | `#e88272` | `#c6a0eb` | `#70d4ec` |
+## Automatic freshness
 
-Two constraints hold at once, both enforced by the contrast gate:
+Dashboard data updates from the real query cadence already supplied by the metrics API:
+realtime series use their reported step, history uses its bucket cadence, snapshots and
+node exits use their existing intervals. The UI exposes:
 
-1. A chart line is a **graphical object**, so WCAG 1.4.11 asks **3:1**, not 4.5:1.
-2. The series are separated on the **lightness axis** (adjacent steps ≥1.15 in relative
-   luminance), not only in hue. Greyscale printing, colour-vision deficiency and
-   viewing from three metres all leave lightness as the only surviving channel.
-   **Reordering the series means running the gate.**
+- selected range;
+- last successful data time or source timestamp when available;
+- a restrained updating indicator while polling;
+- an error message and retry action only when polling fails.
 
-Chart grid and axis: `chart-grid` `#e7ecf3` / `#253042`, `chart-axis` `#5a687b` /
-`#8596af` (the axis label is text, so ≥4.5:1). Canvas cannot read CSS variables, so
-these literals are duplicated in
-[`src/features/dashboard/chartPalette.ts`](internal/api/web/src/features/dashboard/chartPalette.ts) —
-**the two must be changed together**, and the gate must be re-run.
+There is no permanent "Refresh data" button on Dashboard. A retry button belongs to an
+error state because it recovers a known failure; it is not a second refresh model.
 
-## Components
+## Dashboard composition
 
-`src/components/ui/` is the only source of components. A page composes them; it does
-not invent a control. Radix owns behaviour, this repository owns appearance, and the
-inventory with per-component detail is in
-[internal/api/web/DESIGN.md](internal/api/web/DESIGN.md).
+Dashboard is the one primary Bento surface. Its DOM order is also its mobile order:
 
-What the set establishes, and what a new component must not break:
+1. **Page context** — range, freshness, map expansion and node-pool link. No search.
+2. **Pool snapshot strip** — one compact readout band for healthy/total nodes,
+   healthy/total egress IPs, covered regions and subscription health.
+3. **Traffic trend, 7/12** — the main monitoring evidence. Requests, estimated average
+   latency, error rate and active leases appear once above the real ingress/egress/
+   connections chart.
+4. **Egress map, 5/12** — offline GeoJSON/d3-geo map, real origin-to-hub relationships
+   and a readable region index. Expand remains a viewport Dialog.
+5. **Latency, Platform, Subscription, 4/12 each** — compact diagnostic and outcome
+   evidence. Platform distribution may use a real donut with a readable list; it is not
+   decorative.
+6. **Recent system changes, 12/12** — the recent audit write history. It is not called
+   an alert feed and does not imply a threshold engine.
 
-- **Structure comes from a pane and a type size**: one glass edge, one blur, one
-  radius (20px, and the same on an overlay so a dialog and the pane it opened from agree),
-  the inner top rim-light, and the smallest step of lift. A pane is not decorated into
-  importance.
-- **`Badge` is the only fully round shape in the system**, so the shape itself carries
-  "this is a state". A second pill-shaped thing spends that signal.
-- **`Table` is a data grid, not a table**: fixed row heights 32/28/36, a sticky glass
-  head, row rules and no cell borders, and `TDClip` for any text that can run long.
-- **Controls are 28px** (24 small, 32 large, 36 extra-large for the shell's search
-  field), and every one ships default / hover / focus / active / disabled / loading /
-  error. Focus is one rule for the whole console and error belongs to the field rather
-  than to the button; the per-state audit is in
-  [internal/api/web/DESIGN.md](internal/api/web/DESIGN.md).
-- **`Readout` / `Numeral` is how a figure is shown**: monospaced, tabular, counting up
-  on change. A bare number in a `div` is not a reading.
-- **Panel actions are visible.** Never revealed on hover: on a touch screen an action
-  behind `opacity: 0` does not exist.
-- **Loading, error and empty are the same three components everywhere**, so a state is
-  never invented per page.
-- **Charts use the renderer that fits the evidence.** ECharts remains the canvas renderer for the traffic timeline and other series charts, with palette literals mirrored in `src/features/dashboard/chartPalette.ts`. The egress plate is different: it is an offline SVG world map rendered from the repository's own GeoJSON with `d3-geo`, so projection fitting and accessible map marks remain inspectable and stable. A chart's ground is the pane's inset, never a second card.
+Do not add independent instance, quick-action, popular-region or recently-added-node cards.
+Those facts have an owning page or belong in the evidence group above.
 
-## Typography
+## Page families
 
-| Token | Family |
-|---|---|
-| `font-sans` | **Manrope** 400/500/600/700, falling back to IBM Plex Sans |
-| `font-mono` | **IBM Plex Mono** 400/500/600 — **only for values actually read as data** |
+- **Inventory:** Nodes and Subscriptions use one stable table work surface. Common search
+  and filters stay in one toolbar; advanced filters use a Filter Sheet; details use a Sheet.
+- **Delivery:** Platforms, Platform detail, Exports, Endpoints and Rules use table/workflow
+  surfaces and focused detail Sheets. Platform detail may use tabs for monitor/access/
+  config/ops; it does not flatten every concern into cards.
+- **Observability:** Request Logs, Jobs and Audit prioritize dense tables, filters, queue
+  progress and details. Their searches live beside their own records.
+- **Resources & Settings:** GeoIP is a database-status and IP-lookup workbench. System
+  Config is a category index plus one current editor; RuntimeConfig stays editable and
+  EnvConfig stays a clearly read-only deployment fact.
+- **Auth/fallback:** Login and 404 are quiet single work surfaces with clear recovery.
 
-Scale: `2xs` 11 · `xs` 12 · `sm` **14** · `base` **16** · `lg` 18 · `xl` 20 · `2xl` 24 ·
-`3xl` 30 · `4xl` 36. **Every step is at least 1.125× its neighbour** — a step a reader
-cannot see is not a step, and three sizes inside a two-pixel band doing three jobs is
-what makes a dense console read as flat.
+## Bento boundaries
 
-Roles: `.micro` column heads, rail group labels and card meta (11/600, uppercase,
-tracking .07em) · `.label` meta (12/500) · body 14 · page title 18/600 · pane title
-14/600 · instrument reading 20/600 (`.numeral`, monospaced with tabular figures).
+- Dashboard may use one unequal grid: Traffic 7/12 + Map 5/12, then Latency/Platform/
+  Subscription 4/4/4, then Recent changes 12/12.
+- Platform detail and System Config may use two-column workspaces because the columns have
+  distinct tasks. This is not permission to create a decorative card wall.
+- Every other page is primarily normal flow: one main work surface, one table/form/diagram,
+  and detail overlays where needed.
+- Maximum surface depth is canvas → selected surface → inset. Readout cells are part of a
+  strip, not individual panels. Tables remain tables; form fields remain a semantic field
+  flow; pagination and empty/error states remain workflow regions.
 
-KPI figures are set at **2.5:1 number to unit** (Grafana's BigValue anatomy) and count
-up over `--dur-count` (800ms) when they change. Micro-caps are for a column head, a
-rail group or a card's meta — **never as a decorative eyebrow above a title**, which is
-a kicker and is prohibited.
+## Data, accessibility and motion
 
-## Geometry
-
-An 8px grid. `radius-control` 10 · `radius-card-sm` 12 · `radius-panel` **20** ·
-`radius-chip` 999. The generous radii are the mockup's, kept because they are what
-separates a pane from a rule; the pane's 20px is the Apple-card step, and the panel's
-inner top rim-light (`inset 0 1px 0 0 var(--color-glass-highlight)`, first in the
-shadow list) is what makes the glass read as a lit lip rather than a flat fill.
-
-Chrome heights are **one decision for the whole console, never a per-page one**:
-`--shell-bar-h` 56 · `--page-header-h` 52 (a minimum; the band grows with its
-description and tab strip) · `--panel-header-h` 44 · `--toolbar-h` 40 · `--control-h`
-28 (sm 24 / lg 32 / xl 36) · `--row-h` 32 (compact 28 / comfortable 36).
-
-`--shell-rail-w` is 248px expanded and 64px collapsed. Below 1440 the shell folds it to
-its icon width on its own, because a 248px rail on a 1280px laptop is a fifth of the
-screen; below 1024 the rail becomes a drawer and the top bar keeps the destinations.
-
-### Elevation
-
-`shadow-md` on a pane, `shadow-lg` on an overlay (sheet, menu, dialog, palette), and
-`shadow-xs` inside a control that is itself lifted. A pane's lift is the same in both
-themes; only its colour differs, because a shadow over a lit ground is a real shadow
-and over pale paper is a soft one.
-
-### Motion
-
-`--ease-instrument` = `cubic-bezier(0.16, 1, 0.3, 1)`; 110 / 170 / 240ms, with
-`--dur-count` 800ms for a counting numeral. **There is no page-load choreography.**
-`prefers-reduced-motion` is honoured, including the plate's flight-line pulses and its
-hub ripples, which become solid marks.
-
-## Prohibited
-
-Each entry is a machine-detectable tell, not a taste preference.
-
-**Page skeleton** — a uniform card wall used as page structure; a pane whose only
-content is another pane; an all-caps kicker above a heading; decorative section
-numerals (01 / 02 / 03).
-
-**Surfaces** — gradient text; a blur value outside the two sanctioned ones; a coloured
-`border-left` / `border-right` wider than 1px on a rounded pane; hard-offset shadows
-(`box-shadow: 4px 4px 0`); zero-offset coloured glow; a sparkline, ring or soft-shadow
-rounded rectangle **standing in for a stated value**; monospace as a "technical"
-costume; Unicode glyphs or emoji as an icon system; tiled decorative stripes or
-two-axis grid textures (unless the thing underneath genuinely is a canvas, map, drawing
-or measuring device).
-
-**Motion** — pulsing status dots; blinking cursors; marquees; the same fade-and-rise on
-every section; images that scale or rotate on hover; any animation that a value does
-not drive.
-
-**Chrome** — invented status text, notification bells, avatars or identities; a
-control that does not do what its label says.
+- Keep the existing API, routes, URL parameters (`range`, node filters, `selected`,
+  `category`), calculations, ECharts, offline d3-geo map, pagination, SSE/polling,
+  RuntimeConfig PATCH and EnvConfig read-only semantics.
+- Loading, empty and error states must preserve the surrounding track and explain recovery.
+- Focus is visible with one shared accent ring. Touch actions are visible without hover.
+- Motion communicates polling updates, sorting, saving, opening/closing or real map activity.
+  No page-load choreography, decorative pulsing dots or automatic camera motion. Reduced
+  motion disables map pulses, count-up and nonessential transitions.
 
 ## Verification
 
-| Floor | How it is checked |
-|---|---|
-| Text contrast: body ≥4.5:1, large text and graphical objects ≥3:1 | `npm run check:contrast` reads `design.css` and computes **100 pairs across both themes**, including the hero pane's two gradient stops; non-zero exit on failure. Wired into `make test-web` → `make verify` |
-| Series separable in greyscale | The same gate: adjacent relative luminance ≥1.15 |
-| The console composes the kit and nothing else | `npm run check:kit`: native controls outside `src/components/ui/`, hard-coded control heights, and the pill shape outside `Badge` — over every `.tsx` in `src/`. Wired into `make test-web` |
-| The board is a responsive Bento grid, not a pixel replica | `npm run check:responsive` reads `design.css` and fails if the geometry comes back: a `@media (min-width: 1536px)` block, a fixed pixel height on `.wb-board`/`.wb-shell-root`/`.wb-main-zone`, a `position: absolute` rule naming a board pane, or a missing board rule (the gate proves it read the right stylesheet rather than passing on an empty one). In `make test-web` → `make verify`, so the rule holds in CI even though CI installs no browser |
-| Row height and panel geometry match this file | DOM audit over the live pages: `--row-h`, pane radius 20, rail 248/64, the ground's glow, both themes |
-| The chart palette is a copy, and it is current | `tests/chart-palette.test.mjs` (in `npm test` → `make test-web`) reads `design.css` and `chartPalette.ts` and fails on any pair that disagrees, on a series out of order, on a band ramp that is not separable in greyscale, or on a font that is not the token's family |
-| Focus visible | `:focus-visible` draws accent at 2px with 1px offset |
-| `prefers-reduced-motion` honoured | Media query at the end of `design.css` |
-| Browser surfaces belong to the system | Selection, caret, scrollbar, underline offset and `tabular-nums` are set in the base layer |
-| Every interactive component has default/hover/focus/active/disabled/loading/error | The UI kit, audited per state in [internal/api/web/DESIGN.md](internal/api/web/DESIGN.md). Focus is the one shared `:focus-visible` rule; error is the field's `invalid` prop |
-| The ground that was painted is the ground that was asked for | `make test-ui` (local-only, needs a built `bin/prism`) drives a real Chromium and asserts `body` against the **canvas and ink primitives read out of `design.css`**, so re-solving the palette can't produce a false failure |
-
-### The third-party slop detector
-
-<https://github.com/pbakaus/impeccable> ships a deterministic detector: 61 checks for
-the defaults an agent reaches for before the design exists. It runs in code, with no
-model and no API key.
-
-```bash
-make test-slop          # scans the source tree, exit 0 = clean, exit 2 = findings
-```
-
-**It does not scan `.tsx`.** It reads HTML, CSS and JS. Passing it a directory of React
-source returns nothing at all — which reads as a clean result and is not one. The
-source-level equivalent is a scan of `src/styles/design.css` plus `index.html`; the
-strongest form is a scan of a built `dist` tree, which also covers the bundled chunks.
-
-**A scan of a built tree only works if the asset paths resolve.** The production
-`index.html` links `/ui/assets/*` (the server mounts the bundle at `/ui/`), so a scan
-root must contain `ui/assets/`. Pointed at `dist/` directly, the detector warns
-`could not read linked stylesheet … color and custom-property rules will be
-incomplete` and exits 2 — and its colour and custom-property checks silently do not
-run. `make test-slop` builds the correct root for you.
-
-**A finding survives only for a reason, and the reason is printed.** The gate prints
-every finding it excuses, on every run, so a reader sees the choice rather than a clean
-scan. Two kinds of reason exist: *provenance* (the code is not ours) and *decision* (the
-code is ours and the pattern is deliberate, recorded here with its bound). Anything else
-fails the build. Recorded for the current tree:
-
-| Finding | Where | Why it stands |
-|---|---|---|
-| `[layout-transition] transition: padding` | ECharts' own bundled code, in a Vite shared chunk (`TrafficChart-*.js` or `useReducedMotion-*.js` may name the split, not its contents) | **Provenance.** It is third-party; Prism cannot fix it without forking ECharts. The gate re-reads the chunk and only excuses it while the file still contains ECharts |
-| `[ai-color-palette] Purple/violet accent colors detected` | the built `ui/index.html`, i.e. this console's own palette | **Decision.** The accent is an indigo→violet pair, because the operator pinned that look in a mockup. The bound: two gradient stops on one pane, one ground wash, one accent token pair, no gradient text, no glow and no second accent hue — see [What is deliberate now, and its bound](#what-is-deliberate-now-and-its-bound). A second palette finding still fails the gate |
-| `[radial-halo] radial-gradient halo (<stop> → transparent) on dark page` | none — the finding is gone | **Not applicable any more.** The finding was the hero band's radial stops, and the band went with the 1536px replica layer. Measured: the build scan is clean without it, and `check-slop.mjs` no longer carries the excuse, so a radial halo that comes back is an unexcused finding and fails the gate |
-
-The gate's own parser used to drop the second kind of row entirely: the engine reports
-**file-scoped** rules (`ai-color-palette`, `cream-palette`, the font tells) without a
-`line N:` prefix, and the first version of `parse()` only understood rows that carried a
-line number — so the scan reported "clean" while the engine had reported a finding. A
-false clean is the one failure a gate must not have; `parse()` now reads both shapes,
-which is how the palette finding surfaced at all.
-
-### The Bento board
-
-The workbench is a **Bento grid**, not a reproduction. An earlier revision rebuilt the board to
-match an operator's reference dashboard at exactly 1536×1024, and did it with a
-`@media (min-width: 1536px)` layer in `design.css` that positioned every pane as a percentage of
-a 1288×1024 canvas: unequal KPI widths, a quick-action card overlapping the hero, a rail replica,
-two panes folded away. It was faithful and it was wrong — at every other size the board read as
-cards of odd sizes in odd places, and the operator rejected it on exactly that ground. The layer
-is deleted, and with it the rail replica, the folded panes and the shell overrides: the dashboard
-wears the same shell as every other route, and its composition is the point rather than its pixel
-geometry.
-
-What replaced it is a twelve-column grid at `xl` whose classes live in the JSX
-(`xl:grid-cols-12`, `xl:col-span-8`, `xl:col-span-4`) — no pane geometry in the stylesheet at
-all:
-
-| Band | Panes, top to bottom |
-|---|---|
-| Full width (`xl:col-span-12`) | the hero band (`hero-gradient`) with the range picker, refresh, add-subscription and the four metric chips |
-| Main (`xl:col-span-8`) | 全球流量: the egress plate at the column's full width · the **KPI strip**: 总请求数, 平均延迟, 错误率 and 活跃租约 as four cards across (`sm:grid-cols-2`, `xl:grid-cols-4`) · 延迟分布: the full-width streaming latency profile · 最近加入节点 · the 订阅状态 band |
-| Side (`xl:col-span-4`) | 运行状态 (instance badge, version, the two pool readouts and the sync line — one card) · 快捷操作 · 热门区域 (the region table, each row carrying its share as a bar in the region's own colour) · 流量概览 · 平台分布 (the donut) · 告警 |
-
-Read top to bottom the board is the composition the operator's reference carries: greeting, then
-where traffic leaves from, then the four numbers about that traffic, then the detail tables, then
-the band. Only the hero takes a full-width row (`xl:col-span-12`); the KPI strip sits inside the
-main column, under the plate, so the split into the data story and the always-on panes begins
-immediately below the greeting. The four KPIs used to be a four-row card at the bottom of the side
-column (关键指标), and then a full-width strip between the hero and the split; the reference puts
-them under the map, where they read as the plate's own figures.
-
-Two of the board's lines live outside the grid. The **"所有系统运行正常" pill** is a `Badge
-tone="signal"` in the shell's own top bar (`components/AppShell.tsx`), so it shows on every route:
-the 运行状态 card's plain-language status line moved there when the reference board put it there,
-and the side card kept the instance badge, the version, the two pool readouts and the sync line.
-The **告警 feed** is the audit log (`/api/v1/audit-logs`) rendered as sentences:
-`alertPhrase()` in `WorkbenchPage.tsx` maps the route pattern the middleware recorded
-(`METHOD /api/v1/...`, braces and all) to a whole-phrase translation key, with a route the table
-does not know falling back to its own trimmed path — so a row reads "探测节点出口 / Node egress
-probed" rather than "POST /api/v1/nodes/{hash}/actions/probe-egress". It is the audit trail, not a
-synthetic alert stream; the method chip keeps its tone colour (a DELETE is the one row that can be
-a loss) and the raw record stays in the row's own `title`.
-
-Below `xl` the two columns stack; below `sm` the panes inside them do, and the KPI strip goes
-two across and then one. Type, radii and borders stay
-in px — this is a dashboard that gets wider, not a screenshot that gets scaled — but nothing about
-a pane's *position* is a fixed length any more. The hero heading is 26px in its own rule: that is
-the breakpoint layer's 34px folded back into the base, so the band keeps its presence at every
-width.
-
-**The plate's flow runs outward.** The map's origin is the panel's own egress
-(`panel_egress_region` / `panel_egress_ip` on `/system/info`, resolved through the same centroid
-index the hubs use) and one constant-width flight line runs from that origin to every hub with
-exits. A missing or unresolvable egress region draws **no origin and no lines**, because the lines
-are the dispatch relationship and not a measurement: converging them on whichever hub happened to
-be busiest was a fact nobody took. The origin marker is the one mark on the plate that is not a
-region, and it is not sized by node count.
-
-**The plate is fit, not stretched.** `EgressMap.tsx` renders the vendored world outline with `d3-geo`'s `geoNaturalEarth1` and `geoPath`. A `ResizeObserver` measures the actual map stage, `fitExtent` recomputes the projection for that stage, and the SVG uses a matching `viewBox` with `preserveAspectRatio="xMidYMid meet"`. The normal dashboard wrapper is a content-driven `.wb-plate-map` with a fluid `clamp()` minimum height, not a reference-image aspect ratio, so the world keeps its proportions on wide, narrow and stacked layouts.
-
-The map layers remain explicit: the transparent SVG sits on the theme-bound paper inset surface; country paths carry the offline outline and region footprint; constant-width paths connect the panel egress to real hubs when the API supplies a resolvable origin; hub and origin marks expose labels, tooltips and keyboard focus. No network tiles, guessed origin, synthetic metric or runtime map service is introduced.
-
-The expand control opens the same component in a viewport-level Radix dialog. The dialog is a flex column sized from the current viewport; its header stays visible and the map body is `flex: 1` with `min-height: 0`. The map therefore measures the available dialog area instead of mounting inside a small centered ratio box, while Escape, scrim dismissal, focus capture and focus return remain Radix behavior.
-
-The latency profile follows ordinary document flow. The API buckets and overflow count are grouped into six readable bands; each band is a grid row containing its label, proportional bar and count. Summary values stack below the bars on narrow screens, and the panel sits in the main evidence column rather than being squeezed into the side rail.
-
-What stayed, because it was the design and not the replica: the hero band's light field (`.hero-gradient`, the pane's own two stops), the metric-chip row, the plate's header, live dot and region-table rules, and every colour pair the contrast gate measures.
-
-
-**The gate's new contract.** `npm run check:responsive` no longer resolves percentages against a
-canvas; it fails if the geometry comes back. It reads `design.css` and fails when (1) a
-`@media (min-width: 1536px)` block reappears, (2) a `.wb-board` / `.wb-shell-root` /
-`.wb-main-zone` rule carries a fixed pixel height — those boxes must be fluid, and today none of
-the three carries a rule at all, so this is a guard against the old geometry returning — (3) a
-`position: absolute` rule names a board pane (the range picker's chevron is not a pane and is not
-flagged), or (4) one of the board's own rules — `.wb-hero-banner`, `.wb-hero-heading`,
-`.wb-metric-chips`, `.wb-status-card`, `.wb-plate`, `.wb-region-table` — has been renamed or
-deleted, because a gate that passes on an empty stylesheet is a false clean. `.wb-status-card` is
-the one entry nothing composes any more — the 运行状态 card's status line moved into the shell's top
-bar — and it is kept, with `.wb-status-dot`, `.wb-status-title` and `.wb-status-desc`, as the
-residue this rule names. It fails closed on a
-missing or unparseable file, an implausible rule count or an empty check set, and prints a
-one-line summary when it passes.
-
-### Installing the detector
-
-```bash
-npx impeccable install --providers=pi --scope=global   # lands in ~/.pi/agent/skills
-cp -a ~/.pi/agent/skills/impeccable ~/.agents/skills/  # where this console actually looks
-rm -rf ~/.pi/agent/skills                              # keep one place only; the copy above is the install
-```
-
-The install that matters is a **directory-style skill under `~/.agents/skills/`**:
-`SKILL.md`, `reference/`, and `scripts/` holding the engine for the platform. That is
-the path this console scans — its settings page calls `listUserSkills({ level: "global" })`
-and the bundle resolves the global root as `~/.agents/skills`, with
-`<project-root>/.agents/skills` for the project level. It rescans on demand, so a
-directory appearing there needs no registry entry. Both shapes are read:
-`frontend-design.md` sits there as a flat file, and a directory with `SKILL.md` beside
-it.
-
-Four traps, all hit while installing it here:
-
-- **Run it from a neutral directory.** The installer detects harnesses from the current
-  directory. Run inside this repository — which has a `.github/` — and it installs a
-  GitHub Copilot skill *and* `hooks/impeccable.json` into the tree. Both were removed
-  again; the tree is meant to stay clean.
-- **Never put it on `PATH` as a symlink.** The launcher resolves its own directory with
-  `dirname "$0"` to find `reference/*.md` and its engine, so through a symlink it
-  searches beside the symlink — and redirecting output into that path **overwrites the
-  launcher itself**. Use a wrapper in `~/.local/bin` that exports `IMPECCABLE_SKILL_DIR`
-  and execs the real path.
-- **The vendored engine can lag the checkout** (the installer ships 0.1.5, the local
-  checkout here is 0.1.6). Keep one engine — replace the vendored copy or set
-  `IMPECCABLE_BIN` — so every launcher reports the same version.
-- **The installer's Pi provider does not put the skill where this console reads it.** It
-  writes `~/.pi/agent/skills/impeccable`; this console scans `~/.agents/skills`. It looks
-  like the right place because the console *does* read `~/.pi/agent/AGENTS.md` for its
-  instructions — but not for skills. Verified in the app bundle, not guessed.
-
-`~/.local/bin` reaches **interactive** shells only. A non-interactive shell — which is
-how an agent runs commands — does not read `~/.bashrc`, so it needs the absolute path
-or an exported `PATH`.
-
-**Never trust a 0.** Confirm the detector can fail first: feed it a page with a thick
-coloured `border-left`, gradient text, a zero-offset glow, a pulsing dot, an icon tile
-above a heading, and a cream background. It must report `side-tab`, `gradient-text`,
-`dark-glow`, `pulsing-dot`, `icon-tile-stack`, `cream-palette`.
+- `npm run check:types`, `npm run lint`, `npm run build`, `npm run test:config`.
+- `npm run check:kit`, `npm run check:contrast`, `npm run check:responsive`,
+  `npm run check:slop`.
+- Real backend Chromium verification at 1440×900, 1280×800 and 390×844 in both themes.
+  Dashboard must contain no search input and no permanent refresh button; only an error
+  state may expose retry. Page-level horizontal overflow is forbidden; intentional table
+  overflow is confined to its wrapper.

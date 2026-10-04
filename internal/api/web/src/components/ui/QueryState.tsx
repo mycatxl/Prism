@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
+import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { Button } from "./Button";
 
@@ -37,6 +38,7 @@ export function ErrorState({
   onRetry?: () => void;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
     <div
       className={cn(
@@ -51,7 +53,7 @@ export function ErrorState({
       </div>
       {onRetry && (
         <Button size="sm" variant="secondary" onClick={onRetry} className="border-alert/40">
-          重试
+          {t("重试")}
         </Button>
       )}
     </div>

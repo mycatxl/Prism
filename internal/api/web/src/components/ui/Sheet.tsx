@@ -1,6 +1,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
+import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 
 /**
@@ -25,6 +26,7 @@ export function Sheet({
   width?: "sm" | "md" | "lg";
 }) {
   const widthClass = { sm: "sm:max-w-md", md: "sm:max-w-2xl", lg: "sm:max-w-4xl" }[width];
+  const { t } = useI18n();
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -48,7 +50,7 @@ export function Sheet({
               )}
             </div>
             <DialogPrimitive.Close
-              aria-label="关闭"
+              aria-label={t("关闭")}
               className="action -mr-1 rounded-control p-1.5 text-ink-soft hover:bg-glass hover:text-ink"
             >
               <X size={16} />
