@@ -59,7 +59,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   "搜索节点、平台、接入点...": "Search nodes, platforms, endpoints...",
   "欢迎回来，Prism": "Welcome back, Prism",
   "网络运行平稳，以下是各区域概览。": "Your network is running smoothly. Here's what's happening across regions.",
-  "所有系统运行正常": "All Systems Operational",
   "无活动事件": "No active incidents",
   "添加节点": "Add Node",
   "新建接入点": "New Endpoint",
@@ -186,6 +185,30 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   /* The plate's own control: the same map again, in the dialog at full size. */
   "展开大屏":
     "Expand view",
+  "全天监控":
+    "All-day monitoring",
+  "流量与连接":
+    "Traffic & connections",
+  "实时查看流量、连接和出口资源。":
+    "Monitor traffic, connections and egress resources in real time.",
+  "最近更新":
+    "Last updated",
+  "更新中":
+    "Updating",
+  "资源快照":
+    "Resource snapshot",
+  "地区覆盖":
+    "Region coverage",
+  "订阅健康":
+    "Subscription health",
+  "流量趋势":
+    "Traffic trend",
+  "出口地图":
+    "Egress map",
+  "最近变更":
+    "Recent changes",
+  "真实审计写操作":
+    "Recent write actions from the audit log",
 
   // The redesigned shell and dashboard.
   "实例在线":
@@ -206,8 +229,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
     "Collapse navigation",
   "展开导航":
     "Expand navigation",
-  "刷新数据":
-    "Refresh data",
   "控制台":
     "Console",
   "切换到浅色":

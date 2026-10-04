@@ -1,18 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
-import {
-  Activity,
-  ChevronDown,
-  CircleAlert,
-  Gauge,
-  CheckCircle2,
-  Maximize2,
-  Server,
-  X,
-  Zap,
-} from "lucide-react";
+import { lazy, Suspense, useMemo, useState } from "react";
+import { ChevronDown, Maximize2, X } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
+import { DataFreshnessBar } from "../../components/ui/DataFreshnessBar";
 import { Button } from "../../components/ui/Button";
 import {
   DialogClose,
@@ -28,13 +18,8 @@ import { Panel, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout } from "../../components/ui/Readout";
 import { Select } from "../../components/ui/Select";
-import { Sparkline } from "../../components/ui/Sparkline";
-import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { useI18n } from "../../i18n";
-import { ApiError, apiRequest } from "../../lib/api-client";
-import { formatRelativeTime } from "../../lib/time";
 import { listAuditLogs } from "../audit/api";
-import { listNodes } from "../nodes/api";
 import { listPlatforms } from "../platforms/api";
 import { listSubscriptions } from "../subscriptions/api";
 import {
@@ -63,12 +48,11 @@ import {
   getTimeWindow,
   historyRefreshMsFromBuckets,
   parseRangeKey,
-  rangeOption,
   realtimeRefreshMsFromSteps,
 } from "./range";
-import { aggregateRegionTraffic } from "./worldMap";
+import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../systemInfo/api";
 import LatencyProfile from "./LatencyProfile";
-
+import { aggregateRegionTraffic } from "./worldMap";
 /**
  * The charts are the only ECharts consumers in the console, so they load with the
  * board and the canvas, not with the route table.
@@ -212,14 +196,6 @@ function alertPhrase(action: string): { method: AlertMethod | ""; phrase: string
   return { method, phrase: known ?? (route || raw) };
 }
 
-function subscribeOnline(callback: () => void) {
-  window.addEventListener("online", callback);
-  window.addEventListener("offline", callback);
-  return () => {
-    window.removeEventListener("online", callback);
-    window.removeEventListener("offline", callback);
-  };
-}
 
 /**
  * A trend chip: an arrow, a signed percentage, and the basis in its own `title` and
@@ -245,80 +221,6 @@ function Delta({ value, basis }: { value: number | null; basis: string }) {
   );
 }
 
-/** One KPI: an icon, the reading, its trend with the basis, and the series behind it. */
-function Kpi({
-  icon: Icon,
-  label,
-  value,
-  unit,
-  trend,
-  basis,
-  series,
-  tone,
-  className,
-}: {
-  icon: typeof Activity;
-  label: string;
-  value: string;
-  unit?: string;
-  trend: number | null;
-  basis: string;
-  series: number[];
-  tone: "accent" | "signal" | "live" | "alert";
-  className?: string;
-}) {
-  const iconTone = {
-    accent: "bg-accent-wash text-accent",
-    signal: "bg-signal-wash text-signal",
-    live: "bg-live-wash text-live",
-    alert: "bg-alert-wash text-alert",
-  }[tone];
-  return (
-    <Panel className={`min-w-0 p-4 ${className ?? ""}`}>
-      <div className="flex items-start gap-2.5">
-        <span aria-hidden className={`grid size-7 shrink-0 place-items-center rounded-control ${iconTone}`}>
-          <Icon size={15} />
-        </span>
-        <Readout className="min-w-0 flex-1" label={label} value={value} unit={unit} size="md" />
-      </div>
-      <div className="mt-2 flex items-center gap-2 text-2xs text-ink-faint">
-        <Delta value={trend} basis={basis} />
-        <span className="truncate">{basis}</span>
-      </div>
-      <Sparkline values={series} tone={tone} className="mt-2" />
-    </Panel>
-  );
-}
-
-/** A hero readout uses the shared KPI primitive without inventing a trend. */
-function HeroMetric({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  tone,
-}: {
-  icon: typeof Activity;
-  label: ReactNode;
-  value: ReactNode;
-  hint?: ReactNode;
-  tone: "accent" | "signal" | "live" | "alert";
-}) {
-  const iconTone = {
-    accent: "bg-accent-wash text-accent",
-    signal: "bg-signal-wash text-signal",
-    live: "bg-live-wash text-live",
-    alert: "bg-alert-wash text-alert",
-  }[tone];
-  return (
-    <div className="wb-metric-chip">
-      <span aria-hidden className={`wb-metric-icon-box ${iconTone}`}>
-        <Icon size={17} />
-      </span>
-      <Readout className="min-w-0 flex-1" label={label} value={value} hint={hint} size="sm" />
-    </div>
-  );
-}
 
 /**
  * The overview board keeps the primary traffic evidence in a golden-ratio reading lane
@@ -335,11 +237,6 @@ export function WorkbenchPage() {
   const [mapExpanded, setMapExpanded] = useState(false);
   const rangeKey = parseRangeKey(params.get("range"));
   const queryClient = useQueryClient();
-  const online = useSyncExternalStore(
-    subscribeOnline,
-    () => navigator.onLine,
-    () => true,
-  );
 
   const snapshot = useQuery({
     queryKey: ["dashboard-global-snapshot"],
@@ -395,29 +292,12 @@ export function WorkbenchPage() {
    * string nobody changes.
    */
   const info = useQuery({
-    queryKey: ["system-info", "shell"],
-    /*
-     * The panel's own egress rides along on the info the shell already polls. Both
-     * fields are optional on purpose: the backend resolves them best-effort, and a
-     * build that does not report them yet is a normal answer, not an error — the
-     * map draws no origin and no lines rather than inventing one.
-     */
-    queryFn: () =>
-      apiRequest<{
-        version: string;
-        panel_egress_region?: string;
-        panel_egress_ip?: string;
-      }>("/api/v1/system/info"),
+    queryKey: SYSTEM_INFO_QUERY_KEY,
+    queryFn: getSystemInfo,
     refetchInterval: 30_000,
     retry: false,
   });
 
-  const recentNodes = useQuery({
-    queryKey: ["workbench", "recent-nodes"],
-    queryFn: ({ signal }) => listNodes({ limit: 6, sort_by: "created_at", sort_order: "desc" }, signal),
-    refetchInterval: NODE_EXITS_REFRESH_MS,
-    placeholderData: (previous) => previous,
-  });
 
   const platforms = useQuery({
     queryKey: ["workbench", "platforms"],
@@ -583,12 +463,6 @@ export function WorkbenchPage() {
     }
     setParams(nextParams, { replace: true });
   };
-  /** Refetches every board query at once; the hero's refresh stays honest because
-      it invalidates the same cache the range picker reads. */
-  const refreshBoard = () => {
-    void queryClient.invalidateQueries({ queryKey: ["dashboard-global-snapshot"] });
-    void queryClient.invalidateQueries({ queryKey: ["workbench"] });
-  };
 
   const chartEmpty = ingressPoints.length === 0 && egressPoints.length === 0 && connectionPoints.length === 0;
   const chartFallback = <LoadingState className="h-full" label={t("正在加载")} />;
@@ -597,557 +471,240 @@ export function WorkbenchPage() {
   const basisStep = t("较上一采样");
   const latencyBasis = t("按直方图分箱上界估算");
 
-  const unauthorized = info.error instanceof ApiError && info.error.status === 401;
-  const disconnected = !online || info.isError;
-  const instanceState = unauthorized
-    ? { tone: "alert" as const, label: t("令牌失效") }
-    : disconnected
-      ? { tone: "warn" as const, label: t("连接中断") }
-      : info.data
-        ? { tone: "signal" as const, label: t("实例在线") }
-        : { tone: "neutral" as const, label: t("连接中") };
+
+  const latestUpdatedAt = Math.max(
+    snapshot.dataUpdatedAt,
+    realtime.dataUpdatedAt,
+    history.dataUpdatedAt,
+    nodes.dataUpdatedAt,
+    info.dataUpdatedAt,
+    platforms.dataUpdatedAt,
+    subscriptions.dataUpdatedAt,
+    events.dataUpdatedAt,
+  );
+  const dashboardFetching =
+    snapshot.isFetching ||
+    realtime.isFetching ||
+    history.isFetching ||
+    nodes.isFetching ||
+    info.isFetching ||
+    platforms.isFetching ||
+    subscriptions.isFetching ||
+    events.isFetching;
+  const dashboardError =
+    snapshot.isError ||
+    realtime.isError ||
+    history.isError ||
+    nodes.isError ||
+    info.isError ||
+    platforms.isError ||
+    subscriptions.isError ||
+    events.isError;
+  const retryDashboard = () => {
+    void Promise.all([
+      snapshot.refetch(),
+      realtime.refetch(),
+      history.refetch(),
+      nodes.refetch(),
+      info.refetch(),
+      platforms.refetch(),
+      subscriptions.refetch(),
+      events.refetch(),
+    ]);
+  };
 
   return (
     <Page bleed>
       <h1 className="sr-only">{t("总览看板")}</h1>
-      <div className="page-content page-content--dashboard wb-board">
-        {snapshot.isError && <ErrorState message={offline} onRetry={() => void snapshot.refetch()} />}
-
-        <div className="dashboard-grid grid min-w-0 gap-3 lg:gap-4 2xl:gap-5">
-          <div className="dashboard-summary-slot flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5">
-            <Panel className="dashboard-summary min-w-0 overflow-hidden px-5 py-4">
-              <div className="dashboard-summary__row">
-                <div className="wb-metric-chips dashboard-summary__metrics">
-                  <HeroMetric
-                    icon={Server}
-                    tone="accent"
-                    label={t("节点总数")}
-                    value={pool ? formatCount(pool.total_nodes) : PLACEHOLDER}
-                  />
-                  <HeroMetric
-                    icon={CheckCircle2}
-                    tone="signal"
-                    label={t("健康节点")}
-                    value={pool ? formatCount(poolHealthy) : PLACEHOLDER}
-                    hint={pool ? formatPercent(poolHealthy / (pool.total_nodes || 1)) : undefined}
-                  />
-                  <HeroMetric
-                    icon={Activity}
-                    tone="live"
-                    label={t("成功率")}
-                    value={windowSuccessRate === null ? PLACEHOLDER : formatPercent(windowSuccessRate)}
-                  />
-                  <HeroMetric
-                    icon={Zap}
-                    tone="accent"
-                    label={t("平均延迟")}
-                    value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
-                  />
-                </div>
-                <div className="wb-hero-timerange dashboard-summary__actions">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="wb-hero-refresh"
-                    loading={snapshot.isFetching || realtime.isFetching || history.isFetching}
-                    onClick={refreshBoard}
+      <div className="page-content page-content--dashboard wb-board precision-dashboard">
+        <div className="dashboard-context">
+          <div className="dashboard-context__heading">
+            <div>
+              <p className="micro">{t("全天监控")}</p>
+              <h2 className="dashboard-context__title">{t("流量与连接")}</h2>
+            </div>
+            <p className="dashboard-context__description">{t("实时查看流量、连接和出口资源。")}</p>
+          </div>
+          <DataFreshnessBar
+            range={
+              <div className="dashboard-range-control">
+                <span className="micro">{t("时间范围")}</span>
+                <div className="relative inline-flex items-center">
+                  <Select
+                    aria-label={t("时间范围")}
+                    value={rangeKey}
+                    onChange={(event) => selectRange(event.target.value as RangeKey)}
+                    className="wb-timerange-select"
                   >
-                    {t("刷新数据")}
-                  </Button>
-                  <div className="relative inline-flex items-center">
-                    <Select
-                      aria-label={t("时间范围")}
-                      value={rangeKey}
-                      onChange={(e) => selectRange(e.target.value as RangeKey)}
-                      className="wb-timerange-select"
-                    >
-                      {RANGE_OPTIONS.map((option) => (
-                        <option key={option.key} value={option.key} className="wb-select-option">
-                          {t(option.label)}
-                        </option>
-                      ))}
-                    </Select>
-                    <ChevronDown size={14} className="wb-timerange-icon" aria-hidden />
-                  </div>
+                    {RANGE_OPTIONS.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        {t(option.label)}
+                      </option>
+                    ))}
+                  </Select>
+                  <ChevronDown size={13} className="wb-timerange-icon" aria-hidden />
                 </div>
               </div>
-            </Panel>
-          </div>
+            }
+            updatedAt={Number.isFinite(latestUpdatedAt) ? latestUpdatedAt : null}
+            isFetching={dashboardFetching}
+            error={dashboardError ? offline : undefined}
+            onRetry={dashboardError ? retryDashboard : undefined}
+          />
+        </div>
 
-          {/* The main column keeps the dashboard's primary evidence in a golden-ratio
-              reading lane; the side column carries the compact supporting evidence. */}
-          <div className="dashboard-main flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5">
-            {/* The four traffic KPIs sit immediately before the map they describe. */}
-            <div className="dashboard-kpi-grid grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Kpi
-                icon={Activity}
-                tone="accent"
-                label={t("总请求数")}
-                value={formatCount(windowRequests.total)}
-                trend={halfDelta(requestSeries)}
-                basis={basisHalf}
-                series={requestSeries}
-              />
-              <Kpi
-                icon={Gauge}
-                tone="live"
-                label={t("平均延迟")}
-                value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)}
-                trend={halfDelta(latencySeries)}
-                basis={latencyBasis}
-                series={latencySeries}
-              />
-              <Kpi
-                icon={CircleAlert}
-                tone="alert"
-                label={t("错误率")}
-                value={errorRate === null ? PLACEHOLDER : formatPercent(errorRate)}
-                trend={halfDelta(errorSeries)}
-                basis={basisHalf}
-                series={errorSeries}
-              />
-              <Kpi
-                icon={Zap}
+        <Panel className="dashboard-pool-snapshot">
+          <PanelHeader
+            title={t("资源快照")}
+            meta={pool?.generated_at ? formatTimestamp(Date.parse(pool.generated_at), { seconds: true }) : PLACEHOLDER}
+            actions={
+              <Button asChild variant="ghost" size="sm">
+                <Link to="/nodes">{t("查看节点池")}</Link>
+              </Button>
+            }
+          />
+          <div className="pool-snapshot-grid">
+            <div className="pool-snapshot-cell">
+              <Readout
+                size="sm"
+                label={t("健康节点")}
+                value={pool ? `${formatCount(poolHealthy)} / ${formatCount(pool.total_nodes)}` : PLACEHOLDER}
                 tone="signal"
-                label={t("活跃租约")}
-                value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER}
-                trend={stepDelta(leaseSeries)}
-                basis={basisStep}
-                series={leaseSeries}
               />
             </div>
-
-            <Panel className="flex min-w-0 flex-col">
-              <div className="wb-plate grid min-h-0 flex-1">
-                <div className="flex min-w-0 flex-col">
-                  <div className="wb-plate-head">
-                    <span className="wb-live-dot" aria-hidden />
-                    <h2 className="truncate text-sm font-semibold tracking-tight text-ink">
-                      {t("全球流量")}
-                    </h2>
-                    <span className="label shrink-0 whitespace-nowrap">
-                      {formatCount(regions.length)} {t("地区")}
-                    </span>
-                    {unknown > 0 && (
-                      <span className="label shrink-0 whitespace-nowrap">
-                        {t("未定位")}
-                        <span className="readout ml-1 text-ink-soft">{formatCount(unknown)}</span>
-                      </span>
-                    )}
-                    <Button asChild variant="ghost" size="sm" className="wb-plate-link ml-auto shrink-0">
-                      <Link to="/nodes">{t("查看节点池")}</Link>
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="shrink-0"
-                      aria-label={t("展开大屏")}
-                      onClick={() => setMapExpanded(true)}
-                    >
-                      <Maximize2 size={15} aria-hidden />
-                    </Button>
-                  </div>
-                  <div className="wb-plate-map flex min-h-0 flex-1 flex-col bg-paper-inset" style={{ backgroundImage: "none" }}>
-                    {nodes.isError ? (
-                      <ErrorState className="my-auto" message={offline} onRetry={() => void nodes.refetch()} />
-                    ) : !nodes.data ? (
-                      <LoadingState className="h-full" label={t("正在加载")} />
-                    ) : nodeFacts.length === 0 ? (
-                      <EmptyState
-                        className="h-full justify-center"
-                        title={t("建立你的第一个节点池")}
-                        hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
-                        action={
-                          <Button asChild variant="primary">
-                            <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
-                          </Button>
-                        }
-                      />
-                    ) : (
-                      <Suspense fallback={chartFallback}>
-                        <EgressMap
-                          activity={mapActivity}
-                          regions={regions}
-                          origin={{
-                            region: info.data?.panel_egress_region,
-                            ip: info.data?.panel_egress_ip,
-                          }}
-                        />
-                      </Suspense>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </Panel>
-
-            <Panel className="wb-latency-panel flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("延迟分布")}
-                meta={
-                  <>
-                    {t("节点数")} {formatCount(latency?.sample_count ?? 0)}
-                  </>
-                }
+            <div className="pool-snapshot-cell">
+              <Readout
+                size="sm"
+                label={t("健康出口 IP")}
+                value={pool ? `${formatCount(pool.healthy_egress_ip_count)} / ${formatCount(pool.egress_ip_count)}` : PLACEHOLDER}
+                tone="live"
               />
-              <div className="min-w-0 flex-1 px-4 py-4 sm:px-5">
-                {snapshot.isError ? (
-                  <ErrorState className="my-3" message={offline} onRetry={() => void snapshot.refetch()} />
-                ) : !latency ? (
-                  <LoadingState className="my-6" label={t("正在加载")} />
-                ) : (
-                  <LatencyProfile
-                    buckets={latency.buckets}
-                    overflowCount={latency.overflow_count}
-                    overflowMs={latency.overflow_ms}
-                  />
-                )}
-              </div>
-            </Panel>
-
-            {/* The newest arrivals and subscription state remain real evidence cards below
-                the primary map story. */}
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("最近加入节点")}
-                meta={
-                  <>
-                    {formatCount(recentNodes.data?.total ?? 0)} {t("节点")}
-                  </>
-                }
-                actions={
-                  <Button asChild variant="ghost" size="sm">
-                    <Link to="/nodes">{t("查看全部")}</Link>
-                  </Button>
-                }
+            </div>
+            <div className="pool-snapshot-cell">
+              <Readout size="sm" label={t("地区覆盖")} value={formatCount(regions.length)} />
+              {unknown > 0 && <span className="pool-snapshot-cell__hint">{t("未定位")} {formatCount(unknown)}</span>}
+            </div>
+            <div className="pool-snapshot-cell">
+              <Readout
+                size="sm"
+                label={t("订阅健康")}
+                value={subscriptionState.total ? `${formatCount(subscriptionState.enabled)} / ${formatCount(subscriptionState.total)}` : PLACEHOLDER}
+                tone={subscriptionState.failed > 0 ? "warn" : "signal"}
               />
-              {recentNodes.isError ? (
-                <ErrorState className="my-4 mx-4" message={offline} onRetry={() => void recentNodes.refetch()} />
-              ) : !recentNodes.data ? (
-                <LoadingState className="my-6" label={t("正在加载")} />
-              ) : recentNodes.data.items.length === 0 ? (
-                <EmptyState className="flex-1 justify-center" title={t("建立你的第一个节点池")} />
+              {subscriptionState.failed > 0 && <span className="pool-snapshot-cell__hint text-warn">{formatCount(subscriptionState.failed)} {t("异常")}</span>}
+            </div>
+          </div>
+        </Panel>
+
+        <div className="dashboard-evidence-grid">
+          <Panel className="dashboard-traffic-pane">
+            <PanelHeader
+              title={t("流量趋势")}
+              meta={`${t("窗口累计")} ${formatBytes(windowVolume)}`}
+              actions={
+                <Button asChild variant="ghost" size="sm">
+                  <Link to="/request-logs">{t("请求日志")}</Link>
+                </Button>
+              }
+            />
+            <div className="dashboard-traffic-readouts">
+              <Readout label={t("总请求数")} value={formatCount(windowRequests.total)} delta={<Delta value={halfDelta(requestSeries)} basis={basisHalf} />} />
+              <Readout label={t("平均延迟")} value={averageLatency === null ? PLACEHOLDER : formatLatency(averageLatency)} hint={latencyBasis} tone="live" />
+              <Readout label={t("错误率")} value={errorRate === null ? PLACEHOLDER : formatPercent(errorRate)} delta={<Delta value={halfDelta(errorSeries)} basis={basisHalf} />} tone="alert" />
+              <Readout label={t("活跃租约")} value={latestLease ? formatCount(latestLease.active_leases) : PLACEHOLDER} delta={<Delta value={stepDelta(leaseSeries)} basis={basisStep} />} tone="signal" />
+            </div>
+            <div className="dashboard-chart-well">
+              {realtime.isError || history.isError ? (
+                <ErrorState message={offline} onRetry={() => { void realtime.refetch(); void history.refetch(); }} />
+              ) : (realtime.isLoading && !realtime.data) || (history.isLoading && !history.data) ? (
+                <LoadingState className="h-full" label={t("正在加载")} />
+              ) : chartEmpty ? (
+                <EmptyState className="h-full justify-center" title={t("暂无流量采样")} />
               ) : (
-                <TableWrap>
-                  <Table>
-                    <THead>
-                      <TR>
-                        <TH>{t("节点")}</TH>
-                        <TH>{t("地区")}</TH>
-                        <TH>{t("出口 IP")}</TH>
-                        <TH className="text-right">{t("延迟")}</TH>
-                        <TH className="text-right">{t("失败次数")}</TH>
-                        <TH>{t("状态")}</TH>
-                      </TR>
-                    </THead>
-                    <TBody>
-                      {recentNodes.data.items.map((node) => {
-                        const state = node.circuit_open_since
-                          ? { tone: "alert" as const, label: t("熔断") }
-                          : !node.enabled
-                            ? { tone: "neutral" as const, label: t("已停用") }
-                            : !node.has_outbound
-                              ? { tone: "warn" as const, label: t("无出口") }
-                              : { tone: "signal" as const, label: t("正常") };
-                        return (
-                          <TR key={node.node_hash}>
-                            <TDClip className="max-w-[16rem] font-medium" title={node.display_tag ?? node.node_hash}>
-                              {node.display_tag || node.node_hash.slice(0, 12)}
-                            </TDClip>
-                            <TD className="text-ink-soft">{node.region || PLACEHOLDER}</TD>
-                            <TD className="readout text-ink-soft">{node.egress_ip || PLACEHOLDER}</TD>
-                            <TDNum>
-                              {node.reference_latency_ms === undefined
-                                ? PLACEHOLDER
-                                : formatLatency(node.reference_latency_ms)}
-                            </TDNum>
-                            <TDNum className="text-ink-faint">{formatCount(node.failure_count)}</TDNum>
-                            <TD>
-                              <Badge tone={state.tone} dot>
-                                {state.label}
-                              </Badge>
-                            </TD>
-                          </TR>
-                        );
-                      })}
-                    </TBody>
-                  </Table>
-                </TableWrap>
+                <Suspense fallback={chartFallback}>
+                  <TrafficChart egress={egressPoints} ingress={ingressPoints} connections={connectionPoints} />
+                </Suspense>
               )}
-            </Panel>
+            </div>
+            <div className="dashboard-traffic-footer">
+              <Readout size="sm" label={t("入口流量")} value={formatBytes(trafficItems.reduce((total, item) => total + item.ingress_bytes, 0))} />
+              <Readout size="sm" label={t("出口流量")} value={formatBytes(trafficItems.reduce((total, item) => total + item.egress_bytes, 0))} />
+            </div>
+          </Panel>
 
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("订阅状态")}
-                meta={
-                  <>
-                    {formatCount(subscriptionState.total)} {t("订阅")}
-                  </>
-                }
-                actions={
-                  <Button asChild variant="ghost" size="sm">
-                    <Link to="/subscriptions">{t("查看全部")}</Link>
-                  </Button>
-                }
-              />
-              {subscriptions.isError ? (
-                <ErrorState className="my-4 mx-4" message={offline} onRetry={() => void subscriptions.refetch()} />
-              ) : !subscriptions.data ? (
-                <LoadingState className="my-6" label={t("正在加载")} />
-              ) : subscriptionState.total === 0 ? (
+          <Panel className="dashboard-map-pane">
+            <PanelHeader
+              title={t("出口地图")}
+              meta={`${formatCount(regions.length)} ${t("地区")}`}
+              actions={
+                <Button variant="ghost" size="icon" aria-label={t("展开大屏")} onClick={() => setMapExpanded(true)}>
+                  <Maximize2 size={15} aria-hidden />
+                </Button>
+              }
+            />
+            <div className="dashboard-map-well">
+              {nodes.isError ? (
+                <ErrorState message={offline} onRetry={() => void nodes.refetch()} />
+              ) : !nodes.data ? (
+                <LoadingState className="h-full" label={t("正在加载")} />
+              ) : nodeFacts.length === 0 ? (
                 <EmptyState
-                  className="flex-1 justify-center"
-                  title={t("还没有订阅")}
+                  className="h-full justify-center"
+                  title={t("建立你的第一个节点池")}
                   hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
-                  action={
-                    <Button asChild variant="primary">
-                      <Link to="/subscriptions?create=1">{t("开始导入")}</Link>
-                    </Button>
-                  }
+                  action={<Button asChild variant="primary"><Link to="/subscriptions?create=1">{t("开始导入")}</Link></Button>}
                 />
               ) : (
-                <div className="flex flex-col gap-4 px-5 py-4">
-                  <div aria-hidden className="flex h-2 w-full overflow-hidden rounded-[2px] bg-paper-sunk">
-                    {[
-                      { key: "enabled", count: subscriptionState.enabled, className: "bg-signal" },
-                      { key: "failed", count: subscriptionState.failed, className: "bg-alert" },
-                      { key: "disabled", count: subscriptionState.disabled, className: "bg-rule-strong" },
-                    ].map((segment) => (
-                      <span
-                        key={segment.key}
-                        className={segment.className}
-                        style={{ width: `${(segment.count / subscriptionState.total) * 100}%` }}
-                      />
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-3 gap-4">
-                    <Readout size="sm" label={t("启用")} value={formatCount(subscriptionState.enabled)} />
-                    <Readout size="sm" label={t("异常")} value={formatCount(subscriptionState.failed)} />
-                    <Readout size="sm" label={t("已停用")} value={formatCount(subscriptionState.disabled)} />
-                  </div>
-                  <p className="text-2xs text-ink-faint">
-                    {t("健康")} {formatCount(subscriptionState.healthy)} / {t("节点")}{" "}
-                    {formatCount(subscriptionState.nodes)}
-                  </p>
-                </div>
+                <Suspense fallback={chartFallback}>
+                  <EgressMap activity={mapActivity} regions={regions} origin={{ region: info.data?.panel_egress_region, ip: info.data?.panel_egress_ip }} />
+                </Suspense>
               )}
-            </Panel>
-          </div>
-
-          <div className="dashboard-side flex min-w-0 flex-col gap-3 lg:gap-4 2xl:gap-5">
-            <Panel className="min-w-0 p-4">
-              <div className="flex items-center gap-2.5">
-                <Badge tone={instanceState.tone} dot>
-                  {instanceState.label}
-                </Badge>
-                <span className="readout ml-auto shrink-0 text-2xs text-ink-faint">
-                  {info.data?.version ?? PLACEHOLDER}
-                </span>
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2">
-                <Readout
-                  size="sm"
-                  label={t("健康节点")}
-                  value={pool ? formatCount(poolHealthy) : PLACEHOLDER}
-                  hint={`/ ${pool ? formatCount(pool.total_nodes) : PLACEHOLDER}`}
-                />
-                <Readout
-                  size="sm"
-                  label={t("健康出口 IP")}
-                  value={pool ? formatCount(pool.healthy_egress_ip_count) : PLACEHOLDER}
-                  hint={`/ ${pool ? formatCount(pool.egress_ip_count) : PLACEHOLDER}`}
-                />
-              </div>
-              <p className="mt-3 flex items-center gap-1.5 text-2xs text-ink-faint">
-                <span className="readout">{t("同步")}</span>
-                {pool?.generated_at ? formatRelativeTime(pool.generated_at) : PLACEHOLDER}
-                {pool?.generated_at && <span className="readout">· {rangeOption(rangeKey).label}</span>}
-              </p>
-            </Panel>
-
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("流量概览")}
-                meta={
-                  <>
-                    {t("窗口累计")} {formatBytes(windowVolume)}
-                  </>
-                }
-                actions={
-                  <Button asChild variant="ghost" size="sm">
-                    <Link to="/request-logs">{t("请求日志")}</Link>
-                  </Button>
-                }
-              />
-              <div className="flex flex-1 min-h-0 flex-col">
-                <div className="h-[220px] px-2 py-2">
-                  {realtime.isError || history.isError ? (
-                    <ErrorState
-                      className="my-auto"
-                      message={offline}
-                      onRetry={() => {
-                        void realtime.refetch();
-                        void history.refetch();
-                      }}
-                    />
-                  ) : (realtime.isLoading && !realtime.data) || (history.isLoading && !history.data) ? (
-                    <LoadingState className="h-full" label={t("正在加载")} />
-                  ) : chartEmpty ? (
-                    <EmptyState className="h-full justify-center" title={t("暂无流量采样")} />
-                  ) : (
-                    <Suspense fallback={chartFallback}>
-                      <TrafficChart egress={egressPoints} ingress={ingressPoints} connections={connectionPoints} />
-                    </Suspense>
-                  )}
+            </div>
+            <div className="dashboard-region-index">
+              {regions.length === 0 ? (
+                <span className="text-xs text-ink-faint">{t("暂无出口数据")}</span>
+              ) : regions.map((region) => (
+                <div key={region.id} className="dashboard-region-row">
+                  <span className="truncate text-xs text-ink">{region.name}</span>
+                  <span className="readout text-2xs text-ink-soft">{formatCount(region.exits)} · {formatPercent(region.share)}</span>
                 </div>
-                <div className="grid grid-cols-2 gap-4 border-t border-rule-faint px-4 py-3">
-                  <Readout
-                    size="sm"
-                    label={t("入口流量")}
-                    value={formatBytes(trafficItems.reduce((total, item) => total + item.ingress_bytes, 0))}
-                    delta={
-                      <Delta
-                        value={halfDelta(trafficItems.map((item) => guardValue(item.ingress_bytes)))}
-                        basis={basisHalf}
-                      />
-                    }
-                  />
-                  <Readout
-                    size="sm"
-                    label={t("出口流量")}
-                    value={formatBytes(trafficItems.reduce((total, item) => total + item.egress_bytes, 0))}
-                    delta={
-                      <Delta
-                        value={halfDelta(trafficItems.map((item) => guardValue(item.egress_bytes)))}
-                        basis={basisHalf}
-                      />
-                    }
-                  />
-                </div>
-              </div>
-            </Panel>
-
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("平台分布")}
-                meta={
-                  <>
-                    {formatCount(platforms.data?.total ?? 0)} {t("平台")}
-                  </>
-                }
-                actions={
-                  <Button asChild variant="ghost" size="sm">
-                    <Link to="/platforms">{t("查看全部")}</Link>
-                  </Button>
-                }
-              />
-              {platforms.isError ? (
-                <ErrorState className="mx-4 my-3" message={offline} onRetry={() => void platforms.refetch()} />
-              ) : !platforms.data ? (
-                <LoadingState className="my-6" label={t("正在加载")} />
-              ) : platformSlices.length === 0 ? (
-                <EmptyState
-                  className="flex-1 justify-center"
-                  title={t("无平台")}
-                  hint={t("创建平台以聚合节点")}
-                  action={
-                    <Button asChild variant="primary">
-                      <Link to="/platforms">{t("创建平台")}</Link>
-                    </Button>
-                  }
-                />
-              ) : (
-                <div className="px-4 py-3">
-                  <Donut slices={platformSlices} centerValue={formatCount(platforms.data.total)} centerLabel={t("平台")} />
-                </div>
-              )}
-            </Panel>
-
-            <Panel className="flex min-w-0 flex-col">
-              <PanelHeader
-                title={t("告警")}
-                actions={
-                  <Button asChild variant="ghost" size="sm">
-                    <Link to="/audit">{t("查看全部")}</Link>
-                  </Button>
-                }
-              />
-              {events.isError ? (
-                <ErrorState className="mx-4 my-3" message={offline} onRetry={() => void events.refetch()} />
-              ) : !events.data ? (
-                <LoadingState className="my-6" label={t("正在加载")} />
-              ) : events.data.items.length === 0 ? (
-                <EmptyState className="flex-1 justify-center" title={t("暂无变更记录")} />
-              ) : (
-                <ul className="flex flex-col px-4 py-3">
-                  {events.data.items.map((entry) => {
-                    const { method, phrase } = alertPhrase(entry.action);
-                    const tone =
-                      method === "DELETE"
-                        ? ("alert" as const)
-                        : method === "POST" || method === "PUT"
-                          ? ("signal" as const)
-                          : ("live" as const);
-                    const toneClass = {
-                      alert: "text-alert",
-                      signal: "text-signal",
-                      live: "text-live",
-                    }[tone];
-                    return (
-                      <li
-                        key={entry.id}
-                        title={entry.action}
-                        className="flex items-start gap-2.5 rounded-control px-2 py-1.5 transition-colors hover:bg-glass"
-                      >
-                        <span aria-hidden className={`readout shrink-0 pt-0.5 text-2xs ${toneClass}`}>
-                          {method || PLACEHOLDER}
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-xs text-ink">{t(phrase)}</span>
-                          <span className="block truncate text-2xs text-ink-faint">
-                            {entry.target || entry.remote_addr || PLACEHOLDER}
-                          </span>
-                        </span>
-                        <span className="readout shrink-0 pt-0.5 text-2xs text-ink-faint">
-                          {formatTimestamp(entry.at_ns / 1_000_000)}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </Panel>
-          </div>
+              ))}
+            </div>
+          </Panel>
         </div>
+
+        <div className="dashboard-support-grid">
+          <Panel className="dashboard-support-pane">
+            <PanelHeader title={t("延迟分布")} meta={`${t("样本")} ${formatCount(latency?.sample_count ?? 0)}`} />
+            {snapshot.isError ? <ErrorState className="m-4" message={offline} onRetry={() => void snapshot.refetch()} /> : !latency ? <LoadingState label={t("正在加载")} /> : <div className="p-4"><LatencyProfile buckets={latency.buckets} overflowCount={latency.overflow_count} overflowMs={latency.overflow_ms} /></div>}
+          </Panel>
+
+          <Panel className="dashboard-support-pane">
+            <PanelHeader title={t("平台分布")} meta={`${formatCount(platforms.data?.total ?? 0)} ${t("平台")}`} actions={<Button asChild variant="ghost" size="sm"><Link to="/platforms">{t("查看全部")}</Link></Button>} />
+            {platforms.isError ? <ErrorState className="m-4" message={offline} onRetry={() => void platforms.refetch()} /> : !platforms.data ? <LoadingState label={t("正在加载")} /> : platformSlices.length === 0 ? <EmptyState title={t("无平台")} hint={t("创建平台以聚合节点")} action={<Button asChild variant="primary"><Link to="/platforms">{t("创建平台")}</Link></Button>} /> : <div className="dashboard-platform-content"><Donut slices={platformSlices} centerValue={formatCount(platforms.data.total)} centerLabel={t("平台")} /></div>}
+          </Panel>
+
+          <Panel className="dashboard-support-pane">
+            <PanelHeader title={t("订阅状态")} meta={`${formatCount(subscriptionState.total)} ${t("订阅")}`} actions={<Button asChild variant="ghost" size="sm"><Link to="/subscriptions">{t("查看全部")}</Link></Button>} />
+            {subscriptions.isError ? <ErrorState className="m-4" message={offline} onRetry={() => void subscriptions.refetch()} /> : !subscriptions.data ? <LoadingState label={t("正在加载")} /> : subscriptionState.total === 0 ? <EmptyState title={t("还没有订阅")} action={<Button asChild variant="primary"><Link to="/subscriptions?create=1">{t("开始导入")}</Link></Button>} /> : <div className="dashboard-subscription-content"><div className="dashboard-subscription-bar" aria-hidden>{[{ key: "enabled", count: subscriptionState.enabled, className: "bg-signal" }, { key: "failed", count: subscriptionState.failed, className: "bg-alert" }, { key: "disabled", count: subscriptionState.disabled, className: "bg-rule-strong" }].map((segment) => <span key={segment.key} className={segment.className} style={{ width: `${(segment.count / subscriptionState.total) * 100}%` }} />)}</div><div className="grid grid-cols-3 gap-3"><Readout size="sm" label={t("启用")} value={formatCount(subscriptionState.enabled)} /><Readout size="sm" label={t("异常")} value={formatCount(subscriptionState.failed)} tone="alert" /><Readout size="sm" label={t("已停用")} value={formatCount(subscriptionState.disabled)} tone="muted" /></div><p className="text-2xs text-ink-faint">{t("健康")} {formatCount(subscriptionState.healthy)} / {t("节点")} {formatCount(subscriptionState.nodes)}</p></div>}
+          </Panel>
+        </div>
+
+        <Panel className="dashboard-changes-pane">
+          <PanelHeader title={t("最近变更")} meta={t("真实审计写操作")} actions={<Button asChild variant="ghost" size="sm"><Link to="/audit">{t("查看全部")}</Link></Button>} />
+          {events.isError ? <ErrorState className="m-4" message={offline} onRetry={() => void events.refetch()} /> : !events.data ? <LoadingState label={t("正在加载")} /> : events.data.items.length === 0 ? <EmptyState title={t("暂无变更记录")} /> : <ul className="dashboard-changes-list">{events.data.items.map((entry) => { const { method, phrase } = alertPhrase(entry.action); const toneClass = method === "DELETE" ? "text-alert" : method === "POST" || method === "PUT" ? "text-signal" : "text-live"; return <li key={entry.id} title={entry.action} className="dashboard-change-row"><span className={`readout text-2xs ${toneClass}`}>{method || PLACEHOLDER}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs text-ink">{t(phrase)}</span><span className="block truncate text-2xs text-ink-faint">{entry.target || entry.remote_addr || PLACEHOLDER}</span></span><span className="readout text-2xs text-ink-faint">{formatTimestamp(entry.at_ns / 1_000_000)}</span></li>; })}</ul>}
+        </Panel>
       </div>
-      {/*
-        The expanded plate uses the same data and activity signal as the inline map.
-        It is mounted in a viewport-level dialog so the map can grow without inheriting
-        the dashboard's column geometry.
-      */}
+
       <DialogRoot open={mapExpanded} onOpenChange={setMapExpanded}>
         <DialogPortal>
           <DialogOverlay />
           <DialogContent className="wb-map-dialog flex h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-h-[calc(100vh-1rem)] max-w-[calc(100vw-1rem)] flex-col">
             <div className="flex min-h-[var(--panel-header-h)] shrink-0 items-center justify-between gap-3 border-b border-rule-faint px-4 py-2.5 sm:px-5">
-              <DialogTitle>{t("全球流量")}</DialogTitle>
-              <DialogClose asChild>
-                <Button variant="ghost" size="icon" aria-label={t("关闭")}>
-                  <X size={16} aria-hidden />
-                </Button>
-              </DialogClose>
+              <DialogTitle>{t("出口地图")}</DialogTitle>
+              <DialogClose asChild><Button variant="ghost" size="icon" aria-label={t("关闭")}><X size={16} aria-hidden /></Button></DialogClose>
             </div>
-            <div className="wb-map-dialog__body min-h-0 flex-1 bg-paper-inset">
-              <Suspense fallback={chartFallback}>
-                <EgressMap
-                  activity={mapActivity}
-                  regions={regions}
-                  origin={{
-                    region: info.data?.panel_egress_region,
-                    ip: info.data?.panel_egress_ip,
-                  }}
-                />
-              </Suspense>
-            </div>
+            <div className="wb-map-dialog__body min-h-0 flex-1 bg-paper-inset"><Suspense fallback={chartFallback}><EgressMap activity={mapActivity} regions={regions} origin={{ region: info.data?.panel_egress_region, ip: info.data?.panel_egress_ip }} /></Suspense></div>
           </DialogContent>
         </DialogPortal>
       </DialogRoot>

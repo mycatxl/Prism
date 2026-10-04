@@ -1,16 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Menu, PanelLeftClose, PanelLeftOpen, RefreshCw, X } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ApiError, apiRequest } from "../lib/api-client";
+import { ApiError } from "../lib/api-client";
 import { cn } from "../lib/cn";
 import { navigation } from "../lib/navigation";
 import { useAuthStore } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
+import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../features/systemInfo/api";
 import { useI18n } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { ThemeSwitcher } from "./ThemeSwitcher";
-import { QuickSearch } from "./QuickSearch";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
 import { Tooltip, TooltipProvider } from "./ui/Tooltip";
@@ -58,9 +58,9 @@ export function AppShell() {
   );
 
   const info = useQuery({
-    queryKey: ["system-info", "shell"],
-    queryFn: () => apiRequest<{ version: string }>("/api/v1/system/info"),
-    refetchInterval: 15_000,
+    queryKey: SYSTEM_INFO_QUERY_KEY,
+    queryFn: getSystemInfo,
+    refetchInterval: 30_000,
     retry: false,
   });
   const env = useQuery({
@@ -324,7 +324,6 @@ export function AppShell() {
             {mobileNavOpen ? <X size={16} /> : <Menu size={16} />}
           </Button>
 
-          <QuickSearch />
 
           <div className="flex min-w-0 items-baseline gap-2 sm:hidden">
             <span className="truncate text-sm font-semibold text-ink">
@@ -335,27 +334,6 @@ export function AppShell() {
           <div className="wb-topbar-actions ml-auto flex items-center gap-2">
             {statusBadge}
 
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => queryClient.invalidateQueries()}
-              aria-label={t("刷新数据")}
-              title={t("刷新数据")}
-            >
-              <RefreshCw size={15} />
-            </Button>
-
-            {/*
-              The instance's own "all systems operational" pill, in the top bar where the
-              reference board carries it. It is the same state the shell has always shown
-              (the status badge beside it is the *instance* badge: token, connection,
-              version) — this one says what the board's status line used to say in its own
-              card, which is why that line left the side column. `hidden sm:inline-flex`
-              because the bar has five other things to fit on a phone.
-            */}
-            <Badge tone="signal" dot className="hidden sm:inline-flex">
-              {t("所有系统运行正常")}
-            </Badge>
 
             <div className="hidden items-center gap-1.5 sm:flex">
               <ThemeSwitcher />

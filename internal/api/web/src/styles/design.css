@@ -104,33 +104,29 @@
  * while the blue-grey material carries the identity and keeps long sessions calm.
  */
 :root {
-  --p-canvas: #e4ebf3;
-  --p-sunk: #d4dfe9;
-  --p-raised: #edf3f8;
-  --p-inset: #dae5ef;
-  --p-rail: #e0e8f1;
-  --p-elevated: #f3f7fa;
+  --p-canvas: #e8eef6;
+  --p-sunk: #d4e0eb;
+  --p-raised: #f5f8fc;
+  --p-inset: #dce6f0;
+  --p-rail: #f3f7fb;
+  --p-elevated: #ffffff;
 
-  --p-glass: rgba(239, 245, 249, 0.78);
-  --p-glass-strong: rgba(246, 250, 252, 0.9);
-  --p-glass-edge: rgba(22, 35, 56, 0.12);
-  --p-glass-edge-strong: rgba(22, 35, 56, 0.22);
-  --p-glass-highlight: rgba(255, 255, 255, 0.72);
-  --p-glass-blur: blur(18px) saturate(112%);
+  --p-glass: rgba(243, 247, 251, 0.88);
+  --p-glass-strong: rgba(255, 255, 255, 0.95);
+  --p-glass-edge: rgba(20, 32, 51, 0.1);
+  --p-glass-edge-strong: rgba(20, 32, 51, 0.18);
+  --p-glass-highlight: rgba(255, 255, 255, 0.78);
+  --p-glass-blur: blur(12px) saturate(108%);
 
-  --p-ground-glow:
-    radial-gradient(72rem 44rem at 0% -10%, rgba(80, 118, 166, 0.09), transparent 68%),
-    radial-gradient(66rem 44rem at 100% -8%, rgba(103, 126, 169, 0.07), transparent 66%),
-    radial-gradient(96rem 56rem at 50% 42%, rgba(183, 200, 219, 0.07), transparent 74%);
-
+  --p-ground-glow: none;
   --p-rule: #becbd8;
   --p-rule-strong: #8fa2b6;
   --p-rule-faint: #d2dce6;
   --p-panel-edge: rgba(22, 35, 56, 0.1);
   --p-row-rule: #d5dfe8;
 
-  --p-ink: #162338;
-  --p-ink-soft: #3f536a;
+  --p-ink: #142033;
+  --p-ink-soft: #4c5c72;
   --p-ink-faint: #435a71;
 
   --p-signal: #086a50;
@@ -142,13 +138,11 @@
   --p-warn-wash: #f0e3c9;
   --p-alert: #a42214;
   --p-alert-wash: #f4d9d4;
-  --p-accent: #3157c7;
-  --p-accent-deep: #24439f;
+  --p-accent: #3e5db8;
+  --p-accent-deep: #2e478d;
   --p-accent-wash: #dce6fa;
   --p-accent-lift: #5577d4;
 
-  --p-hero: #cbd9ec;
-  --p-hero-lift: #d8e3ef;
 
   --p-on-accent: #ffffff;
   --p-on-signal: #ffffff;
@@ -181,24 +175,21 @@
    than sinking it), and `elevated` is `glass-strong` itself (0.13). The ordering the
    art had is preserved: inset < rail < raised < sunk < elevated. */
 [data-theme="dark"] {
-  --p-canvas: #070d1a;
-  --p-sunk: #212632;
-  --p-raised: #1c222d;
-  --p-inset: #141a26;
-  --p-rail: #171d29;
-  --p-elevated: #272c38;
+  --p-canvas: #0a1220;
+  --p-sunk: #0e1828;
+  --p-raised: #182438;
+  --p-inset: #121d2e;
+  --p-rail: #101a2a;
+  --p-elevated: #1d2b40;
 
-  --p-glass: rgba(255, 255, 255, 0.085);
-  --p-glass-strong: rgba(255, 255, 255, 0.13);
-  --p-glass-edge: rgba(255, 255, 255, 0.11);
-  --p-glass-edge-strong: rgba(255, 255, 255, 0.19);
-  --p-glass-highlight: rgba(255, 255, 255, 0.11);
-  --p-glass-blur: blur(22px) saturate(160%);
+  --p-glass: rgba(16, 26, 42, 0.9);
+  --p-glass-strong: rgba(29, 43, 64, 0.95);
+  --p-glass-edge: rgba(241, 244, 248, 0.1);
+  --p-glass-edge-strong: rgba(241, 244, 248, 0.18);
+  --p-glass-highlight: rgba(255, 255, 255, 0.1);
+  --p-glass-blur: blur(12px) saturate(118%);
 
-  --p-ground-glow:
-    radial-gradient(64rem 40rem at 10% -6%, rgba(99, 102, 241, 0.109), transparent 68%),
-    radial-gradient(56rem 38rem at 90% -4%, rgba(139, 92, 246, 0.101), transparent 66%),
-    radial-gradient(88rem 52rem at 50% 38%, rgba(79, 70, 229, 0.063), transparent 74%);
+  --p-ground-glow: none;
 
   --p-rule: #2a3447;
   --p-rule-strong: #46556e;
@@ -206,9 +197,9 @@
   --p-panel-edge: rgba(255, 255, 255, 0.09);
   --p-row-rule: #1d2535;
 
-  --p-ink: #f1f3f7;
-  --p-ink-soft: #aeb9cb;
-  --p-ink-faint: #8494ad;
+  --p-ink: #f1f4f8;
+  --p-ink-soft: #aab7c9;
+  --p-ink-faint: #8f9fb5;
 
   --p-signal: #34b888;
   --p-signal-deep: #299e73;
@@ -219,8 +210,8 @@
   --p-warn-wash: #382609;
   --p-alert: #e68277;
   --p-alert-wash: #491812;
-  --p-accent: #818cf8;
-  --p-accent-deep: #6875f5;
+  --p-accent: #8294ff;
+  --p-accent-deep: #6f80e3;
   /* Lifted with the glass. A selection's wash has to read as a fill against the pane it
      sits on, and the frosted pass made the pane itself lighter (`raised` #121824 →
      #1c222d), which left the old #191f45 1.005:1 from it — indistinguishable, and
@@ -230,9 +221,6 @@
   --p-accent-wash: #1c2456;
   --p-accent-lift: #a78bfa;
 
-  /* The hero pane's two gradient stops; see the light theme for why they are hex. */
-  --p-hero: #303758;
-  --p-hero-lift: #2d2d4b;
 
   /* Bright accent, dark text: white on these fails 4.5:1. */
   --p-on-accent: #070d1a;
@@ -240,7 +228,7 @@
   --p-on-alert: #070d1a;
   --p-on-live: #070d1a;
 
-  --p-series-1: #4f5de2;
+  --p-series-1: #5665e0;
   --p-series-2: #248f75;
   --p-series-3: #bf841f;
   --p-series-4: #e88272;
@@ -272,9 +260,9 @@
   --text-4xl: 2.25rem;
 
   --spacing: 0.25rem;
-  --radius-control: 10px;
+  --radius-control: 8px;
   --radius-card-sm: 12px;
-  --radius-panel: 20px;
+  --radius-panel: 16px;
   --radius-chip: 999px;
 
   /* Chrome heights and geometry tokens. */
@@ -292,7 +280,7 @@
   --row-h-compact: 28px;
   --row-h-comfortable: 36px;
 
-  --tracking-data: -0.01em;
+  --tracking-data: 0;
   --tracking-micro: 0.07em;
 
   --ease-instrument: cubic-bezier(0.16, 1, 0.3, 1);
@@ -367,13 +355,13 @@
     margin: 0;
     font-weight: 600;
     line-height: 1.2;
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
     text-wrap: balance;
   }
 
   h1 {
     font-size: var(--text-lg);
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
   }
 
   /* Every value the operator compares is tabular: proportional digits make columns
@@ -446,11 +434,6 @@
     background-repeat: no-repeat;
   }
 
-  /* The one gradient fill in the console, on the dashboard's hero pane. The stops are
-     tokens, and `check-contrast.mjs` measures the ink that sits on them. */
-  .hero-gradient {
-    background-image: linear-gradient(135deg, var(--p-hero), var(--p-hero-lift));
-  }
 
   .rule-t {
     border-top: 1px solid var(--color-rule-faint);
@@ -459,24 +442,13 @@
     border-bottom: 1px solid var(--color-rule-faint);
   }
 
-  /* Primary evidence card: paper-first in light, opaque lifted glass at night. */
+  /* Work surfaces stay opaque; glass belongs to shell chrome and overlays. */
   .panel {
     position: relative;
     background-color: var(--color-paper-raised);
-    border: 1px solid var(--color-glass-edge);
+    border: 1px solid var(--color-panel-edge);
     border-radius: var(--radius-panel);
-    box-shadow:
-      inset 0 1px 0 0 var(--color-glass-highlight),
-      var(--shadow-md);
-    backdrop-filter: var(--p-glass-blur);
-  }
-
-  /* Inset regions are content wells, not another floating card. */
-  .panel .panel {
-    background-color: var(--color-paper-inset);
-    border-color: var(--color-rule-faint);
-    border-radius: var(--radius-card-sm);
-    box-shadow: inset 0 1px 0 0 var(--color-glass-highlight);
+    box-shadow: var(--shadow-sm);
     backdrop-filter: none;
   }
 
@@ -499,7 +471,7 @@
   }
 
   .page-content--dashboard {
-    gap: 1.25rem;
+    gap: 1rem;
   }
 
   .page-header {
@@ -537,7 +509,7 @@
   .page-header__title {
     font-size: var(--text-lg);
     font-weight: 650;
-    letter-spacing: -0.025em;
+    letter-spacing: 0;
   }
 
   .page-header__meta {
@@ -578,9 +550,9 @@
   }
 
   .panel-header {
-    padding: 1rem 1.25rem 0.9rem;
+    padding: 0.875rem 1rem 0.75rem;
     border-bottom: 1px solid var(--color-rule-faint);
-    background-color: color-mix(in srgb, var(--color-paper-raised) 74%, var(--color-paper-inset));
+    background-color: var(--color-paper-raised);
   }
 
   .panel-header__main,
@@ -594,7 +566,7 @@
 
   .panel-toolbar {
     min-height: var(--toolbar-h);
-    padding: 0.75rem 1.25rem;
+    padding: 0.75rem 1rem;
     border-top: 1px solid var(--color-rule-faint);
     border-bottom: 1px solid var(--color-rule-faint);
     background-color: var(--color-paper-inset);
@@ -609,13 +581,13 @@
   }
 
   .panel-body {
-    padding: 1.125rem 1.25rem;
+    padding: 0.875rem 1rem;
   }
 
   .panel-footer {
-    padding: 0.875rem 1.25rem;
+    padding: 0.75rem 1rem;
     border-top: 1px solid var(--color-rule-faint);
-    background-color: color-mix(in srgb, var(--color-paper-inset) 58%, var(--color-paper-raised));
+    background-color: var(--color-paper-inset);
     color: var(--color-ink-faint);
   }
 
@@ -691,6 +663,7 @@
   }
 
   /* ---- the data grid ---- */
+
   .data-grid {
     width: 100%;
     min-width: var(--data-grid-min);
@@ -942,126 +915,251 @@
     box-shadow: inset 0 1px 0 0 var(--color-glass-highlight);
   }
 
-  .wb-hero-add:hover,
-  .wb-hero-refresh:hover,
-  .wb-plate-link:hover {
-    transform: translateY(-1px);
-  }
-
-  .wb-metric-chip {
-    transition:
-      border-color var(--dur-fast) var(--ease-instrument),
-      background-color var(--dur-fast) var(--ease-instrument),
-      transform var(--dur-fast) var(--ease-instrument);
-  }
-
-  .wb-metric-chip:hover,
-  .wb-metric-chip:focus-within {
-    border-color: var(--color-glass-edge-strong);
-    background-color: var(--color-glass-strong);
-    transform: translateY(-1px);
-  }
-
-  .wb-region-table tbody tr:hover td:first-child {
-    color: var(--color-ink);
-  }
-
-  .wb-status-card [role="status"] {
-    min-width: 0;
-  }
 
 }
 
 
-/* ---- dashboard composition ----------------------------------------------- */
-/*
- * The board owns composition, not a second visual language. These hooks keep the
- * dashboard's map and hero responsive while every surface, state and focus treatment
- * continues to come from the shared tokens above.
- */
-.dashboard-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
+/* ---- Precision Glass dashboard composition ------------------------------ */
+.precision-dashboard {
+  gap: 1rem;
 }
 
-.dashboard-summary-slot {
-  grid-column: 1 / -1;
-}
-
-@media (min-width: 72rem) {
-  .dashboard-grid {
-    grid-template-columns: minmax(0, 1.618fr) minmax(0, 1fr);
-    align-items: start;
-  }
-}
-
-.dashboard-main,
-.dashboard-side {
+.dashboard-context {
+  display: flex;
   min-width: 0;
-}
-
-.dashboard-summary__row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem 1.25rem;
-}
-
-.dashboard-summary__metrics {
-  min-width: min(100%, 36rem);
-  flex: 1 1 36rem;
-}
-
-.dashboard-summary__actions {
-  flex: 0 1 auto;
-}
-
-@media (max-width: 59.99rem) {
-  .dashboard-summary__actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-}
-
-.wb-hero-banner {
-  display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
-  gap: 1rem 1.5rem;
-  padding: 0.5rem 0.25rem 1.25rem;
+  gap: 0.75rem 1.5rem;
+  padding: 0.125rem 0;
 }
 
-.wb-hero-left {
-  display: flex;
-  min-width: min(100%, 28rem);
+.dashboard-context__heading {
+  min-width: min(100%, 18rem);
   flex: 1 1 20rem;
-  flex-direction: column;
-  gap: 0.4rem;
 }
 
-.wb-hero-heading {
+.dashboard-context__title {
+  margin-top: 0.2rem;
   color: var(--color-ink);
-  font-size: clamp(1.5rem, 1.15rem + 1vw, 2rem);
+  font-size: var(--text-xl);
   font-weight: 700;
-  line-height: 1.15;
-  letter-spacing: -0.035em;
+  letter-spacing: 0;
 }
 
-.wb-hero-desc {
-  max-width: 48ch;
-  margin: 0;
+.dashboard-context__description {
+  max-width: 52ch;
+  margin: 0.35rem 0 0;
   color: var(--color-ink-soft);
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
 }
 
-.wb-hero-timerange {
+.dashboard-range-control {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.data-freshness-bar {
   display: flex;
-  flex: 0 1 auto;
+  min-width: min(100%, 22rem);
+  flex: 1 1 30rem;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem 1rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--color-rule-faint);
+  border-radius: var(--radius-card-sm);
+  background-color: var(--color-paper-raised);
+}
+
+.data-freshness-bar__range,
+.data-freshness-bar__age,
+.data-freshness-bar__fetching {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.data-freshness-bar__age {
+  color: var(--color-ink-soft);
+}
+
+.data-freshness-bar__fetching {
+  color: var(--color-accent);
+  font-size: var(--text-xs);
+}
+
+.data-freshness-bar__error {
+  display: inline-flex;
+  min-width: min(100%, 18rem);
+  align-items: center;
   justify-content: flex-end;
-  gap: 0.5rem;
+  gap: 0.625rem;
+}
+
+.dashboard-pool-snapshot {
+  min-width: 0;
+}
+
+.pool-snapshot-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pool-snapshot-cell {
+  min-width: 0;
+  padding: 0.875rem 1rem;
+  border-top: 1px solid var(--color-rule-faint);
+}
+
+.pool-snapshot-cell:nth-child(odd) {
+  border-right: 1px solid var(--color-rule-faint);
+}
+
+.pool-snapshot-cell__hint {
+  display: block;
+  margin-top: 0.25rem;
+  overflow: hidden;
+  color: var(--color-ink-faint);
+  font-size: var(--text-2xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-evidence-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.dashboard-traffic-pane,
+.dashboard-map-pane,
+.dashboard-support-pane,
+.dashboard-changes-pane {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.dashboard-traffic-readouts {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  padding: 0.875rem 1rem;
+}
+
+.dashboard-chart-well {
+  display: flex;
+  min-width: 0;
+  min-height: 17rem;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0.5rem 0.75rem 0.75rem;
+  border-top: 1px solid var(--color-rule-faint);
+  background-color: var(--color-paper-inset);
+}
+
+.dashboard-traffic-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--color-rule-faint);
+}
+
+.dashboard-map-well {
+  display: flex;
+  min-width: 0;
+  min-height: clamp(16rem, 24vw, 24rem);
+  flex: 1 1 auto;
+  overflow: hidden;
+  align-items: stretch;
+  justify-content: center;
+  border-top: 1px solid var(--color-rule-faint);
+  background-color: var(--color-paper-inset);
+}
+
+.dashboard-map-well > .egress-map {
+  width: 100%;
+  min-height: inherit;
+}
+
+.dashboard-region-index {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+  padding: 0.75rem 1rem 0.875rem;
+  border-top: 1px solid var(--color-rule-faint);
+}
+
+.dashboard-region-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.25rem 0;
+}
+
+.dashboard-support-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.dashboard-platform-content,
+.dashboard-subscription-content {
+  min-width: 0;
+  padding: 0.875rem 1rem 1rem;
+}
+
+.dashboard-subscription-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.dashboard-subscription-bar {
+  display: flex;
+  width: 100%;
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: 2px;
+  background-color: var(--color-paper-sunk);
+}
+
+.dashboard-subscription-bar > span {
+  min-width: 0;
+}
+
+.dashboard-changes-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  padding: 0.5rem 1rem 0.75rem;
+}
+
+.dashboard-change-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--color-row-rule);
+}
+
+.dashboard-change-row:last-child {
+  border-bottom: 0;
 }
 
 .wb-timerange-select {
@@ -1069,13 +1167,12 @@
   appearance: none;
   cursor: pointer;
   padding-right: 2rem !important;
-  background-color: var(--color-glass-strong) !important;
+  background-color: var(--color-paper-elevated) !important;
   border-color: var(--color-glass-edge-strong) !important;
   color: var(--color-ink) !important;
 }
 
 .wb-timerange-select:hover {
-  background-color: var(--color-paper-elevated) !important;
   border-color: var(--color-accent) !important;
 }
 
@@ -1091,65 +1188,70 @@
   color: var(--color-ink);
 }
 
-.wb-metric-chips {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
+@media (min-width: 60rem) {
+  .pool-snapshot-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .pool-snapshot-cell:nth-child(odd) {
+    border-right: 0;
+  }
+
+  .pool-snapshot-cell:not(:last-child) {
+    border-right: 1px solid var(--color-rule-faint);
+  }
+
+  .dashboard-support-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
-.wb-metric-chip {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.75rem;
-  background-color: var(--color-paper-inset);
-  border: 1px solid var(--color-glass-edge);
-  border-radius: var(--radius-card-sm);
-  box-shadow: inset 0 1px 0 0 var(--color-glass-highlight);
+@media (min-width: 72rem) {
+  .dashboard-evidence-grid {
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    align-items: stretch;
+  }
 }
 
-.wb-metric-icon-box {
-  display: grid;
-  width: 2.25rem;
-  height: 2.25rem;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid currentColor;
-  border-color: color-mix(in srgb, currentColor 24%, transparent);
-  border-radius: var(--radius-control);
+@media (max-width: 39.99rem) {
+  .dashboard-context,
+  .data-freshness-bar {
+    align-items: stretch;
+  }
+
+  .data-freshness-bar,
+  .data-freshness-bar__error {
+    width: 100%;
+  }
+
+  .dashboard-range-control,
+  .dashboard-range-control > .relative,
+  .wb-timerange-select {
+    width: 100%;
+  }
+
+  .dashboard-range-control {
+    justify-content: space-between;
+  }
+
+  .dashboard-traffic-readouts {
+    gap: 0.75rem;
+  }
+
+  .dashboard-chart-well {
+    min-height: 14.5rem;
+  }
+
+  .dashboard-map-well {
+    min-height: 13rem;
+  }
 }
 
-.wb-plate {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.wb-plate-head {
-  display: flex;
-  min-height: var(--panel-header-h);
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem 0.5rem;
-}
-
-.wb-live-dot {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  flex: 0 0 auto;
-  border: 1px solid var(--color-signal-deep);
-  border-radius: 50%;
-  background-color: var(--color-signal);
-}
-
-.wb-plate-map {
-  min-width: 0;
-  min-height: clamp(18rem, 34vw, 32rem);
-  overflow: hidden;
-  background-color: var(--color-paper-inset);
-  border-top: 1px solid var(--color-rule-faint);
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-change-row,
+  .dashboard-region-row {
+    transition: none;
+  }
 }
 
 .egress-map {
@@ -1314,44 +1416,6 @@
   border-bottom-color: transparent;
 }
 
-/* Kept as a semantic hook for any status pane that is added later; it carries no
- * dashboard geometry and therefore cannot become another fixed reference layout. */
-.wb-status-card {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-@media (min-width: 36rem) {
-  .wb-metric-chips {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (min-width: 60rem) {
-  .wb-metric-chips {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 39.99rem) {
-  .wb-hero-banner {
-    align-items: stretch;
-  }
-
-  .wb-hero-timerange {
-    justify-content: flex-start;
-  }
-
-  .wb-hero-timerange > * {
-    flex: 1 1 auto;
-  }
-
-  .wb-timerange-select {
-    width: 100%;
-  }
-}
 
 @media (max-width: 47.99rem) {
   .latency-profile__row {

@@ -13,18 +13,18 @@
  * timeline is the day chart; the egress map carries its own palette, because it is
  * the one surface that paints a night sky rather than paper.
  */
-export const CHART_PAPER = "#e4ebf3";
-export const CHART_PAPER_SUNK = "#d4dfe9";
+export const CHART_PAPER = "#e8eef6";
+export const CHART_PAPER_SUNK = "#d4e0eb";
 /*
  * Fog-blue graphite day surfaces. These literals mirror design.css so canvas
  * charts keep the same material as the rest of the console.
  */
-export const CHART_PAPER_RAISED = "#edf3f8";
-export const CHART_PAPER_INSET = "#dae5ef";
+export const CHART_PAPER_RAISED = "#f5f8fc";
+export const CHART_PAPER_INSET = "#dce6f0";
 export const CHART_RULE = "#becbd8";
 export const CHART_RULE_STRONG = "#8fa2b6";
-export const CHART_INK = "#162338";
-export const CHART_INK_SOFT = "#3f536a";
+export const CHART_INK = "#142033";
+export const CHART_INK_SOFT = "#4c5c72";
 export const CHART_INK_FAINT = "#435a71";
 export const CHART_SIGNAL = "#086a50";
 export const CHART_SIGNAL_DEEP = "#054937";
@@ -38,8 +38,8 @@ export const CHART_AXIS = "#53677c";
  * on the plate that never means "a region". Both values are `--p-accent` from
  * their own theme.
  */
-export const CHART_ACCENT = "#3157c7";
-export const CHART_ACCENT_DARK = "#818cf8";
+export const CHART_ACCENT = "#3e5db8";
+export const CHART_ACCENT_DARK = "#8294ff";
 
 /**
  * The categorical sequence, in the order a chart should spend it.
@@ -68,7 +68,7 @@ export const CHART_SERIES = [
  * `Donut.tsx` makes for its ring and its legend.
  */
 export const CHART_SERIES_DARK = [
-  "#4f5de2",
+  "#5665e0",
   "#248f75",
   "#bf841f",
   "#e88272",
@@ -148,7 +148,7 @@ export type MapPalette = {
 export const MAP_DARK: MapPalette = {
   land: "#1a3458",
   coast: "#2b4a72",
-  ink: "#f1f3f7",
+  ink: "#f1f4f8",
   series: CHART_SERIES_DARK,
   hubStroke: "rgba(11, 22, 47, 0.85)",
   origin: CHART_ACCENT_DARK,
@@ -172,9 +172,9 @@ export const MAP_LIGHT: MapPalette = {
   coast: "#8da3bc",
   ink: CHART_INK,
   series: CHART_SERIES,
-  hubStroke: "rgba(228, 235, 243, 0.96)",
+  hubStroke: "rgba(232, 238, 246, 0.96)",
   origin: CHART_ACCENT,
-  originStroke: "rgba(228, 235, 243, 0.96)",
+  originStroke: "rgba(232, 238, 246, 0.96)",
   originSize: 12,
   hubMin: 5.5,
   hubMax: 5.5,
