@@ -110,7 +110,7 @@ func loadRuntimeConfig(engine *state.StateEngine, envCfg *config.EnvConfig) *con
 func newDirectDownloader(
 	envCfg *config.EnvConfig,
 ) *netutil.DirectDownloader {
-	return netutil.NewDirectDownloader(
+	d := netutil.NewDirectDownloader(
 		func() time.Duration {
 			return envCfg.ResourceFetchTimeout
 		},
@@ -118,6 +118,10 @@ func newDirectDownloader(
 			return currentDownloadUserAgent()
 		},
 	)
+	if envCfg.ResourceFetchMaxBytes > 0 {
+		d.MaxBodyBytes = int64(envCfg.ResourceFetchMaxBytes)
+	}
+	return d
 }
 
 func currentDownloadUserAgent() string {
