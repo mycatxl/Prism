@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * The page header: a 52px minimum glass band with title, metadata, actions,
+ * The page header: a 52px minimum band on the canvas with title, metadata, actions,
  * optional description, and optional tab strip.
  */
 export function PageHeader({
@@ -23,8 +23,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "page-header glass-bar sticky top-0 z-20",
-        "supports-[backdrop-filter]:bg-glass-strong/88",
+        "page-header sticky top-0 z-20 bg-paper",
         className,
       )}
     >

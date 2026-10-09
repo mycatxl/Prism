@@ -10,6 +10,7 @@ import { getEnvConfig } from "../features/systemConfig/api";
 import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../features/systemInfo/api";
 import { useI18n } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
+import { QuickSearch } from "./QuickSearch";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { Badge } from "./ui/Badge";
 import { Button } from "./ui/Button";
@@ -161,20 +162,20 @@ export function AppShell() {
         <div className="flex h-full flex-col">
           <div
             className={cn(
-              "flex h-[var(--shell-bar-h)] shrink-0 items-center border-b border-rule-faint",
+              "flex h-[var(--shell-bar-h)] shrink-0 items-center",
               collapsed ? "justify-center px-2" : "gap-2.5 px-3.5",
             )}
           >
-            <span
+            <img
+              src={`${import.meta.env.BASE_URL}prism-mark.png`}
+              alt=""
               aria-hidden
-              className="grid size-[var(--control-h)] shrink-0 place-items-center rounded-control bg-accent text-xs font-bold tracking-tight text-on-accent shadow-xs"
-            >
-              P
-            </span>
+              className="size-8 shrink-0 object-contain"
+            />
             {!collapsed && (
               <>
                 <div className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-semibold tracking-tight text-ink">
+                  <span className="block truncate text-lg font-bold tracking-tight text-ink">
                     Prism
                   </span>
                   <span className="block truncate text-2xs text-ink-faint">
@@ -214,7 +215,7 @@ export function AppShell() {
                 {collapsed ? (
                   index > 0 && <div className="mx-3 mb-2.5 border-t border-rule-faint" />
                 ) : (
-                  <div className="micro px-3.5 pb-1.5">{t(section)}</div>
+                  <div className="micro px-6 pb-1.5">{t(section)}</div>
                 )}
                 {items.map((item) => {
                   const Icon = item.icon;
@@ -228,14 +229,14 @@ export function AppShell() {
                       title={collapsed ? t(item.label) : undefined}
                       aria-current={active ? "page" : undefined}
                       className={cn(
-                        "action mx-2.5 my-0.5 flex h-[var(--control-h-xl)] items-center gap-2.5 rounded-control text-sm",
+                        "rail-link action mx-3 my-1 flex h-[var(--control-h-xl)] items-center gap-3 rounded-card-sm text-sm",
                         collapsed ? "justify-center px-0" : "px-3",
                         active
-                          ? "border border-glass-edge-strong bg-accent-wash font-semibold text-accent shadow-xs"
-                          : "border border-transparent text-ink-soft hover:bg-glass hover:text-ink",
+                          ? "bg-accent-wash font-semibold text-accent-deep"
+                          : "text-ink-soft hover:bg-paper-sunk hover:text-ink",
                       )}
                     >
-                      <Icon size={16} className="shrink-0" />
+                      <Icon size={17} className="shrink-0" />
                       {!collapsed && <span className="truncate">{t(item.label)}</span>}
                     </NavLink>
                   );
@@ -253,25 +254,32 @@ export function AppShell() {
 
           <div
             className={cn(
-              "shrink-0 border-t border-rule-faint p-2.5",
+              "shrink-0 p-3",
               collapsed ? "flex flex-col items-center gap-1.5" : "flex flex-col gap-2",
             )}
           >
             {!collapsed && (
-              <div className="flex items-center justify-between gap-2 rounded-control border border-glass-edge bg-glass px-2.5 py-1.5">
-                <span className="truncate text-2xs font-medium text-ink-soft">
-                  {statusText}
+              <div className="rail-status flex items-center gap-2.5 rounded-card-sm border border-rule-faint bg-paper-inset px-3 py-2.5">
+                <span
+                  aria-hidden
+                  className={cn(
+                    "rail-status__dot size-2.5 shrink-0",
+                    unauthorized ? "bg-alert" : disconnected ? "bg-warn" : info.data ? "bg-signal" : "bg-rule-strong",
+                  )}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-semibold text-ink">{statusText}</span>
+                  {info.data?.version && (
+                    <span className="readout block truncate text-2xs text-ink-faint">
+                      {info.data.version}
+                    </span>
+                  )}
                 </span>
-                {info.data?.version && (
-                  <span className="readout shrink-0 text-2xs text-ink-faint">
-                    {info.data.version}
-                  </span>
-                )}
               </div>
             )}
             <div
               className={cn(
-                "flex items-center",
+                "flex items-center sm:hidden",
                 collapsed ? "flex-col gap-1.5" : "justify-between gap-2",
               )}
             >
@@ -330,6 +338,8 @@ export function AppShell() {
               {t(current?.label ?? "工作区")}
             </span>
           </div>
+
+          <QuickSearch />
 
           <div className="wb-topbar-actions ml-auto flex items-center gap-2">
             {statusBadge}

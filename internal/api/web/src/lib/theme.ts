@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 /**
  * The theme store.
  *
- * Dark is the default because this console is read as a control-room board: the
- * data carries the light and the ground stays out of the way. Light is kept as a
- * supported theme rather than a leftover, so both are authored, both are measured
- * by `scripts/check-contrast.mjs`, and neither is an inversion of the other.
+ * Light is the default: the console is a daytime operator workspace with white
+ * panes on a cool canvas. Dark is kept as a supported theme rather than a leftover,
+ * so both are authored, both are measured by `scripts/check-contrast.mjs`, and
+ * neither is an inversion of the other.
  *
  * The applied state lives on `<html data-theme>` so CSS owns it and a page that
  * renders before React hydrates still gets the right ground.
@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 export type Theme = "dark" | "light";
 
 const STORAGE_KEY = "prism.theme";
-const DEFAULT_THEME: Theme = "dark";
+const DEFAULT_THEME: Theme = "light";
 
 function readStored(): Theme | null {
   if (typeof window === "undefined") {

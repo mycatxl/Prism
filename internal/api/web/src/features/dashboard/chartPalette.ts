@@ -13,22 +13,22 @@
  * timeline is the day chart; the egress map carries its own palette, because it is
  * the one surface that paints a night sky rather than paper.
  */
-export const CHART_PAPER = "#e8eef6";
-export const CHART_PAPER_SUNK = "#d4e0eb";
+export const CHART_PAPER = "#f3f5fb";
+export const CHART_PAPER_SUNK = "#e8ecf5";
 /*
  * Fog-blue graphite day surfaces. These literals mirror design.css so canvas
  * charts keep the same material as the rest of the console.
  */
-export const CHART_PAPER_RAISED = "#f5f8fc";
-export const CHART_PAPER_INSET = "#dce6f0";
-export const CHART_RULE = "#becbd8";
-export const CHART_RULE_STRONG = "#8fa2b6";
-export const CHART_INK = "#142033";
-export const CHART_INK_SOFT = "#4c5c72";
-export const CHART_INK_FAINT = "#435a71";
-export const CHART_SIGNAL = "#086a50";
-export const CHART_SIGNAL_DEEP = "#054937";
-export const CHART_LIVE = "#0a5d88";
+export const CHART_PAPER_RAISED = "#ffffff";
+export const CHART_PAPER_INSET = "#f7f8fc";
+export const CHART_RULE = "#dde3ee";
+export const CHART_RULE_STRONG = "#9aa6bb";
+export const CHART_INK = "#0f172a";
+export const CHART_INK_SOFT = "#475569";
+export const CHART_INK_FAINT = "#56657c";
+export const CHART_SIGNAL = "#047857";
+export const CHART_SIGNAL_DEEP = "#065f46";
+export const CHART_LIVE = "#0369a1";
 export const CHART_GRID = "#ced9e5";
 export const CHART_AXIS = "#53677c";
 
@@ -38,7 +38,7 @@ export const CHART_AXIS = "#53677c";
  * on the plate that never means "a region". Both values are `--p-accent` from
  * their own theme.
  */
-export const CHART_ACCENT = "#3e5db8";
+export const CHART_ACCENT = "#4f46e5";
 export const CHART_ACCENT_DARK = "#8294ff";
 
 /**

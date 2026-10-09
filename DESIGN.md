@@ -39,7 +39,8 @@ and complete keyboard/touch operation outrank visual novelty.
 
 **Precision Glass** is a quiet SaaS workspace, not a glassmorphism demo.
 
-- The canvas is an opaque blue-grey mist in light mode and deep ink-blue in dark mode.
+- Light is the default theme. The canvas is a cool near-white (#f3f5fb) with white panes
+  in light mode, and deep ink-blue in dark mode.
 - Chrome (rail, top bar and overlays) may use a restrained translucent surface with a
   10–12px blur and a one-pixel hairline. It must have an opaque fallback.
 - Dashboard lead evidence panes may use the same light glass treatment. Their charts and
@@ -49,7 +50,8 @@ and complete keyboard/touch operation outrank visual novelty.
   exist only to wrap another pane.
 - Main panes use a 16px radius, inset wells 12px, controls 8px. Shadows are quiet on
   ordinary panes and stronger only on Sheet/Dialog/Tooltip overlays.
-- No hero gradient, gradient text, ground halo, decorative icon tile, zero-offset glow,
+- The dashboard welcome band is the one place a faint accent wash (two radial tints in
+  its corner) is allowed. No other hero gradient, no gradient text, ground halo, decorative icon tile, zero-offset glow,
   or full-screen purple wash.
 
 ### Palette

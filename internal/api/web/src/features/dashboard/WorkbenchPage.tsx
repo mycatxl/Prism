@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { ChevronDown, Maximize2, X } from "lucide-react";
+import { ChevronDown, Globe2, HeartPulse, Maximize2, Rss, Server, X, type LucideIcon } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { DataFreshnessBar } from "../../components/ui/DataFreshnessBar";
 import { Button } from "../../components/ui/Button";
@@ -110,6 +110,23 @@ function stepDelta(values: number[]): number | null {
     return null;
   }
   return (latest - previous) / previous;
+}
+
+type HeroTone = "accent" | "signal" | "live" | "warn";
+
+/** One pool fact in the board's welcome band: an icon tile, the value and its label. */
+function HeroStat({ icon: Icon, tone, label, value, hint }: { icon: LucideIcon; tone: HeroTone; label: string; value: string; hint?: string }) {
+  return (
+    <div className="hero-stat">
+      <span className={`hero-stat__icon hero-stat__icon--${tone}`} aria-hidden>
+        <Icon size={18} />
+      </span>
+      <span className="min-w-0">
+        <span className="hero-stat__value readout">{value}</span>
+        <span className="hero-stat__label">{label}{hint && <span className="hero-stat__hint"> · {hint}</span>}</span>
+      </span>
+    </div>
+  );
 }
 
 /** The write methods the audit trail can record. */
@@ -517,84 +534,72 @@ export function WorkbenchPage() {
     <Page bleed>
       <h1 className="sr-only">{t("总览看板")}</h1>
       <div className="page-content page-content--dashboard wb-board precision-dashboard">
-        <div className="dashboard-context">
-          <div className="dashboard-context__heading">
-            <div>
-              <p className="micro">{t("全天监控")}</p>
-              <h2 className="dashboard-context__title">{t("流量与连接")}</h2>
+        <section className="dashboard-hero" aria-labelledby="dashboard-hero-title">
+          <div className="dashboard-hero__top">
+            <div className="dashboard-hero__heading">
+              <h2 id="dashboard-hero-title" className="dashboard-hero__title">{t("欢迎回来")}</h2>
+              <p className="dashboard-hero__description">{t("实时查看流量、连接和出口资源。")}</p>
             </div>
-            <p className="dashboard-context__description">{t("实时查看流量、连接和出口资源。")}</p>
+              <DataFreshnessBar
+                range={
+                  <div className="dashboard-range-control">
+                    <span className="micro">{t("时间范围")}</span>
+                    <div className="relative inline-flex items-center">
+                      <Select
+                        aria-label={t("时间范围")}
+                        value={rangeKey}
+                        onChange={(event) => selectRange(event.target.value as RangeKey)}
+                        className="wb-timerange-select"
+                      >
+                        {RANGE_OPTIONS.map((option) => (
+                          <option key={option.key} value={option.key}>
+                            {t(option.label)}
+                          </option>
+                        ))}
+                      </Select>
+                      <ChevronDown size={13} className="wb-timerange-icon" aria-hidden />
+                    </div>
+                  </div>
+                }
+                updatedAt={Number.isFinite(latestUpdatedAt) ? latestUpdatedAt : null}
+                isFetching={dashboardFetching}
+                error={dashboardError ? offline : undefined}
+                onRetry={dashboardError ? retryDashboard : undefined}
+              />
           </div>
-          <DataFreshnessBar
-            range={
-              <div className="dashboard-range-control">
-                <span className="micro">{t("时间范围")}</span>
-                <div className="relative inline-flex items-center">
-                  <Select
-                    aria-label={t("时间范围")}
-                    value={rangeKey}
-                    onChange={(event) => selectRange(event.target.value as RangeKey)}
-                    className="wb-timerange-select"
-                  >
-                    {RANGE_OPTIONS.map((option) => (
-                      <option key={option.key} value={option.key}>
-                        {t(option.label)}
-                      </option>
-                    ))}
-                  </Select>
-                  <ChevronDown size={13} className="wb-timerange-icon" aria-hidden />
-                </div>
-              </div>
-            }
-            updatedAt={Number.isFinite(latestUpdatedAt) ? latestUpdatedAt : null}
-            isFetching={dashboardFetching}
-            error={dashboardError ? offline : undefined}
-            onRetry={dashboardError ? retryDashboard : undefined}
-          />
-        </div>
-
-        <Panel className="dashboard-pool-snapshot">
-          <PanelHeader
-            title={t("资源快照")}
-            meta={pool?.generated_at ? formatTimestamp(Date.parse(pool.generated_at), { seconds: true }) : PLACEHOLDER}
-            actions={
-              <Button asChild variant="ghost" size="sm">
-                <Link to="/nodes">{t("查看节点池")}</Link>
-              </Button>
-            }
-          />
-          <div className="pool-snapshot-grid">
-            <div className="pool-snapshot-cell">
-              <Readout
-                size="sm"
-                label={t("健康节点")}
-                value={pool ? `${formatCount(poolHealthy)} / ${formatCount(pool.total_nodes)}` : PLACEHOLDER}
-                tone="signal"
-              />
-            </div>
-            <div className="pool-snapshot-cell">
-              <Readout
-                size="sm"
-                label={t("健康出口 IP")}
-                value={pool ? `${formatCount(pool.healthy_egress_ip_count)} / ${formatCount(pool.egress_ip_count)}` : PLACEHOLDER}
-                tone="live"
-              />
-            </div>
-            <div className="pool-snapshot-cell">
-              <Readout size="sm" label={t("地区覆盖")} value={formatCount(regions.length)} />
-              {unknown > 0 && <span className="pool-snapshot-cell__hint">{t("未定位")} {formatCount(unknown)}</span>}
-            </div>
-            <div className="pool-snapshot-cell">
-              <Readout
-                size="sm"
-                label={t("订阅健康")}
-                value={subscriptionState.total ? `${formatCount(subscriptionState.enabled)} / ${formatCount(subscriptionState.total)}` : PLACEHOLDER}
-                tone={subscriptionState.failed > 0 ? "warn" : "signal"}
-              />
-              {subscriptionState.failed > 0 && <span className="pool-snapshot-cell__hint text-warn">{formatCount(subscriptionState.failed)} {t("异常")}</span>}
-            </div>
+          <div className="dashboard-hero__stats">
+            <HeroStat
+              icon={Server}
+              tone="accent"
+              label={t("健康节点")}
+              value={pool ? `${formatCount(poolHealthy)} / ${formatCount(pool.total_nodes)}` : PLACEHOLDER}
+            />
+            <HeroStat
+              icon={HeartPulse}
+              tone="signal"
+              label={t("健康出口 IP")}
+              value={pool ? `${formatCount(pool.healthy_egress_ip_count)} / ${formatCount(pool.egress_ip_count)}` : PLACEHOLDER}
+            />
+            <HeroStat
+              icon={Globe2}
+              tone="live"
+              label={t("地区覆盖")}
+              value={formatCount(regions.length)}
+              hint={unknown > 0 ? `${t("未定位")} ${formatCount(unknown)}` : undefined}
+            />
+            <HeroStat
+              icon={Rss}
+              tone={subscriptionState.failed > 0 ? "warn" : "signal"}
+              label={t("订阅健康")}
+              value={subscriptionState.total ? `${formatCount(subscriptionState.enabled)} / ${formatCount(subscriptionState.total)}` : PLACEHOLDER}
+              hint={subscriptionState.failed > 0 ? `${formatCount(subscriptionState.failed)} ${t("异常")}` : undefined}
+            />
           </div>
-        </Panel>
+          <p className="dashboard-hero__meta">
+            {t("资源快照")} · {pool?.generated_at ? formatTimestamp(Date.parse(pool.generated_at), { seconds: true }) : PLACEHOLDER}
+            <Link to="/nodes" className="dashboard-hero__link">{t("查看节点池")}</Link>
+          </p>
+        </section>
 
         <div className="dashboard-evidence-grid">
           <Panel className="dashboard-traffic-pane">
