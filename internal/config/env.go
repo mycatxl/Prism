@@ -55,11 +55,14 @@ type EnvConfig struct {
 	EgressTraceURL                                  string
 	ResourceFetchTimeout                            time.Duration
 	ResourceFetchMaxBytes                           int
-	NodeDNSUpstreams                                []string
-	ProxyTransportMaxIdleConns                      int
-	ProxyTransportMaxIdleConnsPerHost               int
-	ProxyTransportIdleConnTimeout                   time.Duration
-	ProxyBypassRules                                []string
+	// ResourceFetchAllowPrivate lets subscription/resource downloads reach
+	// loopback and private addresses (off by default to block SSRF).
+	ResourceFetchAllowPrivate         bool
+	NodeDNSUpstreams                  []string
+	ProxyTransportMaxIdleConns        int
+	ProxyTransportMaxIdleConnsPerHost int
+	ProxyTransportIdleConnTimeout     time.Duration
+	ProxyBypassRules                  []string
 	// TrustedProxies lists the CIDRs (or plain IP literals) whose
 	// X-Forwarded-For header is trusted when deriving the client IP used for
 	// authentication failure limiting. Empty means "trust no proxy".
@@ -177,6 +180,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	// instead, so an unrelated value is never clobbered.
 	cfg.EgressTraceURL = strings.TrimSpace(envStr("PRISM_EGRESS_TRACE_URL", ""))
 	cfg.ResourceFetchTimeout = envDuration("PRISM_RESOURCE_FETCH_TIMEOUT", 30*time.Second, &errs)
+	cfg.ResourceFetchAllowPrivate = envBool("PRISM_RESOURCE_FETCH_ALLOW_PRIVATE", false, &errs)
 	cfg.ResourceFetchMaxBytes = envInt("PRISM_RESOURCE_FETCH_MAX_BYTES", 32<<20, &errs)
 	cfg.NodeDNSUpstreams = envStringSlice("PRISM_NODE_DNS_UPSTREAMS", DefaultNodeDNSUpstreams(), &errs)
 	cfg.ProxyTransportMaxIdleConns = envInt("PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS", 1024, &errs)
@@ -184,9 +188,9 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.ProxyTransportIdleConnTimeout = envDuration("PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT", 90*time.Second, &errs)
 	cfg.ProxyBypassRules = envDelimitedStringSlice("PRISM_PROXY_BYPASS", []string{})
 	cfg.TrustedProxies = envDelimitedStringSlice("PRISM_TRUSTED_PROXIES", []string{})
-	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", false, &errs)
-	cfg.DenyPrivateNodes = envBool("PRISM_DENY_PRIVATE_NODES", false, &errs)
-	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 0, &errs)
+	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", true, &errs)
+	cfg.DenyPrivateNodes = envBool("PRISM_DENY_PRIVATE_NODES", true, &errs)
+	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 30, &errs)
 
 	// --- Request log ---
 	cfg.RequestLogQueueSize = envInt("PRISM_REQUEST_LOG_QUEUE_SIZE", 8192, &errs)

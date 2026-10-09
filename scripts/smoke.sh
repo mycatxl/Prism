@@ -192,9 +192,14 @@ PRISM_LOG_DIR=./logs
 PRISM_EGRESS_TRACE_URL=http://127.0.0.1:$TRACE_PORT/cdn-cgi/trace
 # The reverse-proxy check below dials a loopback target directly. That only
 # happens for hosts matched by the operator bypass rules (upstream Resin
-# behaviour); SSRF protection for this path is opt-in via
-# PRISM_DIRECT_DENY_PRIVATE.
+# behaviour); SSRF protection for this path (on by default) is
+# PRISM_DIRECT_DENY_PRIVATE, disabled below.
 PRISM_PROXY_BYPASS=127.0.0.1
+# Every mock in this test (subscription server, nodes, bypass target) lives on
+# loopback, so the v0.1.0 private-address defaults are switched off here.
+PRISM_RESOURCE_FETCH_ALLOW_PRIVATE=true
+PRISM_DENY_PRIVATE_NODES=false
+PRISM_DIRECT_DENY_PRIVATE=false
 EOF
 chmod 0600 "$WORK_DIR/.env"
 

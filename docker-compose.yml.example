@@ -28,7 +28,7 @@ services:
       PRISM_PORT: 2260
       # TZ: <Your Time Zone>
     ports:
-      - "2260:2260"
+      - "127.0.0.1:2260:2260"  # loopback only; put a TLS reverse proxy in front for remote access
     volumes:
       - prism_cache:/var/cache/prism
       - prism_state:/var/lib/prism

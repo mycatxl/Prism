@@ -818,6 +818,9 @@ func (a *prismApp) intelGeoDatabases(registry *providers.Registry) *providers.Ge
 		currentDownloadUserAgent,
 	)
 	direct.MaxBodyBytes = providers.GeoDBMaxDownloadBytes
+	if a.envCfg == nil || !a.envCfg.ResourceFetchAllowPrivate {
+		direct.DenyPrivate()
+	}
 	manager := providers.NewGeoManager(providers.GeoManagerOptions{
 		Dir: geoDir,
 		// The direct download is the normal path; a node is borrowed when it
