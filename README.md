@@ -118,7 +118,7 @@ prints the effective values with every secret masked.
 | `PRISM_QUALITY_ENABLED`, `PRISM_QUALITY_API_KEY`, `PRISM_ABUSEIPDB_API_KEY` | *(off / unset)* | Optional IP-quality providers |
 | `PRISM_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is trusted for client-IP limiting |
 | `PRISM_PROXY_AUTH_FAIL_LIMIT` | `30` | Failed proxy authentications per minute per IP. Covers the HTTP forward proxy and CONNECT (`Proxy-Authorization`), the reverse-proxy path token and the SOCKS5 username/password check; `0` disables proxy-entry limiting. `/api/*` keeps its own limiter |
-| `PRISM_DIRECT_DENY_PRIVATE` | `true` | Refuse loopback, private, link-local, CGNAT, reserved and cloud-metadata targets on every local dial path (reverse-proxy bypass, forward HTTP, CONNECT, SOCKS5). On by default; set `false` to restore the upstream Resin behaviour |
+| `PRISM_DIRECT_DENY_PRIVATE` | `true` | Refuse loopback, private, link-local, CGNAT, reserved and cloud-metadata targets on every local dial path (reverse-proxy bypass, forward HTTP, CONNECT, SOCKS5). On by default; set `false` to allow local direct dials to any address |
 | `PRISM_DENY_PRIVATE_NODES` | `true` | Refuse a **node** whose own `server` names loopback, the LAN, a link-local address or a cloud metadata endpoint. A name that is not a literal is resolved, so a public-looking hostname whose DNS answer is private (`127.0.0.1.nip.io`, `sslip.io`, `xip.io`, …) is refused as well; a name that resolves only into a transparent proxy's fake-IP pool (`198.18.0.0/15`) is allowed, because on such a machine that answer says nothing about the target. On by default; set `false` if a deployment deliberately routes through a private node |
 
 ### Usage
@@ -383,20 +383,14 @@ them off only on a trusted network.
 
 ### Acknowledgements
 
-Prism started from [Resin](https://github.com/Resinat/Resin) (commit
-`9b8ef8e`, MIT, © Resinat and contributors). Its proxy pool, sticky leases,
-scheduling, subscription and probe design are the foundation this project grew
-from — many thanks to the Resin authors. The original MIT notice is kept in
-[`LICENSES/Resin-MIT.txt`](LICENSES/Resin-MIT.txt); see
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the full provenance.
-Thanks also to [sing-box](https://github.com/SagerNet/sing-box), the engine
-under every outbound, and to Claude, which pair-programmed much of Prism with
-the maintainer.
+Thanks to [sing-box](https://github.com/SagerNet/sing-box), the engine under
+every outbound, and to Claude, which pair-programmed much of Prism with the
+maintainer.
 
 ### License
 
-GPL-3.0-or-later — see the `LICENSE` file for the full text. Code derived from
-Resin keeps its MIT notice (`LICENSES/Resin-MIT.txt`).
+GPL-3.0-or-later — see the `LICENSE` file for the full text. Third-party notices are in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ### Contributing
 

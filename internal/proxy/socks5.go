@@ -46,7 +46,7 @@ type Socks5InboundConfig struct {
 	MetricsSink      MetricsEventSink
 	ProxyBypassRules []string
 	// DirectDenyPrivate enables the local dial guard (PRISM_DIRECT_DENY_PRIVATE)
-	// on this inbound's local direct branch, keeping Resin behaviour when false.
+	// on this inbound's local direct branch, keeping the default behaviour when false.
 	DirectDenyPrivate bool
 }
 

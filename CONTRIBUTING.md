@@ -134,9 +134,8 @@ Two properties of this repository decide the order of the steps:
 After the run, check three things: the release is marked Pre-release, it carries
 the five archives plus `SHA256SUMS.txt`, and a downloaded binary reports the tag
 (`./prism version`). Then bump the pinned image tag wherever it is quoted, which
-is three files: [`docker-compose.yml.example`](docker-compose.yml.example),
-[`docs/deployment.md`](docs/deployment.md#container-files-in-this-repository) and
-the `docker run` example in [`docs/MIGRATION_FROM_RESIN.md`](docs/MIGRATION_FROM_RESIN.md).
+is two files: [`docker-compose.yml.example`](docker-compose.yml.example) and
+[`docs/deployment.md`](docs/deployment.md#container-files-in-this-repository).
 
 ## License
 

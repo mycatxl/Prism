@@ -72,7 +72,7 @@ type qualityFacts struct {
 
 // AdmitQuality applies the WP10 §2 rule list and reports the first failure.
 //
-// An empty policy always passes, which reproduces the upstream Resin behaviour
+// An empty policy always passes, which reproduces the default behaviour
 // (deviation X5). A non-empty policy is fail-closed: a node whose quality cannot
 // be established is rejected unless UnknownAction says otherwise.
 func AdmitQuality(

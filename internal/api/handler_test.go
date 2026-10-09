@@ -17,9 +17,9 @@ func newTestServer() *Server {
 	runtimeCfg := &atomic.Pointer[config.RuntimeConfig]{}
 	runtimeCfg.Store(config.NewDefaultRuntimeConfig())
 	envCfg := &config.EnvConfig{
-		CacheDir:                              "/tmp/resin/cache",
-		StateDir:                              "/tmp/resin/state",
-		LogDir:                                "/tmp/resin/log",
+		CacheDir:                              "/tmp/prism/cache",
+		StateDir:                              "/tmp/prism/state",
+		LogDir:                                "/tmp/prism/log",
 		ListenAddress:                         "127.0.0.1",
 		ProxyPort:                             2260,
 		APIMaxBodyBytes:                       1 << 20,
@@ -371,8 +371,8 @@ func TestSystemEnvConfig_OK(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if body["cache_dir"] != "/tmp/resin/cache" {
-		t.Errorf("cache_dir: got %q, want %q", body["cache_dir"], "/tmp/resin/cache")
+	if body["cache_dir"] != "/tmp/prism/cache" {
+		t.Errorf("cache_dir: got %q, want %q", body["cache_dir"], "/tmp/prism/cache")
 	}
 	if body["listen_address"] != "127.0.0.1" {
 		t.Errorf("listen_address: got %q, want %q", body["listen_address"], "127.0.0.1")

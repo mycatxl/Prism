@@ -5,7 +5,7 @@ package node
 // A node document has two shapes:
 //
 //   - form A: a plain sing-box outbound JSON object, byte-compatible with the
-//     upstream Resin representation (hash unchanged);
+//     legacy representation (hash unchanged);
 //   - form B: an envelope object marked with "prism_node":1 that carries an
 //     endpoint, a detour chain, or a mihomo proxy.
 

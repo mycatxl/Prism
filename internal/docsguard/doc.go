@@ -8,7 +8,7 @@
 //     said 1.27 (DOC-01);
 //   - the panel port was documented as 8080 while server/config.mjs defaulted to
 //     1262 (DOC-02);
-//   - two shipped features (intel.db, `prism import-resin`) were described as
+//   - two shipped features (intel.db, `prism restore`) were described as
 //     "not implemented yet" (DOC-03);
 //   - the directory listing in docs/DESIGN.md §4.3 named seven paths that do not
 //     exist and omitted nine that do (DOC-04).

@@ -193,7 +193,7 @@ func TestMajorFlow_E2E_LocalProxyAndSubscriptionProvider(t *testing.T) {
 	const (
 		platformName = "plat-e2e"
 		account      = "acct-e2e"
-		subUA        = "resin-major-e2e"
+		subUA        = "prism-major-e2e"
 	)
 	h := newMajorFlowHarness(t, subUA)
 

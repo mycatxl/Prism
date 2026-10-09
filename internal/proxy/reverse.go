@@ -39,10 +39,10 @@ type ReverseProxyConfig struct {
 	// (this proxy's bypass branch, the forward HTTP proxy, CONNECT and SOCKS5)
 	// while keeping node-routed requests unaffected. It is the
 	// PRISM_DIRECT_DENY_PRIVATE switch and defaults to false, which keeps the
-	// upstream Resin behaviour.
+	// the default behaviour.
 	DirectDenyPrivate bool
 	// AuthGuard optionally rate limits failed proxy authentications. A nil
-	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
+	// guard keeps the default behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
 	// defaults to 0, which disables it).
 	AuthGuard AuthFailureGuard
 }
@@ -334,7 +334,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	domain := netutil.ExtractDomain(parsed.Host)
 	if p.bypass != nil && p.bypass.ShouldBypass(parsed.Host) {
 		// Bypass targets are dialled locally by operator-configured rules and
-		// never create a routing lease (upstream Resin behaviour).
+		// never create a routing lease (the default behaviour).
 		// PRISM_DIRECT_DENY_PRIVATE optionally refuses loopback, private,
 		// link-local, CGNAT, reserved and cloud metadata direct targets. The
 		// same policy covers every local dial path (forward proxy, CONNECT and

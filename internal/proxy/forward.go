@@ -28,10 +28,10 @@ type ForwardProxyConfig struct {
 	TransportPool     *OutboundTransportPool
 	ProxyBypassRules  []string
 	// DirectDenyPrivate enables the local dial guard (PRISM_DIRECT_DENY_PRIVATE)
-	// on this proxy's local direct branch, keeping Resin behaviour when false.
+	// on this proxy's local direct branch, keeping the default behaviour when false.
 	DirectDenyPrivate bool
 	// AuthGuard optionally rate limits failed proxy authentications. A nil
-	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
+	// guard keeps the default behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
 	// defaults to 0, which disables it).
 	AuthGuard AuthFailureGuard
 }

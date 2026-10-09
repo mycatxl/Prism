@@ -31,7 +31,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | 凭据 | `Authorization: Bearer <PRISM_ADMIN_TOKEN>`。令牌用 `crypto/subtle.ConstantTimeCompare` 比较，长度不同也走同一路径 | `internal/api/rate_limiter.go` `AuthMiddleware` |
 | 失败响应 | 缺头 → `401 UNAUTHORIZED`（`missing Authorization header`）；前缀不是 `Bearer ` → `401`（`invalid Authorization header format`）；令牌不符 → `401`（`invalid admin token`） | 同上 |
 | 登录失败限流 | 每个客户端 IP 在 60 秒内累计 **10** 次失败后封禁 **5 分钟**，期间所有管理请求先答 `429 RATE_LIMITED` 并带 `Retry-After`。成功请求永不计数，`X-Forwarded-For` 只在 peer 命中 `PRISM_TRUSTED_PROXIES` 时被采纳 | `internal/api/rate_limiter.go` 顶部的常量块；`docs/SECURITY.md` §1.2 |
-| 空令牌 | `PRISM_ADMIN_TOKEN` 为空表示管理员鉴权被**有意关闭**，中间件直接放行（`AuthMiddleware` 的首个分支）。启动时的空令牌/弱令牌策略见 `docs/MIGRATION_FROM_RESIN.md` 偏差 X1、X2 | `internal/api/rate_limiter.go`；`docs/SECURITY.md` |
+| 空令牌 | `PRISM_ADMIN_TOKEN` 为空表示管理员鉴权被**有意关闭**，中间件直接放行（`AuthMiddleware` 的首个分支）。启动时的空令牌/弱令牌策略见 `docs/SECURITY.md` | `internal/api/rate_limiter.go`；`docs/SECURITY.md` |
 | 管理专用监听面 | `PRISM_ADMIN_LISTEN=host:port` 起第二个 listener，**只**服务 `/`、`/healthz`、`/api`、`/api/*`、`/ui`、`/ui/*`；其余路径一律 404，CONNECT 一律拒绝 | `cmd/prism/admin_runtime.go` `newAdminOnlyHandler`、`isManagementPath` |
 | 主监听面上的管理面 | 主 listener 的 `/api/*`、`/ui/*` 先经过**接入点** `allow_management` 判定：为 false 时直接 404；**`/healthz` 是唯一例外**，任何接入点都放行 | `cmd/prism/inbound_mux.go` `shouldRouteControlPlane` 与 `newInboundMuxWithGuard` 的调用点 |
 | SSE 的第二种凭据 | `GET /api/v1/intel/jobs/{id}/events` 额外接受 `?access_token=<管理员令牌>`（浏览器 `EventSource` 不能设请求头）。它不经过 `AuthMiddleware`，而是走自己的常量时间比较与同一个失败限流器 | `internal/api/handler_intel.go` `intelEventAuthorized`、`accessTokenFromRequest` |
@@ -332,8 +332,7 @@ sing-box 能把它当完整配置直接加载（`sing-box check -c` 通过），
 ./scripts/prism-backup.sh backup --out /var/backups/prism --keep 7
 ```
 
-细节见 `docs/backup-restore.md` 与 `docs/deployment.md`；`prism restore` 会拒绝在实例仍在运行时执行
-（判活方式与 `prism import-resin` 相同）。请勿把本文件当作备份 API 的入口。
+细节见 `docs/backup-restore.md` 与 `docs/deployment.md`；`prism restore` 会拒绝在实例仍在运行时执行。请勿把本文件当作备份 API 的入口。
 
 ## 21. 附录：容易踩到的行为（逐条核对结论）
 
@@ -403,7 +402,7 @@ sing-box 能把它当完整配置直接加载（`sing-box check -c` 通过），
   的用法、指标保留窗口，以及本版本**未实现**的清单（Prometheus 导出器、TLS 监听、OpenAPI 文档与 `/ui/docs` 页面）。
 - `docs/PROTOCOLS.md`：协议支持矩阵、解析报告与 `auto_intel` 如何到达 API/UI。
 - `docs/SECURITY.md`：令牌策略、登录失败限流、可信代理的威胁模型。
-- `docs/backup-restore.md`、`docs/MIGRATION_FROM_RESIN.md`（偏差清单 X1–X6 与 `prism import-resin`）。
+- `docs/backup-restore.md`：备份与恢复。
 
 没有 OpenAPI 文档、没有 `/ui/docs` 页面：路由的唯一真相是 `internal/api/server.go`（`docs/deployment.md`
 「Not implemented」章节同样声明了这一点）。

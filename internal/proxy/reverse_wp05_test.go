@@ -38,9 +38,9 @@ func TestResolveReverseAccountAcceptsBothAccountHeaders(t *testing.T) {
 	}{
 		{
 			name:        "resin header is accepted",
-			resinHeader: "resin-account",
+			resinHeader: "prism-account",
 			parsed:      parsed,
-			wantAccount: "resin-account",
+			wantAccount: "prism-account",
 		},
 		{
 			name:        "prism header is accepted",
@@ -51,15 +51,15 @@ func TestResolveReverseAccountAcceptsBothAccountHeaders(t *testing.T) {
 		{
 			name:        "prism header wins over resin header",
 			prismHeader: "prism-account",
-			resinHeader: "resin-account",
+			resinHeader: "prism-account",
 			parsed:      parsed,
 			wantAccount: "prism-account",
 		},
 		{
 			name:        "header wins over the path account",
-			resinHeader: "resin-account",
+			resinHeader: "prism-account",
 			parsed:      parsed,
-			wantAccount: "resin-account",
+			wantAccount: "prism-account",
 		},
 		{
 			name:        "path account is used without headers",
@@ -135,12 +135,12 @@ func TestReverseProxyAccountHeaderCompat(t *testing.T) {
 		resinHeader string
 		wantLease   string
 	}{
-		{name: "resin header", resinHeader: "resin-account", wantLease: "resin-account"},
+		{name: "resin header", resinHeader: "prism-account", wantLease: "prism-account"},
 		{name: "prism header", prismHeader: "prism-account", wantLease: "prism-account"},
 		{
 			name:        "both headers",
 			prismHeader: "prism-account",
-			resinHeader: "resin-account",
+			resinHeader: "prism-account",
 			wantLease:   "prism-account",
 		},
 	}
@@ -209,8 +209,7 @@ func TestWriteProxyErrorCarriesResinHeader(t *testing.T) {
 		}
 	}
 
-	// Deviation X4: the challenge realm stays "Prism"; upstream tests that
-	// assert realm="Resin" are adjusted for this release line.
+	// The challenge realm is "Prism".
 	rec := httptest.NewRecorder()
 	writeProxyError(rec, ErrAuthRequired)
 	challenge := rec.Header().Get("Proxy-Authenticate")

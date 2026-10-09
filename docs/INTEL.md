@@ -313,8 +313,7 @@ agreement = 1 − min(1, 标准差(各分量 clean) / 50)
 
 ### 3.7 fail-closed 准入（平台侧）
 
-准入在 `internal/platform/quality_policy.go` `AdmitQuality`/`qualityRules`：**空策略永远放行**（复刻上游 Resin 行为，
-偏差 X5）；**非空策略是 fail-closed 的**，"拿不准"一律拒绝。规则按序求值，第一条失败就是拒绝原因：
+准入在 `internal/platform/quality_policy.go` `AdmitQuality`/`qualityRules`：**空策略永远放行**；**非空策略是 fail-closed 的**，"拿不准"一律拒绝。规则按序求值，第一条失败就是拒绝原因：
 
 | # | 规则 | 拒绝原因 | fail-closed 之处 |
 |---|---|---|---|

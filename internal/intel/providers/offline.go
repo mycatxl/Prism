@@ -18,7 +18,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Country lookup (Resin's country.mmdb)
+// Country lookup (country.mmdb)
 // ---------------------------------------------------------------------------
 
 // CountryLookup is the region-filter database of the running application

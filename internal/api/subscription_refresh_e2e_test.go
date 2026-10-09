@@ -19,7 +19,7 @@ func TestAPIContract_SubscriptionRefreshAction_E2EHTTPSource(t *testing.T) {
 	const rawOutbound = `{"type":"shadowsocks","tag":"edge-refresh","server":"1.1.1.1","server_port":443,"method":"aes-256-gcm","password":"secret"}`
 	subPayload := `{"outbounds":[` + rawOutbound + `]}`
 
-	const userAgent = "resin-api-e2e"
+	const userAgent = "prism-api-e2e"
 	var subscriptionHits atomic.Int32
 	subscriptionSource := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		subscriptionHits.Add(1)

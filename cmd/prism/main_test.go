@@ -70,7 +70,7 @@ func TestLoadDotenvFile_LoadsEmptyProxyToken(t *testing.T) {
 	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_ADMIN_TOKEN", "RESIN_PROXY_TOKEN")
 
 	// PRISM-DEVIATION: X2 — disabling authentication by leaving a token empty
-	// now requires an explicit opt-in; upstream Resin accepted it silently.
+	// now requires an explicit opt-in; it used to be accepted silently.
 	t.Setenv("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "true")
 	t.Setenv("PRISM_ALLOW_EMPTY_PROXY_TOKEN", "true")
 	// PRISM-DEVIATION: X3 — RESIN_ADMIN_TOKEN now feeds PRISM_ADMIN_TOKEN, and

@@ -23,7 +23,7 @@ var Zero Hash
 // Form A (a plain sing-box outbound, §1.1): the "tag" key is removed and the
 // result is re-marshalled. Go's encoding/json sorts map keys at all nesting
 // levels, so the output is deterministic without any manual sorting. This path
-// is byte-compatible with the upstream Resin implementation.
+// is byte-compatible with the original implementation.
 //
 // Form B (an envelope, §1.2): the display name, main.tag and proxy.name are
 // removed. deps[i].tag is fixed to d<i> and therefore kept.

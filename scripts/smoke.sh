@@ -191,7 +191,7 @@ PRISM_CACHE_DIR=./cache
 PRISM_LOG_DIR=./logs
 PRISM_EGRESS_TRACE_URL=http://127.0.0.1:$TRACE_PORT/cdn-cgi/trace
 # The reverse-proxy check below dials a loopback target directly. That only
-# happens for hosts matched by the operator bypass rules (upstream Resin
+# happens for hosts matched by the operator bypass rules (default
 # behaviour); SSRF protection for this path (on by default) is
 # PRISM_DIRECT_DENY_PRIVATE, disabled below.
 PRISM_PROXY_BYPASS=127.0.0.1

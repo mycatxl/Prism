@@ -6,7 +6,7 @@
 
 ## 1. 目标与范围
 
-Prism 是个人自用的代理资源管理与质量检测工具：导入不同来源和格式的节点，确认实际出口，持续检测并分类，通过自建 Platform 规则提供与 Resin 兼容的代理接入。项目以可审计、可复现和可长期维护的开源单机部署为目标。
+Prism 是个人自用的代理资源管理与质量检测工具：导入不同来源和格式的节点，确认实际出口，持续检测并分类，通过自建 Platform 规则提供代理接入。项目以可审计、可复现和可长期维护的开源单机部署为目标。
 
 性能与安全为同等优先的验收条件：安全检查不能因优化被绕过；安全机制应采用有界、可测量的实现，避免外部查询和全量扫描进入转发请求路径。资源不足时按明确策略拒绝或降载。
 
@@ -14,10 +14,10 @@ Prism 是个人自用的代理资源管理与质量检测工具：导入不同�
 
 本版包含：
 
-1. 继承 Resin 的 HTTP 正向代理、CONNECT、SOCKS5 CONNECT、HTTP 反向代理、WebSocket 转发能力。
+1. 提供 HTTP 正向代理、CONNECT、SOCKS5 CONNECT、HTTP 反向代理、WebSocket 转发能力。
 2. 保留订阅解析、节点去重、P2C 调度、出口 IP 粘性租约、健康检查、持久化恢复。
 3. 内置出口类型、信誉与黑名单检测，支持质量评级、时效、来源和历史记录。
-4. 每个平台独立按 Resin 标签规则、订阅范围、手动分类、地区、出口类型、评级和证据有效期筛选节点。
+4. 每个平台独立按标签规则、订阅范围、手动分类、地区、出口类型、评级和证据有效期筛选节点。
 5. 建设访问日志、检测记录和操作审计，流量统计只用于诊断。
 6. 提供个人管理页面与 API；支持同出口线路分组、优先级和受控会话换 IP。
 
@@ -29,7 +29,7 @@ Prism 是个人自用的代理资源管理与质量检测工具：导入不同�
 
 > **本节是 2026-09-05 的 M0 基线的历史记录**，不是待办清单。下文"需要局部改造""必要改造"描述的是当时评估出的工作量；这些改造此后已经落地，当前结构见 §4。阅读时以 §3 的约束和 §4 的现状为准。
 
-当前主项目已包含迁出的 Go 应用及独立管理前端；原参考副本位于本地私有目录 `references/Resin/`（`.gitignore` 忽略，不属于仓库）。Resin 的转发、租约、平台视图、探测队列和存储已被继承。本节早期写作"新增质量检测和容量改造仍待实施"，现已落地：质量检测子系统在 `internal/intel` 与独立 `intel.db`，容量测试为 `make capacity`，实测结果记录在 [PERFORMANCE.md](PERFORMANCE.md)。
+当前主项目已包含迁出的 Go 应用及独立管理前端；转发、租约、平台视图、探测队列和存储是核心。本节早期写作"新增质量检测和容量改造仍待实施"，现已落地：质量检测子系统在 `internal/intel` 与独立 `intel.db`，容量测试为 `make capacity`，实测结果记录在 [PERFORMANCE.md](PERFORMANCE.md)。
 
 2026-09-05 已运行以下七个包的现有普通测试并通过：
 
@@ -38,7 +38,7 @@ go test ./internal/proxy ./internal/routing ./internal/probe \
   ./internal/topology ./internal/platform ./internal/requestlog ./internal/state
 ```
 
-执行位置为 `references/Resin/`，使用 Go 1.27.0；参考模块声明 Go 1.25.5、sing-box v1.12.21。当时的验证未覆盖真实供应节点、全构建标签、规模和长时间稳定性；race 此后已纳入 `make verify` 并在 CI 中运行。正式构建版本由 M0 验证后锁定，不以运行环境版本自动升级依赖。
+使用 Go 1.27.0。当时的验证未覆盖真实供应节点、全构建标签、规模和长时间稳定性；race 此后已纳入 `make verify` 并在 CI 中运行。正式构建版本由 M0 验证后锁定，不以运行环境版本自动升级依赖。
 
 继承的是协议实现、并发语义和现有行为测试。节点库存持久化、有界 Outbound 生命周期、出口组索引和增量视图需要局部改造；不能原样迁移全量常驻运行态后宣称达到新容量目标。
 
@@ -52,7 +52,7 @@ go test ./internal/proxy ./internal/routing ./internal/probe \
 | `requestlog`, `metrics` | 保留可观测能力 | 脱敏、丢弃指标和本地留存策略 |
 | `api`, `service`, WebUI | 渐进扩展 | 个人管理员鉴权；先最小运维页面，后完整页面 |
 
-源码依据来自上游 Resin 仓库（基线提交见[上游基线](UPSTREAM_BASELINE.md)）：`internal/platform/platform.go`（平台筛选）、`internal/routing/router.go`（路由）、`internal/probe/manager.go`（探测）、`internal/proxy/counting_conn.go`（流量统计）、`internal/requestlog/service.go`（日志写入）。
+相关源码：`internal/platform/platform.go`（平台筛选）、`internal/routing/router.go`（路由）、`internal/probe/manager.go`（探测）、`internal/proxy/counting_conn.go`（流量统计）、`internal/requestlog/service.go`（日志写入）。
 
 ## 3. 架构约束
 
@@ -103,7 +103,7 @@ flowchart LR
 
 默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。数据归属是分库的：**state.db** 保存配置（`system_config`、`platforms`、`subscriptions`（含订阅源文本 `content`，是节点库存的重建来源）、`account_header_rules`、`endpoints`、`intel_provider_settings`）与变更审计（`audit_log`）；**cache.db** 保存由订阅重建出来的节点库存（`nodes_static`、`nodes_dynamic`、`node_latency`、`subscription_nodes`）与租约（`leases`），即"可重建"的运行快照；检测证据在独立的 **intel.db**（`egress_history`、`evidence`、`ip_assessment`、`node_egress`、`node_checks` 与任务/provider 状态）；`metrics.db` 与滚动库 `request_logs-<unix_ms>.db` 位于日志目录（`PRISM_LOG_DIR`），既不在 state 目录、也不在备份清单允许范围内。
 
-**"可重建"已核实成立**：节点进入池的唯一路径是 `GlobalNodePool.AddNodeFromSub`，其调用者全部在 `internal/topology/subscription_scheduler.go`（订阅刷新），没有手工加节点的接口；节点来源文本存在 state.db 的 `subscriptions.content` 里。因此删除 cache.db 只会丢掉可从订阅重新拉取的节点库存、延迟记录与租约——`prism import-resin` 也把 state.db（含 `subscriptions`）与 cache.db 一起搬，不构成例外。运维文档可以据此承诺"cache.db 可删"。
+**"可重建"已核实成立**：节点进入池的唯一路径是 `GlobalNodePool.AddNodeFromSub`，其调用者全部在 `internal/topology/subscription_scheduler.go`（订阅刷新），没有手工加节点的接口；节点来源文本存在 state.db 的 `subscriptions.content` 里。因此删除 cache.db 只会丢掉可从订阅重新拉取的节点库存、延迟记录与租约——`prism restore` 也把 state.db（含 `subscriptions`）与 cache.db 一起恢复，不构成例外。运维文档可以据此承诺"cache.db 可删"。
 
 Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与 `PRISM_PORT`（默认 `2260`）上的同一个 listener 同时提供 `/ui/` 管理面板、`/api/v1/` 接口、HTTP/SOCKS5 正向代理、`/<token>/...` 反向代理。可选的管理面通过 `PRISM_ADMIN_LISTEN` 单独开放，默认关闭且必须是 loopback。`PRISM_ADMIN_TOKEN` / `PRISM_PROXY_TOKEN` 从 `.env` 读取，不打包进前端。前端开发服务器（`npm run dev`）另有自己的端口与 `PRISM_API_TARGET` 反代目标，那只用于本地开发，不是产品部署形态。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
 
@@ -145,7 +145,7 @@ Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与
 以下是当前代码的真实结构（`internal/` 下 27 个目录，外加 `cmd/prism/`）：
 
 ```text
-cmd/prism/                 # 服务入口与 standalone 子命令（run / backup / restore / import-resin / …）
+cmd/prism/                 # 服务入口与 standalone 子命令（run / backup / restore / …）
 internal/config/           # 环境变量配置加载与运行期配置模型
 internal/model/            # 跨持久化层共享的领域结构体
 internal/state/            # 持久化层：SQLite 仓储、StateEngine、脏集刷盘、一致性修复与迁移
@@ -175,7 +175,7 @@ internal/testutil/         # 测试辅助（内存统计、空出口等）
 internal/e2e/              # 端到端协议场景（仅测试文件与 testdata）
 ```
 
-本节的早期版本按"目标结构"列出了 `internal/app`、`internal/inspection`、`internal/policy`、`internal/identity`、`internal/access`、`internal/targetpolicy`、`internal/audit`、`api/openapi`、`tests/` 与 `references/Resin`。这些路径在代码中**都不存在**，此处已按实际结构替换。职责的实际落点：请求身份在 `internal/proxy`，平台与目标准入、质量规则编译在 `internal/platform`，地址策略在 `internal/addrpolicy`，变更审计在 `internal/api/audit.go` 与 `internal/state`（`audit_log` 表），装配与启停在 `cmd/prism/app_runtime.go`；`inspection` 已按 WP08 §8 取消，职责在 `internal/intel`。`references/` 与 `docs/design/` 是 `.gitignore` 忽略的本地私有目录，不属于仓库结构。
+本节的早期版本按"目标结构"列出了 `internal/app`、`internal/inspection`、`internal/policy`、`internal/identity`、`internal/access`、`internal/targetpolicy`、`internal/audit`、`api/openapi`、`tests/` 与 `references/`。这些路径在代码中**都不存在**，此处已按实际结构替换。职责的实际落点：请求身份在 `internal/proxy`，平台与目标准入、质量规则编译在 `internal/platform`，地址策略在 `internal/addrpolicy`，变更审计在 `internal/api/audit.go` 与 `internal/state`（`audit_log` 表），装配与启停在 `cmd/prism/app_runtime.go`；`inspection` 已按 WP08 §8 取消，职责在 `internal/intel`。`references/` 与 `docs/design/` 是 `.gitignore` 忽略的本地私有目录，不属于仓库结构。
 
 ## 5. 请求上下文与关键流程
 
@@ -215,7 +215,7 @@ internal/e2e/              # 端到端协议场景（仅测试文件与 testdata
 
 | 决策 | 取舍与原因 |
 |---|---|
-| ADR-01 保留 Resin 核心 | 避免重写已有协议边界与并发语义，新增需求通过接口扩展 |
+| ADR-01 保留代理核心 | 避免重写已有协议边界与并发语义，新增需求通过接口扩展 |
 | ADR-02 内置质量模块 | 与节点生命周期直接协作，独立预算和故障隔离，消除外部脚本同步 |
 | ADR-03 证据按 IP、健康按节点与出口观测 | 共享信誉查询成本，保留不同线路的健康差异 |
 | ADR-04 硬准入后再调度 | 信誉不能被低延迟评分抵消，P2C 只比较已合格候选 |

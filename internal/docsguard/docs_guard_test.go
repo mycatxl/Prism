@@ -54,7 +54,7 @@ func goDirectiveVersion(t *testing.T, root string) string {
 // The rule is narrow on purpose: only lines that *restate the declared
 // baseline* are checked, meaning a line that mentions both `go.mod` and a
 // version. A historical sentence such as "the upstream module declared go
-// 1.25.5" is a fact about Resin, not a claim about this repository, and must
+// 1.25.5" is a historical fact, not a claim about this repository, and must
 // stay writable.
 func TestGoVersionBaselineIsConsistent(t *testing.T) {
 	root := repoRoot(t)
@@ -68,10 +68,9 @@ func TestGoVersionBaselineIsConsistent(t *testing.T) {
 		"README.md",
 		"README.zh-CN.md",
 		"docs/deployment.md",
-		"docs/UPSTREAM_BASELINE.md",
 	}
 	// A version literal inside one of these markers is a historical quotation.
-	historicalMarkers := []string{"原 Resin", "upstream Resin", "Resin module"}
+	historicalMarkers := []string{"upstream module"}
 
 	declaresGoMod := regexp.MustCompile(`go\.mod`)
 	versionLiteral := regexp.MustCompile(`(?i)\bgo(?:lang)?[ \t:]+(\d+\.\d+(?:\.\d+)?)\b`)
@@ -258,7 +257,7 @@ func mentionsPanel(line string) bool {
 
 // TestShippedFeaturesAreNotDocumentedAsMissing is DOC-03's gate, the one with
 // the highest value in the audit: two shipped capabilities (intel.db, `prism
-// import-resin`) were described as "not implemented yet" in the operations
+// restore`) were described as "not implemented yet" in the operations
 // documentation.
 //
 // The rule is deliberately conservative. A document may legitimately list what
@@ -272,7 +271,7 @@ func TestShippedFeaturesAreNotDocumentedAsMissing(t *testing.T) {
 
 	// The subcommands the binary really dispatches (cmd/prism/subcommands.go
 	// runCLI). Adding one here without implementing it would be a different bug.
-	shippedSubcommands := []string{"run", "init", "version", "check-config", "backup", "restore", "import-resin"}
+	shippedSubcommands := []string{"run", "init", "version", "check-config", "backup", "restore"}
 
 	// The database files the service really opens. Read from the production
 	// sources so a rename cannot leave this list stale.
@@ -298,7 +297,6 @@ func TestShippedFeaturesAreNotDocumentedAsMissing(t *testing.T) {
 	// current version. The release notes are an immutable record, and the two
 	// migration documents describe decisions taken when the port happened.
 	excludedFiles := map[string]bool{
-		"docs/release-notes/v0.1.0-rc2.md": true,
 	}
 	excludedLineMarkers := []string{
 		// A line that explicitly says the capability *is* implemented.

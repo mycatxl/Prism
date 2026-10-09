@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// qualityPolicyLegacyJSON is the pre-Prism (Resin) on-disk encoding, including
+// qualityPolicyLegacyJSON is the legacy on-disk encoding, including
 // keys that were dropped in the Prism rewrite.
 const qualityPolicyLegacyJSON = `{"min_score":80,"max_assessment_age_seconds":3600,` +
 	`"max_egress_age_seconds":1800,"profile_id":"x","pending_action":"allow","conflict_action":"exclude"}`

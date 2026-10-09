@@ -2,13 +2,9 @@
 
 Prism 按 GPL-3.0-or-later 发行，完整条款见 `LICENSE`。派生源码保留其原始许可与版权声明。
 
-## Resin 基线
+## Resin
 
-- 上游仓库：Resinat/Resin。
-- 固定提交：`9b8ef8e5cf83071fbac4de29bd7187268b9cff7b`，2026-08-01。
-- 原始许可：MIT，版权归 Resinat and contributors；全文保存在 `LICENSES/Resin-MIT.txt`。
-- 继承范围：代理、调度、节点与订阅、探测、状态、指标、API，以及相关测试和 SQLite 迁移。
-- 上游源码的对照副本不在本仓库内（`references/` 被 `.gitignore` 排除）：Prism 的应用源码位于 `cmd/prism/` 和 `internal/`，需要逐字比对时按上表的固定提交自行检出上游。
+Portions of the proxy, scheduling, node, subscription, probe and storage code are derived from [Resinat/Resin](https://github.com/Resinat/Resin) (MIT, © Resinat and contributors); the license text is in `LICENSES/Resin-MIT.txt`.
 
 ## sing-box
 

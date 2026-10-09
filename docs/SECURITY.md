@@ -258,7 +258,7 @@ Three deliberate properties:
 
 The switch still applies to local dial paths only: a private target reached
 through a remote node is that node's network, not a local SSRF surface, and
-node-routed requests keep the upstream Resin behaviour. A request that hits the
+node-routed requests are not checked. A request that hits the
 bypass rule still does not create a sticky lease.
 
 Verified by:
@@ -274,7 +274,7 @@ Verified by:
   `TestForwardProxy_DirectDenyPrivateFailClosed`,
   `TestForwardProxyConnect_DirectDenyPrivateBlocksLocalDial` and
   `TestSocks5Inbound_DirectDenyPrivateBlocksLocalDial` (same file): one per
-  entrypoint, each with the switch off as the Resin-behaviour control.
+  entrypoint, each with the switch off as the control.
 - `TestDirectDialGuard_AddressSet` (address classes, IPv6 and IPv4-mapped
   forms), `TestDirectDialGuard_CheckTarget` (a resolution failure is refused) and
   `TestDirectDialGuard_DirectTransportRefusesPrivateAddress` (the dial-time hook
@@ -540,9 +540,8 @@ loopback unless the network path is trusted.
 
 `PRISM_PROXY_AUTH_FAIL_LIMIT` defaults to `30` (set `0` to disable failure limiting)
 on the proxy entrypoints (407/403 responses and the SOCKS5 username/password
-rejection); only the management API is protected by default (§1.2). This keeps
-the upstream Resin behaviour (`cmd/prism/app_runtime.go`,
-`internal/proxy/auth_guard.go`, `cmd/prism/proxy_auth_guard.go`). Set a positive
+rejection); only the management API is protected by default (§1.2). See `cmd/prism/app_runtime.go`,
+`internal/proxy/auth_guard.go` and `cmd/prism/proxy_auth_guard.go`. Set a positive
 value to enable the same limiter for proxy authentication failures; §1.2 lists
 the entry points it then covers.
 

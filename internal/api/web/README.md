@@ -50,8 +50,6 @@ npm start
 
 统一后端配置在项目根目录 `.env`，示例见 [根目录环境示例](../.env.example)。首次部署运行 `./bin/prism init` 生成两个独立随机令牌；已有配置继续保留。修改环境后重启后端即可，无需修改前端源码。
 
-上游 Resin 的拼写仍然生效：当 `PRISM_<X>` 查不到时，后端会回退到 `RESIN_<X>`（例如 `RESIN_ADMIN_TOKEN`、`RESIN_PROXY_TOKEN`、`RESIN_PORT`），并对每个变量各记录一次弃用警告 `config: RESIN_<X> is deprecated, use PRISM_<X>`（`internal/config/env.go` 的 `lookupEnv` 与 `warnLegacyEnv`）。这是为从 Resin 迁移的部署保留的兼容层，**新部署一律使用 `PRISM_*`**。`PRISM_QUALITY_*` 没有回退路径，因为这些变量只存在于 Prism。
-
 面板登录时输入管理员 token；面板反代只传递浏览器已提供的 Authorization，**不会将环境中的管理员 token 自动注入匿名请求，也不提供查询 token 的接口**。浏览器 token 仅保留当前 tab 会话。关闭 tab 后重新登录；平台接入页的代理 token 也按会话保存。
 
 所有 `VITE_*` 都是公开的构建配置，绝不用于 token。真实 `.env`、数据目录和本地覆盖已加入忽略规则；开源仓库只提交 example。Prism 启动时拒绝缺失或为空的管理员 / 代理令牌。
@@ -66,6 +64,6 @@ npm run build
 
 `test:config` 验证默认端口、新旧环境变量覆盖、危险 target 拒绝、深链接、静态文件边界、分块请求体限制，以及凭证不会被自动注入。浏览器回归位于 scripts/，默认启动根目录 `bin/prism`（无子命令；`standalone` 是 WP03 之前的旧入口，已不存在），也可用 `PRISM_TEST_BACKEND` 指定二进制，旧 `PRISMX_TEST_BACKEND` 继续兼容。
 
-本次已接入的是 Resin 现有节点、订阅、平台、探测、接入点、日志和设置 API。新增信誉评分、住宅类型、同出口优先级与 rotate 服务仍属后端设计，当前前端不伪造这些结果。
+本次已接入的是现有节点、订阅、平台、探测、接入点、日志和设置 API。新增信誉评分、住宅类型、同出口优先级与 rotate 服务仍属后端设计，当前前端不伪造这些结果。
 
 监听改为局域网/公网必须显式设置 host；远程管理建议在可信 HTTPS/隧道后运行并保持后端鉴权开启。
