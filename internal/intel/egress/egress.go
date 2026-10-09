@@ -80,7 +80,7 @@ func ParseTrace(body []byte) (Trace, error) {
 type Probe struct {
 	Fetcher Fetcher
 	Store   *store.Store
-	// ProbeEgressSync keeps Resin's cache.db egress_ip semantics (§3.2 step 1).
+	// ProbeEgressSync keeps the cache.db egress_ip semantics (§3.2 step 1).
 	// It is optional: when nil the probe only writes intel.db.
 	ProbeEgressSync func(ctx context.Context, hash node.Hash) error
 	// URLs override the default trace endpoints.
@@ -193,7 +193,7 @@ func (p *Probe) Run(ctx context.Context, hash node.Hash) (Result, error) {
 		return Result{}, err
 	}
 
-	// Keep Resin's egress_ip (cache.db) semantics unchanged.
+	// Keep the egress_ip (cache.db) semantics unchanged.
 	if p.ProbeEgressSync != nil {
 		if err := p.ProbeEgressSync(ctx, hash); err != nil {
 			// A cache.db failure must not fail the intel.db write.

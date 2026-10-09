@@ -253,14 +253,6 @@ Copy the whole backup directory (databases plus `manifest.json`) and the `.env`
 to the new host; both are needed, and `manifest.json` must travel with the
 databases or the restore will refuse to run.
 
-To import an existing Resin installation instead of a Prism backup, use
-`prism import-resin`: `--from-state DIR` and `--from-cache DIR` are required, and
-`--from-log DIR` is optional (the upstream request-log databases). It copies the
-databases with `VACUUM INTO`, applies the Prism migrations and prints the imported
-row counts. It refuses to run while a Prism instance is active; with `--force`
-existing databases are replaced, after being renamed to `*.pre-import-<timestamp>`.
-See [MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md).
-
 ## Troubleshooting
 
 | Message | Cause and fix |

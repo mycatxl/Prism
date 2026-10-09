@@ -448,14 +448,13 @@ protocols that are not built at all.
 and the tailscale endpoint remain unsupported by decision D-1; §7 lists the exact reason
 strings.
 
-### 10.10 Not ported from Resin / still absent
+### 10.10 Still absent
 
 - The public-source collector **is** ported now: `internal/publicsource` (10 test files) and
   `cmd/public-source-sync` (2) landed afterwards, so the earlier "no Prism equivalent" note no
   longer applies. Two `internal/config` cases (`TestLoadEnvConfig_PublicSourceOverrides`,
   `TestLoadEnvConfig_PublicSourceRequiresSourcesWhenEnabled`) stay unported on purpose: Prism keeps
-  `PUBLIC_SOURCE_*` in the companion binary's own config instead of `internal/config`
-  (`docs/MIGRATION_FROM_RESIN.md`).
+  `PUBLIC_SOURCE_*` in the companion binary's own config instead of `internal/config`.
 - The WireGuard test cases of the upstream protocol table were deliberately replaced by the
   endpoint forms of §5 (sing-box 1.14 removed the WireGuard outbound).
 - The `internal/inspection` test files (`ippure`, `manager`, `provider`, `tor_registry`) and
@@ -468,7 +467,6 @@ strings.
   `internal/api/quality_status_test.go`.
   An earlier revision explained the gap with "no type in this tree implements `inspection.Store`";
   that described a tree that still contained the package and is now obsolete.
-  `docs/MIGRATION_FROM_RESIN.md` carried the same stale paragraph and is corrected too.
 
 ### 10.11 Upstream sing data race: `CachedConn` (NOT fixed upstream, and reachable from our
 outbound)

@@ -162,8 +162,7 @@ func TestForwardProxy_AuthRequired(t *testing.T) {
 	if w.Header().Get("X-Prism-Error") != "AUTH_REQUIRED" {
 		t.Fatalf("expected AUTH_REQUIRED, got %q", w.Header().Get("X-Prism-Error"))
 	}
-	// PRISM-DEVIATION: X4 the Proxy-Authenticate realm is "Prism" instead of
-	// upstream's "Resin" (documented in the deviation list).
+	// The Proxy-Authenticate realm is "Prism".
 	if w.Header().Get("Proxy-Authenticate") != `Basic realm="Prism"` {
 		t.Fatalf("expected Proxy-Authenticate header, got %q", w.Header().Get("Proxy-Authenticate"))
 	}

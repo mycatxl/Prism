@@ -98,7 +98,7 @@ sudo systemctl restart prism    # 重启
 | `PRISM_QUALITY_ENABLED`、`PRISM_QUALITY_API_KEY`、`PRISM_ABUSEIPDB_API_KEY` | *（关闭 / 未设置）* | 可选的 IP 质量数据源 |
 | `PRISM_TRUSTED_PROXIES` | *（空）* | 允许其 `X-Forwarded-For` 作为客户端 IP 的代理 CIDR 列表 |
 | `PRISM_PROXY_AUTH_FAIL_LIMIT` | `30` | 每个 IP 每分钟允许的代理鉴权失败次数。覆盖正向 HTTP 代理与 CONNECT（`Proxy-Authorization`）、反代路径令牌以及 SOCKS5 用户名/密码校验；`0` 表示不在代理入口限流。`/api/*` 有独立限流 |
-| `PRISM_DIRECT_DENY_PRIVATE` | `true` | 在所有本机直连路径（反代 bypass、正向 HTTP、CONNECT、SOCKS5）上拒绝回环、私网、链路本地、CGNAT、保留地址与云元数据地址。默认开启；设为 `false` 时本机直连路径不做地址限制（与 Resin 一致） |
+| `PRISM_DIRECT_DENY_PRIVATE` | `true` | 在所有本机直连路径（反代 bypass、正向 HTTP、CONNECT、SOCKS5）上拒绝回环、私网、链路本地、CGNAT、保留地址与云元数据地址。默认开启；设为 `false` 时本机直连路径不做地址限制 |
 
 ### 使用示例
 
@@ -337,11 +337,11 @@ Prism/
 仅在可信内网中才考虑关闭。
 ### 致谢
 
-Prism 从 [Resin](https://github.com/Resinat/Resin) 起步（提交 `9b8ef8e`，MIT 许可，版权归 Resinat and contributors）。代理池、粘性租约、调度、订阅与探测的设计都来自 Resin 打下的基础，衷心感谢 Resin 的作者们。原始 MIT 许可声明保存在 [`LICENSES/Resin-MIT.txt`](LICENSES/Resin-MIT.txt)，完整来源说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。同时感谢 [sing-box](https://github.com/SagerNet/sing-box) 提供全部出站能力，也感谢 Claude 与维护者一起结对完成了本仓库的大部分开发。
+感谢 [sing-box](https://github.com/SagerNet/sing-box) 提供全部出站能力，也感谢 Claude 与维护者一起结对完成了本仓库的大部分开发。
 
 ### 许可证
 
-GPL-3.0-or-later，详见 `LICENSE` 文件。源自 Resin 的代码保留其 MIT 声明（`LICENSES/Resin-MIT.txt`）。
+GPL-3.0-or-later，详见 `LICENSE` 文件。第三方声明见 `THIRD_PARTY_NOTICES.md`。
 
 ### 贡献
 

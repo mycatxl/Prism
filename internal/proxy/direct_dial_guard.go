@@ -20,7 +20,7 @@ import (
 //
 // It implements PRISM_DIRECT_DENY_PRIVATE, which is opt-in: the zero value is
 // disabled and every method is a no-op, so a build or a configuration that does
-// not enable the switch keeps the upstream Resin behaviour (local direct
+// not enable the switch keeps the default behaviour (local direct
 // targets are dialled with no address policy).
 //
 // When it is enabled the policy is applied twice, because a single check is not
@@ -115,7 +115,7 @@ func (g DirectDialGuard) CheckTarget(ctx context.Context, host string) error {
 }
 
 // dialer returns the dialer every local direct dial must use. With the policy
-// disabled it is a plain net.Dialer, which keeps Resin behaviour.
+// disabled it is a plain net.Dialer, which keeps the default behaviour.
 func (g DirectDialGuard) dialer() *net.Dialer {
 	dialer := &net.Dialer{}
 	if !g.enabled {

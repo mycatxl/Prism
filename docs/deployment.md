@@ -358,11 +358,6 @@ docker compose up -d
 ```
 
 See [backup-restore.md](backup-restore.md) for retention and restore details.
-Migrating from Resin uses the same pattern: mount the upstream data directories
-read-only and import them in a one-off container —
-`docker compose run --rm prism /usr/local/bin/prism import-resin --from-state
-/var/lib/resin --from-cache /var/cache/resin`
-([MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md) has the complete example).
 
 ### Verified in a real Docker daemon (2026-09-27)
 
@@ -619,7 +614,7 @@ curl "https://prism.example.com/<token>/Default/http/example.com:80/"
 
 Query the platform list (`GET /api/v1/platforms`) for the name to use; `Default`
 is the built-in one. Clients normalise the path too — plain `curl` strips the dot
-segment before the request leaves the machine, so the Resin-compatible form only
+segment before the request leaves the machine, so the `Platform.Account:Token` form only
 reaches Prism verbatim when the client sends the raw target
 (`curl --path-as-is`). `scripts/smoke.sh` does exactly that, with a comment
 recording why.
@@ -787,9 +782,3 @@ place; remove it with `sudo userdel prism` if it is no longer needed.
   `docs/API.md` or `docs/openapi.yaml`; this version ships the former, and
   `docs/API.md` covers every endpoint registered in `internal/api/server.go`.
 
-`prism import-resin` is **not** on this list: it is implemented and imports an
-upstream Resin `state.db`/`cache.db` (plus the optional request-log databases)
-with
-`prism import-resin --from-state DIR --from-cache DIR [--from-log DIR] [--force]`;
-[MIGRATION_FROM_RESIN.md](MIGRATION_FROM_RESIN.md) is the authoritative document
-for it — usage, the deviation list and a container example.

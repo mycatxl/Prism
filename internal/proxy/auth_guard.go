@@ -12,7 +12,7 @@ import (
 // and can temporarily block an abusive client address.
 //
 // A nil guard disables proxy-entry failure limiting, which keeps the upstream
-// Resin behaviour: 407/403 responses are never rate limited unless the operator
+// Default behaviour: 407/403 responses are never rate limited unless the operator
 // sets PRISM_PROXY_AUTH_FAIL_LIMIT to a positive value.
 type AuthFailureGuard interface {
 	// Blocked reports whether the client is currently blocked and, when it is,

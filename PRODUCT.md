@@ -20,7 +20,7 @@ tags:
 **The operator** — one person, running Prism on their own machine or VPS. They import
 nodes from subscriptions and public sources, they want to know what each node's real
 egress is and how clean it is, and they consume the result through their own client
-(Resin-compatible HTTP / SOCKS5 / reverse proxy, or a subscription). They are looking
+(HTTP / SOCKS5 / reverse proxy, or a subscription). They are looking
 at the console the way a technician looks at a bench: which address a request came out
 of, how fresh the reading is, what failed and why.
 

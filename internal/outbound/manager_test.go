@@ -432,7 +432,7 @@ func TestFetchWithUserAgent_UsesCustomHeader(t *testing.T) {
 	mgr := NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
 	mgr.EnsureNodeOutbound(entry.Hash)
 
-	const customUA = "Resin-Test-UA/42"
+	const customUA = "Prism-Test-UA/42"
 	_, _, err := mgr.FetchWithUserAgent(context.Background(), entry.Hash, srv.URL, customUA)
 	if err != nil {
 		t.Fatalf("unexpected fetch error: %v", err)

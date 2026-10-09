@@ -343,7 +343,7 @@ func TestLoadEnvConfig_InvalidAuthVersion(t *testing.T) {
 
 // PRISM-DEVIATION: X2 an empty token still disables that authentication scope,
 // but only with the explicit opt-in switch and a loopback listen address.
-// Upstream Resin accepted the empty tokens on their own.
+// Earlier versions accepted the empty tokens on their own.
 func TestLoadEnvConfig_EmptyTokensAllowedWhenDefined(t *testing.T) {
 	t.Setenv("PRISM_AUTH_VERSION", "V1")
 	t.Setenv("PRISM_ADMIN_TOKEN", "")
@@ -873,8 +873,8 @@ func TestQualityVariablesHaveNoResinFallback(t *testing.T) {
 	)
 	t.Setenv("PRISM_ADMIN_TOKEN", testAdminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", testProxyToken)
-	t.Setenv("RESIN_QUALITY_API_KEY", "resin-quality-key")
-	t.Setenv("RESIN_ABUSEIPDB_API_KEY", "resin-abuse-key")
+	t.Setenv("RESIN_QUALITY_API_KEY", "prism-quality-key")
+	t.Setenv("RESIN_ABUSEIPDB_API_KEY", "prism-abuse-key")
 	t.Setenv("RESIN_QUALITY_ENABLED", "false")
 
 	cfg, err := LoadEnvConfig()
@@ -907,7 +907,7 @@ func TestEnforceStrongTokensOffRestoresUpstreamBehaviour(t *testing.T) {
 	}
 
 	// PRISM-DEVIATION: X1 — with the switch off, Prism must accept weak tokens
-	// exactly like upstream Resin and only report them as weak.
+	// as before and only report them as weak.
 	t.Setenv("PRISM_ENFORCE_STRONG_TOKENS", "false")
 	cfg, err := LoadEnvConfig()
 	if err != nil {

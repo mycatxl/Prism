@@ -209,7 +209,7 @@ func TestDirectDialGuard_DialTimeControlRefusesReboundAddress(t *testing.T) {
 	// disabled guard must not.
 	disabled := NewDirectDialGuard(false).dialer()
 	if disabled.ControlContext != nil {
-		t.Error("a disabled guard must keep the plain Resin dialer")
+		t.Error("a disabled guard must keep the plain dialer")
 	}
 }
 
@@ -244,7 +244,7 @@ func TestDirectDialGuard_DirectTransportRefusesPrivateAddress(t *testing.T) {
 }
 
 // TestForwardProxy_DirectDenyPrivateBlocksLocalDial covers the forward HTTP
-// entrypoint: the guard is enforced there and the default stays Resin.
+// entrypoint: the guard is enforced there and the default stays off.
 func TestForwardProxy_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 	var upstreamHits atomic.Int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +261,7 @@ func TestForwardProxy_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 		wantError string
 	}{
 		{name: "enabled refuses loopback", deny: true, wantCode: http.StatusForbidden, wantError: "DIRECT_TARGET_DENIED"},
-		{name: "disabled keeps Resin behaviour", deny: false, wantCode: http.StatusOK},
+		{name: "disabled keeps the default behaviour", deny: false, wantCode: http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fp := NewForwardProxy(ForwardProxyConfig{
@@ -353,7 +353,7 @@ func TestForwardProxyConnect_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 	}
 }
 
-// TestForwardProxyConnect_DirectDenyPrivateControlsDisabled keeps the Resin
+// TestForwardProxyConnect_DirectDenyPrivateControlsDisabled keeps the default
 // behaviour: with the switch off the tunnel is dialled, not refused.
 func TestForwardProxyConnect_DirectDenyPrivateControlsDisabled(t *testing.T) {
 	fp := NewForwardProxy(ForwardProxyConfig{
@@ -410,7 +410,7 @@ func TestSocks5Inbound_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 	<-done
 }
 
-// TestSocks5Inbound_DirectDenyPrivateDisabledDialsTarget keeps the Resin
+// TestSocks5Inbound_DirectDenyPrivateDisabledDialsTarget keeps the default
 // behaviour on the SOCKS5 local dial path.
 func TestSocks5Inbound_DirectDenyPrivateDisabledDialsTarget(t *testing.T) {
 	targetLn, err := net.Listen("tcp", "127.0.0.1:0")

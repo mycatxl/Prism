@@ -58,8 +58,6 @@ func runCLI(args []string) error {
 		return runBackupCommand(rest, os.Stdout, os.Stderr)
 	case "restore":
 		return runRestoreCommand(rest, os.Stdout, os.Stderr)
-	case "import-resin":
-		return runImportResinCommand(rest, os.Stdout, os.Stderr)
 	case "help", "-h", "--help":
 		printUsage(os.Stdout)
 		return nil
@@ -81,8 +79,6 @@ Usage:
   prism backup --out DIR          Online backup of state.db, cache.db and intel.db
   prism restore --from DIR [--force]
                                   Verify and restore a backup created by "prism backup"
-  prism import-resin --from-state DIR --from-cache DIR [--from-log DIR] [--force]
-                                  Import an upstream Resin installation (state.db, cache.db, request logs)
   prism help                      Print this help
 
 Exit codes:

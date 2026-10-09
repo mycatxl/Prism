@@ -101,7 +101,7 @@ func TestScheduler_UpdateSubscription_DownloadViaHTTPServer(t *testing.T) {
 	const rawOutbound = `{"type":"shadowsocks","tag":"http-node","server":"1.1.1.1","server_port":443,"method":"aes-256-gcm","password":"secret"}`
 	body := makeSubscriptionJSON(rawOutbound)
 
-	subUserAgent := "resin-scheduler-e2e"
+	subUserAgent := "prism-scheduler-e2e"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if ua := r.Header.Get("User-Agent"); ua != subUserAgent {
 			t.Fatalf("user-agent: got %q, want %q", ua, subUserAgent)
@@ -1009,7 +1009,7 @@ func TestScheduler_StopCancelsInFlightForceRefreshDownload(t *testing.T) {
 	pool := newTestPool(subMgr)
 	downloader := netutil.NewDirectDownloader(
 		func() time.Duration { return 30 * time.Second },
-		func() string { return "resin-scheduler-stop-test" },
+		func() string { return "prism-scheduler-stop-test" },
 	)
 	sched := NewSubscriptionScheduler(SchedulerConfig{
 		SubManager: subMgr,

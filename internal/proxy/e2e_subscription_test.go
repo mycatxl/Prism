@@ -44,7 +44,7 @@ func newProxyE2EEnvFromSubscriptionURL(t *testing.T, subURL string) *proxyE2EEnv
 
 	downloader := netutil.NewDirectDownloader(
 		func() time.Duration { return 2 * time.Second },
-		func() string { return "resin-proxy-e2e" },
+		func() string { return "prism-proxy-e2e" },
 	)
 	scheduler := topology.NewSubscriptionScheduler(topology.SchedulerConfig{
 		SubManager: subMgr,
@@ -108,8 +108,8 @@ func TestForwardProxy_E2ELocalHTTPProxy_FromHTTPSubscription(t *testing.T) {
 		if r.URL.Path != "/sub" {
 			t.Fatalf("subscription path: got %q, want %q", r.URL.Path, "/sub")
 		}
-		if ua := r.Header.Get("User-Agent"); ua != "resin-proxy-e2e" {
-			t.Fatalf("subscription user-agent: got %q, want %q", ua, "resin-proxy-e2e")
+		if ua := r.Header.Get("User-Agent"); ua != "prism-proxy-e2e" {
+			t.Fatalf("subscription user-agent: got %q, want %q", ua, "prism-proxy-e2e")
 		}
 		_, _ = w.Write([]byte(subBody))
 	}))

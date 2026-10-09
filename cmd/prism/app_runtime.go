@@ -596,7 +596,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	}
 
 	// WP04 §4.6: proxy-entry (407/403) failure limiting is opt-in and disabled
-	// by default (PRISM_PROXY_AUTH_FAIL_LIMIT=0 keeps Resin behaviour).
+	// by default (PRISM_PROXY_AUTH_FAIL_LIMIT=0 keeps the default behaviour).
 	var proxyAuthGuard proxy.AuthFailureGuard
 	if a.envCfg.ProxyAuthFailLimit > 0 {
 		proxyAuthGuard = api.NewAuthFailureLimiter(

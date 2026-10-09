@@ -188,7 +188,7 @@ func TestTokenActionInheritLease_InvalidArguments(t *testing.T) {
 
 // TestTokenActionHandler_TokenComparison covers G-07: the constant-time compare
 // accepts the configured token, rejects a wrong one, rejects a request without a
-// token segment, and keeps the Resin "empty token disables the compare"
+// token segment, and keeps the "empty token disables the compare"
 // behaviour. No response may echo the token.
 func TestTokenActionHandler_TokenComparison(t *testing.T) {
 	const proxyToken = "proxy-token-under-test"

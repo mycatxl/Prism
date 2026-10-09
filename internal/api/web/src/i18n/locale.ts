@@ -3,7 +3,7 @@ import { readMigratedValue, removeStoredValues } from "../lib/storage";
 export type AppLocale = "zh-CN" | "en-US";
 
 export const STORAGE_KEY = "prism.locale";
-const LEGACY_STORAGE_KEYS = ["resin.webui.locale"];
+const LEGACY_STORAGE_KEYS: string[] = [];
 export const DEFAULT_LOCALE: AppLocale = "zh-CN";
 export const SUPPORTED_LOCALES: readonly AppLocale[] = ["zh-CN", "en-US"];
 
