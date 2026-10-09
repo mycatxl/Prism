@@ -53,3 +53,73 @@ jobs:
       # loopback interface, so it adds about two seconds and no network access.
       - name: Smoke test (end-to-end against the built binary)
         run: make smoke
+
+      # Browser regression: boots bin/prism in an isolated environment and drives
+      # Chromium against the panel it serves (internal/api/web/scripts/check-ui-live.mjs).
+      - name: Install Playwright Chromium
+        run: npx --prefix internal/api/web playwright install --with-deps chromium
+
+      - name: UI regression (Playwright)
+        run: make test-ui
+
+  container:
+    name: Container
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Build image
+        run: docker build -t prism:ci --build-arg VERSION=ci --build-arg GIT_COMMIT="${GITHUB_SHA}" .
+
+      # Runs the image the way docker-compose.yml.example does (entrypoint,
+      # su-exec drop to the prism user, named volumes) and checks the public
+      # surface from outside the container.
+      - name: Run container and check health, UI and API auth
+        run: |
+          set -euo pipefail
+          ADMIN_TOKEN="$(openssl rand -hex 24)"
+          PROXY_TOKEN="$(openssl rand -hex 24)"
+          echo "::add-mask::$ADMIN_TOKEN"
+          echo "::add-mask::$PROXY_TOKEN"
+          docker run -d --name prism-ci -p 127.0.0.1:2260:2260 \
+            -e PRISM_ADMIN_TOKEN="$ADMIN_TOKEN" -e PRISM_PROXY_TOKEN="$PROXY_TOKEN" \
+            -e PRISM_LISTEN_ADDRESS=0.0.0.0 -e PRISM_PORT=2260 \
+            -v prism_cache:/var/cache/prism -v prism_state:/var/lib/prism -v prism_log:/var/log/prism \
+            prism:ci
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:2260/healthz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          fail=0
+          expect() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (expected $2, got $3)"; fail=1; fi; }
+          expect "healthz" 200 "$(code http://127.0.0.1:2260/healthz)"
+          expect "UI" 200 "$(code http://127.0.0.1:2260/ui/)"
+          expect "API rejects missing token" 401 "$(code http://127.0.0.1:2260/api/v1/system/info)"
+          expect "API accepts admin token" 200 "$(code -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:2260/api/v1/system/info)"
+          expect "runs as prism user" prism "$(docker exec prism-ci stat -c %U /proc/1)"
+          exit "$fail"
+
+      - name: Restart container comes back healthy
+        run: |
+          set -euo pipefail
+          docker restart prism-ci
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:2260/healthz >/dev/null 2>&1 && exit 0
+            sleep 1
+          done
+          echo "container did not become healthy after restart"; exit 1
+
+      # The full 23-check smoke suite against the binary shipped in the image
+      # (static, CGO_ENABLED=0), so the image's own build is what gets exercised.
+      - name: Smoke test (image binary)
+        run: |
+          docker cp prism-ci:/usr/local/bin/prism ./prism-image
+          PRISM_BIN="$PWD/prism-image" bash scripts/smoke.sh
+
+      - name: Container logs
+        if: always()
+        run: docker logs prism-ci 2>&1 | tail -n 100 || true
