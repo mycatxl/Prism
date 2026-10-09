@@ -249,3 +249,26 @@ func TestSummarizeParseResult_EmptyListsSerialiseAsArrays(t *testing.T) {
 		t.Error("SetParseSummary(nil) must clear the summary")
 	}
 }
+
+// TestParseWithReport_NaiveIsEngineNotBuilt pins PROTOCOLS.md §10.1: this
+// build has no with_naive_outbound tag, so a naive node is refused at parse
+// time with ENGINE_NOT_BUILT instead of entering the pool and failing to build.
+func TestParseWithReport_NaiveIsEngineNotBuilt(t *testing.T) {
+	data := []byte(`{"outbounds":[` +
+		`{"type":"naive","tag":"nv","server":"1.2.3.4","server_port":443},` +
+		`{"type":"tor","tag":"tor"}]}`)
+	result, err := ParseWithReport(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Nodes) != 1 || result.Nodes[0].Tag != "tor" {
+		t.Fatalf("nodes: got %+v, want only tor", result.Nodes)
+	}
+	if len(result.Skipped) != 1 {
+		t.Fatalf("skipped: got %+v, want one naive entry", result.Skipped)
+	}
+	got := result.Skipped[0]
+	if got.Name != "nv" || got.Type != "naive" || got.Reason != node.ReasonEngineNotBuilt {
+		t.Errorf("skip: got %+v, want nv/naive/%s", got, node.ReasonEngineNotBuilt)
+	}
+}
