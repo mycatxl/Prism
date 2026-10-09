@@ -121,6 +121,9 @@ func newDirectDownloader(
 	if envCfg.ResourceFetchMaxBytes > 0 {
 		d.MaxBodyBytes = int64(envCfg.ResourceFetchMaxBytes)
 	}
+	if !envCfg.ResourceFetchAllowPrivate {
+		d.DenyPrivate()
+	}
 	return d
 }
 
