@@ -4,9 +4,8 @@
 // Two very different callers need the same answer, which is why it lives here
 // rather than inside either of them:
 //
-//   - internal/publicsource screens nodes collected from public gists. Those
-//     documents are untrusted input, so a target that names loopback, the LAN or
-//     a cloud metadata endpoint must be rejected before the node is ever stored.
+//   - internal/netutil refuses resource downloads (subscriptions and their
+//     redirects) that resolve to loopback, the LAN or a cloud metadata endpoint.
 //   - internal/outbound screens a node before it builds a sing-box outbound. This
 //     is the second gate, and the one that matters for nodes that entered the
 //     pool through some other route (a hand-added subscription, a restored
