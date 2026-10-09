@@ -124,19 +124,6 @@ const CONTROL_HEIGHT_ALLOW = [
     pattern: /h-20/,
     reason: "textarea block size, not a control step",
   },
-  {
-    /*
-     * The command palette's query field. This is not a chrome control: it is the
-     * input of a modal search surface, sized to the dialog's own row rather than
-     * to a toolbar, and it sits in no form. Sizing it to `--control-h` would make
-     * the palette's single most-used element shorter than the list it searches.
-     * The pattern is the element's own class string, so another `h-10` in this
-     * file still fails.
-     */
-    file: "src/components/QuickSearch.tsx",
-    pattern: /className="h-10 min-w-0 flex-1 bg-transparent/,
-    reason: "command palette query field, sized to the dialog row",
-  },
 ];
 
 // ---------------------------------------------------------------------------

@@ -11,9 +11,9 @@
       (function () {
         try {
           document.documentElement.dataset.theme =
-            localStorage.getItem("prism.theme") === "light" ? "light" : "dark";
+            localStorage.getItem("prism.theme") === "dark" ? "dark" : "light";
         } catch (error) {
-          document.documentElement.dataset.theme = "dark";
+          document.documentElement.dataset.theme = "light";
         }
       })();
     </script>

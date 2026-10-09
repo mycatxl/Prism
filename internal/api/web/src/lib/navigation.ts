@@ -1,16 +1,17 @@
-import { Activity, Cable, Globe2, ListChecks, Logs, Network, Regex, Rss, ScrollText, Settings2, Share2, Waypoints } from "lucide-react";
-
+/**
+ * The console's page list, in the order the rail shows it. Labels are dictionary
+ * keys; `section` groups the rail and disappears in the horizontal (<1100px) bar.
+ */
 export const navigation = [
-  { label: "总览看板", path: "/dashboard", icon: Activity, section: "工作区" },
-  { label: "节点池", path: "/nodes", icon: Network, section: "工作区" },
-  { label: "订阅管理", path: "/subscriptions", icon: Rss, section: "工作区" },
-  { label: "平台管理", path: "/platforms", icon: Waypoints, section: "工作区" },
-  { label: "检测任务", path: "/jobs", icon: ListChecks, section: "工作区" },
-  { label: "导出与订阅", path: "/exports", icon: Share2, section: "工作区" },
-  { label: "请求日志", path: "/request-logs", icon: Logs, section: "观测与配置" },
-  { label: "接入点", path: "/endpoints", icon: Cable, section: "观测与配置" },
-  { label: "请求头规则", path: "/rules", icon: Regex, section: "观测与配置" },
-  { label: "GeoIP", path: "/resources", icon: Globe2, section: "观测与配置" },
-  { label: "系统配置", path: "/system-config", icon: Settings2, section: "观测与配置" },
-  { label: "审计日志", path: "/audit", icon: ScrollText, section: "观测与配置" },
+  { label: "总览", path: "/dashboard", section: "工作" },
+  { label: "节点", path: "/nodes", section: "工作" },
+  { label: "平台", path: "/platforms", section: "工作" },
+  { label: "订阅源", path: "/subscriptions", section: "工作" },
+  { label: "检测任务", path: "/jobs", section: "工作" },
+  { label: "接入点", path: "/endpoints", section: "接入" },
+  { label: "请求日志", path: "/request-logs", section: "接入" },
+  { label: "请求头规则", path: "/rules", section: "接入" },
+  { label: "GeoIP", path: "/resources", section: "系统" },
+  { label: "系统配置", path: "/system-config", section: "系统" },
+  { label: "审计日志", path: "/audit", section: "系统" },
 ];

@@ -22,9 +22,7 @@ import (
 //     answer a 429 on.
 //
 // Everything else is deliberate: an empty proxy token disables proxy
-// authentication by configuration and has nothing to meter, and the /sub/{token}
-// subscription endpoint keeps its own per-token and per-IP limiter (it is not a
-// PRISM_PROXY_AUTH_FAIL_LIMIT surface).
+// authentication by configuration and has nothing to meter.
 
 // socks5AuthObserver byte values of the two SOCKS5 rejection replies it watches
 // for. They mirror the constants of internal/proxy, which are unexported there.

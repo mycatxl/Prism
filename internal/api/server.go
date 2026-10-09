@@ -189,20 +189,6 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/geoip/lookup", HandleGeoIPLookup(cp))
 		authed.Handle("POST /api/v1/geoip/lookup", HandleGeoIPLookupPost(cp))
 		authed.Handle("POST /api/v1/geoip/actions/update-now", HandleGeoIPUpdate(cp))
-		// Export profiles and the public subscription they mint (WP11 §4.2/§4.3).
-		authed.Handle("GET /api/v1/export-profiles", HandleListExportProfiles(cp))
-		authed.Handle("POST /api/v1/export-profiles", HandleCreateExportProfile(cp))
-		authed.Handle("GET /api/v1/export-profiles/{id}", HandleGetExportProfile(cp))
-		authed.Handle("PATCH /api/v1/export-profiles/{id}", HandleUpdateExportProfile(cp))
-		authed.Handle("DELETE /api/v1/export-profiles/{id}", HandleDeleteExportProfile(cp))
-		authed.Handle("POST /api/v1/export-profiles/{id}/actions/rotate-token", HandleRotateExportProfileToken(cp))
-	}
-	// Public subscription endpoints (WP11 §4.3). They are registered on the main
-	// listener without the admin token: the token in the path is the credential.
-	if cp != nil {
-		subscriptionHandler := NewSubscriptionHandler(cp)
-		mux.Handle("/sub/", subscriptionHandler)
-		mux.Handle("GET /sub/{token}", subscriptionHandler)
 	}
 
 	// Request log endpoints (always registered if repo is available).

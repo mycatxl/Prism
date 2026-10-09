@@ -147,7 +147,13 @@ export type NodeExitFact = {
   /** ISO 3166-1 alpha-2, uppercase. Empty when the node's egress is unlocated. */
   region: string;
   healthy: boolean;
+  /** The passive circuit breaker has paused the node. */
+  circuitOpen: boolean;
   egressIp: string;
+  /** The assessed IP type (`residential`, `datacenter`, …), empty when unassessed. */
+  ipType: string;
+  /** The assessed purity band (`excellent` … `poor`), empty when unassessed. */
+  purityBand: string;
   /**
    * The node's own reference latency in ms, or `null` when it has not been
    * measured. A node that reported nothing is excluded from its region's mean

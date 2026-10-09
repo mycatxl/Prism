@@ -17,4 +17,13 @@ export const NODES_TRANSLATIONS: Record<string, string> = {
   // 节点行标签（NodesPage 的“地区 / 网络类型”列）。
   "地区 / 网络类型": "Region / network type",
   网络类型: "Network type",
+  // 节点导出菜单（GET /api/v1/nodes/export）。
+  导出: "Export",
+  按当前筛选导出: "Export current filter",
+  分享链接: "Share links",
+  表格: "Spreadsheet",
+  分析数据: "Analysis data",
+  "已导出 {{count}} 个节点": "Exported {{count}} nodes",
+  "跳过 {{count}} 个": "{{count}} skipped",
+  "超出上限 {{count}} 个未导出": "{{count}} over the limit not exported",
 };

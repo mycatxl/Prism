@@ -157,12 +157,6 @@ func writeInboundAuthFailed(w http.ResponseWriter) {
 
 // shouldRouteControlPlane reports whether a request belongs to the management
 // surface, which `endpoint.AllowManagement` gates as a whole.
-//
-// `/sub/{token}` is part of it: the public subscription endpoint (WP11 §4.3) is
-// served by the management handler without the admin token, and the
-// subscription URL the API mints points at this listener. Without this case a
-// `GET /sub/<token>` is treated as an unauthenticated reverse-proxy path and
-// rejected with 403, which is what the documentation promised would work.
 func shouldRouteControlPlane(r *http.Request) bool {
 	if r == nil {
 		return false
@@ -178,8 +172,6 @@ func shouldRouteControlPlane(r *http.Request) bool {
 	case p == "/api" || strings.HasPrefix(p, "/api/"):
 		return true
 	case p == "/ui" || strings.HasPrefix(p, "/ui/"):
-		return true
-	case p == "/sub" || strings.HasPrefix(p, "/sub/"):
 		return true
 	default:
 		return false

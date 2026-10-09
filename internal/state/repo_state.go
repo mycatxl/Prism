@@ -720,7 +720,7 @@ func (r *StateRepo) ListAccountHeaderRules() ([]model.AccountHeaderRule, error) 
 	return result, rows.Err()
 }
 
-// --- Prism extensions: quality policy, import options, intel, export, audit ---
+// --- Prism extensions: quality policy, import options, intel, audit ---
 
 // maxParseReportBytes caps the stored parse report so a pathological
 // subscription response cannot bloat state.db.
@@ -733,9 +733,8 @@ const (
 )
 
 const (
-	maxInt64             = int64(^uint64(0) >> 1)
-	exportProfileColumns = `id, name, format, token_sha256, platform_id, filter_json, name_template, enabled, last_access_at_ns, access_count, created_at_ns, updated_at_ns`
-	auditLogColumns      = `id, at_ns, actor, remote_addr, action, target, detail_json`
+	maxInt64        = int64(^uint64(0) >> 1)
+	auditLogColumns = `id, at_ns, actor, remote_addr, action, target, detail_json`
 )
 
 // decodeQualityPolicyJSON accepts both the current and the legacy key set.
@@ -846,141 +845,6 @@ func (r *StateRepo) UpsertIntelProviderSetting(s model.IntelProviderSetting) err
 	return err
 }
 
-// --- export profiles ---
-
-func scanExportProfile(scan func(dest ...any) error) (model.ExportProfile, error) {
-	var p model.ExportProfile
-	var enabled int
-	if err := scan(&p.ID, &p.Name, &p.Format, &p.TokenSHA256, &p.PlatformID, &p.FilterJSON,
-		&p.NameTemplate, &enabled, &p.LastAccessAtNs, &p.AccessCount, &p.CreatedAtNs, &p.UpdatedAtNs); err != nil {
-		return model.ExportProfile{}, err
-	}
-	p.Enabled = enabled != 0
-	return p, nil
-}
-
-// ListExportProfiles returns all export profiles ordered by name.
-func (r *StateRepo) ListExportProfiles() ([]model.ExportProfile, error) {
-	rows, err := r.db.Query("SELECT " + exportProfileColumns + " FROM export_profiles ORDER BY name")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var result []model.ExportProfile
-	for rows.Next() {
-		p, err := scanExportProfile(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, p)
-	}
-	return result, rows.Err()
-}
-
-// GetExportProfile returns one export profile by ID.
-func (r *StateRepo) GetExportProfile(id string) (*model.ExportProfile, error) {
-	row := r.db.QueryRow("SELECT "+exportProfileColumns+" FROM export_profiles WHERE id = ?", id)
-	p, err := scanExportProfile(row.Scan)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return &p, nil
-}
-
-// GetExportProfileByTokenSHA256 resolves a subscription token to its profile.
-func (r *StateRepo) GetExportProfileByTokenSHA256(hash string) (*model.ExportProfile, error) {
-	row := r.db.QueryRow("SELECT "+exportProfileColumns+" FROM export_profiles WHERE token_sha256 = ?", hash)
-	p, err := scanExportProfile(row.Scan)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return &p, nil
-}
-
-// UpsertExportProfile inserts or updates one export profile.
-// A duplicate name or token is reported as ErrConflict.
-func (r *StateRepo) UpsertExportProfile(p model.ExportProfile) error {
-	if strings.TrimSpace(p.ID) == "" {
-		return fmt.Errorf("id: required")
-	}
-	if strings.TrimSpace(p.Name) == "" {
-		return fmt.Errorf("name: required")
-	}
-	if strings.TrimSpace(p.Format) == "" {
-		return fmt.Errorf("format: required")
-	}
-	if strings.TrimSpace(p.FilterJSON) == "" {
-		p.FilterJSON = "{}"
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	_, err := r.db.Exec(`
-		INSERT INTO export_profiles (`+exportProfileColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			name              = excluded.name,
-			format            = excluded.format,
-			token_sha256      = excluded.token_sha256,
-			platform_id       = excluded.platform_id,
-			filter_json       = excluded.filter_json,
-			name_template     = excluded.name_template,
-			enabled           = excluded.enabled,
-			last_access_at_ns = excluded.last_access_at_ns,
-			access_count      = excluded.access_count,
-			updated_at_ns     = excluded.updated_at_ns
-	`, p.ID, p.Name, p.Format, p.TokenSHA256, p.PlatformID, p.FilterJSON, p.NameTemplate,
-		p.Enabled, p.LastAccessAtNs, p.AccessCount, p.CreatedAtNs, p.UpdatedAtNs)
-	if err != nil {
-		if isSQLiteUniqueConstraint(err) {
-			return fmt.Errorf("%w: export profile name or token already exists", ErrConflict)
-		}
-		return err
-	}
-	return nil
-}
-
-// DeleteExportProfile removes one export profile by ID.
-func (r *StateRepo) DeleteExportProfile(id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec("DELETE FROM export_profiles WHERE id = ?", id)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// TouchExportProfileAccess records one subscription fetch.
-func (r *StateRepo) TouchExportProfileAccess(id string, atNs int64) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec(
-		"UPDATE export_profiles SET last_access_at_ns = ?, access_count = access_count + 1 WHERE id = ?",
-		atNs, id,
-	)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // --- audit log ---
 
 // AppendAudit records one administrative mutation.
@@ -1032,12 +896,6 @@ func (r *StateRepo) ListAudit(beforeID int64, limit int) ([]model.AuditEntry, er
 
 // PruneAudit drops entries older than olderThanNs and keeps at most keepMax
 // newest entries. Zero disables the corresponding rule.
-//
-// The keepMax budget is split: management entries keep the full keepMax, while
-// public subscription accesses (model.AuditActorExportPrefix, written by
-// /sub/{token}) are capped at keepMax/2 in a bucket of their own. Without the
-// split a caller holding nothing but a subscription URL could write one entry
-// per request and push every earlier management entry out of the trail.
 func (r *StateRepo) PruneAudit(olderThanNs int64, keepMax int) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1054,29 +912,14 @@ func (r *StateRepo) PruneAudit(olderThanNs int64, keepMax int) (int64, error) {
 	}
 
 	if keepMax > 0 {
-		exportKeepMax := keepMax / 2
-		// Subscription accesses are capped in their own bucket first, so they can
-		// never consume the management budget below.
 		result, err := r.db.Exec(
-			"DELETE FROM audit_log WHERE actor LIKE ? || '%' AND id NOT IN "+
-				"(SELECT id FROM audit_log WHERE actor LIKE ? || '%' ORDER BY id DESC LIMIT ?)",
-			model.AuditActorExportPrefix, model.AuditActorExportPrefix, exportKeepMax,
+			"DELETE FROM audit_log WHERE id NOT IN (SELECT id FROM audit_log ORDER BY id DESC LIMIT ?)",
+			keepMax,
 		)
 		if err != nil {
 			return removed, err
 		}
 		n, _ := result.RowsAffected()
-		removed += n
-
-		result, err = r.db.Exec(
-			"DELETE FROM audit_log WHERE actor NOT LIKE ? || '%' AND id NOT IN "+
-				"(SELECT id FROM audit_log WHERE actor NOT LIKE ? || '%' ORDER BY id DESC LIMIT ?)",
-			model.AuditActorExportPrefix, model.AuditActorExportPrefix, keepMax,
-		)
-		if err != nil {
-			return removed, err
-		}
-		n, _ = result.RowsAffected()
 		removed += n
 	}
 

@@ -1,4 +1,5 @@
-import { apiRequest } from "../../lib/api-client";
+import { ApiError, apiRequest, type ApiErrorBody } from "../../lib/api-client";
+import { getStoredAuthToken } from "../auth/auth-store";
 import type {
   EgressProbeResult,
   LatencyProbeResult,
@@ -8,6 +9,9 @@ import type {
 } from "./types";
 
 const basePath = "/api/v1/nodes";
+
+// The raw export fetch cannot use apiRequest, so it reads the same base URL.
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
 
 type ApiNodeSummary = Omit<NodeSummary, "tags"> & {
   tags?: NodeSummary["tags"] | null;
@@ -100,14 +104,8 @@ function normalizeNode(raw: ApiNodeSummary): NodeSummary {
   return normalized;
 }
 
-export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): Promise<PageResponse<NodeSummary>> {
-  const query = new URLSearchParams({
-    limit: String(filters.limit ?? 50),
-    offset: String(filters.offset ?? 0),
-    sort_by: filters.sort_by || "tag",
-    sort_order: filters.sort_order || "asc",
-  });
-
+/** Appends the shared node filter vocabulary (GET /nodes and /nodes/export). */
+function appendNodeFilters(query: URLSearchParams, filters: NodeListQuery): void {
   const appendIfNotEmpty = (key: string, value?: string) => {
     if (!value) {
       return;
@@ -164,6 +162,17 @@ export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): P
   if (filters.enabled !== undefined) {
     query.set("enabled", String(filters.enabled));
   }
+}
+
+export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): Promise<PageResponse<NodeSummary>> {
+  const query = new URLSearchParams({
+    limit: String(filters.limit ?? 50),
+    offset: String(filters.offset ?? 0),
+    sort_by: filters.sort_by || "tag",
+    sort_order: filters.sort_order || "asc",
+  });
+
+  appendNodeFilters(query, filters);
 
   const data = await apiRequest<ApiNodePage | null>(`${basePath}?${query.toString()}`, { signal });
   const items = Array.isArray(data?.items) ? data.items.filter(isApiNodeSummary) : [];
@@ -192,4 +201,85 @@ export async function probeLatency(hash: string): Promise<LatencyProbeResult> {
   return apiRequest<LatencyProbeResult>(`${basePath}/${hash}/actions/probe-latency`, {
     method: "POST",
   });
+}
+
+export const NODE_EXPORT_FORMATS = ["singbox", "mihomo", "v2rayn", "uri", "csv", "json"] as const;
+export type NodeExportFormat = (typeof NODE_EXPORT_FORMATS)[number];
+
+// Fallback names, mirroring export.FileName() in internal/export/types.go. The
+// server sends the real name in Content-Disposition.
+const EXPORT_FILE_NAMES: Record<NodeExportFormat, string> = {
+  singbox: "prism.json",
+  mihomo: "prism.yaml",
+  v2rayn: "prism.txt",
+  uri: "prism-uri.txt",
+  csv: "prism.csv",
+  json: "prism-export.json",
+};
+
+// One export renders up to export.MaxItems (5000) nodes, heavier than the 30s
+// budget apiRequest uses for JSON calls.
+const EXPORT_TIMEOUT_MS = 60_000;
+
+export type NodeExportOutcome = {
+  blob: Blob;
+  fileName: string;
+  exported: number;
+  skipped: number;
+  truncated: number;
+};
+
+function headerCount(value: string | null): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
+/**
+ * GET /api/v1/nodes/export with the node list's filters (paging and sorting
+ * are not part of an export). The body is the file itself, so this cannot go
+ * through apiRequest; counts come from the X-Prism-Export-* headers.
+ */
+export async function exportNodes(
+  format: NodeExportFormat,
+  filters: NodeListQuery,
+  signal?: AbortSignal,
+): Promise<NodeExportOutcome> {
+  const query = new URLSearchParams({ format });
+  appendNodeFilters(query, filters);
+
+  const headers = new Headers();
+  const token = getStoredAuthToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const timeout = AbortSignal.timeout(EXPORT_TIMEOUT_MS);
+  const response = await fetch(`${API_BASE_URL}${basePath}/export?${query.toString()}`, {
+    method: "GET",
+    headers,
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  });
+  if (!response.ok) {
+    let body: ApiErrorBody | null = null;
+    try {
+      body = (await response.json()) as ApiErrorBody;
+    } catch {
+      body = null;
+    }
+    throw new ApiError(
+      response.status,
+      body?.error?.code ?? "HTTP_ERROR",
+      body?.error?.message ?? `HTTP ${response.status}`,
+      body,
+    );
+  }
+
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return {
+    blob: await response.blob(),
+    fileName: match?.[1]?.trim() || EXPORT_FILE_NAMES[format],
+    exported: headerCount(response.headers.get("x-prism-export-exported")),
+    skipped: headerCount(response.headers.get("x-prism-export-skipped")),
+    truncated: headerCount(response.headers.get("x-prism-export-truncated")),
+  };
 }
