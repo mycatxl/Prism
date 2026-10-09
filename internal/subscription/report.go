@@ -86,6 +86,7 @@ var deferredProtocolTypes = map[string]string{
 	"zerotier":     "zerotier",
 	"openvpn":      "openvpn (use a .ovpn profile instead)",
 	"tailscale":    "tailscale",
+	"naive":        "naive (sing-box built without with_naive_outbound)",
 }
 
 // deferredShareLinkSchemes lists share-link schemes delegated to the rejected

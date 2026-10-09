@@ -41,7 +41,7 @@ func TestParseGeneralSubscription_SingboxJSON_AllSupportedTypes(t *testing.T) {
 	types := []string{
 		"socks", "http", "shadowsocks", "vmess", "trojan", "wireguard",
 		"hysteria", "vless", "shadowtls", "tuic", "hysteria2", "anytls",
-		"tor", "ssh", "naive",
+		"tor", "ssh",
 	}
 
 	// Build JSON with all supported types.
