@@ -50,6 +50,8 @@ type RequestLogEntry struct {
 	PlatformID          string
 	PlatformName        string
 	Account             string
+	UserID              string // owning user; built-in admin for legacy-token traffic
+	KeyID               string // access key ID; "legacy" for PRISM_PROXY_TOKEN
 	TargetHost          string
 	TargetURL           string
 	NodeHash            string

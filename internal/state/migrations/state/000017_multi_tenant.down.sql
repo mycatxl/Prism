@@ -1,0 +1,13 @@
+DROP INDEX IF EXISTS idx_audit_log_actor;
+ALTER TABLE audit_log DROP COLUMN target_id;
+ALTER TABLE audit_log DROP COLUMN target_type;
+ALTER TABLE audit_log DROP COLUMN actor_user_id;
+DROP TABLE IF EXISTS user_sessions;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS invites;
+DROP TABLE IF EXISTS usage_daily;
+DROP TABLE IF EXISTS usage_hourly;
+DROP TABLE IF EXISTS access_keys;
+DROP TABLE IF EXISTS user_subscriptions;
+DROP TABLE IF EXISTS plans;
+DROP TABLE IF EXISTS users;

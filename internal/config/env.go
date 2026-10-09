@@ -105,6 +105,18 @@ type EnvConfig struct {
 	AdminToken  string `json:"-"`
 	ProxyToken  string `json:"-"`
 
+	// Multi-tenant
+	MultiTenant bool
+	// LegacyToken accepts PRISM_PROXY_TOKEN as the built-in admin's
+	// unmetered key. Defaults to !MultiTenant.
+	LegacyToken bool
+	// LegacyTokenUnsafe is true when LegacyToken was explicitly enabled with
+	// MultiTenant on: the token bypasses every quota and platform limit.
+	LegacyTokenUnsafe        bool
+	UsageHourlyRetentionDays int
+	UsageDailyRetentionDays  int
+	AuditRetentionDays       int
+
 	// Metrics
 	MetricThroughputIntervalSeconds   int
 	MetricThroughputRetentionSeconds  int
@@ -212,6 +224,13 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.AdminToken = adminToken
 	cfg.ProxyToken = proxyToken
 
+	cfg.MultiTenant = envBool("PRISM_MULTI_TENANT", false, &errs)
+	cfg.LegacyToken = envBool("PRISM_LEGACY_TOKEN", !cfg.MultiTenant, &errs)
+	cfg.LegacyTokenUnsafe = cfg.MultiTenant && cfg.LegacyToken
+	cfg.UsageHourlyRetentionDays = envInt("PRISM_USAGE_HOURLY_RETENTION_DAYS", 30, &errs)
+	cfg.UsageDailyRetentionDays = envInt("PRISM_USAGE_DAILY_RETENTION_DAYS", 400, &errs)
+	cfg.AuditRetentionDays = envInt("PRISM_AUDIT_RETENTION_DAYS", 365, &errs)
+
 	// PRISM-DEVIATION: X1 — strong tokens are required by default.
 	// PRISM_ENFORCE_STRONG_TOKENS=false restores the upstream Resin behaviour,
 	// where weak tokens are only reported through /api/v1/system/config/env.
@@ -246,6 +265,15 @@ func LoadEnvConfig() (*EnvConfig, error) {
 
 	adminTokenEmpty := !hasAdminToken || strings.TrimSpace(cfg.AdminToken) == ""
 	proxyTokenEmpty := !hasProxyToken || strings.TrimSpace(cfg.ProxyToken) == ""
+	if cfg.UsageHourlyRetentionDays < 1 {
+		errs = append(errs, "PRISM_USAGE_HOURLY_RETENTION_DAYS must be >= 1")
+	}
+	if cfg.UsageDailyRetentionDays < cfg.UsageHourlyRetentionDays {
+		errs = append(errs, "PRISM_USAGE_DAILY_RETENTION_DAYS must be >= PRISM_USAGE_HOURLY_RETENTION_DAYS")
+	}
+	if cfg.AuditRetentionDays < 0 {
+		errs = append(errs, "PRISM_AUDIT_RETENTION_DAYS must be >= 0")
+	}
 
 	// PRISM-DEVIATION: X1 — weak tokens are rejected by default; setting
 	// PRISM_ENFORCE_STRONG_TOKENS=false restores the upstream Resin behaviour
