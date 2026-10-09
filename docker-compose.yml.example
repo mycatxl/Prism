@@ -18,7 +18,7 @@ services:
     # non-prerelease, so while every release is an `-rc` the version tag is the
     # only one that exists. Bump this line with each release you deploy.
     # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
-    image: ghcr.io/mycatxl/prism:0.1.0-rc5
+    image: ghcr.io/mycatxl/prism:0.1.0-rc6
     container_name: prism
     restart: unless-stopped
     environment:
