@@ -126,7 +126,6 @@ Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与
 | `routing` | P2C、租约与同 IP 轮换 |
 | `quality` | 数据源证据、评级与有效性，独立于节点健康 |
 | `intel` | 检测任务、provider 适配、限流与预算、证据持久化（原 `inspection` 的职责） |
-| `publicsource` | 从公开订阅源收集节点 |
 | `geoip` | GeoIP 数据库下载、校验与读取 |
 | `scanloop` | 带抖动的周期性扫描循环 |
 | `export` | 导出渲染：sing-box／mihomo／v2rayN／CSV-JSON |
@@ -162,7 +161,6 @@ internal/probe/            # 网络健康与出口探测
 internal/routing/          # P2C 选路与租约
 internal/quality/          # 数据源证据、评级与有效性（与节点健康解耦）
 internal/intel/            # 检测任务、限流、预算、数据源调用与持久化（子包 intel/store 持有 intel.db）
-internal/publicsource/     # 从公开订阅源收集节点
 internal/geoip/            # GeoIP 数据库下载、校验与读取
 internal/scanloop/         # 带抖动的周期性扫描循环
 internal/export/           # 把节点池渲染成用户消费的格式（sing-box / mihomo / v2rayN / CSV-JSON）
