@@ -307,12 +307,12 @@ func TestImportResinMigratesAndReportsSummary(t *testing.T) {
 	assertMode0600(t, statePath)
 	assertMode0600(t, cachePath)
 
-	// Prism migrations state 000010..000016 / cache 000002 ran during the import.
-	if got := databaseIntValue(t, statePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 16 {
-		t.Fatalf("state schema_migrations version = %d, want 16", got)
+	// Prism migrations state 000010..000018 / cache 000002..000003 ran during the import.
+	if got := databaseIntValue(t, statePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 18 {
+		t.Fatalf("state schema_migrations version = %d, want 18", got)
 	}
-	if got := databaseIntValue(t, cachePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 2 {
-		t.Fatalf("cache schema_migrations version = %d, want 2", got)
+	if got := databaseIntValue(t, cachePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 3 {
+		t.Fatalf("cache schema_migrations version = %d, want 3", got)
 	}
 
 	// Resin rows are intact and the node identity is byte-identical (D3).
@@ -322,7 +322,7 @@ func TestImportResinMigratesAndReportsSummary(t *testing.T) {
 	if got := databaseStringValue(t, statePath, "SELECT url FROM subscriptions WHERE id = 'sub-resin'"); got != "https://subscription.invalid/resin" {
 		t.Fatalf("subscription url = %q", got)
 	}
-	if got := databaseStringValue(t, cachePath, "SELECT account FROM leases WHERE platform_id = 'plat-resin'"); got != "account-a" {
+	if got := databaseStringValue(t, cachePath, "SELECT account FROM leases WHERE platform_id = 'plat-resin' AND user_id = 'u_admin'"); got != "account-a" {
 		t.Fatalf("lease account = %q, want account-a", got)
 	}
 	for _, fixtureNode := range fixtureNodes {
