@@ -2,7 +2,6 @@ package state
 
 import (
 	"database/sql"
-	"errors"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -210,10 +209,11 @@ func TestMigrateStateDB_PrismUpgradePreservesData(t *testing.T) {
 	}
 
 	// Step 4d: the new tables are usable without any further DDL.
-	if _, err := repo.GetExportProfile("missing"); err == nil {
-		t.Error("export_profiles table must exist after upgrade")
-	} else if !errors.Is(err, ErrNotFound) {
-		t.Errorf("GetExportProfile on a migrated db: got %v, want ErrNotFound", err)
+	var exportTables int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'export_profiles'").Scan(&exportTables); err != nil {
+		t.Fatalf("query sqlite_master: %v", err)
+	} else if exportTables != 0 {
+		t.Error("export_profiles must be dropped after upgrade")
 	}
 	if entries, err := repo.ListAudit(0, 10); err != nil {
 		t.Errorf("audit_log table must exist after upgrade: %v", err)

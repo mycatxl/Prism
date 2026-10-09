@@ -12,7 +12,7 @@ import (
 
 // adminListener is the optional independent management listener configured
 // through PRISM_ADMIN_LISTEN=host:port. It serves only the management surface
-// — /ui, /api, /healthz and the public /sub subscription path — and never
+// — /ui, /api and /healthz — and never
 // exposes a proxy protocol, so the management plane can live on an internal
 // address while the primary listener keeps serving traffic.
 type adminListener struct {
@@ -98,11 +98,6 @@ func isManagementPath(r *http.Request) bool {
 	case path == "/api" || strings.HasPrefix(path, "/api/"):
 		return true
 	case path == "/ui" || strings.HasPrefix(path, "/ui/"):
-		return true
-	// The public subscription endpoint is part of the management surface: it is
-	// served without the admin token by the same handler, so a URL minted while
-	// the operator was talking to this listener resolves here too.
-	case path == "/sub" || strings.HasPrefix(path, "/sub/"):
 		return true
 	default:
 		return false

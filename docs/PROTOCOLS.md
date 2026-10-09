@@ -300,46 +300,10 @@ names per bucket (names capped at 80 runes) in the summary, 64 KiB per stored re
 over-limit case is counted explicitly (`skipped_overflow`, `reasons_overflow`,
 `samples_truncated`, `truncated`/`original_bytes`) rather than silently dropped.
 
-## 9. Export formats and subscription links
+## 9. Export (removed)
 
-Output (independent of the D-1 kernel decision — a mihomo *configuration file* is a
-dependency-free serialisation, `internal/export/types.go`):
-
-| Format | Content type | Notes |
-|---|---|---|
-| `singbox` | `application/json` | selector + urltest groups, default tags `PROXY` / `AUTO` |
-| `mihomo` | `text/yaml` | Clash Meta config; chain nodes are not representable (`NOT_REPRESENTABLE:mihomo(chain)`) |
-| `v2rayn` | `text/plain` | share-link list |
-| `uri` | `text/plain` | plain share-link list (round-trip tested through the parser) |
-| `csv`, `json` | `text/csv` / JSON | analysis columns incl. optional intel columns; never contains credentials |
-
-Per-node skips carry `NOT_REPRESENTABLE:<format>`, `NOT_REPRESENTABLE:mihomo(chain)`,
-`INVALID:node document` or `INVALID:duplicate node name`; the response reports
-`exported` / `skipped` / `truncated` (one request is bounded to `export.MaxItems = 5000`).
-`GET /api/v1/nodes/export` is admin-authenticated.
-
-**Client version requirement for `mihomo`.** The output was validated with the real mihomo
-binary (`mihomo -t -d <dir> -f <config>`) against two live subscriptions (280 / 235 nodes,
-0 skipped): **v1.19.31 accepts both exports**. `anytls` needs a recent mihomo — **v1.19.2
-rejects it with `unsupport proxy type: anytls`** because that type did not exist yet, so use
-a current mihomo release when the subscription contains anytls nodes. `mihomo -t` validates
-the configuration structure and field types only; it does not dial the nodes. Full evidence
-and the `up`/`down` findings are in `docs/ENGINE_DECISIONS.md` D-4.
-
-Export profiles (`/api/v1/export-profiles`, `POST …/{id}/actions/rotate-token`) store format,
-name template, platform and a node filter with the same vocabulary as `GET /api/v1/nodes`
-(`ip_type`, `purity_band`, `purity_min`, `purity_max`, `verdict`, `asn`, `country`, `checks`, …;
-`internal/api/handler_export.go`). Each profile exposes a public subscription URL
-`<scheme>://<host>/sub/<token>` served without the admin token (`internal/api/server.go`
-registers `GET /sub/{token}` on the management handler, so the subscription URL resolves on every
-listener that carries the management surface — the primary listener and `PRISM_ADMIN_LISTEN` — and
-is gated by that endpoint's `allow_management` flag exactly like `/api/*`;
-`cmd/prism/inbound_mux.go`, `shouldRouteControlPlane`). A profile can be disabled and its token
-rotated; an unknown token, a disabled profile and a listener without management access all answer
-`404`. The public endpoint stores only the token hash and has its own limiter — 60 requests per
-minute per token, 120 per minute per client IP, then `429` with `Retry-After` — which is
-independent of `PRISM_PROXY_AUTH_FAIL_LIMIT` (`internal/api/export_token.go`,
-`internal/api/handler_subscription_token.go`).
+Prism is a relay gateway: node export (`GET /api/v1/nodes/export`), export profiles and the public
+`/sub/{token}` subscription output were removed. Subscription *import* (§1–§8) is unchanged.
 
 ## 10. Known limitations
 
@@ -664,7 +628,5 @@ is not.
 | A capability is only reported when the runtime can deliver it (mihomo stays `built:false`, also with `-tags with_mihomo`) | `internal/outbound` `TestEngineCapabilitiesMatchRuntimeBehaviour`, `internal/api` `TestSystemCapabilities_NeverClaimsAnUnbuiltEngine` |
 | `naive` fails only at build time | `TestProtocolMatrix` case `naive-not-built` |
 | Share links, Clash, Surge and sing-box JSON conversion detail | `internal/subscription` `TestParseGeneralSubscription_*` (parser, links, plugins, transports) |
-| Public `/sub/<token>` behaviour and token rotation | `internal/api` `handler_export_test.go` (`TestSubscriptionTokenFlow`, `TestSubscriptionMihomoContentDisposition`), `export_token_test.go` (`TestExportSubscriptionLimiterPerTokenBound`, `TestExportSubscriptionLimiterPerIPBound`); the listener coverage is pinned by `cmd/prism/subscription_routing_test.go` (`TestInboundMuxRoutesSubscriptionPathToManagementHandler`, `TestInboundMuxSubscriptionPathHonoursAllowManagement`, `TestAdminListenerServesSubscriptionPath`) |
-| Export formats and their skip reasons | `internal/export` (`TestExportMihomoEveryProxyIsParseableByClash`, `TestExportSkipsUnrepresentable*`, `TestExportAnalysisFormatsNeverCarryCredentials`, …) |
 | Offline database state and refresh | `internal/intel/providers` `geo_db_test.go`, `internal/api` `handler_intel_geo_test.go` |
 | Intel pipeline (egress → offline → online → via-node → checks → assess) | `internal/intel` `pipeline_e2e_test.go`, `internal/intel/jobs` `jobs_test.go` |

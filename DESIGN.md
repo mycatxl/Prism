@@ -100,7 +100,7 @@ greyscale.
 - Dashboard has no search. Search belongs beside the table or workflow that owns the
   entity: nodes, subscriptions, platforms, request logs, jobs, audit, rules and config.
 - Navigation groups destinations by work: Workspace (overview, nodes, subscriptions,
-  platforms, jobs, exports) and Observability & Settings (request logs, endpoints, rules,
+  platforms, jobs) and Observability & Settings (request logs, endpoints, rules,
   GeoIP, system config, audit).
 - Expanded rail is about 232–248px; below 1440px it may collapse to an icon rail, and
   below 1024px it becomes a drawer. The active destination uses a quiet filled wash and
@@ -170,7 +170,7 @@ Those facts have an owning page or belong in the evidence group above.
 ## Data, accessibility and motion
 
 - Keep the existing API, routes, URL parameters (`range`, node filters, `selected`,
-  `category`), calculations, ECharts, offline d3-geo map, pagination, SSE/polling,
+  `category`), calculations, Recharts, offline d3-geo map, pagination, SSE/polling,
   RuntimeConfig PATCH and EnvConfig read-only semantics.
 - Loading, empty and error states must preserve the surrounding track and explain recovery.
 - Focus is visible with one shared accent ring. Touch actions are visible without hover.

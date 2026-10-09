@@ -32,8 +32,8 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | 失败响应 | 缺头 → `401 UNAUTHORIZED`（`missing Authorization header`）；前缀不是 `Bearer ` → `401`（`invalid Authorization header format`）；令牌不符 → `401`（`invalid admin token`） | 同上 |
 | 登录失败限流 | 每个客户端 IP 在 60 秒内累计 **10** 次失败后封禁 **5 分钟**，期间所有管理请求先答 `429 RATE_LIMITED` 并带 `Retry-After`。成功请求永不计数，`X-Forwarded-For` 只在 peer 命中 `PRISM_TRUSTED_PROXIES` 时被采纳 | `internal/api/rate_limiter.go` 顶部的常量块；`docs/SECURITY.md` §1.2 |
 | 空令牌 | `PRISM_ADMIN_TOKEN` 为空表示管理员鉴权被**有意关闭**，中间件直接放行（`AuthMiddleware` 的首个分支）。启动时的空令牌/弱令牌策略见 `docs/MIGRATION_FROM_RESIN.md` 偏差 X1、X2 | `internal/api/rate_limiter.go`；`docs/SECURITY.md` |
-| 管理专用监听面 | `PRISM_ADMIN_LISTEN=host:port` 起第二个 listener，**只**服务 `/`、`/healthz`、`/api`、`/api/*`、`/ui`、`/ui/*`、`/sub`、`/sub/*`；其余路径一律 404，CONNECT 一律拒绝 | `cmd/prism/admin_runtime.go` `newAdminOnlyHandler`、`isManagementPath` |
-| 主监听面上的管理面 | 主 listener 的 `/api/*`、`/ui/*`、`/sub/*` 先经过**接入点** `allow_management` 判定：为 false 时直接 404；**`/healthz` 是唯一例外**，任何接入点都放行 | `cmd/prism/inbound_mux.go` `shouldRouteControlPlane` 与 `newInboundMuxWithGuard` 的调用点 |
+| 管理专用监听面 | `PRISM_ADMIN_LISTEN=host:port` 起第二个 listener，**只**服务 `/`、`/healthz`、`/api`、`/api/*`、`/ui`、`/ui/*`；其余路径一律 404，CONNECT 一律拒绝 | `cmd/prism/admin_runtime.go` `newAdminOnlyHandler`、`isManagementPath` |
+| 主监听面上的管理面 | 主 listener 的 `/api/*`、`/ui/*` 先经过**接入点** `allow_management` 判定：为 false 时直接 404；**`/healthz` 是唯一例外**，任何接入点都放行 | `cmd/prism/inbound_mux.go` `shouldRouteControlPlane` 与 `newInboundMuxWithGuard` 的调用点 |
 | SSE 的第二种凭据 | `GET /api/v1/intel/jobs/{id}/events` 额外接受 `?access_token=<管理员令牌>`（浏览器 `EventSource` 不能设请求头）。它不经过 `AuthMiddleware`，而是走自己的常量时间比较与同一个失败限流器 | `internal/api/handler_intel.go` `intelEventAuthorized`、`accessTokenFromRequest` |
 
 ## 2. 错误响应形状
@@ -64,8 +64,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | 状态 | 何时 |
 |---|---|
 | 400 `PAYLOAD_TOO_LARGE` | 请求体超过 `PRISM_API_MAX_BODY_BYTES`（`errors.go` `writePayloadTooLarge`） |
-| 405 `METHOD_NOT_ALLOWED` | `/sub/{token}` 只接受 GET/HEAD（`handler_subscription_token.go`） |
-| 429 `RATE_LIMITED` | 管理面登录失败限流（§1）或 `/sub/{token}` 自己的限流（§4） |
+| 429 `RATE_LIMITED` | 管理面登录失败限流（§1） |
 | 502 / 429 | 仅 `POST /api/v1/nodes/{hash}/actions/review-ippure`：IPPure 数据源在 15 秒等待窗内未返回证据时是 **202** + `queued=true` + `job_id`（轮询 `GET /api/v1/intel/jobs/{id}`）；供应商自身失败不再直接映射到 HTTP 状态，而是记录在证据行里（`error_code`，见 §13） |
 | 503 `UNAVAILABLE` | 指标端点里运行时统计尚未就绪（`handler_metrics.go`） |
 
@@ -91,10 +90,10 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 |---|---|
 | `GET /api/v1/request-logs` | **游标**：`limit`（默认 50）+ `cursor`（base64url 的 `tsNs:id`）；带 `offset` 直接 400 `offset: not supported for request-logs; use cursor`；响应为 `{items, limit, has_more, next_cursor?}` |
 | `GET /api/v1/audit-logs` | 反向游标：`before_id` + `limit`（默认 100，**上限 200**）；响应为 `{items, limit}`，按 id 降序 |
-| `GET /api/v1/nodes/export`、`/sub/{token}` | 导出专用：`limit` 默认 `export.MaxItems`=**5000**，显式传更大的值直接 400；`offset` 是选块游标，被截掉的条数通过 `X-Prism-Export-Truncated` 头暴露 |
+
 
 **查询参数**：布尔有两套实现，别混用——`ParseBoolQuery`（`strconv.ParseBool`，接受 `1/0/t/T/TRUE` 等）用于
-`/nodes`、`/subscriptions`、`/nodes/export` 的 `enabled`、`circuit_open`、`has_outbound`、`native`、`healthy_only`；
+`/nodes`、`/subscriptions` 的 `enabled`、`circuit_open`、`has_outbound`、`native`、`healthy_only`；
 `parseStrictBoolQuery`（只认 `true`/`false`）用于 `/platforms/{id}/leases` 的 `fuzzy`、`/request-logs` 的 `net_ok`/`fuzzy`。
 `sort_by`/`sort_order` 走白名单（`ParseSorting`），非法值 400。时间戳一律 RFC3339Nano，时长一律 Go duration 字符串（如 `"24h"`）。
 
@@ -108,7 +107,6 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | GET | `/` | 无 | 302 → `/ui/`（`webui.go` `newRootRedirectHandler`） |
 | GET | `/ui` | 无 | 302 → `/ui/` |
 | GET | `/ui/…` | 无 | 嵌入的 SPA；资源不存在且带扩展名 → 404，无扩展名的路径回落 `index.html`。**前端未构建时整个 `/ui/` 返回 503** + `WebUI not built. Run: make web`（`webui.go`、`docs/deployment.md`） |
-| GET/HEAD | `/sub/{token}` | 路径里的令牌**就是**凭据（SHA-256 摘要查表） | 命中且 `enabled=true` 时直接返回导出文件；未知令牌、被停用的 profile、`allow_management=false` 的接入点、存储不可读——**全部统一 404**，不可用于探测令牌是否存在。响应带 `Cache-Control: no-store`、`X-Prism-Export-Exported/Skipped`，`v2rayn` 加 `Profile-Update-Interval: 12`，`mihomo` 加 `Content-Disposition`。限流：**60 次/分钟/令牌 + 120 次/分钟/客户端 IP**，超出 429 + `Retry-After`（`handler_subscription_token.go`、`export_token.go`） |
 | GET | `/api/v1/intel/jobs/{id}/events` | 管理员令牌（头或 `?access_token=`） | SSE 进度流；不经过 `AuthMiddleware`，但有自己的常量时间比较与失败限流 |
 
 另外两类「非管理员鉴权」入口，属于代理面而不是管理面，本文件只登记不展开：
@@ -147,7 +145,6 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 |---|---|---|---|
 | GET | `/api/v1/nodes` | 节点列表 | 响应在标准分页信封上多两个字段：`unique_egress_ips`、`unique_healthy_egress_ips`。过滤参数见下 |
 | GET | `/api/v1/nodes/{hash}` | 节点详情 | `NodeSummary`；hash 非十六进制 → 400 `node_hash: invalid format`，超过 128 字符 → 400，节点不存在 → 404 |
-| GET | `/api/v1/nodes/export` | 导出节点文件 | 见 §17 |
 | POST | `/api/v1/nodes/{hash}/actions/probe-egress` | 同步出口探测（阻塞） | 200 `{"egress_ip","region?","latency_ewma_ms"}`。失败分支：hash 非十六进制 → 400 `node_hash: invalid format`；节点不存在 → 404；探测本身失败（出站未就绪、无 fetcher 等）→ **500** `INTERNAL`「egress probe failed」（`control_plane_nodes.go` 用 `internal()` 包装，不区分 5xx 原因） |
 | POST | `/api/v1/nodes/{hash}/actions/probe-latency` | 同步延迟探测（阻塞） | 200 `{"latency_ewma_ms"}`；失败分支与 probe-egress 相同（400 / 404 / 500） |
 | POST | `/api/v1/nodes/{hash}/actions/probe-quality` | 创建节点的情报任务 | 建 `{kind:"intel", scope:{node_hashes:[hash]}, force:true}`，返回 **202** `{queued:true, job_id:"…"}`（WP08 §9）；hash 非十六进制 → 400，节点不存在 → 404 |
@@ -205,8 +202,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | PATCH | `/api/v1/endpoints/{id}` | 局部更新 | 白名单：`enabled`、`port`、`allow_management`、`allow_proxy`、`require_proxy_auth_info`、`allow_http_forward`、`allow_http_reverse`、`allow_socks5` |
 | DELETE | `/api/v1/endpoints/{id}` | 删除并释放端口 | **204**；环境定义的默认接入点（`id=default`，`source: environment`、`read_only: true`）受保护：`GET` 能查，`PATCH`/`DELETE` → **409** `default endpoint is read-only`。端口冲突 → 409 `endpoint port already exists` |
 
-`allow_management=false` 的接入点同时失去 `/api/*`、`/ui/*` 与 **`/sub/*`**（`handler_subscription_token.go` 注释与
-`subscriptionsEnabled`）：只要树里还存在一个 `allow_management=true` 的接入点，`/sub` 就仍然可用。
+`allow_management=false` 的接入点同时失去 `/api/*` 与 `/ui/*`。
 
 ## 11. 请求头规则（account-header-rules）
 
@@ -273,18 +269,10 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | POST | `/api/v1/geoip/lookup` | 批量查地区 | 体 `{"ips":[…]}`；任一 IP 非法 → 400 `ips[i]: invalid IP address`；响应 `{"results":[{"ip","region"}]}` |
 | POST | `/api/v1/geoip/actions/update-now` | 立刻更新数据库（阻塞） | 200 `{"status":"ok"}`；失败 → 500 |
 
-## 17. 导出与订阅令牌
+## 17. 导出（已移除）
 
-| 方法 | 路径 | 用途 | 备注 |
-|---|---|---|---|
-| GET | `/api/v1/nodes/export` | 导出节点，管理员直接下载 | 必填 `format` ∈ `singbox`,`mihomo`,`v2rayn`,`uri`,`csv`,`json`（`internal/export/types.go`）。过滤词表与 `/api/v1/nodes` 完全一致（含 intel 过滤器）。`name_template` ≤256 字节，`healthy_only` 布尔；响应是**文件本体**（不是 JSON），带 `Content-Type`/`Content-Disposition` 与 `X-Prism-Export-Exported`、`X-Prism-Export-Skipped`、`X-Prism-Export-Truncated` 头。跳过明细只有 JSON 格式会写进正文 |
-| GET | `/api/v1/export-profiles` | 订阅档案列表 | 标准分页信封 |
-| POST | `/api/v1/export-profiles` | 创建档案并一次性给出订阅 URL | 体：`name`（1..128）、`format`（必填）、`platform_id?`（UUID）、`filter?`、`name_template?`、`enabled?`（默认 true）。**201**，**明文 URL 只在这一个响应里出现**（`url` 字段）。`platform_id` 是该档案的平台范围，与 `filter.platform_id` 同一含义，两者都填且不同 → **400**；只填 `platform_id` 时它会成为实际过滤条件 |
-| GET | `/api/v1/export-profiles/{id}` | 档案详情 | **永远不含 `url`**（服务端只存 SHA-256 摘要，`token_sha256` 是 `json:\"-\"`） |
-| PATCH | `/api/v1/export-profiles/{id}` | 修改档案 | 可改 `name`、`format`、`platform_id`、`name_template`、`enabled`、`filter`；**不返回 `url`**，也不会换令牌。冲突判定针对写入后的整行：只改 `platform_id` 而库里 filter 指向另一平台 → **400** |
-| DELETE | `/api/v1/export-profiles/{id}` | 删除档案 | **204**；订阅 URL 立即失效且不可恢复 |
-| POST | `/api/v1/export-profiles/{id}/actions/rotate-token` | 轮换订阅令牌 | 200，**新的明文 URL 只在这里出现一次**，旧令牌立刻失效。`url` 的 scheme/host 取自请求（`X-Forwarded-Proto`、`Host`），因此反代后也正确 |
-| （见 §4） | `GET /sub/{token}` | 公开订阅入口 | 用摘要查表 + 限流 + 统一 404 |
+Prism 定位为中转网关，不再提供订阅导出：`/api/v1/nodes/export`、`/api/v1/export-profiles*` 与公开的
+`/sub/{token}` 均已删除，state.db 迁移 `000016_drop_export_profiles` 会删掉 `export_profiles` 表。
 
 ## 18. 审计日志
 
@@ -299,8 +287,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 - `detail` 只记请求体的**顶层键名**（形如 `{"keys":["name","format"]}`），不记值；
 - `actor` 是管理员令牌的 SHA-256 前 8 个十六进制字符，令牌本身永不落库；
 - 路径参数里带凭据的名字（`token`、`secret`、`password`、`apikey`、`api_key`）不会写进 `target`；
-- `GET /sub/{token}` 由公开订阅处理器自己追加一条审计（`actor` 为 `export:<profileID>`，即 `model.AuditActorExportPrefix` + 档案 ID），**不**经过审计中间件；
-- 保留策略：90 天或最多 100000 条，由后台清理任务执行（`PruneAuditLogs`）。**额度是分桶的**：`export:` 前缀的订阅访问单独限在 50000 条（`keepMax/2`），管理记录的 100000 条额度不受它影响。否则只拿到一个订阅 URL 的调用者可以按请求速率写满整张表，把更早的管理操作挤出审计链（`internal/state/repo_state.go` `PruneAudit`）；
+- 保留策略：90 天或最多 100000 条，由后台清理任务执行（`PruneAuditLogs`，`internal/state/repo_state.go` `PruneAudit`）；
 
 ## 19. 指标
 
@@ -343,8 +330,8 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
    `encoding/json` 会把这个设置带进嵌套结构：多传一个顶层字段、或嵌套对象里拼错一个键，都是 400
    `invalid request body: json: unknown field "x"`。`PATCH` 用白名单达到同样效果（`field "x" is read-only or unknown`）。
    另一条容易忘的规则：`PATCH` **不接受 `null`**（`parseMergePatch`/`validateFields` 直接 400）。
-2. **未鉴权路径必须单独记：** `/healthz`、`/`、`/ui`、`/ui/`、`/sub/{token}`（以及代理入口本身）。
-   其中只有 `/healthz` 不受接入点 `allow_management` 影响；`/ui/*`、`/api/*`、`/sub/*` 在主监听面上都先过
+2. **未鉴权路径必须单独记：** `/healthz`、`/`、`/ui`、`/ui/`（以及代理入口本身）。
+   其中只有 `/healthz` 不受接入点 `allow_management` 影响；`/ui/*`、`/api/*` 在主监听面上都先过
    `allow_management`，为 false 时统一 404（`cmd/prism/inbound_mux.go`）。`PRISM_ADMIN_LISTEN` 的 listener
    只服务这些管理路径（`cmd/prism/admin_runtime.go`）。
 3. **`GET /api/v1/intel/jobs/{id}/events` 不走 `AuthMiddleware`**：它接受 `Authorization: Bearer` 或
@@ -376,20 +363,14 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 
    写成 `?status=success` 不会 400，而是安静地返回**全部**任务/条目。相关但**相反**的例子：`GET /nodes` 的
    `ip_type`/`quality_state`/`risk_grade`/`purity_band`/`protocol` 非法值是硬 400（`handler_node.go`）。
-6. **明文订阅 URL 只出现一次。** `POST /api/v1/export-profiles` 与
-   `POST /api/v1/export-profiles/{id}/actions/rotate-token` 的响应带 `url`；`GET`/`PATCH`/列表**永不**返回它
-   （服务端只存 SHA-256 摘要，`model.ExportProfile.TokenSHA256` 是 `json:"-"`）。轮换后旧 URL 立刻失效。
-   `/sub/{token}` 对未知令牌与已停用档案同样答 404，无法用来探测令牌存在性。
-7. **审计只记成功的写操作。** 只有 POST/PUT/PATCH/DELETE 且响应 2xx 才落一条记录；读操作和失败的写操作都不落
+6. **审计只记成功的写操作。** 只有 POST/PUT/PATCH/DELETE 且响应 2xx 才落一条记录；读操作和失败的写操作都不落
    （`internal/api/audit.go` 的 `auditWriteMethods` 与 `recorder.status` 判定）。`detail` 只有顶层键名。
-8. **两套布尔解析器不通用。** `enabled=true` 用 `ParseBoolQuery`（`1`/`t`/`TRUE` 都行），
+7. **两套布尔解析器不通用。** `enabled=true` 用 `ParseBoolQuery`（`1`/`t`/`TRUE` 都行），
    `/request-logs?net_ok=1` 与 `/leases?fuzzy=1` 用严格版（只认 `true`/`false`），混用会被 400 拒绝。
-9. **`/api/v1/nodes/export` 与 `/sub/{token}` 返回的是文件不是 JSON。** 别把它们塞进只解析 JSON 的客户端；
-   跳过明细只在 `format=json` 时进正文，其余格式靠 `X-Prism-Export-Skipped` 头。
-10. **指标端点对 `platform_id` 的支持不一致**：`realtime/throughput`、`realtime/connections`、`history/traffic`、
+8. **指标端点对 `platform_id` 的支持不一致**：`realtime/throughput`、`realtime/connections`、`history/traffic`、
     `history/probes`、`history/node-pool`、`snapshots/node-pool` 传 `platform_id` 会 400；
     `history/lease-lifetime` 与 `snapshots/platform-node-pool` 反过来**必填**。
-11. **新导入的节点不会立刻可路由，中间有一段探测窗口。** `AddNodeFromSub` 把新节点创建为
+9. **新导入的节点不会立刻可路由，中间有一段探测窗口。** `AddNodeFromSub` 把新节点创建为
     **circuit-open**（`entry.CircuitOpenSince` = 创建时刻），因为订阅内容不代表节点真的能通；
     只有出口探测成功（`RecordOutcome(hash, true, …)`）才会清掉熔断并触发
     `notifyAllPlatformsDirty`，节点这时才进入平台的 routable view。在此之前代理请求会得到
@@ -408,7 +389,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 - `docs/deployment.md`：`prism init`、systemd/`scripts/deploy.sh`、Docker、反向代理 + TLS、`PRISM_ADMIN_LISTEN`
   的用法、指标保留窗口，以及本版本**未实现**的清单（Prometheus 导出器、TLS 监听、OpenAPI 文档与 `/ui/docs` 页面）。
 - `docs/PROTOCOLS.md`：协议支持矩阵、解析报告与 `auto_intel` 如何到达 API/UI。
-- `docs/SECURITY.md`：令牌策略、登录失败限流、可信代理、`/sub` 公开入口的威胁模型。
+- `docs/SECURITY.md`：令牌策略、登录失败限流、可信代理的威胁模型。
 - `docs/backup-restore.md`、`docs/MIGRATION_FROM_RESIN.md`（偏差清单 X1–X6 与 `prism import-resin`）。
 
 没有 OpenAPI 文档、没有 `/ui/docs` 页面：路由的唯一真相是 `internal/api/server.go`（`docs/deployment.md`

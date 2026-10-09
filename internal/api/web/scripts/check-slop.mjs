@@ -228,14 +228,6 @@ function attribution(finding) {
     return body;
   };
 
-  if (finding.rule === "layout-transition") {
-    const file = finding.file ?? "";
-    if (!/(?:^|[\\/])(?:useReducedMotion|TrafficChart)-[A-Za-z0-9_-]+\.js$/.test(file)) return null;
-    return /echarts/i.test(read())
-      ? "ECharts' own bundled code (a Vite shared chunk whose name can follow either the chart or reduced-motion module). Recorded in DESIGN.md"
-      : null;
-  }
-
   /*
    * The detector reads the shell and its linked stylesheet as one palette, and reports
    * a violet/indigo accent as an "AI tell". This console's accent *is* an indigo→violet

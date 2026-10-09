@@ -140,16 +140,12 @@ Verified by `TestEndpointInboundMux_AppliesCapabilities` and
 ### 1.5 Management listener isolation (`PRISM_ADMIN_LISTEN`)
 
 When `PRISM_ADMIN_LISTEN=host:port` is set, a second listener serves only the
-management surface — `/`, `/healthz`, `/api/*`, `/ui/*` and the public
-subscription path `/sub/{token}` — and `CONNECT` plus every other path answer
+management surface — `/`, `/healthz`, `/api/*` and `/ui/*` — and `CONNECT` plus every other path answer
 `404` (`cmd/prism/admin_runtime.go`, `newAdminOnlyHandler` / `isManagementPath`).
 An empty value disables the listener instead of binding one.
 
 The management surface is gated as a whole by the endpoint's `allow_management`
-flag: `GET /sub/{token}` reaches the subscription handler through the same
-`shouldRouteControlPlane` case as `/api/*` and `/ui/*`
-(`cmd/prism/inbound_mux.go`), so the subscription URL the API mints resolves on
-the listener that minted it instead of being treated as a reverse-proxy path.
+flag (`cmd/prism/inbound_mux.go`, `shouldRouteControlPlane`).
 
 With an empty admin or proxy token the listener must stay on loopback:
 `LoadEnvConfig` rejects a non-loopback `PRISM_ADMIN_LISTEN` unless
@@ -436,7 +432,7 @@ path-valued option (`*_path`, including `certificate_path`,
 `static_key_path`, `private_key_path`) that holds a file reference instead of
 inline material, wherever it appears in the document (main object, nested `tls`,
 chain dependencies). It runs inside `node.ParseNodeDoc`, which every consumer
-uses — the outbound builder, the export path and the subscription parse report —
+uses — the outbound builder and the subscription parse report —
 so no input format can bypass it. The refusal carries reason
 `UNSUPPORTED_FEATURE` and detail `<field>: file path is not supported; inline the
 material` (the same rule the `.ovpn` parser already applied to `ca`/`cert`/`key`
@@ -459,7 +455,7 @@ Verified by:
 ### 1.13 State and cache databases are private
 
 `state.db` stores provider API keys in clear (`intel_provider_settings.api_key`),
-the audit log, export-profile token digests and subscription URLs, so the
+the audit log and subscription URLs, so the
 databases Prism owns are private by construction
 (`internal/state/schema.go`, `HardenDBFiles`): the containing directory is
 created or repaired to `0700` and the database file plus its `-wal`/`-shm` side
@@ -557,11 +553,6 @@ Deliberate exceptions, so the next reader does not have to grep for them:
   at all (`internal/proxy/forward.go`, `internal/proxy/socks5.go`: a SOCKS5
   client may offer the no-auth method, which the guard therefore never counts).
   The loopback rule of §1.5 is what constrains that configuration.
-- **`/sub/{token}` is not a `PRISM_PROXY_AUTH_FAIL_LIMIT` surface.** The public
-  subscription endpoint answers an unknown token with `404`, but it has its own
-  limiter — 60 requests per minute per token and 120 per minute per client IP,
-  answered `429` — which is independent of the proxy limiter
-  (`internal/api/export_token.go`, `internal/api/handler_subscription_token.go`).
 - **The admin API keeps its own fixed limiter.** `/api/*` is governed by
   `AuthMiddleware` (10 failures per minute, 5-minute block, §1.2); raising
   `PRISM_PROXY_AUTH_FAIL_LIMIT` does not change it, and lowering it does not
