@@ -286,6 +286,9 @@ Built-in unlock checks: `chatgpt`, `claude`, `gemini`, `google_captcha`, `netfli
 - `GET /api/v1/intel/providers`, `PATCH /api/v1/intel/providers/{id}`,
   `POST /api/v1/intel/providers/{id}/actions/refresh|resume`, `GET /api/v1/intel/checks`,
   `PATCH /api/v1/intel/checks/{id}`.
+- `GET /api/v1/nodes/export` — admin download of the filtered node pool as `singbox`, `mihomo`,
+  `v2rayn`, `uri`, `csv` or `json` (at most 5000 nodes per request; counts in the
+  `X-Prism-Export-Exported` / `-Skipped` / `-Truncated` headers). The nodes page has an Export menu.
 
 There is no OpenAPI document or `/ui/docs` page in this repository yet; the
 route table lives in `internal/api/server.go`.
@@ -334,6 +337,7 @@ Prism/
 │   ├── api/                  # REST handlers, middleware; api/web/ holds the React UI
 │   ├── buildinfo/            # version, commit, build time, build tags
 │   ├── config/               # PRISM_* environment configuration
+│   ├── export/               # admin node export (sing-box, mihomo, v2rayN, URI, CSV/JSON)
 │   ├── geoip/                # country database and lookup
 │   ├── intel/                # providers, checks, purity, evidence store and jobs
 │   ├── metrics/              # realtime, history and snapshot metrics

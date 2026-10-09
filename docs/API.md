@@ -90,10 +90,11 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 |---|---|
 | `GET /api/v1/request-logs` | **游标**：`limit`（默认 50）+ `cursor`（base64url 的 `tsNs:id`）；带 `offset` 直接 400 `offset: not supported for request-logs; use cursor`；响应为 `{items, limit, has_more, next_cursor?}` |
 | `GET /api/v1/audit-logs` | 反向游标：`before_id` + `limit`（默认 100，**上限 200**）；响应为 `{items, limit}`，按 id 降序 |
+| `GET /api/v1/nodes/export` | 导出专用：`limit` 默认 `export.MaxItems`=**5000**，显式传更大的值直接 400；`offset` 是选块游标，被截掉的条数通过 `X-Prism-Export-Truncated` 头暴露 |
 
 
 **查询参数**：布尔有两套实现，别混用——`ParseBoolQuery`（`strconv.ParseBool`，接受 `1/0/t/T/TRUE` 等）用于
-`/nodes`、`/subscriptions` 的 `enabled`、`circuit_open`、`has_outbound`、`native`、`healthy_only`；
+`/nodes`、`/subscriptions`、`/nodes/export` 的 `enabled`、`circuit_open`、`has_outbound`、`native`、`healthy_only`；
 `parseStrictBoolQuery`（只认 `true`/`false`）用于 `/platforms/{id}/leases` 的 `fuzzy`、`/request-logs` 的 `net_ok`/`fuzzy`。
 `sort_by`/`sort_order` 走白名单（`ParseSorting`），非法值 400。时间戳一律 RFC3339Nano，时长一律 Go duration 字符串（如 `"24h"`）。
 
@@ -144,6 +145,7 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | 方法 | 路径 | 用途 | 备注 |
 |---|---|---|---|
 | GET | `/api/v1/nodes` | 节点列表 | 响应在标准分页信封上多两个字段：`unique_egress_ips`、`unique_healthy_egress_ips`。过滤参数见下 |
+| GET | `/api/v1/nodes/export` | 导出节点文件 | 见 §17 |
 | GET | `/api/v1/nodes/{hash}` | 节点详情 | `NodeSummary`；hash 非十六进制 → 400 `node_hash: invalid format`，超过 128 字符 → 400，节点不存在 → 404 |
 | POST | `/api/v1/nodes/{hash}/actions/probe-egress` | 同步出口探测（阻塞） | 200 `{"egress_ip","region?","latency_ewma_ms"}`。失败分支：hash 非十六进制 → 400 `node_hash: invalid format`；节点不存在 → 404；探测本身失败（出站未就绪、无 fetcher 等）→ **500** `INTERNAL`「egress probe failed」（`control_plane_nodes.go` 用 `internal()` 包装，不区分 5xx 原因） |
 | POST | `/api/v1/nodes/{hash}/actions/probe-latency` | 同步延迟探测（阻塞） | 200 `{"latency_ewma_ms"}`；失败分支与 probe-egress 相同（400 / 404 / 500） |
@@ -269,10 +271,19 @@ curl -sS -i -H "Authorization: Bearer wrong" http://127.0.0.1:2260/api/v1/system
 | POST | `/api/v1/geoip/lookup` | 批量查地区 | 体 `{"ips":[…]}`；任一 IP 非法 → 400 `ips[i]: invalid IP address`；响应 `{"results":[{"ip","region"}]}` |
 | POST | `/api/v1/geoip/actions/update-now` | 立刻更新数据库（阻塞） | 200 `{"status":"ok"}`；失败 → 500 |
 
-## 17. 导出（已移除）
+## 17. 节点导出
 
-Prism 定位为中转网关，不再提供订阅导出：`/api/v1/nodes/export`、`/api/v1/export-profiles*` 与公开的
-`/sub/{token}` 均已删除，state.db 迁移 `000016_drop_export_profiles` 会删掉 `export_profiles` 表。
+| 方法 | 路径 | 用途 | 备注 |
+|---|---|---|---|
+| GET | `/api/v1/nodes/export` | 导出节点，管理员直接下载 | 必填 `format` ∈ `singbox`,`mihomo`,`v2rayn`,`uri`,`csv`,`json`（`internal/export/types.go`）。过滤词表与 `/api/v1/nodes` 完全一致（含 intel 过滤器）。`name_template` ≤256 字节，`healthy_only` 布尔；响应是**文件本体**（不是 JSON），带 `Content-Type`/`Content-Disposition` 与 `X-Prism-Export-Exported`、`X-Prism-Export-Skipped`、`X-Prism-Export-Truncated` 头。跳过明细只有 JSON 格式会写进正文 |
+
+`format=singbox` 输出的是 sing-box 配置**片段**：只有 `outbounds`（一个 `PROXY` selector、一个 `AUTO` urltest，
+再加每个节点一条出站及链式依赖 `<名>/d<i>`）与 `endpoints`（WireGuard 等），**没有** `inbounds`/`route`/`dns`。
+sing-box 能把它当完整配置直接加载（`sing-box check -c` 通过），但不开入站就没有流量入口：实际使用时把这两个数组
+合并进自己的配置（或用 `sing-box run -c base.json -c prism-export.json` 多文件合并），路由 `final` 指向 `PROXY`。
+
+导出只是管理员的一次性下载：没有导出档案、没有订阅令牌，也没有公开的 `/sub/{token}`
+（state.db 迁移 `000016_drop_export_profiles` 删除了旧的 `export_profiles` 表）。
 
 ## 18. 审计日志
 
@@ -367,10 +378,12 @@ Prism 定位为中转网关，不再提供订阅导出：`/api/v1/nodes/export`�
    （`internal/api/audit.go` 的 `auditWriteMethods` 与 `recorder.status` 判定）。`detail` 只有顶层键名。
 7. **两套布尔解析器不通用。** `enabled=true` 用 `ParseBoolQuery`（`1`/`t`/`TRUE` 都行），
    `/request-logs?net_ok=1` 与 `/leases?fuzzy=1` 用严格版（只认 `true`/`false`），混用会被 400 拒绝。
-8. **指标端点对 `platform_id` 的支持不一致**：`realtime/throughput`、`realtime/connections`、`history/traffic`、
+8. **`/api/v1/nodes/export` 返回的是文件不是 JSON。** 别把它塞进只解析 JSON 的客户端；
+   跳过明细只在 `format=json` 时进正文，其余格式靠 `X-Prism-Export-Skipped` 头。
+9. **指标端点对 `platform_id` 的支持不一致**：`realtime/throughput`、`realtime/connections`、`history/traffic`、
     `history/probes`、`history/node-pool`、`snapshots/node-pool` 传 `platform_id` 会 400；
     `history/lease-lifetime` 与 `snapshots/platform-node-pool` 反过来**必填**。
-9. **新导入的节点不会立刻可路由，中间有一段探测窗口。** `AddNodeFromSub` 把新节点创建为
+10. **新导入的节点不会立刻可路由，中间有一段探测窗口。** `AddNodeFromSub` 把新节点创建为
     **circuit-open**（`entry.CircuitOpenSince` = 创建时刻），因为订阅内容不代表节点真的能通；
     只有出口探测成功（`RecordOutcome(hash, true, …)`）才会清掉熔断并触发
     `notifyAllPlatformsDirty`，节点这时才进入平台的 routable view。在此之前代理请求会得到

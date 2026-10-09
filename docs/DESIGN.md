@@ -129,6 +129,7 @@ Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与
 | `publicsource` | 从公开订阅源收集节点 |
 | `geoip` | GeoIP 数据库下载、校验与读取 |
 | `scanloop` | 带抖动的周期性扫描循环 |
+| `export` | 管理员节点导出渲染：sing-box／mihomo／v2rayN／URI／CSV-JSON |
 | `requestlog`, `metrics` | 访问日志与聚合指标；专属存储适配器，不修改代理状态 |
 | `service`, `api` | 用例编排、输入输出与权限边界；变更审计在 `internal/api/audit.go` |
 | `buildinfo` | 构建期由 ldflags 注入的版本信息 |
@@ -164,6 +165,7 @@ internal/intel/            # 检测任务、限流、预算、数据源调用与
 internal/publicsource/     # 从公开订阅源收集节点
 internal/geoip/            # GeoIP 数据库下载、校验与读取
 internal/scanloop/         # 带抖动的周期性扫描循环
+internal/export/           # 把节点池渲染成管理员下载的文件（sing-box / mihomo / v2rayN / CSV-JSON）
 internal/requestlog/       # 结构化请求日志：异步写入滚动 SQLite 库
 internal/metrics/          # 指标采集、聚合与存储
 internal/service/          # 用例编排的服务层类型

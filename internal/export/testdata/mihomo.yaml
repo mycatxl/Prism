@@ -1,0 +1,136 @@
+proxies:
+  - cipher: aes-256-gcm
+    name: ss-tokyo
+    password: ss-secret-credential
+    port: 8388
+    server: 198.51.100.10
+    type: ss
+  - alterId: 0
+    cipher: auto
+    name: vmess-ws
+    network: ws
+    port: 443
+    server: vmess.example.com
+    servername: vmess.example.com
+    sni: vmess.example.com
+    tls: true
+    type: vmess
+    uuid: 11111111-2222-3333-4444-555555555555
+    ws-opts:
+      headers:
+        Host: vmess.example.com
+      path: /ws
+  - client-fingerprint: chrome
+    flow: xtls-rprx-vision
+    name: vless-reality
+    port: 443
+    reality-opts:
+      public-key: PUBLIC-KEY-FIXTURE
+      short-id: 0123abcd
+    server: vless.example.com
+    servername: www.example.com
+    sni: www.example.com
+    tls: true
+    type: vless
+    uuid: aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+  - name: trojan-1
+    password: trojan-secret-credential
+    port: 8443
+    server: trojan.example.org
+    servername: trojan.example.org
+    sni: trojan.example.org
+    tls: true
+    type: trojan
+  - name: hy2-1
+    obfs: salamander
+    obfs-password: obfs-secret
+    password: hy2-secret-credential
+    port: 443
+    server: hy2.example.net
+    servername: hy2.example.net
+    sni: hy2.example.net
+    tls: true
+    type: hysteria2
+  - name: tuic-1
+    password: tuic-secret-credential
+    port: 443
+    server: tuic.example.org
+    servername: tuic.example.org
+    sni: tuic.example.org
+    tls: true
+    type: tuic
+    uuid: bbbbbbbb-cccc-dddd-eeee-ffffffffffff
+  - name: anytls-1
+    password: anytls-secret-credential
+    port: 443
+    server: anytls.example.com
+    servername: anytls.example.com
+    sni: anytls.example.com
+    tls: true
+    type: anytls
+  - name: socks-1
+    password: socks-secret-credential
+    port: 1080
+    server: socks.example.com
+    type: socks5
+    username: socks-user
+  - name: http-1
+    password: http-secret-credential
+    port: 8080
+    server: http.example.com
+    type: http
+    username: http-user
+  - allowed-ips:
+      - 0.0.0.0/0
+    ip: 10.7.0.2/32
+    name: wg-1
+    port: 51820
+    private-key: WG-PRIVATE-KEY-FIXTURE
+    public-key: WG-PUBLIC-KEY-FIXTURE
+    server: 203.0.113.9
+    type: wireguard
+  - cipher: aes-256-gcm
+    name: ss-shadowtls
+    password: chain-secret-credential
+    plugin: shadow-tls
+    plugin-opts:
+      host: 198.51.100.20
+      password: shadowtls-secret-credential
+      version: 3
+    port: 443
+    server: 198.51.100.20
+    type: ss
+proxy-groups:
+  - name: PROXY
+    proxies:
+      - AUTO
+      - ss-tokyo
+      - vmess-ws
+      - vless-reality
+      - trojan-1
+      - hy2-1
+      - tuic-1
+      - anytls-1
+      - socks-1
+      - http-1
+      - wg-1
+      - ss-shadowtls
+    type: select
+  - interval: 300
+    name: AUTO
+    proxies:
+      - ss-tokyo
+      - vmess-ws
+      - vless-reality
+      - trojan-1
+      - hy2-1
+      - tuic-1
+      - anytls-1
+      - socks-1
+      - http-1
+      - wg-1
+      - ss-shadowtls
+    type: url-test
+    url: https://www.gstatic.com/generate_204
+rules:
+  - MATCH,PROXY

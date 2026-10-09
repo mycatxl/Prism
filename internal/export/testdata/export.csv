@@ -1,0 +1,5 @@
+name,node_hash,engine,protocol,protocol_detail,subscription,egress_ipv4,egress_ipv6,colo,country,city,asn,as_org,ip_type,native,purity_score,purity_band,confidence,verdict,flags,checks,latency_ms,healthy,assessed_at
+ss-tokyo,11111111111111111111111111111111,singbox,shadowsocks,shadowsocks,,198.51.100.10,,NRT,JP,Tokyo,AS64500,Example Residential ISP,residential,true,96,excellent,80,favorable,,proxycheck:valid:ip_type=residential:grade=low:risk=4:confidence=80,42.5,false,2026-09-24T12:00:00Z
+wg-1,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,singbox,wireguard,wireguard,,,,,,,,,,,,,,,,,,false,
+ss-shadowtls,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,singbox,shadowsocks,shadowsocks+shadowtls,,,,,,,,,,,,,,,,,,false,
+ssr-1,cccccccccccccccccccccccccccccccc,mihomo,ssr,ssr,,,,,,,,,,,,,,,,,,false,

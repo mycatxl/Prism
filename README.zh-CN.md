@@ -246,6 +246,8 @@ DB-IP Lite、MaxMind GeoLite2 与 IPinfo Lite 需要先下载到
 - `GET /api/v1/intel/providers`、`PATCH /api/v1/intel/providers/{id}`、
   `POST /api/v1/intel/providers/{id}/actions/refresh|resume`、`GET /api/v1/intel/checks`、
   `PATCH /api/v1/intel/checks/{id}`。
+- `GET /api/v1/nodes/export` — 管理员按筛选下载节点文件：`singbox`、`mihomo`、`v2rayn`、`uri`、`csv`、`json`
+  （单次最多 5000 个节点，数量见 `X-Prism-Export-Exported/Skipped/Truncated` 头）。节点页有「导出」菜单。
 
 仓库中目前没有 OpenAPI 文档，也没有 `/ui/docs` 页面；完整路由表见
 `internal/api/server.go`。
@@ -293,6 +295,7 @@ Prism/
 │   ├── api/                  # REST 处理器与中间件；api/web/ 为 React 前端
 │   ├── buildinfo/            # 版本、提交、构建时间与标签
 │   ├── config/               # PRISM_* 环境配置
+│   ├── export/               # 管理员节点导出（sing-box、mihomo、v2rayN、URI、CSV/JSON）
 │   ├── geoip/                # 国家数据库与查询
 │   ├── intel/                # 数据源、检测规则、纯净度、证据库与任务
 │   ├── metrics/              # 实时、历史与快照指标

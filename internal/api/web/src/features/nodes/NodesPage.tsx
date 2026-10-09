@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   Globe2,
   LoaderCircle,
   Network,
@@ -17,7 +18,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import {
   Link,
   useLocation,
@@ -27,6 +28,7 @@ import {
 import { Badge, type BadgeProps } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../../components/ui/Menu";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import {
   Panel,
@@ -50,7 +52,15 @@ import { listPlatforms } from "../platforms/api";
 import { listSubscriptions } from "../subscriptions/api";
 import { createIntelJob } from "../jobs/api";
 import type { IntelJobScope } from "../jobs/types";
-import { getNode, listNodes, probeEgress, probeLatency } from "./api";
+import {
+  exportNodes,
+  getNode,
+  listNodes,
+  NODE_EXPORT_FORMATS,
+  probeEgress,
+  probeLatency,
+  type NodeExportFormat,
+} from "./api";
 import { buildBulkIntelScope, hasUnsupportedFilters } from "./intelScope";
 import { getAllRegions, getRegionName } from "./regions";
 import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
@@ -86,6 +96,27 @@ const sorts = ["tag", "created_at", "failure_count", "region", "purity_score", "
 function integer(value: string | null, fallback: number) {
   const n = Number(value);
   return value !== null && Number.isSafeInteger(n) && n >= 0 ? n : fallback;
+}
+
+// Export formats in menu order: client configs first, then analysis files.
+const EXPORT_FORMAT_LABELS: Record<NodeExportFormat, { label: string; hint: string }> = {
+  singbox: { label: "sing-box", hint: "JSON" },
+  mihomo: { label: "mihomo / Clash Meta", hint: "YAML" },
+  v2rayn: { label: "v2rayN", hint: "Base64" },
+  uri: { label: "分享链接", hint: "URI" },
+  csv: { label: "表格", hint: "CSV" },
+  json: { label: "分析数据", hint: "JSON" },
+};
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function formatCount(value: number | null | undefined) {
@@ -306,6 +337,18 @@ export function NodesPage() {
     },
     onError: error => showToast("error", formatApiErrorMessage(error, t)),
   });
+  const exportMutation = useMutation({
+    mutationFn: (format: NodeExportFormat) => exportNodes(format, nodeQuery),
+    onSuccess: (result) => {
+      downloadBlob(result.blob, result.fileName);
+      const parts = [t("已导出 {{count}} 个节点", { count: result.exported })];
+      if (result.skipped > 0) parts.push(t("跳过 {{count}} 个", { count: result.skipped }));
+      if (result.truncated > 0) parts.push(t("超出上限 {{count}} 个未导出", { count: result.truncated }));
+      showToast("success", parts.join(" · "));
+    },
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
+  });
+
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["quality"] });
     if (view === "nodes") void nodesQuery.refetch();
@@ -412,6 +455,30 @@ export function NodesPage() {
                   className={nodesQuery.isFetching ? "animate-spin" : undefined}
                 />
               </Button>
+              <Menu>
+                <MenuTrigger asChild>
+                  <Button variant="secondary" disabled={exportMutation.isPending}>
+                    {exportMutation.isPending ? (
+                      <LoaderCircle size={16} className="animate-spin" aria-hidden />
+                    ) : (
+                      <Download size={16} aria-hidden />
+                    )}
+                    {t("导出")}
+                  </Button>
+                </MenuTrigger>
+                <MenuContent>
+                  <MenuLabel>{t("按当前筛选导出")}</MenuLabel>
+                  {NODE_EXPORT_FORMATS.map((format, index) => (
+                    <Fragment key={format}>
+                      {index === 4 ? <MenuSeparator /> : null}
+                      <MenuItem onSelect={() => exportMutation.mutate(format)}>
+                        <span>{t(EXPORT_FORMAT_LABELS[format].label)}</span>
+                        <span className="text-xs text-ink-faint">{EXPORT_FORMAT_LABELS[format].hint}</span>
+                      </MenuItem>
+                    </Fragment>
+                  ))}
+                </MenuContent>
+              </Menu>
               <Button asChild variant="secondary">
                 <Link to="/subscriptions?create=1">{t("导入节点")}</Link>
               </Button>

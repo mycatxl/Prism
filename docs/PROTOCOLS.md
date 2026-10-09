@@ -300,10 +300,38 @@ names per bucket (names capped at 80 runes) in the summary, 64 KiB per stored re
 over-limit case is counted explicitly (`skipped_overflow`, `reasons_overflow`,
 `samples_truncated`, `truncated`/`original_bytes`) rather than silently dropped.
 
-## 9. Export (removed)
+## 9. Node export formats
 
-Prism is a relay gateway: node export (`GET /api/v1/nodes/export`), export profiles and the public
-`/sub/{token}` subscription output were removed. Subscription *import* (§1–§8) is unchanged.
+Output (independent of the D-1 kernel decision — a mihomo *configuration file* is a
+dependency-free serialisation, `internal/export/types.go`):
+
+| Format | Content type | Notes |
+|---|---|---|
+| `singbox` | `application/json` | selector + urltest groups, default tags `PROXY` / `AUTO` |
+| `mihomo` | `text/yaml` | Clash Meta config; chain nodes are not representable (`NOT_REPRESENTABLE:mihomo(chain)`) |
+| `v2rayn` | `text/plain` | share-link list |
+| `uri` | `text/plain` | plain share-link list (round-trip tested through the parser) |
+| `csv`, `json` | `text/csv` / JSON | analysis columns incl. optional intel columns; never contains credentials |
+
+Per-node skips carry `NOT_REPRESENTABLE:<format>`, `NOT_REPRESENTABLE:mihomo(chain)`,
+`INVALID:node document` or `INVALID:duplicate node name`; the response reports
+`exported` / `skipped` / `truncated` (one request is bounded to `export.MaxItems = 5000`).
+`GET /api/v1/nodes/export` is admin-authenticated.
+
+**Client version requirement for `mihomo`.** The output was validated with the real mihomo
+binary (`mihomo -t -d <dir> -f <config>`) against two live subscriptions (280 / 235 nodes,
+0 skipped): **v1.19.31 accepts both exports**. `anytls` needs a recent mihomo — **v1.19.2
+rejects it with `unsupport proxy type: anytls`** because that type did not exist yet, so use
+a current mihomo release when the subscription contains anytls nodes. `mihomo -t` validates
+the configuration structure and field types only; it does not dial the nodes. Full evidence
+and the `up`/`down` findings are in `docs/ENGINE_DECISIONS.md` D-4.
+
+The `singbox` file is an `outbounds` + `endpoints` fragment (no inbounds, route or dns). sing-box
+loads it as-is, but to use it merge it into a config that has an inbound, or pass both files:
+`sing-box run -c base.json -c prism-export.json`, with `route.final` set to `PROXY`.
+
+There are no export profiles, subscription tokens or public `/sub/{token}` output: export is a one-off
+admin download. Subscription *import* (§1–§8) is unaffected.
 
 ## 10. Known limitations
 
