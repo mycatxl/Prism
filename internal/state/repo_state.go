@@ -849,13 +849,17 @@ func (r *StateRepo) UpsertIntelProviderSetting(s model.IntelProviderSetting) err
 
 // AppendAudit records one administrative mutation.
 func (r *StateRepo) AppendAudit(e model.AuditEntry) error {
+	return r.appendAuditLocked(&r.mu, e)
+}
+
+func (r *StateRepo) appendAuditLocked(mu *sync.Mutex, e model.AuditEntry) error {
 	detail := strings.TrimSpace(e.Detail)
 	if detail == "" {
 		detail = "{}"
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 
 	_, err := r.db.Exec(
 		`INSERT INTO audit_log (at_ns, actor, remote_addr, action, target, detail_json, actor_user_id, target_type, target_id)

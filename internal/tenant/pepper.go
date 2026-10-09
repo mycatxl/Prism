@@ -63,19 +63,26 @@ func LoadOrCreatePepper(stateDir string) ([]byte, error) {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create %s: %w", stateDir, err)
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// Write a temp file, then hard-link it into place: readers never see a
+	// partial file and concurrent creators agree on one winner.
+	f, err := os.CreateTemp(stateDir, PepperFileName+".tmp-*")
 	if err != nil {
-		if errors.Is(err, os.ErrExist) { // lost a creation race; use the winner
-			return LoadOrCreatePepper(stateDir)
-		}
-		return nil, fmt.Errorf("create %s: %w", path, err)
+		return nil, fmt.Errorf("create pepper temp file: %w", err)
 	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	cherr := f.Chmod(0o600)
 	_, werr := f.WriteString(base64.StdEncoding.EncodeToString(pepper) + "\n")
 	serr := f.Sync()
 	cerr := f.Close()
-	if err := errors.Join(werr, serr, cerr); err != nil {
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("write %s: %w", path, err)
+	if err := errors.Join(cherr, werr, serr, cerr); err != nil {
+		return nil, fmt.Errorf("write pepper temp file: %w", err)
+	}
+	if err := os.Link(tmp, path); err != nil {
+		if errors.Is(err, os.ErrExist) { // lost a creation race; use the winner
+			return LoadOrCreatePepper(stateDir)
+		}
+		return nil, fmt.Errorf("install %s: %w", path, err)
 	}
 	return pepper, nil
 }

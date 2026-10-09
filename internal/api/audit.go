@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"prism/internal/model"
@@ -25,7 +26,6 @@ import (
 // the values, and path parameters that carry a credential are not recorded at
 // all.
 const (
-	auditRetentionDays   = 90
 	auditMaxEntries      = 100000
 	auditDefaultLimit    = 100
 	auditMaxLimit        = 200
@@ -319,13 +319,25 @@ func HandleListAuditLogs(store AuditLogStore) http.Handler {
 	})
 }
 
-// PruneAuditLogs applies the audit retention policy: 90 days, at most 100000
-// entries. It returns the number of removed rows.
+// auditRetentionDays is set from PRISM_AUDIT_RETENTION_DAYS; 0 disables the
+// age rule.
+var auditRetentionDays atomic.Int64
+
+func init() { auditRetentionDays.Store(365) }
+
+// SetAuditRetentionDays sets the audit age limit in days (0 = no age limit).
+func SetAuditRetentionDays(days int) { auditRetentionDays.Store(int64(days)) }
+
+// PruneAuditLogs applies the audit retention policy: PRISM_AUDIT_RETENTION_DAYS
+// (default 365), at most 100000 entries. It returns the number of removed rows.
 func PruneAuditLogs(store AuditLogStore) (int64, error) {
 	if store == nil {
 		return 0, nil
 	}
-	olderThanNs := time.Now().Add(-auditRetentionDays * 24 * time.Hour).UnixNano()
+	var olderThanNs int64
+	if days := auditRetentionDays.Load(); days > 0 {
+		olderThanNs = time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
+	}
 	return store.PruneAudit(olderThanNs, auditMaxEntries)
 }
 
