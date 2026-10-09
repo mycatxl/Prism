@@ -223,7 +223,7 @@ Verified by:
 
 ### 1.7 Local direct dial target policy (`PRISM_DIRECT_DENY_PRIVATE`)
 
-With `PRISM_DIRECT_DENY_PRIVATE=true` (default `false`) **every** local dial path
+With `PRISM_DIRECT_DENY_PRIVATE=true` (default `true` since v0.1.0) **every** local dial path
 refuses a target whose address is in the denied set, because all four share one
 policy object (`internal/proxy/direct_dial_guard.go`, `DirectDialGuard`):
 
@@ -294,7 +294,7 @@ private target reached through a remote node is that node's network. That left a
 different gap — a node whose own `server` names loopback or the LAN, which Prism
 would happily dial as the first hop.
 
-`PRISM_DENY_PRIVATE_NODES=true` (default `false`) closes it. The check runs in
+`PRISM_DENY_PRIVATE_NODES=true` (default `true` since v0.1.0) closes it. The check runs in
 `OutboundManager.EnsureNodeOutbound` (`internal/outbound/manager.go`), which is
 the one point every dial path passes through: the probe manager, the batch jobs
 and the routing path all build their outbound there. A refused node gets no
@@ -538,7 +538,7 @@ loopback unless the network path is trusted.
 
 ### 3.2 Proxy entry failure limiting is off by default
 
-`PRISM_PROXY_AUTH_FAIL_LIMIT` defaults to `0`, which disables failure limiting
+`PRISM_PROXY_AUTH_FAIL_LIMIT` defaults to `30` (set `0` to disable failure limiting)
 on the proxy entrypoints (407/403 responses and the SOCKS5 username/password
 rejection); only the management API is protected by default (§1.2). This keeps
 the upstream Resin behaviour (`cmd/prism/app_runtime.go`,
@@ -564,7 +564,7 @@ closed session instead of the `429 RATE_LIMITED` the HTTP entries return.
 
 ### 3.3 Direct target policy is off by default
 
-`PRISM_DIRECT_DENY_PRIVATE=false` is the default, so **none** of Prism's local
+With `PRISM_DIRECT_DENY_PRIVATE=false` (the default before v0.1.0) **none** of Prism's local
 dial paths (the reverse-proxy bypass branch, the forward HTTP proxy, CONNECT and
 SOCKS5) applies an address policy unless it is enabled (§1.7). Without it, a
 client that holds the proxy token can reach loopback, private, CGNAT, reserved

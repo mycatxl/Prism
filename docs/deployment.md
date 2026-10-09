@@ -44,9 +44,7 @@ touch an existing file unless `--force` is passed (the old file is moved to
 
 The quickest deployment needs **no Go and no Node**: `release.yml` runs on a `v*` tag
 and publishes one archive per target on the
-[releases page](https://github.com/mycatxl/Prism/releases). Each archive holds **two
-binaries**: `prism` and `public-source-sync` (the public-source collector, so it needs
-no separate build). The same tag publishes a container image on `ghcr.io`, so
+[releases page](https://github.com/mycatxl/Prism/releases). Each archive holds the `prism` binary. The same tag publishes a container image on `ghcr.io`, so
 `docker pull` is the other no-toolchain path.
 
 | Archive | Platform |
