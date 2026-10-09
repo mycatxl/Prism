@@ -401,13 +401,13 @@ func (r *TenantRepo) ExpireDue(nowNs int64) ([]string, error) {
 
 // --- access keys ---
 
-const keyColumns = `id, user_id, name, secret_hash, platforms_json, ip_allowlist_json, status, expires_at_ns,
+const keyColumns = `id, user_id, name, scope, secret_hash, platforms_json, ip_allowlist_json, status, expires_at_ns,
 	last_used_at_ns, created_at_ns, updated_at_ns`
 
 func scanKey(s rowScanner) (*tenant.AccessKey, error) {
 	var k tenant.AccessKey
 	var platforms, allow sql.NullString
-	if err := s.Scan(&k.ID, &k.UserID, &k.Name, &k.SecretHash, &platforms, &allow, &k.Status,
+	if err := s.Scan(&k.ID, &k.UserID, &k.Name, &k.Scope, &k.SecretHash, &platforms, &allow, &k.Status,
 		&k.ExpiresAtNs, &k.LastUsedNs, &k.CreatedAtNs, &k.UpdatedAtNs); err != nil {
 		return nil, err
 	}
@@ -432,8 +432,12 @@ func (r *TenantRepo) CreateKey(k tenant.AccessKey) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, err = r.db.Exec(`INSERT INTO access_keys (`+keyColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		k.ID, k.UserID, k.Name, k.SecretHash, platforms, allow, k.Status, k.ExpiresAtNs,
+	scope := k.Scope
+	if scope == "" {
+		scope = tenant.ScopeProxy
+	}
+	_, err = r.db.Exec(`INSERT INTO access_keys (`+keyColumns+`) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		k.ID, k.UserID, k.Name, scope, k.SecretHash, platforms, allow, k.Status, k.ExpiresAtNs,
 		k.LastUsedNs, k.CreatedAtNs, k.UpdatedAtNs)
 	return wrapWrite(err)
 }
@@ -529,7 +533,7 @@ func (r *TenantRepo) TouchKeysUsed(lastUsed map[string]int64) error {
 	return tx.Commit()
 }
 
-const authSnapshotSQL = `SELECT ` + `k.id, k.user_id, k.name, k.secret_hash, k.platforms_json, k.ip_allowlist_json, k.status,
+const authSnapshotSQL = `SELECT ` + `k.id, k.user_id, k.name, k.scope, k.secret_hash, k.platforms_json, k.ip_allowlist_json, k.status,
 	k.expires_at_ns, k.last_used_at_ns, k.created_at_ns, k.updated_at_ns,
 	u.status, u.role,
 	s.id, s.plan_id, s.plan_snapshot_json, s.starts_at_ns, s.expires_at_ns, s.period_start_ns,
@@ -545,7 +549,7 @@ func scanAuthRecord(s rowScanner) (*tenant.AuthRecord, error) {
 	var role string
 	var sID, sPlan, sSnap, sStatus sql.NullString
 	var sStarts, sExpires, sPeriod, sUsed, sCreated, sUpdated sql.NullInt64
-	if err := s.Scan(&k.ID, &k.UserID, &k.Name, &k.SecretHash, &platforms, &allow, &k.Status,
+	if err := s.Scan(&k.ID, &k.UserID, &k.Name, &k.Scope, &k.SecretHash, &platforms, &allow, &k.Status,
 		&k.ExpiresAtNs, &k.LastUsedNs, &k.CreatedAtNs, &k.UpdatedAtNs,
 		&rec.UserStatus, &role,
 		&sID, &sPlan, &sSnap, &sStarts, &sExpires, &sPeriod, &sUsed, &sStatus, &sCreated, &sUpdated); err != nil {

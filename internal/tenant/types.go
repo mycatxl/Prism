@@ -13,7 +13,6 @@ import (
 // Re-exported so callers need not import model for these.
 const (
 	BuiltinAdminUserID = model.BuiltinAdminUserID
-	LegacyKeyID        = model.LegacyKeyID
 )
 
 var (
@@ -37,6 +36,13 @@ const (
 	StatusActive   = "active"
 	StatusDisabled = "disabled" // users, access keys
 	StatusArchived = "archived" // plans
+)
+
+// Access-key scopes. Proxy keys authenticate the data plane; admin keys
+// authenticate the management API and are only valid for admin users.
+const (
+	ScopeProxy = "proxy"
+	ScopeAdmin = "admin"
 )
 
 // Subscription status values.
@@ -107,6 +113,7 @@ type AccessKey struct {
 	ID          string   `json:"id"` // public, "pk_..."
 	UserID      string   `json:"user_id"`
 	Name        string   `json:"name"`
+	Scope       string   `json:"scope"` // ScopeProxy or ScopeAdmin
 	SecretHash  []byte   `json:"-"`
 	Platforms   []string `json:"platforms,omitempty"`    // nil = no extra restriction
 	IPAllowlist []string `json:"ip_allowlist,omitempty"` // nil = any source

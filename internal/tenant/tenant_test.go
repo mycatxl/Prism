@@ -159,7 +159,8 @@ func newFixture(t *testing.T) *fixture {
 		mk("a_exp", "u_a", RoleUser, sub, func(k *AccessKey) { k.ExpiresAtNs = 50 }),
 		mk("a_off", "u_a", RoleUser, sub, func(k *AccessKey) { k.Status = StatusDisabled }),
 		mk("nosub", "u_n", RoleUser, nil, nil),
-		mk("adm", BuiltinAdminUserID, RoleAdmin, nil, nil),
+		mk("u_admkey", "u_a", RoleUser, sub, func(k *AccessKey) { k.Scope = ScopeAdmin }),
+		mk("adm", BuiltinAdminUserID, RoleAdmin, nil, func(k *AccessKey) { k.Scope = ScopeAdmin }),
 	}
 	f.recAdm = recs[len(recs)-1]
 	if err := f.cache.Load(recs); err != nil {
@@ -171,7 +172,7 @@ func newFixture(t *testing.T) *fixture {
 func TestKeyCache_Authenticate(t *testing.T) {
 	f := newFixture(t)
 	c := f.cache
-	if c.Len() != 7 {
+	if c.Len() != 8 {
 		t.Fatalf("len = %d", c.Len())
 	}
 	ok := func(name string, now int64) *KeyState {
@@ -199,8 +200,14 @@ func TestKeyCache_Authenticate(t *testing.T) {
 	ok("a_exp", 49)
 	fail(f.creds["a_exp"], 50)
 	fail(f.creds["nosub"], 10)
-	fail(f.creds["a"], 1000) // subscription expired by time
-	ok("adm", 1<<62)         // admin: no subscription needed
+	fail(f.creds["a"], 1000)                  // subscription expired by time
+	if ok("adm", 1<<62).Scope != ScopeAdmin { // admin: no subscription needed
+		t.Fatal("scope")
+	}
+	if ok("a", 10).Scope != ScopeProxy {
+		t.Fatal("default scope")
+	}
+	fail(f.creds["u_admkey"], 10) // admin scope on a non-admin user
 
 	c.SetUserActive("u_a", false)
 	fail(f.creds["a"], 10)
@@ -268,11 +275,11 @@ func TestKeyCache_PutRemove(t *testing.T) {
 	if got := c.Remove(rec.Key.ID); got == nil || got.ID != rec.Key.ID {
 		t.Fatal("remove")
 	}
-	if len(c.UserKeys("u_a")) != 5 {
+	if len(c.UserKeys("u_a")) != 6 {
 		t.Fatal("user keys")
 	}
 	removed := c.RemoveUser("u_a")
-	if len(removed) != 5 || c.Len() != 1 || c.User("u_a") != nil {
+	if len(removed) != 6 || c.Len() != 1 || c.User("u_a") != nil {
 		t.Fatalf("remove user: %d left", c.Len())
 	}
 	bad := f.recAdm

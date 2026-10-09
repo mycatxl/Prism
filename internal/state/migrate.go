@@ -36,7 +36,8 @@ const (
 	stateVersionPlatformNodeCriteria             = 15
 	stateVersionDropExportProfiles               = 16
 	stateVersionMultiTenant                      = 17
-	stateLatestVersion                           = stateVersionMultiTenant
+	stateVersionAccessKeyScope                   = 18
+	stateLatestVersion                           = stateVersionAccessKeyScope
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	stateBaseSchemaMigration = stateMigrationsPath + "/000001_state_base.up.sql"

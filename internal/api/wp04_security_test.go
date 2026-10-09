@@ -536,7 +536,7 @@ func TestAuditLog_RetentionPolicy(t *testing.T) {
 		t.Fatalf("keepMax: got %d, want 100000", store.pruneCall.keepMax)
 	}
 	cutoff := time.Unix(0, store.pruneCall.olderThanNs)
-	wantDays := 90
+	wantDays := 365
 	gotDays := int(time.Since(cutoff).Hours() / 24)
 	if gotDays < wantDays-1 || gotDays > wantDays+1 {
 		t.Fatalf("retention cutoff: got %d days, want about %d", gotDays, wantDays)

@@ -254,6 +254,9 @@ func TestTenant_KeysScopedByOwner(t *testing.T) {
 	must(t, r.UpdateKey("u_a", "pk_a", tenant.KeyPatch{Name: &name, IPAllowlist: &allow, Platforms: &clear}, 3))
 	k, err := r.GetKey("u_a", "pk_a")
 	must(t, err)
+	if k.Scope != tenant.ScopeProxy {
+		t.Fatalf("default scope = %q", k.Scope)
+	}
 	if k.Name != "x" || k.Platforms != nil || len(k.IPAllowlist) != 1 || k.UpdatedAtNs != 3 {
 		t.Fatalf("key = %+v", k)
 	}
@@ -274,7 +277,10 @@ func TestTenant_AuthSnapshot(t *testing.T) {
 	seedUser(t, r, "u_a", "alice", tenant.RoleUser)
 	p := seedPlan(t, r, "plan_1")
 	must(t, r.CreateKey(tenant.AccessKey{ID: "pk_a", UserID: "u_a", SecretHash: []byte{9}, Status: "active"}))
-	must(t, r.CreateKey(tenant.AccessKey{ID: "pk_adm", UserID: tenant.BuiltinAdminUserID, SecretHash: []byte{8}, Status: "active"}))
+	must(t, r.CreateKey(tenant.AccessKey{ID: "pk_adm", UserID: tenant.BuiltinAdminUserID, Scope: tenant.ScopeAdmin, SecretHash: []byte{8}, Status: "active"}))
+	if err := r.CreateKey(tenant.AccessKey{ID: "pk_bad", UserID: "u_a", Scope: "root", SecretHash: []byte{1}, Status: "active"}); err == nil {
+		t.Fatal("invalid scope accepted")
+	}
 	must(t, r.ActivateSubscription(tenant.Subscription{ID: "sub_1", UserID: "u_a", PlanID: p.ID,
 		Snapshot: p.PlanLimits, ExpiresAtNs: 100, Status: tenant.SubActive}))
 
@@ -291,7 +297,7 @@ func TestTenant_AuthSnapshot(t *testing.T) {
 	}
 	rec, err = r.LoadAuthRecord("pk_adm")
 	must(t, err)
-	if rec.UserRole != tenant.RoleAdmin || rec.Subscription != nil {
+	if rec.UserRole != tenant.RoleAdmin || rec.Subscription != nil || rec.Key.Scope != tenant.ScopeAdmin {
 		t.Fatalf("admin record = %+v", rec)
 	}
 	if _, err := r.LoadAuthRecord("pk_none"); !errors.Is(err, tenant.ErrNotFound) {

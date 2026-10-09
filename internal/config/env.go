@@ -105,14 +105,7 @@ type EnvConfig struct {
 	AdminToken  string `json:"-"`
 	ProxyToken  string `json:"-"`
 
-	// Multi-tenant
-	MultiTenant bool
-	// LegacyToken accepts PRISM_PROXY_TOKEN as the built-in admin's
-	// unmetered key. Defaults to !MultiTenant.
-	LegacyToken bool
-	// LegacyTokenUnsafe is true when LegacyToken was explicitly enabled with
-	// MultiTenant on: the token bypasses every quota and platform limit.
-	LegacyTokenUnsafe        bool
+	// Multi-tenant retention
 	UsageHourlyRetentionDays int
 	UsageDailyRetentionDays  int
 	AuditRetentionDays       int
@@ -224,9 +217,6 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.AdminToken = adminToken
 	cfg.ProxyToken = proxyToken
 
-	cfg.MultiTenant = envBool("PRISM_MULTI_TENANT", false, &errs)
-	cfg.LegacyToken = envBool("PRISM_LEGACY_TOKEN", !cfg.MultiTenant, &errs)
-	cfg.LegacyTokenUnsafe = cfg.MultiTenant && cfg.LegacyToken
 	cfg.UsageHourlyRetentionDays = envInt("PRISM_USAGE_HOURLY_RETENTION_DAYS", 30, &errs)
 	cfg.UsageDailyRetentionDays = envInt("PRISM_USAGE_DAILY_RETENTION_DAYS", 400, &errs)
 	cfg.AuditRetentionDays = envInt("PRISM_AUDIT_RETENTION_DAYS", 365, &errs)

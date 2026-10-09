@@ -12,8 +12,8 @@ CREATE TABLE IF NOT EXISTS users (
     last_login_at_ns INTEGER NOT NULL DEFAULT 0
 );
 
--- Built-in admin. Legacy PRISM_PROXY_TOKEN traffic and pre-upgrade sticky
--- leases belong to it. Password is set by `prism init` or first login.
+-- Built-in first admin; pre-upgrade sticky leases belong to it. Its password
+-- is set by `prism init`.
 INSERT OR IGNORE INTO users (id, username, password_hash, role, status, created_at_ns, updated_at_ns)
 VALUES ('u_admin', 'admin', '', 'admin', 'active', 0, 0);
 

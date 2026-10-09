@@ -46,6 +46,7 @@ func (u *UserState) Role() Role {
 // for the atomics; a key edit replaces the whole KeyState.
 type KeyState struct {
 	ID          string
+	Scope       string // ScopeProxy or ScopeAdmin
 	User        *UserState
 	secretHash  []byte
 	expiresAtNs int64
@@ -223,10 +224,11 @@ func (c *KeyCache) Len() int {
 }
 
 // Authenticate verifies "pk_<id>_<secret>" at nowNs. It checks, in order:
-// key exists, secret matches (constant time), key active and unexpired, user
-// active, and for non-admin users an active, unexpired subscription. Every
-// failure returns ErrAuthFailed. Platform and source checks are separate
-// (AllowsPlatform / AllowsSource) so callers can return distinct errors.
+// key exists, secret matches (constant time), admin-scoped keys belong to an
+// admin, key active and unexpired, user active, and for non-admin users an active, unexpired subscription. Every
+// failure returns ErrAuthFailed. Scope, platform and source checks are left
+// to the caller (KeyState.Scope, AllowsPlatform, AllowsSource) so each entry
+// point can return its own error.
 func (c *KeyCache) Authenticate(credential string, nowNs int64) (*KeyState, error) {
 	id, secret, ok := ParseKey(credential)
 	if !ok {
@@ -242,6 +244,9 @@ func (c *KeyCache) Authenticate(credential string, nowNs int64) (*KeyState, erro
 	}
 	if !VerifySecret(c.hmacKey, secret, ks.secretHash) {
 		return nil, ErrAuthFailed
+	}
+	if ks.Scope == ScopeAdmin && !ks.User.Unrestricted() {
+		return nil, ErrAuthFailed // admin keys die with the admin role
 	}
 	if !ks.active.Load() || (ks.expiresAtNs > 0 && nowNs >= ks.expiresAtNs) || !ks.User.Active() {
 		return nil, ErrAuthFailed
@@ -283,9 +288,13 @@ func buildKeyState(rec *AuthRecord, users map[string]*UserState) (*KeyState, err
 
 	ks := &KeyState{
 		ID:          k.ID,
+		Scope:       k.Scope,
 		User:        u,
 		secretHash:  append([]byte(nil), k.SecretHash...),
 		expiresAtNs: k.ExpiresAtNs,
+	}
+	if ks.Scope == "" {
+		ks.Scope = ScopeProxy
 	}
 	if k.Platforms != nil {
 		ks.platforms = make(map[string]struct{}, len(k.Platforms))

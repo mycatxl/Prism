@@ -51,7 +51,7 @@ type prismApp struct {
 	apiHandler      http.Handler
 	adminListener   *adminListener
 	stopAuditPruner func()
-	// Multi-tenant: tenantRT is nil unless PRISM_MULTI_TENANT=true.
+	// Multi-tenant credential cache and store.
 	tenantRT         *tenant.Runtime
 	stopTenantPruner func()
 	// G-08: the metrics retention loop and the policy it applies.
@@ -207,18 +207,12 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 		stateEngine: engine,
 		intelStore:  intelStore,
 	}
-	if envCfg.MultiTenant {
-		rt, err := tenant.Bootstrap(engine.Tenant(), envCfg.StateDir)
-		if err != nil {
-			return nil, fmt.Errorf("multi-tenant bootstrap: %w", err)
-		}
-		app.tenantRT = rt
-		log.Printf("Multi-tenant mode on: %d access keys loaded", rt.Cache.Len())
+	rt, err := tenant.Bootstrap(engine.Tenant(), envCfg.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("tenant bootstrap: %w", err)
 	}
-	if envCfg.LegacyTokenUnsafe {
-		log.Printf("WARNING: PRISM_LEGACY_TOKEN=true with PRISM_MULTI_TENANT=true: " +
-			"PRISM_PROXY_TOKEN bypasses every quota and platform limit. Unset it once clients use access keys.")
-	}
+	app.tenantRT = rt
+	log.Printf("Tenant store ready: %d access keys loaded", rt.Cache.Len())
 	// 4. Runtime configuration (persisted values, defaults otherwise).
 	app.runtimeCfg.Store(loadRuntimeConfig(engine, envCfg))
 	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
@@ -574,8 +568,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// at most 100000 rows).
 	api.SetAuditRetentionDays(a.envCfg.AuditRetentionDays)
 	a.stopAuditPruner = api.StartAuditPruner(engine, 24*time.Hour)
-	// Usage rollup/pruning runs regardless of mode; the tables are empty when
-	// multi-tenant is off.
+	// Usage rollup and expired-session pruning.
 	a.stopTenantPruner = tenant.StartMaintenance(engine.Tenant(), tenant.Retention{
 		HourlyDays: a.envCfg.UsageHourlyRetentionDays,
 		DailyDays:  a.envCfg.UsageDailyRetentionDays,

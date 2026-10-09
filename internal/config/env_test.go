@@ -1060,33 +1060,14 @@ func TestEmptyProxyTokenRequiresLoopbackAdminListen(t *testing.T) {
 	}
 }
 
-func TestLoadEnvConfig_MultiTenantLegacyTokenDefaults(t *testing.T) {
-	cases := []struct {
-		multi, legacy      string
-		wantLegacy, unsafe bool
-	}{
-		{"", "", true, false},
-		{"false", "", true, false},
-		{"true", "", false, false},
-		{"true", "true", true, true},
-		{"false", "false", false, false},
+func TestLoadEnvConfig_RetentionDefaults(t *testing.T) {
+	setEnvs(t, requiredEnvs())
+	cfg, err := LoadEnvConfig()
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, c := range cases {
-		t.Run(c.multi+"/"+c.legacy, func(t *testing.T) {
-			setEnvs(t, requiredEnvs())
-			t.Setenv("PRISM_MULTI_TENANT", c.multi)
-			t.Setenv("PRISM_LEGACY_TOKEN", c.legacy)
-			cfg, err := LoadEnvConfig()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if cfg.LegacyToken != c.wantLegacy || cfg.LegacyTokenUnsafe != c.unsafe {
-				t.Fatalf("legacy=%v unsafe=%v", cfg.LegacyToken, cfg.LegacyTokenUnsafe)
-			}
-			if cfg.UsageHourlyRetentionDays != 30 || cfg.UsageDailyRetentionDays != 400 || cfg.AuditRetentionDays != 365 {
-				t.Fatalf("retention defaults: %+v", cfg)
-			}
-		})
+	if cfg.UsageHourlyRetentionDays != 30 || cfg.UsageDailyRetentionDays != 400 || cfg.AuditRetentionDays != 365 {
+		t.Fatalf("retention defaults: %+v", cfg)
 	}
 }
 
