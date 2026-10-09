@@ -3,6 +3,7 @@ package topology
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"runtime"
 	"sync"
@@ -13,6 +14,8 @@ import (
 	"prism/internal/scanloop"
 	"prism/internal/subscription"
 )
+
+var errEmptyRefresh = errors.New("subscription returned no usable nodes; keeping previous nodes")
 
 const schedulerLookahead = 15 * time.Second
 
@@ -233,6 +236,15 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 		return
 	}
 	parsed := result.Nodes
+	// An upstream that suddenly returns a valid but empty document (expired
+	// account, every node skipped) must not wipe the pool and break every sticky
+	// lease; treat it as a failed update and keep the previous nodes.
+	if len(parsed) == 0 {
+		if cur := sub.ManagedNodes(); cur != nil && cur.Size() > 0 {
+			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", errEmptyRefresh)
+			return
+		}
+	}
 
 	// 3. Build refreshed managed nodes map (lock-free, pure computation).
 	refreshedManagedNodes := subscription.NewManagedNodes()
