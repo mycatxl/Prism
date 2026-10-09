@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useMemo, useState } from "react";
-import { ChevronDown, Globe2, HeartPulse, Maximize2, Rss, Server, X, type LucideIcon } from "lucide-react";
+import { Cable, ChevronDown, ChevronRight, Globe2, HeartPulse, ListChecks, Maximize2, Pencil, Plus, Rss, Server, Trash2, Waypoints, X, type LucideIcon } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { DataFreshnessBar } from "../../components/ui/DataFreshnessBar";
 import { Button } from "../../components/ui/Button";
@@ -111,6 +111,14 @@ function stepDelta(values: number[]): number | null {
   }
   return (latest - previous) / previous;
 }
+
+/** The board's shortcuts: each one opens a real page, the first opens its create form. */
+const QUICK_ACTIONS: { to: string; label: string; icon: LucideIcon }[] = [
+  { to: "/subscriptions?create=1", label: "导入节点", icon: Rss },
+  { to: "/platforms", label: "创建平台", icon: Waypoints },
+  { to: "/endpoints", label: "新建接入点", icon: Cable },
+  { to: "/jobs", label: "新建任务", icon: ListChecks },
+];
 
 type HeroTone = "accent" | "signal" | "live" | "warn";
 
@@ -599,6 +607,15 @@ export function WorkbenchPage() {
             {t("资源快照")} · {pool?.generated_at ? formatTimestamp(Date.parse(pool.generated_at), { seconds: true }) : PLACEHOLDER}
             <Link to="/nodes" className="dashboard-hero__link">{t("查看节点池")}</Link>
           </p>
+          <nav className="dashboard-quick" aria-label={t("快捷操作")}>
+            {QUICK_ACTIONS.map((action) => (
+              <Link key={action.to} to={action.to} className="dashboard-quick__item action">
+                <action.icon size={15} aria-hidden />
+                <span className="truncate">{t(action.label)}</span>
+                <ChevronRight size={14} aria-hidden className="dashboard-quick__chevron" />
+              </Link>
+            ))}
+          </nav>
         </section>
 
         <div className="dashboard-evidence-grid">
@@ -671,6 +688,7 @@ export function WorkbenchPage() {
               ) : regions.map((region) => (
                 <div key={region.id} className="dashboard-region-row">
                   <span className="truncate text-xs text-ink">{region.name}</span>
+                  <span className="dashboard-region-row__bar" aria-hidden><span style={{ width: `${Math.max(2, region.share * 100)}%` }} /></span>
                   <span className="readout text-2xs text-ink-soft">{formatCount(region.exits)} · {formatPercent(region.share)}</span>
                 </div>
               ))}
@@ -697,7 +715,7 @@ export function WorkbenchPage() {
 
         <Panel className="dashboard-changes-pane">
           <PanelHeader title={t("最近变更")} meta={t("真实审计写操作")} actions={<Button asChild variant="ghost" size="sm"><Link to="/audit">{t("查看全部")}</Link></Button>} />
-          {events.isError ? <ErrorState className="m-4" message={offline} onRetry={() => void events.refetch()} /> : !events.data ? <LoadingState label={t("正在加载")} /> : events.data.items.length === 0 ? <EmptyState title={t("暂无变更记录")} /> : <ul className="dashboard-changes-list">{events.data.items.map((entry) => { const { method, phrase } = alertPhrase(entry.action); const toneClass = method === "DELETE" ? "text-alert" : method === "POST" || method === "PUT" ? "text-signal" : "text-live"; return <li key={entry.id} title={entry.action} className="dashboard-change-row"><span className={`readout text-2xs ${toneClass}`}>{method || PLACEHOLDER}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs text-ink">{t(phrase)}</span><span className="block truncate text-2xs text-ink-faint">{entry.target || entry.remote_addr || PLACEHOLDER}</span></span><span className="readout text-2xs text-ink-faint">{formatTimestamp(entry.at_ns / 1_000_000)}</span></li>; })}</ul>}
+          {events.isError ? <ErrorState className="m-4" message={offline} onRetry={() => void events.refetch()} /> : !events.data ? <LoadingState label={t("正在加载")} /> : events.data.items.length === 0 ? <EmptyState title={t("暂无变更记录")} /> : <ul className="dashboard-changes-list">{events.data.items.map((entry) => { const { method, phrase } = alertPhrase(entry.action); const toneClass = method === "DELETE" ? "text-alert" : method === "POST" || method === "PUT" ? "text-signal" : "text-live"; return <li key={entry.id} title={entry.action} className="dashboard-change-row"><span className={`dashboard-change-row__icon dashboard-change-row__icon--${method === "DELETE" ? "alert" : method === "POST" || method === "PUT" ? "signal" : "live"}`} aria-hidden>{method === "DELETE" ? <Trash2 size={14} /> : method === "POST" || method === "PUT" ? <Plus size={14} /> : <Pencil size={14} />}</span><span className={`readout sr-only ${toneClass}`}>{method || PLACEHOLDER}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs text-ink">{t(phrase)}</span><span className="block truncate text-2xs text-ink-faint">{entry.target || entry.remote_addr || PLACEHOLDER}</span></span><span className="readout text-2xs text-ink-faint">{formatTimestamp(entry.at_ns / 1_000_000)}</span></li>; })}</ul>}
         </Panel>
       </div>
 
