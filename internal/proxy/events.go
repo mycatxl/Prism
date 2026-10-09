@@ -50,6 +50,8 @@ type RequestLogEntry struct {
 	PlatformID          string
 	PlatformName        string
 	Account             string
+	UserID              string // owning user
+	KeyID               string // access key ID
 	TargetHost          string
 	TargetURL           string
 	NodeHash            string

@@ -230,6 +230,8 @@ type NodeLatencyKey struct {
 
 // Lease represents a sticky routing lease.
 type Lease struct {
+	// UserID owns the lease; empty means BuiltinAdminUserID.
+	UserID         string `json:"user_id,omitempty"`
 	PlatformID     string `json:"platform_id"`
 	Account        string `json:"account"`
 	NodeHash       string `json:"node_hash"`
@@ -239,8 +241,12 @@ type Lease struct {
 	LastAccessedNs int64  `json:"last_accessed_ns"`
 }
 
+// Owner returns the owning user ID, defaulting to the built-in admin.
+func (l Lease) Owner() string { return leaseOwner(l.UserID) }
+
 // LeaseKey is the composite primary key for leases.
 type LeaseKey struct {
+	UserID     string // empty means BuiltinAdminUserID
 	PlatformID string
 	Account    string
 }
@@ -281,4 +287,18 @@ type AuditEntry struct {
 	Action     string `json:"action"`
 	Target     string `json:"target"`
 	Detail     string `json:"detail"`
+	// Multi-tenant fields (state migration 000017).
+	ActorUserID string `json:"actor_user_id,omitempty"`
+	TargetType  string `json:"target_type,omitempty"`
+	TargetID    string `json:"target_id,omitempty"`
+}
+
+// Owner returns the owning user ID, defaulting to the built-in admin.
+func (k LeaseKey) Owner() string { return leaseOwner(k.UserID) }
+
+func leaseOwner(userID string) string {
+	if userID == "" {
+		return BuiltinAdminUserID
+	}
+	return userID
 }

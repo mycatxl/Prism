@@ -193,7 +193,7 @@ func (r *CacheRepo) BulkUpsertLeases(leases []model.Lease) error {
 		upsertLeasesSQL,
 		leases,
 		func(stmt *sql.Stmt, l model.Lease) error {
-			_, err := stmt.Exec(l.PlatformID, l.Account, l.NodeHash, l.EgressIP, l.CreatedAtNs, l.ExpiryNs, l.LastAccessedNs)
+			_, err := stmt.Exec(l.Owner(), l.PlatformID, l.Account, l.NodeHash, l.EgressIP, l.CreatedAtNs, l.ExpiryNs, l.LastAccessedNs)
 			return err
 		},
 	)
@@ -206,7 +206,7 @@ func (r *CacheRepo) BulkDeleteLeases(keys []model.LeaseKey) error {
 		deleteLeasesSQL,
 		keys,
 		func(stmt *sql.Stmt, key model.LeaseKey) error {
-			_, err := stmt.Exec(key.PlatformID, key.Account)
+			_, err := stmt.Exec(key.Owner(), key.PlatformID, key.Account)
 			return err
 		},
 	)
@@ -214,7 +214,7 @@ func (r *CacheRepo) BulkDeleteLeases(keys []model.LeaseKey) error {
 
 // LoadAllLeases reads all lease records.
 func (r *CacheRepo) LoadAllLeases() ([]model.Lease, error) {
-	rows, err := r.db.Query("SELECT platform_id, account, node_hash, egress_ip, created_at_ns, expiry_ns, last_accessed_ns FROM leases")
+	rows, err := r.db.Query("SELECT user_id, platform_id, account, node_hash, egress_ip, created_at_ns, expiry_ns, last_accessed_ns FROM leases")
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +223,7 @@ func (r *CacheRepo) LoadAllLeases() ([]model.Lease, error) {
 	var result []model.Lease
 	for rows.Next() {
 		var l model.Lease
-		if err := rows.Scan(&l.PlatformID, &l.Account, &l.NodeHash, &l.EgressIP, &l.CreatedAtNs, &l.ExpiryNs, &l.LastAccessedNs); err != nil {
+		if err := rows.Scan(&l.UserID, &l.PlatformID, &l.Account, &l.NodeHash, &l.EgressIP, &l.CreatedAtNs, &l.ExpiryNs, &l.LastAccessedNs); err != nil {
 			return nil, err
 		}
 		result = append(result, l)
@@ -408,12 +408,12 @@ func (r *CacheRepo) FlushTx(ops FlushOps) error {
 		}},
 		{"upsert_leases", upsertLeasesSQL, len(ops.UpsertLeases), func(s *sql.Stmt, i int) error {
 			l := ops.UpsertLeases[i]
-			_, err := s.Exec(l.PlatformID, l.Account, l.NodeHash, l.EgressIP, l.CreatedAtNs, l.ExpiryNs, l.LastAccessedNs)
+			_, err := s.Exec(l.Owner(), l.PlatformID, l.Account, l.NodeHash, l.EgressIP, l.CreatedAtNs, l.ExpiryNs, l.LastAccessedNs)
 			return err
 		}},
 		// Deletes in reverse dependency order.
 		{"delete_leases", deleteLeasesSQL, len(ops.DeleteLeases), func(s *sql.Stmt, i int) error {
-			_, err := s.Exec(ops.DeleteLeases[i].PlatformID, ops.DeleteLeases[i].Account)
+			_, err := s.Exec(ops.DeleteLeases[i].Owner(), ops.DeleteLeases[i].PlatformID, ops.DeleteLeases[i].Account)
 			return err
 		}},
 		{"delete_node_latency", deleteNodeLatencySQL, len(ops.DeleteNodeLatency), func(s *sql.Stmt, i int) error {
@@ -472,9 +472,9 @@ const (
 			ewma_ns         = excluded.ewma_ns,
 			last_updated_ns = excluded.last_updated_ns`
 
-	upsertLeasesSQL = `INSERT INTO leases (platform_id, account, node_hash, egress_ip, created_at_ns, expiry_ns, last_accessed_ns)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(platform_id, account) DO UPDATE SET
+	upsertLeasesSQL = `INSERT INTO leases (user_id, platform_id, account, node_hash, egress_ip, created_at_ns, expiry_ns, last_accessed_ns)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, platform_id, account) DO UPDATE SET
 			node_hash       = excluded.node_hash,
 			egress_ip       = excluded.egress_ip,
 			created_at_ns   = excluded.created_at_ns,
@@ -490,6 +490,6 @@ const (
 	deleteNodesStaticSQL       = "DELETE FROM nodes_static WHERE hash = ?"
 	deleteNodesDynamicSQL      = "DELETE FROM nodes_dynamic WHERE hash = ?"
 	deleteNodeLatencySQL       = "DELETE FROM node_latency WHERE node_hash = ? AND domain = ?"
-	deleteLeasesSQL            = "DELETE FROM leases WHERE platform_id = ? AND account = ?"
+	deleteLeasesSQL            = "DELETE FROM leases WHERE user_id = ? AND platform_id = ? AND account = ?"
 	deleteSubscriptionNodesSQL = "DELETE FROM subscription_nodes WHERE subscription_id = ? AND node_hash = ?"
 )

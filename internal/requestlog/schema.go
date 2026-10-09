@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS request_logs (
 	req_headers_truncated  INTEGER NOT NULL DEFAULT 0,
 	req_body_truncated     INTEGER NOT NULL DEFAULT 0,
 	resp_headers_truncated INTEGER NOT NULL DEFAULT 0,
-	resp_body_truncated    INTEGER NOT NULL DEFAULT 0
+	resp_body_truncated    INTEGER NOT NULL DEFAULT 0,
+	user_id               TEXT NOT NULL DEFAULT '',
+	key_id                TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS request_log_payloads (
@@ -67,6 +69,13 @@ CREATE INDEX IF NOT EXISTS idx_request_logs_target_host  ON request_logs(target_
 CREATE INDEX IF NOT EXISTS idx_request_logs_egress_ip    ON request_logs(egress_ip);
 `
 
+// tenantRequestLogIndexesDDL runs after the user_id/key_id columns exist, so
+// it is kept out of CreateDDL (older rolling databases lack those columns).
+const tenantRequestLogIndexesDDL = `
+CREATE INDEX IF NOT EXISTS idx_request_logs_user_ts ON request_logs(user_id, ts_ns DESC) WHERE user_id <> '';
+CREATE INDEX IF NOT EXISTS idx_request_logs_key_ts  ON request_logs(key_id, ts_ns DESC) WHERE key_id <> '';
+`
+
 const obsoleteRequestLogIndexesDDL = `
 DROP INDEX IF EXISTS idx_request_logs_ts_ns;
 DROP INDEX IF EXISTS idx_request_logs_proxy_type;
@@ -87,6 +96,14 @@ func ensureRequestLogSchema(db *sql.DB) error {
 		return err
 	}
 
+	// Multi-tenant attribution (plan v2 §3).
+	if err := ensureRequestLogColumn(db, "request_logs", "user_id", "user_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureRequestLogColumn(db, "request_logs", "key_id", "key_id TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin request log index migration: %w", err)
@@ -95,6 +112,9 @@ func ensureRequestLogSchema(db *sql.DB) error {
 
 	if _, err := tx.Exec(requestLogIndexesDDL); err != nil {
 		return fmt.Errorf("create request log indexes: %w", err)
+	}
+	if _, err := tx.Exec(tenantRequestLogIndexesDDL); err != nil {
+		return fmt.Errorf("create request log tenant indexes: %w", err)
 	}
 	if _, err := tx.Exec(obsoleteRequestLogIndexesDDL); err != nil {
 		return fmt.Errorf("drop obsolete request log indexes: %w", err)

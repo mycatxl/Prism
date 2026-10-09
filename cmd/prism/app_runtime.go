@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"prism/internal/tenant"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -50,6 +51,9 @@ type prismApp struct {
 	apiHandler      http.Handler
 	adminListener   *adminListener
 	stopAuditPruner func()
+	// Multi-tenant credential cache and store.
+	tenantRT         *tenant.Runtime
+	stopTenantPruner func()
 	// G-08: the metrics retention loop and the policy it applies.
 	stopMetricsPruner func()
 	metricsRetention  metrics.RetentionPolicy
@@ -203,6 +207,12 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 		stateEngine: engine,
 		intelStore:  intelStore,
 	}
+	rt, err := tenant.Bootstrap(engine.Tenant(), envCfg.StateDir)
+	if err != nil {
+		return nil, fmt.Errorf("tenant bootstrap: %w", err)
+	}
+	app.tenantRT = rt
+	log.Printf("Tenant store ready: %d access keys loaded", rt.Cache.Len())
 	// 4. Runtime configuration (persisted values, defaults otherwise).
 	app.runtimeCfg.Store(loadRuntimeConfig(engine, envCfg))
 	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
@@ -554,8 +564,15 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Intel:          a.intelSvc,
 	}
 
-	// WP04 §4.7: audit retention runs once a day (90 days, at most 100000 rows).
+	// WP04 §4.7: audit retention runs once a day (PRISM_AUDIT_RETENTION_DAYS,
+	// at most 100000 rows).
+	api.SetAuditRetentionDays(a.envCfg.AuditRetentionDays)
 	a.stopAuditPruner = api.StartAuditPruner(engine, 24*time.Hour)
+	// Usage rollup and expired-session pruning.
+	a.stopTenantPruner = tenant.StartMaintenance(engine.Tenant(), tenant.Retention{
+		HourlyDays: a.envCfg.UsageHourlyRetentionDays,
+		DailyDays:  a.envCfg.UsageDailyRetentionDays,
+	}, 6*time.Hour)
 	// G-08: the same published retention windows bound metrics.db. The pruner
 	// deletes in bounded batches, so it never holds the write lock for long.
 	if a.metricsDB != nil {
@@ -778,6 +795,9 @@ func (a *prismApp) shutdown() {
 	defer cancelOverall()
 
 	// 0. The audit retention loop (WP04 §4.7) only touches state.db.
+	if a.stopTenantPruner != nil {
+		a.stopTenantPruner()
+	}
 	if a.stopAuditPruner != nil {
 		a.stopAuditPruner()
 	}

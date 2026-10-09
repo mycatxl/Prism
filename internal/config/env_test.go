@@ -1059,3 +1059,23 @@ func TestEmptyProxyTokenRequiresLoopbackAdminListen(t *testing.T) {
 		t.Fatalf("the error must name the listener, got: %v", err)
 	}
 }
+
+func TestLoadEnvConfig_RetentionDefaults(t *testing.T) {
+	setEnvs(t, requiredEnvs())
+	cfg, err := LoadEnvConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UsageHourlyRetentionDays != 30 || cfg.UsageDailyRetentionDays != 400 || cfg.AuditRetentionDays != 365 {
+		t.Fatalf("retention defaults: %+v", cfg)
+	}
+}
+
+func TestLoadEnvConfig_UsageRetentionValidation(t *testing.T) {
+	setEnvs(t, requiredEnvs())
+	t.Setenv("PRISM_USAGE_HOURLY_RETENTION_DAYS", "60")
+	t.Setenv("PRISM_USAGE_DAILY_RETENTION_DAYS", "30")
+	if _, err := LoadEnvConfig(); err == nil || !strings.Contains(err.Error(), "PRISM_USAGE_DAILY_RETENTION_DAYS") {
+		t.Fatalf("err = %v", err)
+	}
+}

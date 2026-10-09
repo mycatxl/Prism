@@ -734,7 +734,7 @@ const (
 
 const (
 	maxInt64        = int64(^uint64(0) >> 1)
-	auditLogColumns = `id, at_ns, actor, remote_addr, action, target, detail_json`
+	auditLogColumns = `id, at_ns, actor, remote_addr, action, target, detail_json, actor_user_id, target_type, target_id`
 )
 
 // decodeQualityPolicyJSON accepts both the current and the legacy key set.
@@ -849,17 +849,22 @@ func (r *StateRepo) UpsertIntelProviderSetting(s model.IntelProviderSetting) err
 
 // AppendAudit records one administrative mutation.
 func (r *StateRepo) AppendAudit(e model.AuditEntry) error {
+	return r.appendAuditLocked(&r.mu, e)
+}
+
+func (r *StateRepo) appendAuditLocked(mu *sync.Mutex, e model.AuditEntry) error {
 	detail := strings.TrimSpace(e.Detail)
 	if detail == "" {
 		detail = "{}"
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 
 	_, err := r.db.Exec(
-		`INSERT INTO audit_log (at_ns, actor, remote_addr, action, target, detail_json) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.AtNs, e.Actor, e.RemoteAddr, e.Action, e.Target, detail,
+		`INSERT INTO audit_log (at_ns, actor, remote_addr, action, target, detail_json, actor_user_id, target_type, target_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		e.AtNs, e.Actor, e.RemoteAddr, e.Action, e.Target, detail, e.ActorUserID, e.TargetType, e.TargetID,
 	)
 	return err
 }
@@ -886,7 +891,7 @@ func (r *StateRepo) ListAudit(beforeID int64, limit int) ([]model.AuditEntry, er
 	var result []model.AuditEntry
 	for rows.Next() {
 		var e model.AuditEntry
-		if err := rows.Scan(&e.ID, &e.AtNs, &e.Actor, &e.RemoteAddr, &e.Action, &e.Target, &e.Detail); err != nil {
+		if err := scanAuditEntry(rows, &e); err != nil {
 			return nil, err
 		}
 		result = append(result, e)
@@ -924,4 +929,9 @@ func (r *StateRepo) PruneAudit(olderThanNs int64, keepMax int) (int64, error) {
 	}
 
 	return removed, nil
+}
+
+func scanAuditEntry(rows *sql.Rows, e *model.AuditEntry) error {
+	return rows.Scan(&e.ID, &e.AtNs, &e.Actor, &e.RemoteAddr, &e.Action, &e.Target, &e.Detail,
+		&e.ActorUserID, &e.TargetType, &e.TargetID)
 }

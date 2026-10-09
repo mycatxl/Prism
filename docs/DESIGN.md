@@ -165,6 +165,7 @@ internal/geoip/            # GeoIP 数据库下载、校验与读取
 internal/scanloop/         # 带抖动的周期性扫描循环
 internal/export/           # 把节点池渲染成管理员下载的文件（sing-box / mihomo / v2rayN / CSV-JSON）
 internal/requestlog/       # 结构化请求日志：异步写入滚动 SQLite 库
+internal/tenant/           # 多租户：用户/套餐/密钥模型、Store 接口、内存密钥缓存、pepper
 internal/metrics/          # 指标采集、聚合与存储
 internal/service/          # 用例编排的服务层类型
 internal/api/              # HTTP API 服务、DTO、校验、路由与变更审计
