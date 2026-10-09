@@ -296,8 +296,7 @@ func TestShippedFeaturesAreNotDocumentedAsMissing(t *testing.T) {
 	// Historical records of what was not ported are not claims about the
 	// current version. The release notes are an immutable record, and the two
 	// migration documents describe decisions taken when the port happened.
-	excludedFiles := map[string]bool{
-	}
+	excludedFiles := map[string]bool{}
 	excludedLineMarkers := []string{
 		// A line that explicitly says the capability *is* implemented.
 		"is **not** on this list",
