@@ -272,28 +272,6 @@ type IntelProviderSetting struct {
 	UpdatedAtNs int64   `json:"updated_at_ns"`
 }
 
-// ExportProfile is a saved export configuration plus its subscription token.
-type ExportProfile struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Format         string `json:"format"`
-	TokenSHA256    string `json:"-"`
-	PlatformID     string `json:"platform_id"`
-	FilterJSON     string `json:"filter_json"`
-	NameTemplate   string `json:"name_template"`
-	Enabled        bool   `json:"enabled"`
-	LastAccessAtNs int64  `json:"last_access_at_ns"`
-	AccessCount    int64  `json:"access_count"`
-	CreatedAtNs    int64  `json:"created_at_ns"`
-	UpdatedAtNs    int64  `json:"updated_at_ns"`
-}
-
-// AuditActorExportPrefix marks the actor of a public subscription access
-// (WP11 §4.3.4). Those entries are written for callers that hold nothing but a
-// subscription URL, so they are retained in a bucket of their own and can never
-// displace a management entry out of the audit trail.
-const AuditActorExportPrefix = "export:"
-
 // AuditEntry is one recorded administrative mutation. Detail holds JSON text.
 type AuditEntry struct {
 	ID         int64  `json:"id"`

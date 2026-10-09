@@ -1,32 +1,27 @@
 package api
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"prism/internal/export"
-	"prism/internal/model"
 	"prism/internal/service"
-	"prism/internal/state"
 )
 
-// Export API (WP11 §4.1 and §4.2). Everything here is admin-authenticated
-// (rule R7); the public subscription entrypoint lives in handler_subscription.go.
+// Node export API (WP11 §4.1). Admin-authenticated (rule R7): the admin
+// downloads a rendered file of the selected nodes; there is no public
+// subscription surface.
 
-// exportProfileFilter is the stored/queried node filter of an export. It
+// exportNodeFilter is the stored/queried node filter of an export. It
 // mirrors the query parameters accepted by GET /api/v1/nodes so one filter
 // vocabulary covers both the node list and every export surface.
 //
-// The WP10 §4 intel filters are part of it: a saved export profile filters a
-// node exactly the way the live query does.
-type exportProfileFilter struct {
+// The WP10 §4 intel filters are part of it, so an export filters a node exactly
+// the way the live node list does.
+type exportNodeFilter struct {
 	IPType         string   `json:"ip_type,omitempty"`
 	QualityState   string   `json:"quality_state,omitempty"`
 	RiskGrade      string   `json:"risk_grade,omitempty"`
@@ -51,10 +46,10 @@ type exportProfileFilter struct {
 	Checks         []string `json:"checks,omitempty"`
 }
 
-// toNodeFilters validates the stored filter and converts it. An invalid stored
-// value is a CONFLICT rather than a silent ignore: a subscription that quietly
-// exports the whole pool would be worse than an error.
-func (f exportProfileFilter) toNodeFilters() (service.NodeFilters, error) {
+// toNodeFilters validates the filter and converts it. An invalid value is an
+// error rather than a silent ignore: an export that quietly covers the whole
+// pool would be worse than an error.
+func (f exportNodeFilter) toNodeFilters() (service.NodeFilters, error) {
 	var filters service.NodeFilters
 
 	assign := func(raw string, allowed []string, target **string, field string) error {
@@ -122,8 +117,8 @@ func (f exportProfileFilter) toNodeFilters() (service.NodeFilters, error) {
 		parsed = parsed.UTC()
 		filters.ProbedSince = &parsed
 	}
-	// WP10 §4 intel filters. They share the node list validators, so a stored
-	// profile and a live query accept exactly the same values.
+	// WP10 §4 intel filters. They share the node list validators, so an export
+	// and a live query accept exactly the same values.
 	intelValues := nodeIntelFilterValues{
 		Verdict:       f.Verdict,
 		ConfidenceMin: f.ConfidenceMin,
@@ -148,9 +143,9 @@ func (f exportProfileFilter) toNodeFilters() (service.NodeFilters, error) {
 
 // exportFilterFromQuery reads the same filter vocabulary from URL query
 // parameters. Unknown values are rejected, never ignored.
-func exportFilterFromQuery(r *http.Request) (exportProfileFilter, error) {
+func exportFilterFromQuery(r *http.Request) (exportNodeFilter, error) {
 	q := r.URL.Query()
-	filter := exportProfileFilter{
+	filter := exportNodeFilter{
 		IPType:         q.Get("ip_type"),
 		QualityState:   q.Get("quality_state"),
 		RiskGrade:      q.Get("risk_grade"),
@@ -211,16 +206,10 @@ func exportFilterFromQuery(r *http.Request) (exportProfileFilter, error) {
 }
 
 // exportRequest is the resolved form of one export request.
-//
-// PlatformID is the profile-level platform of §4.2, stored in a column of its
-// own next to the filter JSON. It travels separately here and is merged with
-// filter.platform_id by exportPlatformFilter, so the profile column and the
-// filter key can never disagree silently.
 type exportRequest struct {
 	Format       string
 	NameTemplate string
-	PlatformID   string
-	Filter       exportProfileFilter
+	Filter       exportNodeFilter
 	HealthyOnly  bool
 	Limit        int
 }
@@ -262,7 +251,7 @@ func parseExportOffset(r *http.Request) (int, error) {
 	return value, nil
 }
 
-// maxExportNameTemplateBytes bounds the stored template.
+// maxExportNameTemplateBytes bounds the name template.
 const maxExportNameTemplateBytes = 256
 
 // HandleExportNodes returns a handler for GET /api/v1/nodes/export (§4.1).
@@ -322,52 +311,12 @@ func HandleExportNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
-// exportPlatformFilter merges the profile-level platform_id of §4.2 with the
-// platform_id key of the stored filter. The column is the profile's scope and
-// the filter key is the node-list vocabulary; keeping them in sync here is what
-// stops them from becoming two answers to one question, where a profile whose
-// column names platform A exports the nodes of platform B because its filter
-// JSON happens to say so.
-//
-// An empty column leaves the filter key in charge, so a profile that only uses
-// the filter vocabulary keeps working unchanged.
-func exportPlatformFilter(req exportRequest) (exportProfileFilter, error) {
-	filter := req.Filter
-	column := strings.TrimSpace(req.PlatformID)
-	if column == "" {
-		return filter, nil
-	}
-	if err := checkExportProfilePlatformConflict(column, filter); err != nil {
-		return filter, err
-	}
-	filter.PlatformID = column
-	return filter, nil
-}
-
-// checkExportProfilePlatformConflict reports the one combination that has no
-// correct reading: a profile-level platform and a filter-level platform that
-// name different platforms. It runs when a profile is written (400) and again
-// when it is read, because a row stored before the column was enforced can
-// still hold the contradiction.
-func checkExportProfilePlatformConflict(platformID string, filter exportProfileFilter) error {
-	column := strings.TrimSpace(platformID)
-	inFilter := strings.TrimSpace(filter.PlatformID)
-	if column == "" || inFilter == "" || column == inFilter {
-		return nil
-	}
-	return fmt.Errorf("platform_id: filter platform_id %q conflicts with the profile platform_id %q", inFilter, column)
-}
-
 // runNodeExport selects the nodes, renders the items and calls export.Export.
 // offset is the paging cursor: the selection is ordered by node hash and
 // sliced to [offset, offset+limit), then the remainder is counted as truncated
 // so the caller can see that more nodes exist.
 func runNodeExport(cp *service.ControlPlaneService, req exportRequest, offset int) ([]byte, string, export.Report, error) {
-	filter, err := exportPlatformFilter(req)
-	if err != nil {
-		return nil, "", export.Report{}, invalidArgumentError(err.Error())
-	}
-	filters, err := filter.toNodeFilters()
+	filters, err := req.Filter.toNodeFilters()
 	if err != nil {
 		return nil, "", export.Report{}, invalidArgumentError("filter: " + err.Error())
 	}
@@ -421,361 +370,6 @@ func runNodeExport(cp *service.ControlPlaneService, req exportRequest, offset in
 	report.Truncated += truncated
 	return body, contentType, report, nil
 }
-
-// --- export profiles (§4.2) ---
-
-// exportProfileRequest is the POST/PATCH body of an export profile.
-type exportProfileRequest struct {
-	Name         *string              `json:"name,omitempty"`
-	Format       *string              `json:"format,omitempty"`
-	PlatformID   *string              `json:"platform_id,omitempty"`
-	Filter       *exportProfileFilter `json:"filter,omitempty"`
-	NameTemplate *string              `json:"name_template,omitempty"`
-	Enabled      *bool                `json:"enabled,omitempty"`
-}
-
-// exportProfileResponse is the wire shape of an export profile. The plaintext
-// token is never part of it: URL carries it once, and only when the caller just
-// created or rotated it. The SHA-256 digest never leaves the server.
-type exportProfileResponse struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Format         string `json:"format"`
-	PlatformID     string `json:"platform_id,omitempty"`
-	Filter         any    `json:"filter"`
-	NameTemplate   string `json:"name_template"`
-	Enabled        bool   `json:"enabled"`
-	LastAccessAtNs int64  `json:"last_access_at_ns"`
-	AccessCount    int64  `json:"access_count"`
-	CreatedAtNs    int64  `json:"created_at_ns"`
-	UpdatedAtNs    int64  `json:"updated_at_ns"`
-	// URL is present only in the create and rotate-token responses.
-	URL string `json:"url,omitempty"`
-}
-
-func exportProfileToResponse(profile model.ExportProfile) exportProfileResponse {
-	var filter any
-	if strings.TrimSpace(profile.FilterJSON) == "" {
-		filter = map[string]any{}
-	} else if err := json.Unmarshal([]byte(profile.FilterJSON), &filter); err != nil {
-		filter = map[string]any{}
-	}
-	return exportProfileResponse{
-		ID:             profile.ID,
-		Name:           profile.Name,
-		Format:         profile.Format,
-		PlatformID:     profile.PlatformID,
-		Filter:         filter,
-		NameTemplate:   profile.NameTemplate,
-		Enabled:        profile.Enabled,
-		LastAccessAtNs: profile.LastAccessAtNs,
-		AccessCount:    profile.AccessCount,
-		CreatedAtNs:    profile.CreatedAtNs,
-		UpdatedAtNs:    profile.UpdatedAtNs,
-	}
-}
-
-// exportProfileSubscriptionURL renders the one-time subscription URL. The base
-// comes from the request, so a deployment behind a reverse proxy works without
-// extra configuration.
-func exportProfileSubscriptionURL(r *http.Request, token string) string {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwarded == "http" || forwarded == "https" {
-		scheme = forwarded
-	}
-	host := r.Host
-	if host == "" {
-		host = "localhost"
-	}
-	return scheme + "://" + host + "/sub/" + token
-}
-
-// validateStoredExportProfilePlatform rejects the one profile row that would
-// store two different platforms for one export: the column says one platform
-// and the filter JSON says another. It runs on the row about to be written, not
-// on the request fragment, so a PATCH that only moves the column is judged
-// against the filter already in the row.
-func validateStoredExportProfilePlatform(profile model.ExportProfile) error {
-	var filter exportProfileFilter
-	raw := strings.TrimSpace(profile.FilterJSON)
-	if raw != "" && raw != "{}" {
-		if err := json.Unmarshal([]byte(raw), &filter); err != nil {
-			return fmt.Errorf("filter: %w", err)
-		}
-	}
-	return checkExportProfilePlatformConflict(profile.PlatformID, filter)
-}
-
-// validateExportProfileRequest validates the mutable fields.
-func validateExportProfileRequest(req exportProfileRequest, requireName bool) error {
-	if req.Name != nil {
-		name := strings.TrimSpace(*req.Name)
-		if name == "" || len(name) > 128 {
-			return fmt.Errorf("name: must be 1..128 characters")
-		}
-	} else if requireName {
-		return fmt.Errorf("name: required")
-	}
-	if req.Format != nil {
-		if !export.ValidFormat(*req.Format) {
-			return fmt.Errorf("format: must be one of: %s", strings.Join(export.Formats(), ", "))
-		}
-	} else if requireName {
-		return fmt.Errorf("format: required")
-	}
-	if req.NameTemplate != nil && len(*req.NameTemplate) > maxExportNameTemplateBytes {
-		return fmt.Errorf("name_template: too long")
-	}
-	if req.PlatformID != nil {
-		trimmed := strings.TrimSpace(*req.PlatformID)
-		if trimmed != "" && !ValidateUUID(trimmed) {
-			return fmt.Errorf("platform_id: must be a UUID")
-		}
-	}
-	if req.Filter != nil {
-		if _, err := req.Filter.toNodeFilters(); err != nil {
-			return fmt.Errorf("filter: %w", err)
-		}
-	}
-	return nil
-}
-
-// HandleListExportProfiles returns a handler for GET /api/v1/export-profiles.
-func HandleListExportProfiles(cp *service.ControlPlaneService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if cp == nil || cp.Engine == nil {
-			writeServiceError(w, exportInternalError("list export profiles", fmt.Errorf("service not initialized")))
-			return
-		}
-		profiles, err := cp.Engine.ListExportProfiles()
-		if err != nil {
-			writeServiceError(w, exportInternalError("list export profiles", err))
-			return
-		}
-		items := make([]exportProfileResponse, 0, len(profiles))
-		for _, profile := range profiles {
-			items = append(items, exportProfileToResponse(profile))
-		}
-		pg, ok := parsePaginationOrWriteInvalid(w, r)
-		if !ok {
-			return
-		}
-		WritePage(w, http.StatusOK, items, pg)
-	}
-}
-
-// HandleGetExportProfile returns a handler for GET /api/v1/export-profiles/{id}.
-func HandleGetExportProfile(cp *service.ControlPlaneService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		profile, ok := loadExportProfile(w, cp, PathParam(r, "id"))
-		if !ok {
-			return
-		}
-		WriteJSON(w, http.StatusOK, exportProfileToResponse(*profile))
-	}
-}
-
-// HandleCreateExportProfile returns a handler for POST /api/v1/export-profiles.
-// The plaintext token is returned exactly once, in `url`.
-func HandleCreateExportProfile(cp *service.ControlPlaneService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if cp == nil || cp.Engine == nil {
-			writeServiceError(w, exportInternalError("create export profile", fmt.Errorf("service not initialized")))
-			return
-		}
-		var req exportProfileRequest
-		if err := DecodeBody(r, &req); err != nil {
-			writeInvalidArgument(w, err.Error())
-			return
-		}
-		if err := validateExportProfileRequest(req, true); err != nil {
-			writeInvalidArgument(w, err.Error())
-			return
-		}
-
-		token, err := NewExportProfileToken()
-		if err != nil {
-			writeServiceError(w, exportInternalError("create export profile", err))
-			return
-		}
-		now := exportNowNs()
-		profile := model.ExportProfile{
-			ID:           newExportProfileID(),
-			Name:         strings.TrimSpace(*req.Name),
-			Format:       *req.Format,
-			TokenSHA256:  ExportProfileTokenSHA256(token),
-			Enabled:      req.Enabled == nil || *req.Enabled,
-			FilterJSON:   "{}",
-			NameTemplate: strings.TrimSpace(derefString(req.NameTemplate)),
-			CreatedAtNs:  now,
-			UpdatedAtNs:  now,
-		}
-		if req.PlatformID != nil {
-			profile.PlatformID = strings.TrimSpace(*req.PlatformID)
-		}
-		if req.Filter != nil {
-			encoded, err := json.Marshal(req.Filter)
-			if err != nil {
-				writeInvalidArgument(w, "filter: "+err.Error())
-				return
-			}
-			profile.FilterJSON = string(encoded)
-		}
-		if err := validateStoredExportProfilePlatform(profile); err != nil {
-			writeInvalidArgument(w, err.Error())
-			return
-		}
-		if err := cp.Engine.UpsertExportProfile(profile); err != nil {
-			writeServiceError(w, exportProfileStateError("create export profile", err))
-			return
-		}
-
-		response := exportProfileToResponse(profile)
-		response.URL = exportProfileSubscriptionURL(r, token)
-		WriteJSON(w, http.StatusCreated, response)
-	}
-}
-
-// HandleUpdateExportProfile returns a handler for PATCH /api/v1/export-profiles/{id}.
-func HandleUpdateExportProfile(cp *service.ControlPlaneService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		profile, ok := loadExportProfile(w, cp, PathParam(r, "id"))
-		if !ok {
-			return
-		}
-		var req exportProfileRequest
-		if err := DecodeBody(r, &req); err != nil {
-			writeInvalidArgument(w, err.Error())
-			return
-		}
-		if err := validateExportProfileRequest(req, false); err != nil {
-			writeInvalidArgument(w, err.Error())
-			return
-		}
-		next := *profile
-		if req.Name != nil {
-			next.Name = strings.TrimSpace(*req.Name)
-		}
-		if req.Format != nil {
-			next.Format = *req.Format
-		}
-		if req.PlatformID != nil {
-			next.PlatformID = strings.TrimSpace(*req.PlatformID)
-		}
-		if req.NameTemplate != nil {
-			next.NameTemplate = strings.TrimSpace(*req.NameTemplate)
-		}
-		if req.Enabled != nil {
-			next.Enabled = *req.Enabled
-		}
-		if req.Filter != nil {
-			encoded, err := json.Marshal(req.Filter)
-			if err != nil {
-				writeInvalidArgument(w, "filter: "+err.Error())
-				return
-			}
-			next.FilterJSON = string(encoded)
-		}
-		if err := validateStoredExportProfilePlatform(next); err != nil {
-			writeInvalidArgument(w, err.Error())
-			return
-		}
-		next.UpdatedAtNs = exportNowNs()
-		if err := cp.Engine.UpsertExportProfile(next); err != nil {
-			writeServiceError(w, exportProfileStateError("update export profile", err))
-			return
-		}
-		WriteJSON(w, http.StatusOK, exportProfileToResponse(next))
-	}
-}
-
-// HandleDeleteExportProfile returns a handler for DELETE /api/v1/export-profiles/{id}.
-func HandleDeleteExportProfile(cp *service.ControlPlaneService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if cp == nil || cp.Engine == nil {
-			writeServiceError(w, exportInternalError("delete export profile", fmt.Errorf("service not initialized")))
-			return
-		}
-		if err := cp.Engine.DeleteExportProfile(PathParam(r, "id")); err != nil {
-			writeServiceError(w, exportProfileStateError("delete export profile", err))
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}
-}
-
-// HandleRotateExportProfileToken returns a handler for
-// POST /api/v1/export-profiles/{id}/actions/rotate-token. The new plaintext
-// token is returned exactly once, in `url`; the previous token stops working
-// immediately because only the digest is stored.
-func HandleRotateExportProfileToken(cp *service.ControlPlaneService) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		profile, ok := loadExportProfile(w, cp, PathParam(r, "id"))
-		if !ok {
-			return
-		}
-		token, err := NewExportProfileToken()
-		if err != nil {
-			writeServiceError(w, exportInternalError("rotate export profile token", err))
-			return
-		}
-		next := *profile
-		next.TokenSHA256 = ExportProfileTokenSHA256(token)
-		next.UpdatedAtNs = exportNowNs()
-		if err := cp.Engine.UpsertExportProfile(next); err != nil {
-			writeServiceError(w, exportProfileStateError("rotate export profile token", err))
-			return
-		}
-		response := exportProfileToResponse(next)
-		response.URL = exportProfileSubscriptionURL(r, token)
-		WriteJSON(w, http.StatusOK, response)
-	}
-}
-
-// loadExportProfile resolves {id} or writes the error response.
-func loadExportProfile(w http.ResponseWriter, cp *service.ControlPlaneService, id string) (*model.ExportProfile, bool) {
-	if cp == nil || cp.Engine == nil {
-		writeServiceError(w, exportInternalError("export profile", fmt.Errorf("service not initialized")))
-		return nil, false
-	}
-	if id == "" || len(id) > 64 {
-		writeInvalidArgument(w, "id: invalid")
-		return nil, false
-	}
-	profile, err := cp.Engine.GetExportProfile(id)
-	if err != nil {
-		writeServiceError(w, exportProfileStateError("get export profile", err))
-		return nil, false
-	}
-	return profile, true
-}
-
-// exportProfileStateError maps repository errors onto the API error codes.
-func exportProfileStateError(message string, err error) error {
-	if errors.Is(err, state.ErrNotFound) {
-		return &service.ServiceError{Code: "NOT_FOUND", Message: "export profile not found", Err: err}
-	}
-	if errors.Is(err, state.ErrConflict) {
-		return &service.ServiceError{Code: "CONFLICT", Message: "export profile name or token already exists", Err: err}
-	}
-	return exportInternalError(message, err)
-}
-func derefString(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
-}
-
-// exportNowNs is the UTC Unix-nanosecond clock used for profile timestamps
-// (rule R8).
-func exportNowNs() int64 { return time.Now().UTC().UnixNano() }
-
-// newExportProfileID generates a fresh export profile identifier.
-func newExportProfileID() string { return uuid.NewString() }
 
 // exportInternalError renders an INTERNAL service error.
 func exportInternalError(message string, err error) error {

@@ -278,7 +278,7 @@ Reading these honestly:
   HTTP parsing at all.
 - Client, Prism and nginx all ran on the **same host**, so they competed for CPU.
   Treat the ratios as indicative, not as a capacity plan.
-- The payload is unchanged by the front end: the exported `/sub/{token}` body is
+- The payload is unchanged by the front end: the response body is
   byte-identical between plain HTTP and the TLS edge (`cmp` clean), and the
   application surface answers the same status codes through both blocks.
 

@@ -117,9 +117,9 @@ prints the effective values with every secret masked.
 | `PRISM_ALLOW_EMPTY_ADMIN_TOKEN` / `PRISM_ALLOW_EMPTY_PROXY_TOKEN` | `false` | Explicitly disable one authentication scope. Every listener — `PRISM_LISTEN_ADDRESS` **and** `PRISM_ADMIN_LISTEN` — must then stay on loopback unless `PRISM_ALLOW_INSECURE_LISTEN=true` |
 | `PRISM_QUALITY_ENABLED`, `PRISM_QUALITY_API_KEY`, `PRISM_ABUSEIPDB_API_KEY` | *(off / unset)* | Optional IP-quality providers |
 | `PRISM_TRUSTED_PROXIES` | *(empty)* | CIDR list whose `X-Forwarded-For` is trusted for client-IP limiting |
-| `PRISM_PROXY_AUTH_FAIL_LIMIT` | `30` | Failed proxy authentications per minute per IP. Covers the HTTP forward proxy and CONNECT (`Proxy-Authorization`), the reverse-proxy path token and the SOCKS5 username/password check; `0` disables proxy-entry limiting. `/api/*` and `/sub/{token}` keep their own limiters |
+| `PRISM_PROXY_AUTH_FAIL_LIMIT` | `30` | Failed proxy authentications per minute per IP. Covers the HTTP forward proxy and CONNECT (`Proxy-Authorization`), the reverse-proxy path token and the SOCKS5 username/password check; `0` disables proxy-entry limiting. `/api/*` keeps its own limiter |
 | `PRISM_DIRECT_DENY_PRIVATE` | `true` | Refuse loopback, private, link-local, CGNAT, reserved and cloud-metadata targets on every local dial path (reverse-proxy bypass, forward HTTP, CONNECT, SOCKS5). On by default; set `false` to restore the upstream Resin behaviour |
-| `PRISM_DENY_PRIVATE_NODES` | `true` | Refuse a **node** whose own `server` names loopback, the LAN, a link-local address or a cloud metadata endpoint. A name that is not a literal is resolved, so a public-looking hostname whose DNS answer is private (`127.0.0.1.nip.io`, `sslip.io`, `xip.io`, …) is refused as well; a name that resolves only into a transparent proxy's fake-IP pool (`198.18.0.0/15`) is allowed, because on such a machine that answer says nothing about the target. Off by default: a deployment may deliberately route through a private node |
+| `PRISM_DENY_PRIVATE_NODES` | `true` | Refuse a **node** whose own `server` names loopback, the LAN, a link-local address or a cloud metadata endpoint. A name that is not a literal is resolved, so a public-looking hostname whose DNS answer is private (`127.0.0.1.nip.io`, `sslip.io`, `xip.io`, …) is refused as well; a name that resolves only into a transparent proxy's fake-IP pool (`198.18.0.0/15`) is allowed, because on such a machine that answer says nothing about the target. On by default; set `false` if a deployment deliberately routes through a private node |
 
 ### Usage
 
@@ -240,34 +240,10 @@ curl -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" \
 ```
 
 The same filter vocabulary — `purity_band`, `purity_min`, `purity_max`, `ip_type`, `verdict`,
-`confidence_min`, `native`, `asn`, `country`, `checks` — also drives export profiles and the
+`confidence_min`, `native`, `asn`, `country`, `checks` — also drives the
 platform quality policy, which is fail-closed: a policy that requires a score does not admit a node
 without an assessment.
 
-**Export formats and `/sub/<token>` subscriptions.** `GET /api/v1/nodes/export` renders `singbox`,
-`mihomo`, `v2rayn`, `uri`, `csv` and `json` (`internal/export/types.go`); the response headers
-`X-Prism-Export-Exported` / `-Skipped` / `-Truncated` report how many nodes were written, skipped
-and truncated (at most 5000 nodes per request). An export profile (`POST /api/v1/export-profiles`)
-stores format, name template and a node filter, and mints a public URL:
-
-```bash
-curl -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" "http://127.0.0.1:2260/api/v1/nodes/export?format=uri&purity_min=90"
-curl -X POST http://127.0.0.1:2260/api/v1/export-profiles \
-  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"clean-uri","format":"uri","filter":{"purity_min":90}}'
-# the response carries subscription_url: http://<host>:2260/sub/<token>
-curl "http://127.0.0.1:2260/sub/<token>"           # client-side, no admin token
-curl -X POST http://127.0.0.1:2260/api/v1/export-profiles/<id>/actions/rotate-token \
-  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN"    # the old URL stops working
-```
-
-A disabled profile answers `404`. The public endpoint stores only the token's sha256, and it is
-served by the management handler on every listener that carries the management surface — the
-primary listener (`PRISM_LISTEN_ADDRESS` / `PRISM_PORT`) and the independent management listener
-(`PRISM_ADMIN_LISTEN`) — gated by that endpoint's `allow_management` flag, exactly like `/api/*`.
-It is rate-limited on its own (60 requests per minute per token, 120 per minute per client IP,
-`429` with `Retry-After`) and is independent of `PRISM_PROXY_AUTH_FAIL_LIMIT`
-(`internal/api/handler_subscription_token.go`, `internal/api/export_token.go`).
 
 **Data sources and unlock checks.** These are built-in and run automatically; they are not a page you
 operate. The API (`GET|PATCH /api/v1/intel/providers`,
@@ -311,14 +287,9 @@ Built-in unlock checks: `chatgpt`, `claude`, `gemini`, `google_captcha`, `netfli
 - `GET /api/v1/intel/providers`, `PATCH /api/v1/intel/providers/{id}`,
   `POST /api/v1/intel/providers/{id}/actions/refresh|resume`, `GET /api/v1/intel/checks`,
   `PATCH /api/v1/intel/checks/{id}`.
-- `GET /api/v1/nodes/export`, `GET|POST /api/v1/export-profiles`,
-  `GET|PATCH|DELETE /api/v1/export-profiles/{id}`,
-  `POST /api/v1/export-profiles/{id}/actions/rotate-token`.
-- `GET /sub/{token}` — public, no admin token, the path token is the credential. Served by the
-  management handler on any listener with the management surface (primary listener and
-  `PRISM_ADMIN_LISTEN`), gated by `allow_management`; unknown token, disabled profile and an
-  endpoint without management access all answer `404`. It has its own limiter (60/min per token,
-  120/min per client IP, then `429`) and is not part of `PRISM_PROXY_AUTH_FAIL_LIMIT`.
+- `GET /api/v1/nodes/export` — admin download of the filtered node pool as `singbox`, `mihomo`,
+  `v2rayn`, `uri`, `csv` or `json` (at most 5000 nodes per request; counts in the
+  `X-Prism-Export-Exported` / `-Skipped` / `-Truncated` headers). The nodes page has an Export menu.
 
 There is no OpenAPI document or `/ui/docs` page in this repository yet; the
 route table lives in `internal/api/server.go`.
@@ -367,7 +338,7 @@ Prism/
 │   ├── api/                  # REST handlers, middleware; api/web/ holds the React UI
 │   ├── buildinfo/            # version, commit, build time, build tags
 │   ├── config/               # PRISM_* environment configuration
-│   ├── export/               # subscription exporters (Clash/mihomo, sing-box, ...)
+│   ├── export/               # admin node export (sing-box, mihomo, v2rayN, URI, CSV/JSON)
 │   ├── geoip/                # country database and lookup
 │   ├── intel/                # providers, checks, purity, evidence store and jobs
 │   ├── metrics/              # realtime, history and snapshot metrics

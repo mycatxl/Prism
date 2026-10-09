@@ -97,8 +97,8 @@ sudo systemctl restart prism    # 重启
 | `PRISM_ALLOW_EMPTY_ADMIN_TOKEN` / `PRISM_ALLOW_EMPTY_PROXY_TOKEN` | `false` | 显式关闭某一类鉴权。此时**每一个**监听地址（`PRISM_LISTEN_ADDRESS` 与 `PRISM_ADMIN_LISTEN`）都必须保持回环，除非设置 `PRISM_ALLOW_INSECURE_LISTEN=true` |
 | `PRISM_QUALITY_ENABLED`、`PRISM_QUALITY_API_KEY`、`PRISM_ABUSEIPDB_API_KEY` | *（关闭 / 未设置）* | 可选的 IP 质量数据源 |
 | `PRISM_TRUSTED_PROXIES` | *（空）* | 允许其 `X-Forwarded-For` 作为客户端 IP 的代理 CIDR 列表 |
-| `PRISM_PROXY_AUTH_FAIL_LIMIT` | `30` | 每个 IP 每分钟允许的代理鉴权失败次数。覆盖正向 HTTP 代理与 CONNECT（`Proxy-Authorization`）、反代路径令牌以及 SOCKS5 用户名/密码校验；`0` 表示不在代理入口限流。`/api/*` 与 `/sub/{token}` 各自有独立限流 |
-| `PRISM_DIRECT_DENY_PRIVATE` | `true` | 在所有本机直连路径（反代 bypass、正向 HTTP、CONNECT、SOCKS5）上拒绝回环、私网、链路本地、CGNAT、保留地址与云元数据地址。默认关闭；关闭时本机直连路径不做地址限制（与 Resin 一致） |
+| `PRISM_PROXY_AUTH_FAIL_LIMIT` | `30` | 每个 IP 每分钟允许的代理鉴权失败次数。覆盖正向 HTTP 代理与 CONNECT（`Proxy-Authorization`）、反代路径令牌以及 SOCKS5 用户名/密码校验；`0` 表示不在代理入口限流。`/api/*` 有独立限流 |
+| `PRISM_DIRECT_DENY_PRIVATE` | `true` | 在所有本机直连路径（反代 bypass、正向 HTTP、CONNECT、SOCKS5）上拒绝回环、私网、链路本地、CGNAT、保留地址与云元数据地址。默认开启；设为 `false` 时本机直连路径不做地址限制（与 Resin 一致） |
 
 ### 使用示例
 
@@ -203,27 +203,9 @@ curl -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" \
 ```
 
 同一套筛选词（`purity_band`、`purity_min`、`purity_max`、`ip_type`、`verdict`、`confidence_min`、
-`native`、`asn`、`country`、`checks`）同时用于导出配置和平台质量准入；准入是 fail-closed 的：
+`native`、`asn`、`country`、`checks`）同时用于平台质量准入；准入是 fail-closed 的：
 要求分数的策略不会放过没有评估结果的节点。
 
-**导出格式与 `/sub/<token>` 订阅。** `GET /api/v1/nodes/export` 支持 `singbox`、`mihomo`、
-`v2rayn`、`uri`、`csv`、`json`（`internal/export/types.go`），响应头
-`X-Prism-Export-Exported/Skipped/Truncated` 说明导出、跳过与截断数量（单次最多 5000 个节点）。
-导出配置（`POST /api/v1/export-profiles`）保存格式、命名模板与节点筛选，并生成公开订阅链接：
-
-```bash
-curl -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" "http://127.0.0.1:2260/api/v1/nodes/export?format=uri&purity_min=90"
-curl -X POST http://127.0.0.1:2260/api/v1/export-profiles \
-  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"clean-uri","format":"uri","filter":{"purity_min":90}}'
-# 响应中的 subscription_url: http://<host>:2260/sub/<token>
-curl "http://127.0.0.1:2260/sub/<token>"           # 客户端使用，无需管理令牌
-curl -X POST http://127.0.0.1:2260/api/v1/export-profiles/<id>/actions/rotate-token \
-  -H "Authorization: Bearer $PRISM_ADMIN_TOKEN"    # 旧链接立即失效
-```
-
-配置被停用后该链接返回 404。公开入口只保存链接令牌的 sha256，由管理面处理函数在**所有**承载管理面的监听地址上提供（主监听 `PRISM_LISTEN_ADDRESS` / `PRISM_PORT`，以及独立的 `PRISM_ADMIN_LISTEN`），并与其他管理路由一样受该接入点 `allow_management` 开关约束。它有自己的限流（每令牌 60 次/分钟、每客户端 IP 120 次/分钟，超限返回 `429` 与 `Retry-After`），与 `PRISM_PROXY_AUTH_FAIL_LIMIT` 相互独立
-（`internal/api/handler_subscription_token.go`、`internal/api/export_token.go`）。
 
 **数据源与解锁检测。** 这些是内置项，由后台静默选择并自动运行，不是需要日常操作的配置面
 （因此没有界面页面）。接口（`GET|PATCH /api/v1/intel/providers`、
@@ -265,10 +247,8 @@ DB-IP Lite、MaxMind GeoLite2 与 IPinfo Lite 需要先下载到
 - `GET /api/v1/intel/providers`、`PATCH /api/v1/intel/providers/{id}`、
   `POST /api/v1/intel/providers/{id}/actions/refresh|resume`、`GET /api/v1/intel/checks`、
   `PATCH /api/v1/intel/checks/{id}`。
-- `GET /api/v1/nodes/export`、`GET|POST /api/v1/export-profiles`、
-  `GET|PATCH|DELETE /api/v1/export-profiles/{id}`、
-  `POST /api/v1/export-profiles/{id}/actions/rotate-token`。
-- `GET /sub/{token}` — 公开入口，不需要管理令牌，路径中的令牌即凭据。由管理面处理函数在承载管理面的监听地址（主监听与 `PRISM_ADMIN_LISTEN`）上提供，并受该接入点 `allow_management` 约束；未知令牌、已停用的配置、以及关闭了管理面的接入点都返回 `404`。它有自己的限流（每令牌 60 次/分钟、每客户端 IP 120 次/分钟，超限 `429`），不属于 `PRISM_PROXY_AUTH_FAIL_LIMIT` 的覆盖范围。
+- `GET /api/v1/nodes/export` — 管理员按筛选下载节点文件：`singbox`、`mihomo`、`v2rayn`、`uri`、`csv`、`json`
+  （单次最多 5000 个节点，数量见 `X-Prism-Export-Exported/Skipped/Truncated` 头）。节点页有「导出」菜单。
 
 仓库中目前没有 OpenAPI 文档，也没有 `/ui/docs` 页面；完整路由表见
 `internal/api/server.go`。
@@ -316,7 +296,7 @@ Prism/
 │   ├── api/                  # REST 处理器与中间件；api/web/ 为 React 前端
 │   ├── buildinfo/            # 版本、提交、构建时间与标签
 │   ├── config/               # PRISM_* 环境配置
-│   ├── export/               # 订阅导出（Clash/mihomo、sing-box 等）
+│   ├── export/               # 管理员节点导出（sing-box、mihomo、v2rayN、URI、CSV/JSON）
 │   ├── geoip/                # 国家数据库与查询
 │   ├── intel/                # 数据源、检测规则、纯净度、证据库与任务
 │   ├── metrics/              # 实时、历史与快照指标

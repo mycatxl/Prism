@@ -197,7 +197,7 @@ deployment small:
 - **One port carries everything.** The single listener
   `PRISM_LISTEN_ADDRESS`:`PRISM_PORT` (default `127.0.0.1:2260`) serves the Web
   UI (`/ui/`), the API (`/api/v1/`), the HTTP and SOCKS5 forward proxy, the
-  `/<token>/...` reverse proxy and `/sub/{token}`. A container therefore
+  `/<token>/...` reverse proxy. A container therefore
   publishes exactly one port. `PRISM_ADMIN_LISTEN` is disabled by default and
   must stay on loopback when it is enabled.
 - **All state is files.** `state.db`, `intel.db`, `cache.db`, `metrics.db`, the
@@ -644,9 +644,8 @@ stream {
 Verified end to end: with that block in front of the same instance,
 `curl --proxy-insecure -x https://Default:<token>@host:8443 https://1.1.1.1/cdn-cgi/trace`
 returns **200** and the exit node's own address, and the dot-segment form works
-again because a stream proxy never parses the path at all. The admin API, the UI
-and `/sub/{token}` behave identically through either block (the exported
-subscription is byte-identical to the plain-HTTP export).
+again because a stream proxy never parses the path at all. The admin API and the UI
+behave identically through either block.
 
 The trade-off is visibility: a `stream` block cannot set `X-Forwarded-For`, so the
 authentication-failure limiter keys on the proxy's address. Keep the HTTP-level

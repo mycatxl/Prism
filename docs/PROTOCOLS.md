@@ -300,7 +300,7 @@ names per bucket (names capped at 80 runes) in the summary, 64 KiB per stored re
 over-limit case is counted explicitly (`skipped_overflow`, `reasons_overflow`,
 `samples_truncated`, `truncated`/`original_bytes`) rather than silently dropped.
 
-## 9. Export formats and subscription links
+## 9. Node export formats
 
 Output (independent of the D-1 kernel decision — a mihomo *configuration file* is a
 dependency-free serialisation, `internal/export/types.go`):
@@ -326,20 +326,12 @@ a current mihomo release when the subscription contains anytls nodes. `mihomo -t
 the configuration structure and field types only; it does not dial the nodes. Full evidence
 and the `up`/`down` findings are in `docs/ENGINE_DECISIONS.md` D-4.
 
-Export profiles (`/api/v1/export-profiles`, `POST …/{id}/actions/rotate-token`) store format,
-name template, platform and a node filter with the same vocabulary as `GET /api/v1/nodes`
-(`ip_type`, `purity_band`, `purity_min`, `purity_max`, `verdict`, `asn`, `country`, `checks`, …;
-`internal/api/handler_export.go`). Each profile exposes a public subscription URL
-`<scheme>://<host>/sub/<token>` served without the admin token (`internal/api/server.go`
-registers `GET /sub/{token}` on the management handler, so the subscription URL resolves on every
-listener that carries the management surface — the primary listener and `PRISM_ADMIN_LISTEN` — and
-is gated by that endpoint's `allow_management` flag exactly like `/api/*`;
-`cmd/prism/inbound_mux.go`, `shouldRouteControlPlane`). A profile can be disabled and its token
-rotated; an unknown token, a disabled profile and a listener without management access all answer
-`404`. The public endpoint stores only the token hash and has its own limiter — 60 requests per
-minute per token, 120 per minute per client IP, then `429` with `Retry-After` — which is
-independent of `PRISM_PROXY_AUTH_FAIL_LIMIT` (`internal/api/export_token.go`,
-`internal/api/handler_subscription_token.go`).
+The `singbox` file is an `outbounds` + `endpoints` fragment (no inbounds, route or dns). sing-box
+loads it as-is, but to use it merge it into a config that has an inbound, or pass both files:
+`sing-box run -c base.json -c prism-export.json`, with `route.final` set to `PROXY`.
+
+There are no export profiles, subscription tokens or public `/sub/{token}` output: export is a one-off
+admin download. Subscription *import* (§1–§8) is unaffected.
 
 ## 10. Known limitations
 
@@ -663,7 +655,5 @@ is not.
 | A capability is only reported when the runtime can deliver it (mihomo stays `built:false`, also with `-tags with_mihomo`) | `internal/outbound` `TestEngineCapabilitiesMatchRuntimeBehaviour`, `internal/api` `TestSystemCapabilities_NeverClaimsAnUnbuiltEngine` |
 | `naive` fails only at build time | `TestProtocolMatrix` case `naive-not-built` |
 | Share links, Clash, Surge and sing-box JSON conversion detail | `internal/subscription` `TestParseGeneralSubscription_*` (parser, links, plugins, transports) |
-| Public `/sub/<token>` behaviour and token rotation | `internal/api` `handler_export_test.go` (`TestSubscriptionTokenFlow`, `TestSubscriptionMihomoContentDisposition`), `export_token_test.go` (`TestExportSubscriptionLimiterPerTokenBound`, `TestExportSubscriptionLimiterPerIPBound`); the listener coverage is pinned by `cmd/prism/subscription_routing_test.go` (`TestInboundMuxRoutesSubscriptionPathToManagementHandler`, `TestInboundMuxSubscriptionPathHonoursAllowManagement`, `TestAdminListenerServesSubscriptionPath`) |
-| Export formats and their skip reasons | `internal/export` (`TestExportMihomoEveryProxyIsParseableByClash`, `TestExportSkipsUnrepresentable*`, `TestExportAnalysisFormatsNeverCarryCredentials`, …) |
 | Offline database state and refresh | `internal/intel/providers` `geo_db_test.go`, `internal/api` `handler_intel_geo_test.go` |
 | Intel pipeline (egress → offline → online → via-node → checks → assess) | `internal/intel` `pipeline_e2e_test.go`, `internal/intel/jobs` `jobs_test.go` |

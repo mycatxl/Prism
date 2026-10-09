@@ -101,11 +101,11 @@ flowchart LR
 | 个人版 | 单个 `prism run` 进程（`bin/prism` 无子命令即启动），同进程独立工作池 | 本地 SQLite 保存配置、质量证据、运行缓存和滚动日志 |
 | 可选高级部署 | 单机多个进程或只读分析工具 | 仍由一个 Prism 进程拥有写入权；不保证跨机器状态同步 |
 
-默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。数据归属是分库的：**state.db** 保存配置（`system_config`、`platforms`、`subscriptions`（含订阅源文本 `content`，是节点库存的重建来源）、`account_header_rules`、`endpoints`、`export_profiles`、`intel_provider_settings`）与变更审计（`audit_log`）；**cache.db** 保存由订阅重建出来的节点库存（`nodes_static`、`nodes_dynamic`、`node_latency`、`subscription_nodes`）与租约（`leases`），即"可重建"的运行快照；检测证据在独立的 **intel.db**（`egress_history`、`evidence`、`ip_assessment`、`node_egress`、`node_checks` 与任务/provider 状态）；`metrics.db` 与滚动库 `request_logs-<unix_ms>.db` 位于日志目录（`PRISM_LOG_DIR`），既不在 state 目录、也不在备份清单允许范围内。
+默认部署不依赖 Redis、Kafka、PostgreSQL、etcd 或 Kubernetes。项目约定每个数据目录只有一个 Prism 写进程，每库一个 writer；这不是 SQLite 自身不支持多个进程。数据归属是分库的：**state.db** 保存配置（`system_config`、`platforms`、`subscriptions`（含订阅源文本 `content`，是节点库存的重建来源）、`account_header_rules`、`endpoints`、`intel_provider_settings`）与变更审计（`audit_log`）；**cache.db** 保存由订阅重建出来的节点库存（`nodes_static`、`nodes_dynamic`、`node_latency`、`subscription_nodes`）与租约（`leases`），即"可重建"的运行快照；检测证据在独立的 **intel.db**（`egress_history`、`evidence`、`ip_assessment`、`node_egress`、`node_checks` 与任务/provider 状态）；`metrics.db` 与滚动库 `request_logs-<unix_ms>.db` 位于日志目录（`PRISM_LOG_DIR`），既不在 state 目录、也不在备份清单允许范围内。
 
 **"可重建"已核实成立**：节点进入池的唯一路径是 `GlobalNodePool.AddNodeFromSub`，其调用者全部在 `internal/topology/subscription_scheduler.go`（订阅刷新），没有手工加节点的接口；节点来源文本存在 state.db 的 `subscriptions.content` 里。因此删除 cache.db 只会丢掉可从订阅重新拉取的节点库存、延迟记录与租约——`prism import-resin` 也把 state.db（含 `subscriptions`）与 cache.db 一起搬，不构成例外。运维文档可以据此承诺"cache.db 可删"。
 
-Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与 `PRISM_PORT`（默认 `2260`）上的同一个 listener 同时提供 `/ui/` 管理面板、`/api/v1/` 接口、HTTP/SOCKS5 正向代理、`/<token>/...` 反向代理与 `/sub/{token}` 订阅入口。可选的管理面通过 `PRISM_ADMIN_LISTEN` 单独开放，默认关闭且必须是 loopback。`PRISM_ADMIN_TOKEN` / `PRISM_PROXY_TOKEN` 从 `.env` 读取，不打包进前端。前端开发服务器（`npm run dev`）另有自己的端口与 `PRISM_API_TARGET` 反代目标，那只用于本地开发，不是产品部署形态。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
+Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与 `PRISM_PORT`（默认 `2260`）上的同一个 listener 同时提供 `/ui/` 管理面板、`/api/v1/` 接口、HTTP/SOCKS5 正向代理、`/<token>/...` 反向代理。可选的管理面通过 `PRISM_ADMIN_LISTEN` 单独开放，默认关闭且必须是 loopback。`PRISM_ADMIN_TOKEN` / `PRISM_PROXY_TOKEN` 从 `.env` 读取，不打包进前端。前端开发服务器（`npm run dev`）另有自己的端口与 `PRISM_API_TARGET` 反代目标，那只用于本地开发，不是产品部署形态。配置、库存、质量及缓存通过 StateEngine 编排到所属仓储；指标与日志独立排队写入，不因日志积压阻塞配置。
 
 ### 4.2 模块与依赖
 
@@ -128,7 +128,7 @@ Prism 是**单端口**服务：`PRISM_LISTEN_ADDRESS`（默认 `127.0.0.1`）与
 | `intel` | 检测任务、provider 适配、限流与预算、证据持久化（原 `inspection` 的职责） |
 | `geoip` | GeoIP 数据库下载、校验与读取 |
 | `scanloop` | 带抖动的周期性扫描循环 |
-| `export` | 导出渲染：sing-box／mihomo／v2rayN／CSV-JSON |
+| `export` | 管理员节点导出渲染：sing-box／mihomo／v2rayN／URI／CSV-JSON |
 | `requestlog`, `metrics` | 访问日志与聚合指标；专属存储适配器，不修改代理状态 |
 | `service`, `api` | 用例编排、输入输出与权限边界；变更审计在 `internal/api/audit.go` |
 | `buildinfo` | 构建期由 ldflags 注入的版本信息 |
@@ -163,7 +163,7 @@ internal/quality/          # 数据源证据、评级与有效性（与节点健
 internal/intel/            # 检测任务、限流、预算、数据源调用与持久化（子包 intel/store 持有 intel.db）
 internal/geoip/            # GeoIP 数据库下载、校验与读取
 internal/scanloop/         # 带抖动的周期性扫描循环
-internal/export/           # 把节点池渲染成用户消费的格式（sing-box / mihomo / v2rayN / CSV-JSON）
+internal/export/           # 把节点池渲染成管理员下载的文件（sing-box / mihomo / v2rayN / CSV-JSON）
 internal/requestlog/       # 结构化请求日志：异步写入滚动 SQLite 库
 internal/metrics/          # 指标采集、聚合与存储
 internal/service/          # 用例编排的服务层类型
@@ -205,7 +205,7 @@ internal/e2e/              # 端到端协议场景（仅测试文件与 testdata
 | 配置变更队列积压 | 路由最终检查版本和有效期；不依赖事件已及时处理 |
 | 管理 API 暂时不可用 | 已加载的本地配置继续运行；配置有效性无法确认时拒绝写入，不放宽代理策略 |
 | 普通访问日志队列满 | 按配置丢弃并计数告警，不影响代理；检测记录不能静默伪造成功 |
-| 审计写入失败 | **尽力而为，不回滚**：审计是管理写请求成功之后追加的记录（`internal/api/audit.go` 的 `AuditMiddleware` 先放行 handler、再 `AppendAudit`），写失败只记录一条日志（`audit: append failed for …`），已完成的变更保持生效。审计不被当作管理写路径的失败源——把它并入同一事务会让一个日志故障阻断所有配置变更。`/sub/{token}` 的公开访问审计同样尽力而为（`handler_subscription_token.go`） |
+| 审计写入失败 | **尽力而为，不回滚**：审计是管理写请求成功之后追加的记录（`internal/api/audit.go` 的 `AuditMiddleware` 先放行 handler、再 `AppendAudit`），写失败只记录一条日志（`audit: append failed for …`），已完成的变更保持生效。审计不被当作管理写路径的失败源——把它并入同一事务会让一个日志故障阻断所有配置变更。|
 | 检测队列满或外部来源限流 | 保留旧证据到有效期；到期后按平台策略排除，不阻塞代理请求 |
 | 进程崩溃 | 恢复权威配置、校验质量证据、重建分组和平台视图；未证实的状态不能放宽 |
 

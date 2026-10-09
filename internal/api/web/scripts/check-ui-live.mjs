@@ -45,7 +45,6 @@ const RAIL_PATHS = [
   "/ui/subscriptions",
   "/ui/platforms",
   "/ui/jobs",
-  "/ui/exports",
   "/ui/request-logs",
   "/ui/endpoints",
   "/ui/rules",
@@ -495,21 +494,21 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
    *    painted in; sampling glyph pixels would measure antialiasing instead.
    */
   /*
-   * The board now uses the Precision Glass composition: a context band, a
-   * freshness bar, panel headers, Pool Snapshot cells and traffic readouts.
+   * The board now uses the Precision Glass composition: a welcome band, a
+   * freshness bar, panel headers, pool fact tiles and traffic readouts.
    * These semantic hooks are stable across loading and populated fixtures, and
    * they cover the words operators actually read in both authored themes.
    */
   const TARGETS = [
-    ".dashboard-context__title",
-    ".dashboard-context__description",
+    ".dashboard-hero__title",
+    ".dashboard-hero__description",
     ".data-freshness-bar__range .micro",
     ".data-freshness-bar__age .micro",
     ".data-freshness-bar__age .readout",
     ".panel-header__title",
     ".panel-header__meta",
-    ".pool-snapshot-cell .micro",
-    ".pool-snapshot-cell .numeral",
+    ".hero-stat__label",
+    ".hero-stat__value",
     ".dashboard-traffic-readouts .micro",
     ".dashboard-traffic-readouts .numeral",
     ".dashboard-region-row",
