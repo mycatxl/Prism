@@ -16,16 +16,16 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cssPath = join(here, "..", "src", "styles", "design.css");
 
 const FORBIDDEN_LAYER = /@media\s*\(\s*min-width\s*:\s*1536px\s*\)/;
-const FLUID_BOXES = /\.(?:wb-board|wb-shell-root|wb-main-zone|precision-dashboard)\b/;
-const PANES = /\.(?:dashboard-(?:evidence-grid|traffic-pane|map-pane|support-pane|changes-pane)|dashboard-(?:chart-well|map-well|hero))\b/;
+const FLUID_BOXES = /\.(?:dash|shell|shell-main)(?![\w-])/;
+const PANES = /\.dash-(?:card|map|issues|platforms|quality|sessions|sources|jobs)(?![\w-])/;
 const REQUIRED_RULES = [
-  ".precision-dashboard",
-  ".dashboard-hero",
-  ".data-freshness-bar",
-  ".dashboard-hero__stats",
-  ".dashboard-evidence-grid",
-  ".dashboard-support-grid",
-  ".dashboard-changes-list",
+  ".shell",
+  ".shell-nav",
+  ".dash",
+  ".dash-card",
+  ".dash-map",
+  ".dash-platforms",
+  ".dash-heat",
 ];
 
 const failures = [];

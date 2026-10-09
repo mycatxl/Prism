@@ -692,6 +692,7 @@ type ApiNodeExitSummary = {
   has_outbound?: boolean | null;
   circuit_open_since?: string | null;
   reference_latency_ms?: number | null;
+  intel?: { state?: string | null; ip_type?: string | null; purity_band?: string | null } | null;
 };
 
 /**
@@ -717,9 +718,35 @@ export async function listNodeExitFacts(signal?: AbortSignal): Promise<NodeExitF
     region: toString(node.region).trim().toUpperCase(),
     egressIp: toString(node.egress_ip),
     healthy: node.enabled !== false && node.has_outbound === true && !node.circuit_open_since,
+    circuitOpen: Boolean(node.circuit_open_since),
+    ipType: toString(node.intel?.ip_type).trim().toLowerCase(),
+    purityBand: toString(node.intel?.purity_band).trim().toLowerCase(),
     referenceLatencyMs:
       typeof node.reference_latency_ms === "number" && Number.isFinite(node.reference_latency_ms)
         ? node.reference_latency_ms
         : null,
   }));
+}
+
+/** The global active-lease series over an arbitrary window (the dashboard reads 24h). */
+export function getGlobalLeaseSeries(window: TimeWindow): Promise<RealtimeLeasesResponse> {
+  return getRealtimeLeases(window);
+}
+
+/** The global traffic and probe history over a window, without the rest of the history set. */
+export async function getTrafficAndProbes(
+  window: TimeWindow,
+): Promise<{ traffic: HistoryResponse<HistoryTrafficItem>; probes: HistoryResponse<HistoryProbesItem> }> {
+  const [traffic, probes] = await Promise.all([getHistoryTraffic(window), getHistoryProbes(window)]);
+  return { traffic, probes };
+}
+
+/** One platform's routable pool snapshot and its latest active-lease reading. */
+export async function getPlatformPulse(
+  platformId: string,
+  window: TimeWindow,
+): Promise<{ pool: SnapshotPlatformNodePool; activeLeases: number | null }> {
+  const [pool, leases] = await Promise.all([getSnapshotPlatformNodePool(platformId), getRealtimeLeases(window, platformId)]);
+  const latest = leases.items.at(-1);
+  return { pool, activeLeases: latest ? latest.active_leases : null };
 }

@@ -1,13 +1,13 @@
 import { AUDIT_TRANSLATIONS } from "./audit";
-import { EXPORT_TRANSLATIONS } from "./exports";
+import { DASHBOARD_TRANSLATIONS } from "./dashboard";
 import { JOBS_TRANSLATIONS } from "./jobs";
 import { NODES_TRANSLATIONS } from "./nodes";
 import { QUALITY_TRANSLATIONS } from "./quality";
 
 export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
+  ...DASHBOARD_TRANSLATIONS,
   ...QUALITY_TRANSLATIONS,
   ...AUDIT_TRANSLATIONS,
-  ...EXPORT_TRANSLATIONS,
   ...JOBS_TRANSLATIONS,
   ...NODES_TRANSLATIONS,
   "查看节点状态、代理流量和正在使用的平台。":
@@ -331,9 +331,6 @@ export const WORKBENCH_TRANSLATIONS: Record<string, string> = {
   "刷新情报来源": "Intel provider refreshed",
   "更新情报来源": "Intel provider updated",
   "更新检测项": "Intel check updated",
-  "轮换导出令牌": "Export token rotated",
-  "更新导出配置": "Export profile updated",
-  "删除导出配置": "Export profile deleted",
   "更新 GeoIP 数据": "GeoIP data updated",
   "查询 GeoIP": "GeoIP lookup",
   "更新系统配置": "System config updated",

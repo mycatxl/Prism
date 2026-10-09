@@ -13,21 +13,21 @@
  * timeline is the day chart; the egress map carries its own palette, because it is
  * the one surface that paints a night sky rather than paper.
  */
-export const CHART_PAPER = "#f3f5fb";
-export const CHART_PAPER_SUNK = "#e8ecf5";
+export const CHART_PAPER = "#ecf5f1";
+export const CHART_PAPER_SUNK = "#e4f0eb";
 /*
  * Fog-blue graphite day surfaces. These literals mirror design.css so canvas
  * charts keep the same material as the rest of the console.
  */
-export const CHART_PAPER_RAISED = "#ffffff";
-export const CHART_PAPER_INSET = "#f7f8fc";
-export const CHART_RULE = "#dde3ee";
-export const CHART_RULE_STRONG = "#9aa6bb";
+export const CHART_PAPER_RAISED = "#fafcfb";
+export const CHART_PAPER_INSET = "#f3f8f6";
+export const CHART_RULE = "#d5e2dc";
+export const CHART_RULE_STRONG = "#8fa39b";
 export const CHART_INK = "#0f172a";
 export const CHART_INK_SOFT = "#475569";
 export const CHART_INK_FAINT = "#56657c";
-export const CHART_SIGNAL = "#047857";
-export const CHART_SIGNAL_DEEP = "#065f46";
+export const CHART_SIGNAL = "#137a52";
+export const CHART_SIGNAL_DEEP = "#0f6343";
 export const CHART_LIVE = "#0369a1";
 export const CHART_GRID = "#ced9e5";
 export const CHART_AXIS = "#53677c";
@@ -38,8 +38,8 @@ export const CHART_AXIS = "#53677c";
  * on the plate that never means "a region". Both values are `--p-accent` from
  * their own theme.
  */
-export const CHART_ACCENT = "#4f46e5";
-export const CHART_ACCENT_DARK = "#8294ff";
+export const CHART_ACCENT = "#0a7a60";
+export const CHART_ACCENT_DARK = "#2fe0b0";
 
 /**
  * The categorical sequence, in the order a chart should spend it.
@@ -146,9 +146,9 @@ export type MapPalette = {
  * without competing with the route pulses.
  */
 export const MAP_DARK: MapPalette = {
-  land: "#1a3458",
-  coast: "#2b4a72",
-  ink: "#f1f4f8",
+  land: "#143a36",
+  coast: "#1d4440",
+  ink: "#e8ecf3",
   series: CHART_SERIES_DARK,
   hubStroke: "rgba(11, 22, 47, 0.85)",
   origin: CHART_ACCENT_DARK,
@@ -159,7 +159,7 @@ export const MAP_DARK: MapPalette = {
   line: "#7fd6f0",
   lineTrail: "#d8f4ff",
   linePeriod: 5,
-  tooltipSignal: "#34b888",
+  tooltipSignal: "#3fcf8e",
 };
 
 /**
@@ -168,8 +168,8 @@ export const MAP_DARK: MapPalette = {
  * has a readable geographic footprint without inventing activity.
  */
 export const MAP_LIGHT: MapPalette = {
-  land: "#b8c8da",
-  coast: "#8da3bc",
+  land: "#d4e6de",
+  coast: "#bcd3c9",
   ink: CHART_INK,
   series: CHART_SERIES,
   hubStroke: "rgba(232, 238, 246, 0.96)",

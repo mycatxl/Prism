@@ -45,7 +45,6 @@ const RAIL_PATHS = [
   "/ui/subscriptions",
   "/ui/platforms",
   "/ui/jobs",
-  "/ui/exports",
   "/ui/request-logs",
   "/ui/endpoints",
   "/ui/rules",
