@@ -97,7 +97,7 @@ jobs:
           fail=0
           expect() { if [ "$2" = "$3" ]; then echo "PASS $1"; else echo "FAIL $1 (expected $2, got $3)"; fail=1; fi; }
           expect "healthz" 200 "$(code http://127.0.0.1:2260/healthz)"
-          expect "UI" 200 "$(code http://127.0.0.1:2260/)"
+          expect "UI" 200 "$(code http://127.0.0.1:2260/ui/)"
           expect "API rejects missing token" 401 "$(code http://127.0.0.1:2260/api/v1/system/info)"
           expect "API accepts admin token" 200 "$(code -H "Authorization: Bearer $ADMIN_TOKEN" http://127.0.0.1:2260/api/v1/system/info)"
           expect "runs as prism user" prism "$(docker exec prism-ci stat -c %U /proc/1)"
