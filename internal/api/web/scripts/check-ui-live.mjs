@@ -79,26 +79,26 @@ const REMOVED_CLASS_TOKENS = [
   "wb-brand-",
 ];
 
-// The ground and the ink, read from the dark primitives in src/styles/design.css
-// rather than written down here. The console ships dark by default and offers light
+// The ground and the ink, read from the light primitives in src/styles/design.css
+// rather than written down here. The console ships light by default and offers dark
 // as a switch; both themes are verified pair by pair by `npm run check:contrast`, and
 // this file only has to prove the page painted the tokens it was asked for rather
 // than falling back to the browser's black on white. Reading them is deliberate: a
 // literal turns the next deliberate re-solve of the palette into a false failure.
-const darkTheme = (() => {
+const lightTheme = (() => {
   const css = readFileSync(new URL("../src/styles/design.css", import.meta.url), "utf8");
-  const block = /\[data-theme="dark"\] \{([\s\S]*?)\n\}/.exec(css);
-  if (!block) throw new Error("check-ui-live: design.css has no dark theme block");
+  const block = /\n:root \{([\s\S]*?)\n\}/.exec(css);
+  if (!block) throw new Error("check-ui-live: design.css has no light :root block");
   return block[1];
 })();
-const darkToken = (name) => {
-  const value = new RegExp(`--p-${name}:\\s*(#[0-9a-fA-F]{6})\\b`).exec(darkTheme);
-  if (!value) throw new Error(`check-ui-live: the dark theme declares no --p-${name}`);
+const lightToken = (name) => {
+  const value = new RegExp(`--p-${name}:\\s*(#[0-9a-fA-F]{6})\\b`).exec(lightTheme);
+  if (!value) throw new Error(`check-ui-live: the light theme declares no --p-${name}`);
   const hex = value[1].slice(1);
   return `rgb(${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)})`;
 };
-const PAPER = darkToken("canvas");
-const INK = darkToken("ink");
+const PAPER = lightToken("canvas");
+const INK = lightToken("ink");
 
 const LOCALE = "zh-CN";
 const DASHBOARD = "/ui/dashboard";
@@ -449,7 +449,7 @@ check("the dashboard hero renders", async ({ origin, page }) => {
 
   // The exit plate is an offline SVG projection. Assert the rendered surface
   // rather than an implementation-specific canvas node.
-  const map = page.locator("main .egress-map").first();
+  const map = page.locator("main .dash-map").first();
   await map.waitFor({ state: "visible", timeout: 20000 });
   const svg = map.locator("svg").first();
   await svg.waitFor({ state: "attached", timeout: 20000 });
@@ -461,13 +461,9 @@ check("the dashboard hero renders", async ({ origin, page }) => {
   // (`.readout` is only on a unit suffix, and these cells have no unit). Measuring
   // by the value keeps the assertion about content rather than about the layout
   // classes the strip happened to use, which have already changed once.
-  const strip = page
-    .locator("main div.grid.divide-x")
-    .or(page.locator("main .panel"))
-    .first();
-  await strip.waitFor({ state: "visible", timeout: 15000 });
-  const readouts = await strip.locator(".numeral").count();
-  assert(readouts >= 4, `the instrument strip must show at least four readouts (found ${readouts})`);
+  const stats = page.locator("main .dash-map__stats").first();
+  await stats.waitFor({ state: "visible", timeout: 15000 });
+  assert(/\d/.test((await stats.textContent()) || ""), "the map stats must show numbers");
 });
 
 check("every theme is legible, not just the one the art was drawn in", async ({ origin, page }) => {
@@ -500,19 +496,16 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
    * they cover the words operators actually read in both authored themes.
    */
   const TARGETS = [
-    ".dashboard-hero__title",
-    ".dashboard-hero__description",
-    ".data-freshness-bar__range .micro",
-    ".data-freshness-bar__age .micro",
-    ".data-freshness-bar__age .readout",
-    ".panel-header__title",
-    ".panel-header__meta",
-    ".hero-stat__label",
-    ".hero-stat__value",
-    ".dashboard-traffic-readouts .micro",
-    ".dashboard-traffic-readouts .numeral",
-    ".dashboard-region-row",
-    ".dashboard-change-row",
+    ".dash-card__head",
+    ".dash-card__meta",
+    ".dash-map__stats",
+    ".dash-map__legend",
+    ".dash-line__name",
+    ".dash-platform-name",
+    ".dash-change__text",
+    ".dash-issue__text",
+    ".dash-muted",
+    ".readout",
   ];
 
   /*
