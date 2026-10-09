@@ -34,7 +34,6 @@ var supportedOutboundTypes = map[string]bool{
 	"anytls":      true,
 	"tor":         true,
 	"ssh":         true,
-	"naive":       true,
 	"snell":       true,
 }
 

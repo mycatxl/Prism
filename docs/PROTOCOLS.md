@@ -345,24 +345,23 @@ independent of `PRISM_PROXY_AUTH_FAIL_LIMIT` (`internal/api/export_token.go`,
 
 Read this before filing a bug; every item is either a deliberate decision or a verified gap.
 
-### 10.1 `naive` is imported and then fails to build
+### 10.1 `naive` is refused at import
 
-sing-box has no `with_naive_outbound` tag in this build, and `naive` is in the parser's
-`supportedOutboundTypes`, so a naive node appears in the pool and then cannot be built.
-The user-visible text is the sing-box stub message:
-`naive outbound is not included in this build, rebuild with -tags with_naive_outbound`
-(`internal/node/naive_outbound_stub.go` in sing-box 1.14.2; matrix case `naive-not-built`
-asserts the `not included in this build` substring).
-Note: the parse report does not carry an `ENGINE_NOT_BUILT:naive` entry — a `naive` node is
-only refused when its outbound is actually built, which is what the message above reports.
+sing-box has no `with_naive_outbound` tag in this build, so the parser does not import
+`naive`: a naive node is dropped with `ENGINE_NOT_BUILT` (detail
+`naive (sing-box built without with_naive_outbound)`) and counted in the parse report
+(`internal/subscription/report.go`, `deferredProtocolTypes`; matrix case `naive-not-built`).
+A naive outbound stored before this change still fails at build with the sing-box stub
+message `naive outbound is not included in this build` (matrix case
+`naive-envelope-not-built`).
 
-### 10.2 `tor`: no claim
+### 10.2 `tor`: parsed, dial unverified
 
 `tor` is accepted by the parser (`supportedOutboundTypes`) and sing-box 1.14.2 registers the
-`tor` outbound unconditionally (`include/registry.go` imports `protocol/tor`, the file has no
-build tag). It is absent from `SingboxOutboundTypes()`, from the protocol matrix and from the
-end-to-end entry-point tests. Whether a tor node dials successfully depends on reaching the
-Tor network. Treat tor support as unverified.
+`tor` outbound unconditionally. The protocol matrix case `tor-singbox` pins that a tor node
+parses into a sing-box outbound and that building it reaches the tor outbound, which starts
+the `tor` executable. Whether a tor node dials depends on that executable and on reaching
+the Tor network, so treat tor dialing as unverified.
 
 ### 10.3 `tailscale` is not built
 

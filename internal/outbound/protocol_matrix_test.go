@@ -475,10 +475,17 @@ func protocolMatrixCases() []matrixCase {
 			notParsed: true,
 		},
 		{
-			name:       "naive-not-built",
-			input:      `{"outbounds":[{"type":"naive","tag":"naive","server":"1.2.3.4","server_port":443}]}`,
-			wantEngine: node.EngineSingbox, wantKind: "outbound", wantProto: "naive",
-			wantBuild: "not included in this build",
+			name:      "naive-not-built",
+			input:     `{"outbounds":[{"type":"naive","tag":"naive","server":"1.2.3.4","server_port":443}]}`,
+			notParsed: true,
+		},
+		{
+			// tor parses; sing-box starts the tor executable at build time, so
+			// the build is only checked to reach the tor outbound (§10.2).
+			name:       "tor-singbox",
+			input:      `{"outbounds":[{"type":"tor","tag":"tor"}]}`,
+			wantEngine: node.EngineSingbox, wantKind: "outbound", wantProto: "tor",
+			wantBuild: "outbound/tor",
 		},
 		{
 			name:      "invalid-uri",
@@ -494,6 +501,15 @@ func protocolMatrixCases() []matrixCase {
 		direct:     json.RawMessage(`{"prism_node":1,"engine":"mihomo","kind":"proxy","name":"ssr-hk","proxy":{"type":"ssr","server":"1.2.3.4","port":443,"cipher":"aes-256-cfb","password":"pw","obfs":"plain","protocol":"origin"}}`),
 		wantEngine: node.EngineMihomo, wantKind: "proxy", wantProto: "ssr",
 		wantBuild: "ENGINE_NOT_BUILT",
+	})
+
+	// A naive envelope stored before the parser refused naive still fails at
+	// build with the sing-box stub message.
+	cases = append(cases, matrixCase{
+		name:       "naive-envelope-not-built",
+		direct:     json.RawMessage(`{"type":"naive","tag":"naive","server":"1.2.3.4","server_port":443}`),
+		wantEngine: node.EngineSingbox, wantKind: "outbound", wantProto: "naive",
+		wantBuild: "not included in this build",
 	})
 
 	// A tailscale endpoint envelope is refused by the runtime.
