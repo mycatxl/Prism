@@ -327,3 +327,68 @@ func TestSocks5AuthObserverIgnoresNonHandshakeBytes(t *testing.T) {
 		t.Fatalf("metered %d failures for non-handshake bytes, want 0", got)
 	}
 }
+
+// TestSocks5AuthObserverKeepsHalfClose pins the wrapper contract internal/proxy
+// relies on: closeWriteConn (tunnel.go:233) asserts CloseWrite on the client
+// connection, and CloseWrite is not part of net.Conn, so embedding net.Conn does
+// not promote it from the wrapped connection. When the assertion fails the tunnel
+// falls back to closeBoth and a SOCKS5 session loses the rest of the upstream
+// response as soon as the client half-closes first.
+func TestSocks5AuthObserverKeepsHalfClose(t *testing.T) {
+	t.Run("wrapped half-close is delegated to", func(t *testing.T) {
+		inner := &demuxHalfCloseConn{}
+		observer := &socks5AuthObserver{Conn: inner, clientIP: "127.0.0.1"}
+
+		closeWriter, ok := interface{}(observer).(interface{ CloseWrite() error })
+		if !ok {
+			t.Fatalf("socks5AuthObserver lost CloseWrite: the tunnel at "+
+				"internal/proxy/tunnel.go:233 cannot half-close and closes both "+
+				"connections instead (type %T)", observer)
+		}
+		if err := closeWriter.CloseWrite(); err != nil {
+			t.Fatalf("CloseWrite: %v", err)
+		}
+		if inner.closeWriteCalls != 1 {
+			t.Fatalf("the wrapped connection saw %d CloseWrite calls, want 1", inner.closeWriteCalls)
+		}
+		if err := observer.CloseRead(); err != nil {
+			t.Fatalf("CloseRead: %v", err)
+		}
+		if inner.closeReadCalls != 1 {
+			t.Fatalf("the wrapped connection saw %d CloseRead calls, want 1", inner.closeReadCalls)
+		}
+	})
+
+	t.Run("wrapped connection without half-close reports success", func(t *testing.T) {
+		observer := &socks5AuthObserver{Conn: &noopConn{}, clientIP: "127.0.0.1"}
+		closeWriter, ok := interface{}(observer).(interface{ CloseWrite() error })
+		if !ok {
+			t.Fatalf("socks5AuthObserver lost CloseWrite (type %T)", observer)
+		}
+		if err := closeWriter.CloseWrite(); err != nil {
+			t.Fatalf("CloseWrite on a connection without half-close support = %v, want nil: "+
+				"closeWriteConn treats any error as \"no half-close\" and closes both sides", err)
+		}
+		if err := observer.CloseRead(); err != nil {
+			t.Fatalf("CloseRead on a connection without half-close support = %v, want nil", err)
+		}
+	})
+
+	t.Run("nil observer reports success", func(t *testing.T) {
+		var observer *socks5AuthObserver
+		closeWriter, ok := interface{}(observer).(interface{ CloseWrite() error })
+		if !ok {
+			t.Fatalf("socks5AuthObserver lost CloseWrite (type %T)", observer)
+		}
+		if err := closeWriter.CloseWrite(); err != nil {
+			t.Fatalf("CloseWrite on a nil observer = %v, want nil", err)
+		}
+		closeReader, ok := interface{}(observer).(interface{ CloseRead() error })
+		if !ok {
+			t.Fatalf("socks5AuthObserver lost CloseRead (type %T)", observer)
+		}
+		if err := closeReader.CloseRead(); err != nil {
+			t.Fatalf("CloseRead on a nil observer = %v, want nil", err)
+		}
+	})
+}

@@ -82,6 +82,7 @@ proxies:
     username: http-user
   - allowed-ips:
       - 0.0.0.0/0
+      - ::/0
     ip: 10.7.0.2/32
     name: wg-1
     port: 51820

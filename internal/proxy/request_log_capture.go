@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"sync/atomic"
 )
 
 // captureRequestHeaders serializes headers to canonical wire format for
@@ -117,10 +118,15 @@ func (c *countingReadCloser) Total() int64 {
 
 // countingReadWriteCloser wraps a bidirectional stream and records
 // bytes read/written independently.
+//
+// The counters are atomic because the two directions of a 101 upgrade are
+// copied by separate net/http/httputil goroutines (switchProtocolCopier) while
+// the proxy's own goroutine reads the totals after ServeHTTP returns
+// (reverse.go:481-484). A plain int64 there is a data race.
 type countingReadWriteCloser struct {
 	rwc        io.ReadWriteCloser
-	totalRead  int64
-	totalWrite int64
+	totalRead  atomic.Int64
+	totalWrite atomic.Int64
 }
 
 func newCountingReadWriteCloser(rwc io.ReadWriteCloser) *countingReadWriteCloser {
@@ -130,7 +136,7 @@ func newCountingReadWriteCloser(rwc io.ReadWriteCloser) *countingReadWriteCloser
 func (c *countingReadWriteCloser) Read(p []byte) (int, error) {
 	n, err := c.rwc.Read(p)
 	if n > 0 {
-		c.totalRead += int64(n)
+		c.totalRead.Add(int64(n))
 	}
 	return n, err
 }
@@ -138,7 +144,7 @@ func (c *countingReadWriteCloser) Read(p []byte) (int, error) {
 func (c *countingReadWriteCloser) Write(p []byte) (int, error) {
 	n, err := c.rwc.Write(p)
 	if n > 0 {
-		c.totalWrite += int64(n)
+		c.totalWrite.Add(int64(n))
 	}
 	return n, err
 }
@@ -147,10 +153,75 @@ func (c *countingReadWriteCloser) Close() error {
 	return c.rwc.Close()
 }
 
-func (c *countingReadWriteCloser) TotalRead() int64 {
-	return c.totalRead
+// CloseWrite forwards the client half-close to the upstream stream.
+//
+// net/http/httputil's switchProtocolCopier.copyToBackend asserts
+//
+//	if wc, ok := c.backend.(interface{ CloseWrite() error }); ok {
+//	    errc <- wc.CloseWrite()
+//	    return
+//	}
+//	errc <- errCopyDone
+//
+// and handleUpgradeResponse returns on the first non-nil value it receives
+// ("err := <-errc; if err == nil { err = <-errc }"), after which its deferred
+// conn.Close() and backConnCloseCh tear down both connections while the
+// opposite direction is still copying. A failed assertion therefore turns a
+// clean half-close into a full teardown; an unsupported backend must report
+// success here so the copier keeps waiting for the other direction.
+//
+// This is deliberately different from closeWriteErr, which returns
+// errHalfCloseUnsupported because its callers (closeWriteConn in tunnel.go)
+// only need to know whether the peer really half-closed. A nil receiver means
+// there is no stream to abort, so it also reports success.
+func (c *countingReadWriteCloser) CloseWrite() error {
+	if c == nil {
+		return nil
+	}
+	return closeWriteIfSupported(c.rwc)
 }
 
+// CloseRead mirrors CloseWrite for the read half. httputil never calls it on
+// this wrapper (it only probes CloseWrite), but the wrapper must stay
+// transparent for every caller that probes the optional half-close pair.
+func (c *countingReadWriteCloser) CloseRead() error {
+	if c == nil {
+		return nil
+	}
+	return closeReadIfSupported(c.rwc)
+}
+
+// closeWriteIfSupported half-closes rwc when it exposes CloseWrite and reports
+// success when it does not. Returning nil for the unsupported case is what
+// keeps httputil's upgrade copier from treating the missing capability as a
+// copy failure (see countingReadWriteCloser.CloseWrite).
+func closeWriteIfSupported(rwc io.ReadWriteCloser) error {
+	closeWriter, ok := rwc.(interface{ CloseWrite() error })
+	if !ok {
+		return nil
+	}
+	return closeWriter.CloseWrite()
+}
+
+// closeReadIfSupported is the CloseRead counterpart of closeWriteIfSupported.
+func closeReadIfSupported(rwc io.ReadWriteCloser) error {
+	closeReader, ok := rwc.(interface{ CloseRead() error })
+	if !ok {
+		return nil
+	}
+	return closeReader.CloseRead()
+}
+
+// TotalRead returns the bytes read so far. The value is a snapshot: the
+// upgrade copy goroutines may still be running, so a caller reading it before
+// they finish sees an incomplete count. That is a reporting-precision
+// limitation, not a race — the atomic load is safe in any case.
+func (c *countingReadWriteCloser) TotalRead() int64 {
+	return c.totalRead.Load()
+}
+
+// TotalWrite returns the bytes written so far, with the same snapshot
+// semantics as TotalRead.
 func (c *countingReadWriteCloser) TotalWrite() int64 {
-	return c.totalWrite
+	return c.totalWrite.Load()
 }

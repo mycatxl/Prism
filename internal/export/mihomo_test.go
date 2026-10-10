@@ -234,7 +234,7 @@ func TestExportMihomoWireGuardEndpoint(t *testing.T) {
 		t.Fatalf("wireguard proxy = %+v", proxy)
 	}
 	allowed, ok := proxy["allowed-ips"].([]any)
-	if !ok || len(allowed) != 1 || allowed[0] != "0.0.0.0/0" {
+	if !ok || len(allowed) != 2 || allowed[0] != "0.0.0.0/0" || allowed[1] != "::/0" {
 		t.Fatalf("wireguard allowed-ips = %+v", proxy["allowed-ips"])
 	}
 }
