@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"prism/internal/api"
 )
 
 // adminListener is the optional independent management listener configured
@@ -38,8 +40,12 @@ func startAdminListener(addr string, apiHandler http.Handler) (*adminListener, e
 	l := &adminListener{
 		addr:     trimmed,
 		listener: listener,
-		server:   &http.Server{Handler: newAdminOnlyHandler(apiHandler)},
-		errCh:    make(chan error, 1),
+		// api.NewListenerServer applies the shared connection bounds
+		// (ReadHeaderTimeout/IdleTimeout/MaxHeaderBytes). A bare net/http
+		// server value would leave them at zero and let a client hold the
+		// management port open with a half-sent header.
+		server: api.NewListenerServer(newAdminOnlyHandler(apiHandler)),
+		errCh:  make(chan error, 1),
 	}
 	log.Printf("Prism admin listener starting on %s (management plane only: /ui, /api, /healthz)", listener.Addr().String())
 	go func() {

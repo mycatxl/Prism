@@ -495,7 +495,6 @@ func (a *prismApp) startBackgroundServices() {
 	})
 
 	a.topoRuntime.probeMgr.Start()
-	a.topoRuntime.probeMgr.Start()
 	log.Println("Probe manager started (batch 2)")
 
 	// WP08 step 12: the egress observer must be attached after the probe manager

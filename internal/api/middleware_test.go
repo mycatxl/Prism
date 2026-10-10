@@ -8,8 +8,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"prism/internal/service"
 )
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
@@ -131,26 +129,46 @@ func prismAuthLimiter() *AuthFailureLimiter {
 	return NewAuthFailureLimiter(1000, time.Minute, time.Minute, nil)
 }
 
-// TestServerConnectionBounds pins the listener-level connection hygiene.
+// TestListenerServerConnectionBounds pins the listener-level connection hygiene
+// on the constructor every served listener uses.
 //
-// Without a read-header deadline a client can hold a connection open with a
-// half-sent request header (slowloris). WriteTimeout must stay unset: the SSE
-// endpoint is a long-lived stream and a write deadline would cut every progress
-// stream short.
-func TestServerConnectionBounds(t *testing.T) {
-	srv := NewServer(0, "token", service.SystemInfo{}, nil, nil, nil, 1<<20, nil, nil, nil)
-	httpSrv := srv.httpServer
+// It used to assert the fields of a *Server.httpServer that nothing ever
+// served: cmd/prism only took Handler(), so the assertion guaranteed nothing
+// about the process (audit F8). The served listeners are built in cmd/prism
+// through NewListenerServer, and cmd/prism/connection_bounds_test.go asserts
+// both real serve sites use it; this case pins the values NewListenerServer
+// applies, including that the SSE stream is not cut.
+func TestListenerServerConnectionBounds(t *testing.T) {
+	httpSrv := NewListenerServer(nil)
+	if httpSrv == nil {
+		t.Fatal("NewListenerServer returned nil")
+	}
+	if httpSrv.Handler == nil {
+		t.Error("Handler = nil, want a non-nil handler (net/http panics on a nil Handler)")
+	}
 
-	if httpSrv.ReadHeaderTimeout != apiReadHeaderTimeout {
-		t.Errorf("ReadHeaderTimeout = %v, want %v", httpSrv.ReadHeaderTimeout, apiReadHeaderTimeout)
+	if httpSrv.ReadHeaderTimeout != ReadHeaderTimeout {
+		t.Errorf("ReadHeaderTimeout = %v, want %v", httpSrv.ReadHeaderTimeout, ReadHeaderTimeout)
 	}
-	if httpSrv.IdleTimeout != apiIdleTimeout {
-		t.Errorf("IdleTimeout = %v, want %v", httpSrv.IdleTimeout, apiIdleTimeout)
+	if httpSrv.IdleTimeout != IdleTimeout {
+		t.Errorf("IdleTimeout = %v, want %v", httpSrv.IdleTimeout, IdleTimeout)
 	}
-	if httpSrv.MaxHeaderBytes != apiMaxHeaderBytes {
-		t.Errorf("MaxHeaderBytes = %d, want %d", httpSrv.MaxHeaderBytes, apiMaxHeaderBytes)
+	if httpSrv.MaxHeaderBytes != MaxHeaderBytes {
+		t.Errorf("MaxHeaderBytes = %d, want %d", httpSrv.MaxHeaderBytes, MaxHeaderBytes)
 	}
 	if httpSrv.WriteTimeout != 0 {
 		t.Errorf("WriteTimeout = %v, want 0 (a deadline would cut the SSE stream)", httpSrv.WriteTimeout)
+	}
+	// ReadTimeout feeds idleTimeout()/readHeaderTimeout() as a fallback and would
+	// also bound a streaming response, so it must stay unset.
+	if httpSrv.ReadTimeout != 0 {
+		t.Errorf("ReadTimeout = %v, want 0 (ReadHeaderTimeout already bounds the header phase)", httpSrv.ReadTimeout)
+	}
+
+	// The bounds must be non-zero: a zero ReadHeaderTimeout is exactly the
+	// slowloris hole this constructor exists to close.
+	if ReadHeaderTimeout <= 0 || IdleTimeout <= 0 || MaxHeaderBytes <= 0 {
+		t.Errorf("connection bounds must be positive: readHeader=%v idle=%v maxHeader=%d",
+			ReadHeaderTimeout, IdleTimeout, MaxHeaderBytes)
 	}
 }
