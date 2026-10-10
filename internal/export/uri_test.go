@@ -12,9 +12,11 @@ import (
 // TestExportURIRoundTripsThroughTheParser is the §2.3 acceptance test: for
 // every type the exporter supports, "export -> parse" must reproduce the node
 // hash exactly. The hash ignores the tag, so the share-link text is the only
-// thing under test.
+// thing under test. The wireguard endpoint is included on purpose: its peer
+// carries the two-entry default allowed-ips, which the link joins into one
+// comma-separated query value (F2).
 func TestExportURIRoundTripsThroughTheParser(t *testing.T) {
-	items := fixtureNodes(t)
+	items := append(fixtureNodes(t), fixtureEndpointNode(t))
 	body, _, report, err := Export(items, FormatURI, Options{})
 	if err != nil {
 		t.Fatalf("Export: %v", err)

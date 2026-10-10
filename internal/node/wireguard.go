@@ -193,9 +193,20 @@ func wireGuardSinglePeer(options map[string]any) (WireGuardPeer, bool, error) {
 		return WireGuardPeer{}, false, nil
 	}
 
+	// One entry can still carry the whole list: the wireguard share link writes
+	// every allowed-ips entry as ONE comma-joined query value (export/uri.go),
+	// and hand-written Clash/Surge documents use the same spelling. Split each
+	// entry on commas before normalizing, exactly like wireGuardAddressOptions
+	// does for the local addresses.
 	allowedIPs := stringListOption(options, "allowed_ips", "allowed-ips", "allowedIPs")
 	if len(allowedIPs) == 0 {
 		allowedIPs = DefaultWireGuardAllowedIPs()
+	}
+	allowedIPs = splitWireGuardPrefixEntries(allowedIPs)
+	if len(allowedIPs) == 0 {
+		// The key was present but held nothing usable: fail closed rather than
+		// silently widen the tunnel to the default routes.
+		return WireGuardPeer{}, false, fmt.Errorf("INVALID:wireguard allowed_ips is empty")
 	}
 	normalizedAllowed, err := normalizeWireGuardPrefixList(allowedIPs)
 	if err != nil {
@@ -214,6 +225,26 @@ func wireGuardSinglePeer(options map[string]any) (WireGuardPeer, bool, error) {
 		peer.Reserved = reserved
 	}
 	return peer, true, nil
+}
+
+// splitWireGuardPrefixEntries expands comma-joined list entries into one entry
+// per prefix, dropping empty parts. A single-value list (the shape a Clash or
+// sing-box document uses) passes through unchanged.
+func splitWireGuardPrefixEntries(values []string) []string {
+	expanded := make([]string, 0, len(values))
+	for _, value := range values {
+		if !strings.Contains(value, ",") {
+			expanded = append(expanded, value)
+			continue
+		}
+		for _, part := range strings.Split(value, ",") {
+			if strings.TrimSpace(part) == "" {
+				continue
+			}
+			expanded = append(expanded, part)
+		}
+	}
+	return expanded
 }
 
 func normalizeWireGuardPrefixList(values []string) ([]string, error) {

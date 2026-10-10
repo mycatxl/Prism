@@ -178,7 +178,8 @@
         {
           "address": "203.0.113.9",
           "allowed_ips": [
-            "0.0.0.0/0"
+            "0.0.0.0/0",
+            "::/0"
           ],
           "port": 51820,
           "public_key": "WG-PUBLIC-KEY-FIXTURE"

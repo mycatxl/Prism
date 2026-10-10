@@ -472,6 +472,12 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ingressBodyCounter != nil {
 		lifecycle.addIngressBytes(ingressBodyCounter.Total())
 	}
+	// Upgrade-session traffic. The counters are atomic, so reading them here is
+	// race-free even though httputil's copy goroutines own the writes: in the
+	// clean path handleUpgradeResponse only returns after both directions sent
+	// on its error channel (i.e. both copies finished), while an error path can
+	// return after the first one — there the read is simply a partial snapshot,
+	// which is a statistics-precision limit, not a race.
 	if upgradedStreamCounter != nil {
 		lifecycle.addIngressBytes(upgradedStreamCounter.TotalRead())
 		lifecycle.addEgressBytes(upgradedStreamCounter.TotalWrite())

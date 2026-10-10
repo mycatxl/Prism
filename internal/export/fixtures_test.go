@@ -70,10 +70,13 @@ func fixtureNodes(t *testing.T) []Item {
 	}
 }
 
-// fixtureEndpointNode returns a form B wireguard endpoint node.
+// fixtureEndpointNode returns a form B wireguard endpoint node. The peer
+// carries the two-entry default allowed-ips on purpose: the share link joins
+// them into one comma-separated value, so the round-trip tests cover the
+// multi-value parse path (F2).
 func fixtureEndpointNode(t *testing.T) Item {
 	t.Helper()
-	raw := json.RawMessage(`{"prism_node":1,"engine":"singbox","kind":"endpoint","name":"wg-1","main":{"type":"wireguard","address":["10.7.0.2/32"],"private_key":"WG-PRIVATE-KEY-FIXTURE","peers":[{"address":"203.0.113.9","port":51820,"public_key":"WG-PUBLIC-KEY-FIXTURE","allowed_ips":["0.0.0.0/0"]}]}}`)
+	raw := json.RawMessage(`{"prism_node":1,"engine":"singbox","kind":"endpoint","name":"wg-1","main":{"type":"wireguard","address":["10.7.0.2/32"],"private_key":"WG-PRIVATE-KEY-FIXTURE","peers":[{"address":"203.0.113.9","port":51820,"public_key":"WG-PUBLIC-KEY-FIXTURE","allowed_ips":["0.0.0.0/0","::/0"]}]}}`)
 	if !node.IsEnvelope(raw) {
 		t.Fatal("wireguard fixture is not an envelope")
 	}

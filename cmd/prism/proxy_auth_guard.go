@@ -117,6 +117,53 @@ func (o *socks5AuthObserver) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// CloseWrite forwards a client half-close to the wrapped connection.
+//
+// CloseWrite is not part of net.Conn, so embedding net.Conn does not promote it
+// from the wrapped prebufferedConn (inbound_demux.go:440) even though that type
+// has one. Without this method internal/proxy's closeWriteConn (tunnel.go:233)
+// fails its assertion, falls back to closeBoth, and a SOCKS5 tunnel loses the
+// rest of the upstream response when the client half-closes first.
+//
+// An unsupported wrapped connection must report success: closeWriteConn treats
+// any non-nil error as "no half-close available" and closes both sides, which is
+// exactly the behaviour this method exists to avoid. A nil receiver is the same
+// case — there is no stream to abort.
+func (o *socks5AuthObserver) CloseWrite() error {
+	if o == nil {
+		return nil
+	}
+	return closeWriteIfSupported(o.Conn)
+}
+
+// CloseRead mirrors CloseWrite for the read half.
+func (o *socks5AuthObserver) CloseRead() error {
+	if o == nil {
+		return nil
+	}
+	return closeReadIfSupported(o.Conn)
+}
+
+// closeWriteIfSupported half-closes conn when it exposes CloseWrite and reports
+// success when it does not, keeping the wrapper transparent for the half-close
+// probes in internal/proxy (tunnel.go:233, half_close.go).
+func closeWriteIfSupported(conn net.Conn) error {
+	closeWriter, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		return nil
+	}
+	return closeWriter.CloseWrite()
+}
+
+// closeReadIfSupported is the CloseRead counterpart of closeWriteIfSupported.
+func closeReadIfSupported(conn net.Conn) error {
+	closeReader, ok := conn.(interface{ CloseRead() error })
+	if !ok {
+		return nil
+	}
+	return closeReader.CloseRead()
+}
+
 func (o *socks5AuthObserver) observe(p []byte) {
 	if o.phase == socks5WatchDone {
 		return
