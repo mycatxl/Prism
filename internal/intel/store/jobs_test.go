@@ -311,6 +311,107 @@ func TestProviderQueue_ResetStaleAndCleanup(t *testing.T) {
 	}
 }
 
+// TestProviderQueue_ReleaseClaimedItems pins the rollback the worker needs after
+// F6: it claims first (so an idle queue spends no budget) and must be able to
+// hand the rows back when the budget gate it then hits is shut. Only rows the
+// same owner still holds may move; another worker's lease is not this worker's
+// to break.
+func TestProviderQueue_ReleaseClaimedItems(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	for i, ip := range []string{"198.51.100.1", "198.51.100.2"} {
+		if _, err := st.EnqueueProviderItem(ctx, QueueItem{
+			Provider: "ipapi_is", IP: ip, Priority: 1, NextRunAtNs: 10, EnqueuedAtNs: int64(10 + i),
+		}, EnqueueIfMissing); err != nil {
+			t.Fatalf("enqueue: %v", err)
+		}
+	}
+	// A third row owned by another worker: it must survive untouched.
+	if _, err := st.EnqueueProviderItem(ctx, QueueItem{
+		Provider: "ipapi_is", IP: "198.51.100.3", Priority: 1, NextRunAtNs: 10, EnqueuedAtNs: 12,
+	}, EnqueueIfMissing); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	claimed, err := st.ClaimProviderItems(ctx, "ipapi_is", 10, 500, 2, "worker-a")
+	if err != nil || len(claimed) != 2 {
+		t.Fatalf("claim = %d (err %v), want 2", len(claimed), err)
+	}
+	other, err := st.ClaimProviderItems(ctx, "ipapi_is", 10, 500, 1, "worker-b")
+	if err != nil || len(other) != 1 {
+		t.Fatalf("second claim = %d (err %v), want 1", len(other), err)
+	}
+
+	// The claim leaves attempts alone: the attempt is counted by the outcome.
+	for _, item := range claimed {
+		if item.Attempts != 0 || item.Status != QueueRunning || item.LeaseOwner != "worker-a" {
+			t.Fatalf("claimed = %+v", item)
+		}
+	}
+
+	released, err := st.ReleaseProviderItems(ctx, "ipapi_is",
+		[]string{claimed[0].IP, claimed[1].IP, "198.51.100.3", "198.51.100.9"}, "worker-a", 20)
+	if err != nil {
+		t.Fatalf("ReleaseProviderItems: %v", err)
+	}
+	if released != 2 {
+		t.Fatalf("released = %d, want 2: only this owner's claimed rows may move", released)
+	}
+
+	for _, ip := range []string{claimed[0].IP, claimed[1].IP} {
+		row := queueRow(t, st, "ipapi_is", ip)
+		if row.Status != QueueQueued || row.LeaseOwner != "" || row.LeaseUntilNs != 0 {
+			t.Fatalf("released row %s = %+v, want queued without a lease", ip, row)
+		}
+		if row.NextRunAtNs != 20 {
+			t.Fatalf("released row %s next_run_at = %d, want 20", ip, row.NextRunAtNs)
+		}
+		if row.Attempts != 0 {
+			t.Fatalf("released row %s attempts = %d, want 0: a shut gate is not a failure", ip, row.Attempts)
+		}
+	}
+	if row := queueRow(t, st, "ipapi_is", "198.51.100.3"); row.Status != QueueRunning || row.LeaseOwner != "worker-b" {
+		t.Fatalf("another worker's row = %+v, want it left running", row)
+	}
+
+	// The rows are claimable again straight away, which is what lets the worker
+	// retry as soon as the gate opens instead of waiting out the lease.
+	again, err := st.ClaimProviderItems(ctx, "ipapi_is", 20, 600, 10, "worker-a")
+	if err != nil || len(again) != 2 {
+		t.Fatalf("reclaim = %d (err %v), want 2", len(again), err)
+	}
+
+	// An unknown provider and an empty list are both no-ops, and a release
+	// without an owner must fail: it would match every running row.
+	if n, err := st.ReleaseProviderItems(ctx, "ipapi_is", []string{"198.51.100.9"}, "worker-a", 30); err != nil || n != 0 {
+		t.Fatalf("release of an unclaimed row = %d (err %v), want 0", n, err)
+	}
+	if n, err := st.ReleaseProviderItems(ctx, "ipapi_is", nil, "worker-a", 30); err != nil || n != 0 {
+		t.Fatalf("release of nothing = %d (err %v), want 0", n, err)
+	}
+	if _, err := st.ReleaseProviderItems(ctx, "ipapi_is", []string{"198.51.100.1"}, "  ", 30); err == nil {
+		t.Fatal("a release without an owner must fail")
+	}
+	if _, err := st.ReleaseProviderItems(ctx, "  ", []string{"198.51.100.1"}, "worker-a", 30); err == nil {
+		t.Fatal("a release without a provider must fail")
+	}
+}
+
+// queueRow reads one provider_queue row directly; the store exposes no getter.
+func queueRow(t *testing.T, st *Store, provider, ip string) QueueItem {
+	t.Helper()
+	row := st.DB().QueryRowContext(context.Background(),
+		`SELECT provider, ip, priority, job_id, status, attempts, next_run_at_ns,
+		        lease_owner, lease_until_ns, error_code, enqueued_at_ns
+		 FROM provider_queue WHERE provider = ? AND ip = ?`, provider, ip)
+	var item QueueItem
+	if err := row.Scan(&item.Provider, &item.IP, &item.Priority, &item.JobID, &item.Status,
+		&item.Attempts, &item.NextRunAtNs, &item.LeaseOwner, &item.LeaseUntilNs,
+		&item.ErrorCode, &item.EnqueuedAtNs); err != nil {
+		t.Fatalf("read queue row %s/%s: %v", provider, ip, err)
+	}
+	return item
+}
+
 func TestJobs_CreateClaimAndPipelineBreakpoint(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
@@ -390,6 +491,72 @@ func TestJobs_CreateClaimAndPipelineBreakpoint(t *testing.T) {
 	}
 	if settled.Status != JobSucceeded || settled.Done != 1 || settled.Skipped != 1 || settled.FinishedAtNs != 30 {
 		t.Fatalf("settled = %+v", settled)
+	}
+}
+
+// TestJobs_FailPendingItemsSettlesTheJobAndStaysRetryable pins the store half of
+// the job timeout sweep: pending items are failed, the job settles as partial
+// instead of lingering as running, and the normal retry path still reopens it.
+func TestJobs_FailPendingItemsSettlesTheJobAndStaysRetryable(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if err := st.CreateJob(ctx, Job{ID: "sweep", Kind: "full", Priority: 100, CreatedAtNs: 1},
+		[]JobItem{
+			{NodeHash: "done", NextRunAtNs: 1, UpdatedAtNs: 1},
+			{NodeHash: "queued", NextRunAtNs: 1, UpdatedAtNs: 1},
+			{NodeHash: "running", NextRunAtNs: 1, UpdatedAtNs: 1},
+		}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if err := st.FinishJobItem(ctx, "sweep", "done", ItemDone, "", `{}`, 2); err != nil {
+		t.Fatalf("FinishJobItem: %v", err)
+	}
+	claimed, err := st.ClaimJobItems(ctx, ClaimOptions{
+		NowNs: 2, LeaseUntilNs: 100, Limit: 1, Owner: "w",
+	})
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claim = %+v (err %v)", claimed, err)
+	}
+	// The claim orders by node hash, so "queued" is the one now running.
+	if claimed[0].NodeHash != "queued" {
+		t.Fatalf("claimed %q, want queued", claimed[0].NodeHash)
+	}
+
+	failed, err := st.FailPendingJobItems(ctx, "sweep", "JOB_TIMEOUT", 10)
+	if err != nil || failed != 2 {
+		t.Fatalf("FailPendingJobItems = %d (err %v), want 2", failed, err)
+	}
+	for _, hash := range []string{"queued", "running"} {
+		item, ok, err := st.GetJobItem(ctx, "sweep", hash)
+		if err != nil || !ok {
+			t.Fatalf("GetJobItem(%s): ok=%v err=%v", hash, ok, err)
+		}
+		if item.Status != ItemFailed || item.ErrorCode != "JOB_TIMEOUT" {
+			t.Fatalf("item %s = %+v, want failed with JOB_TIMEOUT", hash, item)
+		}
+		if item.LeaseOwner != "" || item.LeaseUntilNs != 0 {
+			t.Fatalf("item %s kept a lease: %+v", hash, item)
+		}
+	}
+	settled, err := st.RefreshJob(ctx, "sweep", 11)
+	if err != nil {
+		t.Fatalf("RefreshJob: %v", err)
+	}
+	if settled.Status != JobPartial || settled.Failed != 2 || settled.Done != 1 {
+		t.Fatalf("settled = %+v, want partial with 2 failed and 1 done", settled)
+	}
+
+	retried, err := st.RetryFailedJobItems(ctx, "sweep", 12)
+	if err != nil || retried != 2 {
+		t.Fatalf("RetryFailedJobItems = %d (err %v), want 2", retried, err)
+	}
+	reopened, _ := st.GetJob(ctx, "sweep")
+	if reopened.Status != JobQueued {
+		t.Fatalf("reopened = %+v, want queued", reopened)
+	}
+	item, _, _ := st.GetJobItem(ctx, "sweep", "queued")
+	if item.Status != ItemQueued || item.Attempts != 0 || item.ErrorCode != "" {
+		t.Fatalf("item after retry = %+v", item)
 	}
 }
 

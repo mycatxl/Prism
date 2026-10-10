@@ -419,6 +419,11 @@ func mapIntelError(err error) error {
 		return &ServiceError{Code: "RATE_LIMITED", Message: err.Error(), Err: err}
 	case errors.Is(err, store.ErrJobNotFound):
 		return notFound("job not found")
+	case errors.Is(err, store.ErrJobNotActive):
+		// The job exists but already reached a terminal status, so a cancel
+		// cannot take effect. 409 rather than 404: the id is real, the request
+		// just lost the race against the job settling (or is a double click).
+		return conflict(err.Error())
 	default:
 		return internal("intel job", err)
 	}

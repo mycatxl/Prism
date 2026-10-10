@@ -76,9 +76,13 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		// With the via-node interval per node, the worker pool is what decides
 		// throughput: every worker can be talking to a different node at the same
 		// time, which is the point of routing the lookups through the nodes.
-		IntelNodeWorkers:              100,
-		IntelCheckConcurrencyPerCheck: 16,
-		IntelMaxRunningJobs:           16,
+		IntelNodeWorkers: 100,
+		// The per-rule ceiling is not a vendor rate: every rule runs through each
+		// node's own client, so the node worker pool is what bounds the fan-out.
+		// A low ceiling only made items queue up inside the engine while their
+		// step timeout was already running.
+		IntelCheckConcurrencyPerCheck: 512,
+		IntelMaxRunningJobs:           64,
 		IntelAutoChecks:               false,
 		IntelRefreshSchedule:          "0 4 * * *",
 	}

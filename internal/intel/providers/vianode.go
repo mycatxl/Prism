@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -532,6 +533,112 @@ func (p *ProxyCheckViaNode) Lookup(ctx context.Context, ob adapter.Outbound, exp
 		"proxycheck_node", ProxyCheckNodeProfile)
 	if err != nil {
 		return FailureErr(err, "proxycheck.io returned incomplete or mismatched evidence")
+	}
+	return Result{Evidence: evidence, Raw: boundedRaw(resp.Body)}
+}
+
+// ---------------------------------------------------------------------------
+// ipapi.is (via-node, anonymous)
+// ---------------------------------------------------------------------------
+
+// IPAPIISViaNodeURL is the ipapi.is lookup endpoint.
+//
+// ipapi.is answers a query for an arbitrary address without a key (the key only
+// raises the quota), so the anonymous tier is usable - but it is counted against
+// the requesting address, which for a host-side source is Prism's own egress and
+// therefore shared by the whole inventory. Sending the query through the node
+// while naming that same node makes the vendor attribute it to the node, so the
+// anonymous quota is spent per node instead of per Prism host. No credential
+// travels through the untrusted outbound (WP09 §1).
+const IPAPIISViaNodeURL = "https://api.ipapi.is/"
+
+// IPAPIISNodeProfile is the normalised contract of the via-node variant. It is
+// separate from IPAPIISProfile so a decoder change can invalidate one without
+// discarding the other.
+const IPAPIISNodeProfile = "ipapi-is-via-node-v2-2"
+
+// IPAPIISViaNodeOptions configures the anonymous via-node data source.
+type IPAPIISViaNodeOptions struct {
+	URL     string
+	TTL     time.Duration
+	Timeout time.Duration
+	Now     func() time.Time
+}
+
+// IPAPIISViaNode reports ipapi.is's verdict for a node's own egress address,
+// queried through that same node so the vendor's anonymous quota belongs to the
+// node. It never carries a key.
+type IPAPIISViaNode struct {
+	spec    Spec
+	url     string
+	ttl     time.Duration
+	timeout time.Duration
+	now     func() time.Time
+}
+
+// NewIPAPIISViaNodeProvider builds the anonymous via-node provider.
+func NewIPAPIISViaNodeProvider(opts IPAPIISViaNodeOptions) *IPAPIISViaNode {
+	target := strings.TrimSpace(opts.URL)
+	if target == "" {
+		target = IPAPIISViaNodeURL
+	}
+	ttl := opts.TTL
+	if ttl <= 0 {
+		ttl = 72 * time.Hour
+	}
+	timeout := opts.Timeout
+	if timeout <= 0 {
+		timeout = 12 * time.Second
+	}
+	now := opts.Now
+	if now == nil {
+		now = time.Now
+	}
+	return &IPAPIISViaNode{
+		spec: Spec{
+			ID: "ipapi_is_node", Name: "ipapi.is (via node)",
+			Website: "https://ipapi.is/",
+			Terms: "Anonymous use is limited to roughly 1,000 requests per day and is not " +
+				"licensed for commercial use without a plan or a self-hosted database. Because " +
+				"the query leaves through the node and names that same node, the quota is spent " +
+				"per node - which is what makes a large inventory affordable without a key. " +
+				"Prism adds no daily budget and no request interval of its own; a 429 is " +
+				"recorded against the one node that hit it. A key is never sent through a node: " +
+				"enter it on the host-side ipapi.is source instead. See https://ipapi.is/.",
+			Kind: KindViaNode, Profile: IPAPIISNodeProfile,
+			RequiresKey: false, DefaultEnabled: true,
+			DefaultDailyLimit: 0, DefaultQPS: 0, BatchSize: 1,
+			DefaultTTL: ttl, SupportsIPv6: true,
+		},
+		url: target, ttl: ttl, timeout: timeout, now: now,
+	}
+}
+
+// Spec implements ViaNodeProvider.
+func (p *IPAPIISViaNode) Spec() Spec { return p.spec }
+
+// Lookup implements ViaNodeProvider. The address is both the query target and -
+// because the request leaves through that same node - the owner of the quota.
+func (p *IPAPIISViaNode) Lookup(ctx context.Context, ob adapter.Outbound, expect netip.Addr) Result {
+	if !expect.IsValid() {
+		return Failure(CodeRequest, "ipapi.is via-node needs the node's own egress address")
+	}
+	target, err := url.Parse(p.url)
+	if err != nil {
+		return Failure(CodeRequest, "ipapi.is request could not be built")
+	}
+	query := target.Query()
+	query.Set("q", expect.Unmap().String())
+	target.RawQuery = query.Encode()
+
+	resp, failure := fetchViaNode(ctx, ob, target.String(), nil, p.timeout)
+	if failure.Failed() {
+		return failure
+	}
+	evidence, err := DecodeIPAPIISAs(resp.Body, expect, p.now().UTC(), p.ttl,
+		"ipapi_is_node", IPAPIISNodeProfile)
+	if err != nil {
+		return FailureErr(err, "ipapi.is returned incomplete or mismatched evidence")
 	}
 	return Result{Evidence: evidence, Raw: boundedRaw(resp.Body)}
 }

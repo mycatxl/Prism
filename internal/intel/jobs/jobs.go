@@ -92,8 +92,39 @@ const MaxNodesPerJob = 200_000
 
 // Timing constants of §3.4 and §3.5.
 const (
-	itemTimeout         = 90 * time.Second
-	itemLease           = 3 * time.Minute
+	// itemTimeout bounds one item's whole pipeline run, every step included. It
+	// has to stay above the sum of the unlock-check rule timeouts (94s for the
+	// eight built-ins): a full pipeline used to be cut off at 90s, in the middle
+	// of the check step, and the rules that never got to run were reported as
+	// errors of the node.
+	itemTimeout = 180 * time.Second
+	// itemLease protects a claim from being handed to a second worker. It must
+	// stay above itemTimeout, otherwise a lease could expire while its owner is
+	// still running the item and two workers would run the same node at once.
+	itemLease = 5 * time.Minute
+	// jobStallYield is how long a running job may settle no item before the
+	// scheduler sorts it behind the queued jobs. A running job keeps its slot by
+	// default (§3.4) so a newly created job queues behind in-flight work instead
+	// of preempting it - but a job whose items only ever get parked (a closed
+	// provider gate, a via-node budget that never reopens) would then hold that
+	// slot forever, which is what made every later job wait on 2026-10-02.
+	// Yielding is a sort order, not a state change: the stalled job keeps running
+	// whenever no queued job wants the slot.
+	jobStallYield = 30 * time.Minute
+	// jobStallTimeout is when a stalled job is given up on: no item settled for
+	// this long *while another job waits for a slot* fails its pending items and
+	// settles it as partial, so the job reaches a terminal state instead of
+	// lingering as running forever.
+	//
+	// It is a no-progress bound, not a wall-clock one, and it is only applied
+	// under queued pressure. A wall-clock bound cannot work here: a legitimately
+	// retrying item sleeps up to backoffMax (6h) between attempts and gets
+	// maxItemAttempts of them, so an honest job can spend a day without settling
+	// anything, and a 200k-item job has no meaningful wall-clock budget at all.
+	// Killing those would destroy collected evidence for no gain - while a job
+	// nobody is waiting on costs nothing, because jobStallYield already took it
+	// out of the slot window.
+	jobStallTimeout     = 12 * time.Hour
 	providerLease       = 2 * time.Minute
 	maxItemAttempts     = 5
 	maxProviderAttempts = 5
@@ -105,10 +136,13 @@ const (
 	// reopens inside that bound, so a floor beyond it would hold the item longer
 	// than the step ever agreed to wait, with its job still holding a
 	// max_running_jobs slot.
-	deferFloorMax        = 30 * time.Minute
-	defaultTick          = time.Second
-	idlePollInterval     = 250 * time.Millisecond
-	maxActiveJobsFetched = 64
+	deferFloorMax    = 30 * time.Minute
+	defaultTick      = time.Second
+	idlePollInterval = 250 * time.Millisecond
+	// maxActiveJobsFetched bounds one scheduling pass. It stays well above
+	// MaxRunningJobs so a burst of queued jobs cannot push the running ones out
+	// of the fetched window and stall them behind the truncation.
+	maxActiveJobsFetched = 4 * MaxRunningJobs
 )
 
 // Default queue and pool bounds (R4).
@@ -117,9 +151,21 @@ const (
 	DefaultNodeWorkers = 16
 	// DefaultMaxRunningJobs is the default number of jobs allowed to execute.
 	DefaultMaxRunningJobs = 2
-	// DefaultCheckConcurrencyPerCheck is the default global concurrency of one
-	// unlock check rule.
-	DefaultCheckConcurrencyPerCheck = 2
+	// DefaultCheckConcurrencyPerCheck is the fallback global concurrency of one
+	// unlock check rule, used when a caller supplies no value. It mirrors
+	// checks.DefaultConcurrencyPerCheck; the jobs package keeps its own copy to
+	// avoid importing the check engine (and sing-box with it) for one integer.
+	DefaultCheckConcurrencyPerCheck = 512
+	// MaxCheckConcurrencyPerCheck is the validated upper bound of
+	// intel_check_concurrency_per_check. The engine allocates a semaphore of that
+	// size per rule, so an unbounded value would let one config entry allocate
+	// unbounded memory.
+	MaxCheckConcurrencyPerCheck = 4096
+	// MaxRunningJobs is the validated upper bound of intel_max_running_jobs.
+	// Every running job holds one entry in the active set and competes for the
+	// same node worker pool, so the ceiling exists to keep the scheduling pass
+	// and its per-job progress bookkeeping bounded.
+	MaxRunningJobs = 1024
 	// MaxNodeWorkers is the validated upper bound of intel_node_workers.
 	//
 	// Each in-flight item works on one node, and the requests leave through that
@@ -141,6 +187,17 @@ var (
 	ErrTooManySubscribers  = errors.New("too many intel SSE subscribers")
 	ErrInvalidJob          = errors.New("invalid job request")
 	ErrProviderNotRunnable = errors.New("provider worker is not runnable")
+)
+
+// Item error codes written by the scheduler itself (step runners use their own).
+const (
+	// CodeItemTimeout marks an item whose pipeline ran out of its itemTimeout
+	// budget while a step was still executing.
+	CodeItemTimeout = "ITEM_TIMEOUT"
+	// CodeJobTimeout marks an item failed by the job-level timeout sweep of
+	// §3.4: the job as a whole ran past jobTimeout and its pending items were
+	// failed so the job stops holding a max_running_jobs slot.
+	CodeJobTimeout = "JOB_TIMEOUT"
 )
 
 // Scope selects the nodes of a job. Every entry is a union (§3.1).

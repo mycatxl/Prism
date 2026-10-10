@@ -254,8 +254,17 @@ func TestIntelJobEvents_StreamEndsWhenTheJobFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := svc.Manager().Store().CancelJob(context.Background(), job.ID); err != nil {
-		t.Fatalf("CancelJob: %v", err)
+	// This fixture's scope resolver returns no node hashes, so the job settles
+	// inside CreateJob. It used to be forced terminal with CancelJob, which is no
+	// longer possible: CancelJob refuses to rewrite a job that already reached a
+	// terminal status. A job that finished on its own is exactly the state this
+	// test needs - the subscriber arrives after the job is done.
+	stored, err := svc.Manager().Store().GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if !stored.Terminal() {
+		t.Fatalf("job = %+v, want a terminal status before subscribing", stored)
 	}
 
 	mux := http.NewServeMux()

@@ -96,8 +96,12 @@ item 记录 `step_index`（最后完成的步骤号），重启后从下一步�
 | `ippure` | IPPure | via-node | 否 | 是 | **不限**（厂商按节点地址限制） | 不限 | 7d |
 | `ip_api` | ip-api.com | via-node | 否 | 是 | **不限**（免费版真正限的是每源 IP 45 次/分钟） | 不限 | 7d |
 | `proxycheck_node` | proxycheck.io (via node) | via-node | 否 | 是 | **不限**（厂商按节点地址限 100/天） | 不限 | 24h |
+| `ipapi_is_node` | ipapi.is (via node) | via-node | 否 | 是 | **不限**（厂商按节点地址限约 1000/天） | 不限 | 72h |
 
 - 只有 `dnsbl` 不支持 IPv6（`SupportsIPv6: false`）。
+- `abuseipdb` 与 `ipqs` **不参与纯净度评分**（§3.2）：两者都强制要求密钥，无密钥请求直接失败，
+  在十万级节点池里不可用。它们仍可配置、仍会产出证据行（有密钥时），其信号也仍被旗标与 IP 类型投票读取，
+  但不占评分权重、不进覆盖度分母。
 - `BatchSize` 全部为 1：`proxycheck` 的 v3 批量能力未经厂商确认，代码里按单个地址查询。
 - "有密钥时启用"来自 `internal/intel/providers/settings.go` `DefaultSetting`：`RequiresKey=true` 的数据源，
   生效 `Enabled` 等于"密钥是否齐全"，与 `DefaultEnabled` 无关。所以 `maxmind_geolite2`/`ipinfo_lite`/`abuseipdb`/`ipqs`
@@ -134,9 +138,9 @@ item 记录 `step_index`（最后完成的步骤号），重启后从下一步�
 - 闸门关闭时 worker 不阻塞：等待时间在 30 分钟内就把 item 挂到那个时刻，超过就记一条
   `budget or quota exhausted for <时长>` 的 skip（`internal/intel/steps.go` `consumeViaNodeBudget`）。
 
-### 2.4 `proxycheck` 与 `proxycheck_node` 的关系
+### 2.4 `proxycheck`/`proxycheck_node` 与 `ipapi_is`/`ipapi_is_node` 的关系
 
-同一个厂商的两条完全独立的接入路径：
+这两对各自是同一个厂商的两条完全独立的接入路径：
 
 | | `proxycheck` | `proxycheck_node` |
 |---|---|---|
@@ -146,12 +150,22 @@ item 记录 `step_index`（最后完成的步骤号），重启后从下一步�
 | 额度归属 | 主机公网 IP（无 Key 时 80/天） | 每个节点自己的出口 IP（100/天） |
 | Profile | `proxycheck-v3-2` | `proxycheck-via-node-v3-2` |
 
+| | `ipapi_is` | `ipapi_is_node` |
+|---|---|---|
+| Kind | online-ip（从 Prism 主机发出） | via-node（经被测节点发出，并**指名该节点自己的地址**） |
+| 默认启用 | **否**（`DefaultEnabled: false`） | 是 |
+| 密钥 | 可选（`X-Api-Key`）；有 Key 时额度按套餐 | **永不携带密钥**，`RequiresKey: false` |
+| 额度归属 | 主机公网 IP（Prism 默认 500/天） | 每个节点自己的出口 IP（约 1000/天） |
+| Profile | `ipapi-is-v2-2` | `ipapi-is-via-node-v2-2` |
+
 代码注释说明了为什么 via-node 版本可行：proxycheck.io 没有匿名"查询我自己"模式，不带地址的请求会被
 HTTP 400 `No valid IP Addresses supplied.` 拒绝；可用的是**在请求里明确写出地址，同时让请求从同一个节点出去**，
-厂商于是把这个查询记在该节点的出口地址上。另一条硬性约束是：**密钥绝不经节点发送**（不可信 outbound），
-要用 Key 就填在主机侧的 `proxycheck` 上。
+厂商于是把这个查询记在该节点的出口地址上。ipapi.is 的差别只在于匿名查询本来就允许（Key 仅用于提额），
+但**额度同样记在发起地址上**——从主机发出就是全池共享一份，经节点发出才变成每节点一份。
+另一条硬性约束对两者都成立：**密钥绝不经节点发送**（不可信 outbound），
+要用 Key 就填在主机侧的对应数据源上。
 
-**评分层把两者折叠成同一个分量**：`internal/intel/assess/assess.go` 的 `ProviderAliases` 把 `proxycheck_node`
+**评分层把每一对折叠成同一个分量**：`internal/intel/assess/assess.go` 的 `ProviderAliases` 把 `proxycheck_node`
 映射到 `SourceProxycheck`，`lookup()` 先找精确匹配、再找别名，所以一个地址只会产生一个 `proxycheck` 分量和一个分数，
 不会因为两条路径都有数据而重复计算。主机侧的精确匹配优先于别名。
 
@@ -173,6 +187,7 @@ HTTP 400 `No valid IP Addresses supplied.` 拒绝；可用的是**在请求里�
 | `abuseipdb` | 免费账号 Key 1000 次/天，Prism 默认 900 留余量；举报数据按 CC BY 4.0 授权，**不得用该 API 构建竞品黑名单**。 |
 | `ipqs` | 需要付费或试用 Key；免费档 5000 次/月，**没有付费计划时不允许商用**；Prism 默认 150/天、1 QPS。 |
 | `ipapi_is` | 匿名用量约 1000 次/天，**无计划或自建数据库时不允许商用**；Prism 默认 500/天、1 QPS。 |
+| `ipapi_is_node` | 匿名用量约 1000 次/天，**无计划或自建数据库时不允许商用**。因为请求经节点发出并指名同一节点，额度按节点计——这才让大量节点在无 Key 的情况下可行。Prism 不额外加日额度和限速，只把 429 记在命中它的那一个节点上。**密钥永不经节点发送**：要填 Key 请填在主机侧的 ipapi.is 数据源上。 |
 | `dnsbl` | Spamhaus 与 SpamCop 都把公开 zone 限制在**非商业、低流量、且必须从自己的递归解析器发起**的查询；经公共解析器的查询会被拒绝（记为 `DNSBL_REFUSED`，**不算命中**）。Prism 默认每 zone 5 QPS，且不查 IPv6。 |
 | `ippure` | IPPure 条款可能限制批量或系统性使用。查询经节点发出，厂商看到的是该节点地址，**厂商自己的每地址限制就是唯一的闸门**：Prism 不设日额度、不限速，只把 429 记在命中它的那一个节点上。**规模化前请自行确认厂商条件。** |
 | `ip_api` | 免费端点仅 HTTP，每源地址 45 次/分钟，且**不允许商用**。因为经节点查询，这个 45/分钟属于节点自己的出口地址：Prism 不额外加日额度和限速，只把 429 记在命中它的那一个节点上。 |
@@ -203,15 +218,21 @@ HTTP 400 `No valid IP Addresses supplied.` 拒绝；可用的是**在请求里�
 
 ### 3.2 权重与组件洁净分（`scoringWeights`、`componentScore`）
 
+评分源只保留**无需密钥、且额度按节点计**的那一组。这是覆盖大节点池的唯一可行形态：
+`ipqs` 与 `abuseipdb` 都强制要求密钥（无密钥直接 `PROVIDER_AUTH`），把它们留在表里只会
+让覆盖度分母为一个永远答不了的数据源留出份额，这正是 `coverage` 与由此推导的 `confidence`
+失去意义的原因。二者仍保留常量、`componentScore` 分支与旗标读取（见 §3.3），历史行与
+手工填了密钥的部署仍能如实上报，只是**不参与评分与覆盖度分母**。
+
 | 数据源 | 权重 | 组件洁净分 `clean` 的算法 |
 |---|---|---|
-| `proxycheck` | 3 | 需要 `RiskScore`；`raw = clamp(RiskScore,0,100)`，`clean = 100 - raw` |
-| `ippure` | 3 | 需要 `FraudScore` **且 IP 是 IPv4**（IPPure 不给 IPv6 打分）；`clean = 100 - raw` |
-| `ipqs` | 3 | 需要 `FraudScore`；`clean = 100 - raw` |
-| `abuseipdb` | 2 | 需要 `AbuseConfidence`；`clean = 100 - raw` |
-| `ipapi_is` | 1 | `compromised=true` → 40；`proxy`/`vpn`/`tor` 任一为真 → 60；否则 100 |
+| `proxycheck` | 3 | 需要 `RiskScore`；`raw = clamp(RiskScore,0,100)`，`clean = 100 - raw`。宿主侧源与经节点变体 `proxycheck_node` 共用此分量（`ProviderAliases` 折算，一个地址只出一个分量） |
+| `ippure` | 4 | 需要 `FraudScore` **且 IP 是 IPv4**（IPPure 不给 IPv6 打分）；`clean = 100 - raw` |
+| `ipapi_is` | 2 | `compromised=true` → 40；`proxy`/`vpn`/`tor` 任一为真 → 60；否则 100。宿主侧源与经节点变体 `ipapi_is_node` 共用此分量（`ProviderAliases` 折算，一个地址只出一个分量） |
 | `ip_api` | 1 | 需要 `Signals.Proxy`（缺字段则**不产生分量**）；`proxy=true` → 60；否则 100 |
 | `dnsbl` | 1 | 需要 `DNSBLChecked` 非空；`raw` = 已查询且命中的 zone 数，`clean = 100 - 34×命中数`（下限 0） |
+
+权重合计 **11**。`ipqs`（原 3）与 `abuseipdb`（原 2）不再计入。
 
 `torproject`（Tor 角色）与 `geo_country`（国家）**不是评分源**，只参与旗标、IP 类型与身份字段。
 
@@ -240,7 +261,7 @@ score = clamp(base + penaltyPoints, 0, 100)
 | `vpn` | −10 | 任一数据源 `Signals.VPN` |
 | `proxy` | −10 | 任一数据源 `Signals.Proxy` |
 | `scraper` | −10 | 任一数据源 `Signals.Scraper` |
-| `abuse` | −10 | `abuseipdb` 的 `AbuseConfidence ≥ 25` |
+| `abuse` | −10 | `abuseipdb` 的 `AbuseConfidence ≥ 25`（该源不参与评分，但此旗标仍生效） |
 
 注意：`anonymous`、`hosting`、`attack_history`、`dnsbl` **不直接扣分**（DNSBL 的惩罚在它自己的组件分里，
 每个命中 zone −34）。它们通过下面第 3 步的判定表把节点送进 `review`。
@@ -249,7 +270,7 @@ score = clamp(base + penaltyPoints, 0, 100)
 ### 3.4 IP 类型投票（`voteIPType`）
 
 投票者与取票方式：`proxycheck`/`proxycheck_node`（规范化后的 `ip_type`）、`ipqs`（先看 `connection_type`，
-再看 `ip_type`）、`ipapi_is`（先看 `ip_type`，再看 `source_type` 的 `isp`/`business`/`hosting`）、
+再看 `ip_type`）、`ipapi_is`/`ipapi_is_node`（先看 `ip_type`，再看 `source_type` 的 `isp`/`business`/`hosting`）、
 `ip_api`（`ip_type`）、`ippure`（`isResidential` 为真 → residential，否则 non_residential）。
 
 规则：
@@ -382,7 +403,11 @@ region:                    # 可选
 `default` 必属 6 个取值之一；`when.error` 只能是 `timeout|refused|tls|any`；`when.step` 与 `region.step`
 引用的步骤必须存在。执行侧的固定行为：每个步骤都通过**绑定被测节点的 HTTP client** 发出（`nodeClient`），
 默认不跟随重定向、响应体最多 256 KiB（超限截断并在 detail 标 `truncated`）、整条规则共用一个 `timeout`；
-同一节点同一时刻只跑 1 个检测，同一条规则全局并发默认 2（`intel_check_concurrency_per_check`）。
+同一节点同一时刻只跑 1 个检测，同一条规则全局并发默认 512（`intel_check_concurrency_per_check`，上限 4096）。
+这个数字**不是厂商限速**：每条规则都是通过各节点自己的 client 发出（`nodeClient`），两个节点的请求既不共用连接也不共用配额，
+真正的扇出上限是节点 worker 池（`intel_node_workers`，≤512）。把它压得很低只会让 item 在引擎里排队，
+而每个 item 的 step 超时**在排队时就已经开始计时**。命中上限时规则记为 `CHECK_BUSY`，**不算失败**：
+该结果不落 `node_checks`，item 无损停放后重试（见 §3.4）。
 
 ### 4.2 `when` 的匹配器
 
@@ -623,6 +648,22 @@ curl -X PATCH http://127.0.0.1:2260/api/v1/system/config \
 **所以"intel 任务慢慢推进"是正常的**——配额是真瓶颈，不是卡死；但**不会**再出现"任务停住不动、
 后续任务永远排队"。想更快就调高该数据源的 QPS（`PATCH /api/v1/intel/providers/{id}`）。
 
+槽位本身也在 2026-10-09 补了兜底。原来"running job 保槽"是绝对的（§3.4）：只要 job 还是 `running`，
+新建的 job 一律排在它后面——而上面那个循环里的 job 会**永远**是 `running`，于是 `max_running_jobs` 的槽位
+被永久占住。现在调度器跟踪每个活动 job 的**已结算 item 数**，并据此分三档：
+
+| 状态 | 判据 | 调度行为 |
+|---|---|---|
+| 正常 | 有 item 结算 | 保持 running 优先，新 job 排在后面 |
+| 让位 | 连续 `jobStallYield`（30 分钟）无 item 结算 | 排序到 queued job **之后**；没有排队 job 时照常运行 |
+| 放弃 | 让位状态持续 `jobStallTimeout`（12 小时）**且确实有 job 在等槽位** | 未完成 item 全部记为 `JOB_TIMEOUT` 失败，job 终结为 `partial`，槽位释放 |
+
+让位只是**排序**，不改 job 状态（所以没有额外的 store 写入，也不会和 §3.4 的"running 保槽"语义打架）；
+放弃用 `partial` 而不用 `cancel`：已经跑出来的 item 证据全部保留，而且能通过正常的
+`RetryFailedJobItems` 重新入队。判据是**无进展**而不是墙钟时间——一个合法重试中的 item 在两次尝试之间
+可能睡满 `backoffMax`（6 小时），200k 节点的 job 更没有有意义的墙钟预算；把这类 job 按时间杀掉只会
+白白毁掉已采集的证据，而一个没人在等它槽位的 job 本来也不花任何代价（让位已经把它移出槽位窗口）。
+
 **这一处已经在 2026-10-02 修掉**：step 4 内部的部分成功原本不落 `step_index`，重试会从这一步开头重跑、
 重新消耗已经成功过的源（实测每节点 `used` 涨到 31~70）。现在 `viaNodeStep` 会从 item 上次停放时写入的
 `result_json` 里读出上一轮的结果，**跳过已经成功答过的源**，只重新询问被限流的（或失败过的）那些——
@@ -785,12 +826,12 @@ TLS 开销（每个 HTTPS 请求约 4~6 KB）再加 6.13 个请求/节点，隧�
   这里是 claude.ai 对这批节点一律回 Cloudflare 挑战，页面里根本没有这个字段。
   所以"200 的完整页面上能否取到"仍未验证，但在这批节点上地区恒为空是**实测事实，不是推断**。
 - `region.step` 留空时取地区的结果不确定（任选一个步骤），见 §4.3。
-- 评分的覆盖度分母取自**主机侧** `proxycheck` 数据源的启用状态（`cmd/prism/intel_runtime.go`
-  `intelEnabledSources` 用 `assess.ScoringSources()`，里面只有 `proxycheck`，不含别名 `proxycheck_node`）。
-  因此"只开 `proxycheck_node`、关掉 `proxycheck`"时，别名分量仍会以 3 的权重出现在分子里，
-  而分母不包含这 3 ——`coverage` 会被 1.0 的上限截断，可能高估覆盖度。这是一处**代码内部的不一致**
-  （评分层的别名折叠与覆盖度分母的口径没对齐），**未确定**它是否为有意行为；不影响分数本身，只影响
-  `coverage` 与由它推导的 `incomplete` 判定和 `min_confidence` 准入。
+- 评分的覆盖度分母与分子口径**已经对齐**（2026-10-09 修）：`cmd/prism/intel_runtime.go` 的
+  `intelEnabledSources` 现在做反向别名解析——`assess.ScoringSources()` 里的某个来源，只要它的**任一别名变体**
+  是启用的，就计入分母。修前只遍历 `ScoringSources()`（不含 `proxycheck_node`/`ipapi_is_node`），
+  于是"只开 `proxycheck_node`、关掉 `proxycheck`"时别名分量以 3 的权重进了分子而分母里没有这 3，
+  `coverage` 被 1.0 截断、置信度虚高。同一处还修了 `noEvidenceState` 的 provider 匹配（改用
+  `scoringSource()` 折算），否则一条只来自经节点变体的证据不会被认作"陈旧但存在"。
 - 第 1 步（出口探测）与第 6 步（评分）不检查 `intel_enabled`：开关只拦"创建新任务"与各 provider 步骤。
   一个在 `intel_enabled=false` 之前就已排队的 item 仍可能完成出口探测与评分。
 - 本文不覆盖：intel.db 的表结构与清理策略、SSE 的背压细节、离线库的下载地址与校验流程

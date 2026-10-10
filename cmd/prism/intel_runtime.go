@@ -363,6 +363,15 @@ const assessmentSweepInterval = 5 * time.Minute
 // intelEnabledSources reports the enabled data sources for the coverage
 // denominator (§1.2). The effective setting decides: a data source that needs a
 // missing key, or that the settings page disabled, does not count as coverage.
+//
+// Alias variants are resolved onto their scoring source before the denominator
+// is built. The scoring layer folds e.g. proxycheck_node onto proxycheck
+// (assess.ProviderAliases), so a variant that answered contributes its weight to
+// the numerator while the host-side source stays disabled. Without this
+// resolution the denominator would omit that weight, coverage would be
+// truncated at 1.0, and the derived confidence / `incomplete` verdict /
+// min_confidence admission would all be overstated - exactly the inconsistency
+// docs/INTEL.md §9 recorded as undecided.
 func intelEnabledSources(registry *providers.Registry) map[string]bool {
 	enabled := make(map[string]bool)
 	for _, id := range assess.ScoringSources() {
@@ -371,11 +380,28 @@ func intelEnabledSources(registry *providers.Registry) map[string]bool {
 	if registry == nil {
 		return enabled
 	}
+	// A source the registry does not define at all keeps the permissive default
+	// (true), exactly as before. A source the registry does define is enabled
+	// when at least one path that can produce its evidence is usable: the source
+	// itself, or any alias variant folded onto it by the scoring layer.
+	runnable := make(map[string]bool, len(enabled))
+	defined := make(map[string]bool, len(enabled))
 	for _, setting := range registry.Settings() {
-		if _, known := enabled[setting.Spec.ID]; !known {
+		id := setting.Spec.ID
+		source := id
+		if aliased, ok := assess.ProviderAliases[id]; ok {
+			source = aliased
+		}
+		if _, known := enabled[source]; !known {
 			continue
 		}
-		enabled[setting.Spec.ID] = setting.Enabled && setting.Runnable()
+		defined[source] = true
+		if setting.Enabled && setting.Runnable() {
+			runnable[source] = true
+		}
+	}
+	for source := range defined {
+		enabled[source] = runnable[source]
 	}
 	return enabled
 }
@@ -396,6 +422,21 @@ func (a *prismApp) startIntel() error {
 	}
 	if err := a.intelSvc.Start(); err != nil {
 		return fmt.Errorf("intel service start: %w", err)
+	}
+	// Start() loads the persisted assessments into the projection the pool
+	// already holds (Service.Start -> ReloadSnapshot fills the snapshot in
+	// place). The platforms were rebuilt during bootstrapFromPersistence, that
+	// is before the projection had any content, and the quality criteria read it
+	// fail-closed - so every platform carrying a quality policy, ip_types or
+	// purity_bands would keep an empty routable view until some per-node dirty
+	// event happened to arrive. A node that recovered with its circuit already
+	// closed produces no such event, and a disabled subscription is never
+	// refreshed, so those nodes would stay unreachable for good.
+	//
+	// Rebuilding once here is what closes that window: RebuildAllPlatforms
+	// re-installs the projection on every platform before it evaluates a node.
+	if a.topoRuntime != nil && a.topoRuntime.pool != nil {
+		a.topoRuntime.pool.RebuildAllPlatforms()
 	}
 	log.Println("Intel store, projection and job executor started (step 12)")
 	return nil

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -576,5 +577,83 @@ func TestProxyCheckNodeSpecSpendsQuotaPerNode(t *testing.T) {
 	if spec.DefaultDailyLimit != 0 || spec.DefaultQPS != 0 {
 		t.Fatalf("a via-node source must not cap itself: daily=%d qps=%v",
 			spec.DefaultDailyLimit, spec.DefaultQPS)
+	}
+}
+
+func TestIPAPIISViaNode(t *testing.T) {
+	var gotQuery, gotUA, gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.RawQuery
+		gotUA = r.Header.Get("User-Agent")
+		gotKey = r.Header.Get("X-Api-Key")
+		_, _ = w.Write(fixture(t, "ipapi_is/success.json"))
+	}))
+	defer server.Close()
+
+	provider := NewIPAPIISViaNodeProvider(IPAPIISViaNodeOptions{
+		URL: server.URL, Now: func() time.Time { return testNow },
+	})
+	result := provider.Lookup(context.Background(), directOutbound{}, testIP)
+	evidence := mustEvidence(t, result)
+
+	// The query must name the node's own address: that is what makes the vendor
+	// attribute the request to the node's quota instead of Prism's.
+	values, err := url.ParseQuery(gotQuery)
+	if err != nil {
+		t.Fatalf("parse query %q: %v", gotQuery, err)
+	}
+	if got := values.Get("q"); got != testIP.String() {
+		t.Fatalf("q = %q, want the node's own address %s", got, testIP)
+	}
+	if gotUA == "" {
+		t.Fatal("the request must carry a user agent")
+	}
+	if gotKey != "" {
+		t.Fatal("a key must never be sent through a node's outbound")
+	}
+	if got := evidence.Provider; got != "ipapi_is_node" {
+		t.Fatalf("provider: %q", got)
+	}
+	if got := evidence.Profile; got != IPAPIISNodeProfile {
+		t.Fatalf("profile: %q", got)
+	}
+	if evidence.IP != testIP.String() {
+		t.Fatalf("evidence IP = %q, want %q", evidence.IP, testIP)
+	}
+}
+
+func TestIPAPIISViaNodeNeedsAnAddress(t *testing.T) {
+	provider := NewIPAPIISViaNodeProvider(IPAPIISViaNodeOptions{
+		URL: "https://example.invalid", Now: func() time.Time { return testNow },
+	})
+	result := provider.Lookup(context.Background(), directOutbound{}, netip.Addr{})
+	if !result.Failed() {
+		t.Fatal("a via-node lookup without the node's address must fail instead of querying another owner's quota")
+	}
+	if result.Err.Code != CodeRequest {
+		t.Fatalf("code: %q", result.Err.Code)
+	}
+}
+
+func TestIPAPIISNodeSpecSpendsQuotaPerNode(t *testing.T) {
+	spec := NewIPAPIISViaNodeProvider(IPAPIISViaNodeOptions{}).Spec()
+	if spec.Kind != KindViaNode {
+		t.Fatalf("kind: %v", spec.Kind)
+	}
+	if spec.RequiresKey {
+		t.Fatal("the via-node variant must never need a credential")
+	}
+	if !spec.DefaultEnabled {
+		t.Fatal("the via-node variant is the default ipapi.is source")
+	}
+	if spec.DefaultDailyLimit != 0 || spec.DefaultQPS != 0 {
+		t.Fatalf("a via-node source must not cap itself: daily=%d qps=%v",
+			spec.DefaultDailyLimit, spec.DefaultQPS)
+	}
+	if spec.Profile == IPAPIISProfile {
+		t.Fatal("the via-node variant needs its own profile so a decoder change can invalidate it alone")
+	}
+	if spec.Website == "" || spec.Terms == "" {
+		t.Fatalf("spec is incomplete: %+v", spec)
 	}
 }

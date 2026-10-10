@@ -21,6 +21,14 @@ const Profile = "prism-purity-v2"
 
 // Scoring source ids (§1.1). The order is the stable output order of
 // Assessment.Components.
+//
+// SourceIPQS and SourceAbuseIPDB are declared but not scored: both vendors
+// reject a keyless request outright (PROVIDER_AUTH), so neither can ever answer
+// for an inventory of this size and neither carries a weight. Their evidence
+// rows are still read by detectFlags / voteOf / identityPriority and the
+// ip_assessment.flags bit contract still names them, so a historical row - or a
+// deployment that deliberately enables one with a key - keeps being reported.
+// It simply never moves the purity score or the coverage denominator.
 const (
 	SourceProxycheck = "proxycheck"
 	// SourceProxycheckNode is the anonymous via-node variant of the same vendor.
@@ -31,8 +39,12 @@ const (
 	SourceIPQS           = "ipqs"
 	SourceAbuseIPDB      = "abuseipdb"
 	SourceIPAPIIs        = "ipapi_is"
-	SourceIPAPI          = "ip_api"
-	SourceDNSBL          = "dnsbl"
+	// SourceIPAPIIsNode is the anonymous via-node variant of ipapi.is. Like
+	// SourceProxycheckNode it is never a scoring source of its own: the alias
+	// table folds it onto SourceIPAPIIs.
+	SourceIPAPIIsNode = "ipapi_is_node"
+	SourceIPAPI       = "ip_api"
+	SourceDNSBL       = "dnsbl"
 )
 
 // Non-scoring sources referenced by the algorithm.
@@ -41,13 +53,23 @@ const (
 	SourceGeoCountry = "geo_country"
 )
 
-// Scoring sources with their §1.1 weights.
+// Scoring sources with their weights.
+//
+// The set is deliberately the keyless, node-scoped one: every entry either
+// needs no credential at all or spends the vendor's anonymous quota per node
+// (ippure, ip_api, and the proxycheck via-node variant folded onto
+// SourceProxycheck). That is the only shape that covers a large node inventory,
+// because ipqs and abuseipdb hard-require an API key. Leaving them in the table
+// would only shrink the coverage denominator for a source that can never
+// answer, which is what made coverage and the derived confidence meaningless.
+//
+// SourceProxycheck carries both the host-side source and its anonymous via-node
+// variant: ProviderAliases folds the variant onto it, so one address still
+// yields exactly one component of weight 3 no matter which path answered.
 var scoringWeights = map[string]int{
 	SourceProxycheck: 3,
-	SourceIPPure:     3,
-	SourceIPQS:       3,
-	SourceAbuseIPDB:  2,
-	SourceIPAPIIs:    1,
+	SourceIPPure:     4,
+	SourceIPAPIIs:    2,
 	SourceIPAPI:      1,
 	SourceDNSBL:      1,
 }
@@ -55,8 +77,7 @@ var scoringWeights = map[string]int{
 // ScoringSources returns the scoring source ids in weight order. It is the
 // canonical list a caller uses to build the "enabled sources" map.
 func ScoringSources() []string {
-	out := []string{SourceProxycheck, SourceIPPure, SourceIPQS, SourceAbuseIPDB, SourceIPAPIIs, SourceIPAPI, SourceDNSBL}
-	return out
+	return []string{SourceProxycheck, SourceIPPure, SourceIPAPIIs, SourceIPAPI, SourceDNSBL}
 }
 
 // offlineSources carry the registry/registration data used by the offline
@@ -71,7 +92,7 @@ var offlineSources = map[string]bool{
 
 // componentOrder is the deterministic output order of components.
 var componentOrder = []string{
-	SourceProxycheck, SourceIPPure, SourceIPQS, SourceAbuseIPDB, SourceIPAPIIs, SourceIPAPI, SourceDNSBL,
+	SourceProxycheck, SourceIPPure, SourceIPAPIIs, SourceIPAPI, SourceDNSBL,
 }
 
 // Flags is the 16-bit summary of an assessment that the routing admission path
@@ -376,13 +397,25 @@ func earliestValidUntil(evidence []quality.Evidence) time.Time {
 
 // ProviderAliases maps a data source id onto the scoring source it feeds.
 //
-// proxycheck_node is the anonymous via-node variant of proxycheck: it reports
-// the same vendor's verdict for the same address, obtained through the node so
-// the vendor's anonymous quota is spent per node instead of per Prism host.
-// Folding it onto SourceProxycheck keeps exactly one component per source -
-// lookup returns the first match - no matter which variant answered.
+// proxycheck_node and ipapi_is_node are the anonymous via-node variants of their
+// vendors: they report the same vendor's verdict for the same address, obtained
+// through the node so the vendor's anonymous quota is spent per node instead of
+// per Prism host. Folding each onto its host-side source keeps exactly one
+// component per source - lookup returns the first match - no matter which variant
+// answered.
 var ProviderAliases = map[string]string{
 	"proxycheck_node": SourceProxycheck,
+	"ipapi_is_node":   SourceIPAPIIs,
+}
+
+// scoringSource folds a data source id onto the scoring source it feeds: an
+// aliased via-node variant returns its host-side source, everything else returns
+// itself.
+func scoringSource(provider string) string {
+	if mapped, ok := ProviderAliases[provider]; ok {
+		return mapped
+	}
+	return provider
 }
 
 // lookup returns the valid evidence of one provider. An exact match wins; only
@@ -809,7 +842,7 @@ func voteOf(ev quality.Evidence) string {
 			return mapped
 		}
 		return normalizeRawType(ev.IPType)
-	case SourceIPAPIIs:
+	case SourceIPAPIIs, SourceIPAPIIsNode:
 		if kind := normalizeRawType(ev.IPType); kind != "" {
 			return kind
 		}
@@ -1013,8 +1046,10 @@ func noEvidenceState(in Input, evidence []quality.Evidence) (state, reason strin
 		return StateUnsupported, ReasonNoScoringSource
 	}
 	// Stale-but-present evidence is a refresh problem, not an unsupported source.
+	// The check folds the via-node variants onto their scoring source, the same
+	// way components() does, so a proxycheck_node or ipapi_is_node row counts.
 	for _, ev := range evidence {
-		if _, ok := scoringWeights[ev.Provider]; ok {
+		if _, ok := scoringWeights[scoringSource(ev.Provider)]; ok {
 			return StatePending, ReasonNoValidEvidence
 		}
 	}
