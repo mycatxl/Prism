@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"prism/internal/api"
 	"prism/internal/model"
 	"prism/internal/proxy"
 	"prism/internal/service"
@@ -119,8 +120,13 @@ func (m *endpointRuntimeManager) ApplyEndpoint(endpoint model.Endpoint) error {
 		m.tokenAPI,
 		m.proxyAuthGuard,
 	)
+	// The demux hands only the non-SOCKS5 connections to this server, and the
+	// sniff deadline it clears before enqueueing is re-armed by net/http from
+	// ReadHeaderTimeout for the header phase. Without that bound a client that
+	// sent a single byte and then stalled would hold the connection forever
+	// (slowloris). WriteTimeout stays unset: the SSE endpoint is a long stream.
 	runtime.server = newInboundDemuxServer(
-		&http.Server{Handler: httpHandler},
+		api.NewListenerServer(httpHandler),
 		&endpointSocksGate{current: currentConfig, next: m.socks5},
 	)
 

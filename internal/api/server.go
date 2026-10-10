@@ -1,10 +1,7 @@
 package api
 
 import (
-	"context"
-	"net"
 	"net/http"
-	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -14,32 +11,65 @@ import (
 	"prism/internal/service"
 )
 
-// Connection-level bounds of the management/proxy listener (WP04 §4.6).
+// Connection-level bounds of every Prism HTTP listener (WP04 §4.6).
 //
-// apiReadHeaderTimeout bounds how long a client may take to send its request
+// ReadHeaderTimeout bounds how long a client may take to send its request
 // headers, which is what stops a slowloris-style hold on a connection.
-// apiIdleTimeout bounds an idle keep-alive connection between requests.
-// apiMaxHeaderBytes caps the header block; 1 MiB is the net/http default, stated
+// IdleTimeout bounds an idle keep-alive connection between requests.
+// MaxHeaderBytes caps the header block; 1 MiB is the net/http default, stated
 // here so the bound is visible next to the request-body limit.
 //
 // WriteTimeout is deliberately not set: GET /api/v1/intel/jobs/{id}/events is a
 // long-lived SSE stream that writes keep-alive frames every sseKeepAlive and is
 // meant to stay open for the whole life of a job. A write deadline would cut
-// every progress stream short.
+// every progress stream short. ReadTimeout is unset for the same reason it is
+// redundant here: ReadHeaderTimeout already bounds the header phase, and a
+// whole-request deadline would also bound a streaming response.
+//
+// These values are exported because the listeners that are actually served live
+// in cmd/prism: the inbound demux server on the proxy/management port and the
+// optional PRISM_ADMIN_LISTEN listener. Both must build their http.Server
+// through NewListenerServer so the bounds cannot drift apart.
 const (
-	apiReadHeaderTimeout = 10 * time.Second
-	apiIdleTimeout       = 120 * time.Second
-	apiMaxHeaderBytes    = 1 << 20
+	ReadHeaderTimeout = 10 * time.Second
+	IdleTimeout       = 120 * time.Second
+	MaxHeaderBytes    = 1 << 20
 )
 
-// Server wraps the HTTP server and mux for the Prism API.
+// NewListenerServer builds the http.Server every Prism listener serves.
+//
+// It is the single place the connection bounds above are applied, so a new
+// listener cannot be added with them missing (a bare &http.Server{Handler: h}
+// leaves ReadHeaderTimeout zero, which lets one client hold a connection open
+// forever with a half-sent header).
+//
+// WriteTimeout and ReadTimeout stay unset on purpose: see the constant block.
+func NewListenerServer(handler http.Handler) *http.Server {
+	if handler == nil {
+		handler = http.NotFoundHandler()
+	}
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: ReadHeaderTimeout,
+		IdleTimeout:       IdleTimeout,
+		MaxHeaderBytes:    MaxHeaderBytes,
+	}
+}
+
+// Server wires the Prism API routes into one handler.
+//
+// It owns the mux only. The listeners are created and served by cmd/prism
+// (see NewListenerServer), so there is exactly one set of connection bounds in
+// the process.
 type Server struct {
-	httpServer *http.Server
-	mux        *http.ServeMux
+	mux *http.ServeMux
 }
 
 // NewServer creates a new API server wired with all routes.
 // cp may be nil if the control plane is not yet initialized.
+//
+// port is part of the constructor contract only: nothing is bound here, so the
+// value is not read. The listener is created and served by cmd/prism.
 func NewServer(
 	port int,
 	adminToken string,
@@ -69,6 +99,11 @@ func NewServer(
 
 // NewServerWithAddress creates a new API server with an explicit listen address.
 // panelEgress may be nil: the panel egress fields stay empty.
+//
+// listenAddress and port are part of the constructor contract only: this value
+// only ever produces the mux, and cmd/prism binds the address itself (through
+// NewListenerServer and the endpoint runtime). Passing them here is harmless but
+// does not configure anything.
 func NewServerWithAddress(
 	listenAddress string,
 	port int,
@@ -244,37 +279,10 @@ func NewServerWithAddress(
 	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(adminToken, authLimiter, cp))
 	mux.Handle("/api/", AuthMiddleware(adminToken, authLimiter, authedHandler))
 
-	// Connection hygiene. Without these a client can hold a connection open
-	// indefinitely with a half-sent request header (slowloris), and a "half-dead"
-	// SSE subscriber that never sends FIN keeps its slot out of the 64 the hub
-	// allows. ReadHeaderTimeout bounds the header phase; IdleTimeout bounds an
-	// idle keep-alive connection. WriteTimeout is deliberately left unset: the
-	// SSE endpoint writes keep-alive frames every sseKeepAlive and is expected to
-	// stay open for the whole life of a job, so a write deadline would cut it.
-	// MaxHeaderBytes matches the default (1 MiB) but is stated explicitly so the
-	// bound is visible next to the request-body limit.
-	srv := &http.Server{
-		Addr:              net.JoinHostPort(listenAddress, strconv.Itoa(port)),
-		Handler:           mux,
-		ReadHeaderTimeout: apiReadHeaderTimeout,
-		IdleTimeout:       apiIdleTimeout,
-		MaxHeaderBytes:    apiMaxHeaderBytes,
-	}
-
-	return &Server{
-		httpServer: srv,
-		mux:        mux,
-	}
-}
-
-// ListenAndServe starts the HTTP server. It blocks until the server stops.
-func (s *Server) ListenAndServe() error {
-	return s.httpServer.ListenAndServe()
-}
-
-// Shutdown gracefully shuts down the server.
-func (s *Server) Shutdown(ctx context.Context) error {
-	return s.httpServer.Shutdown(ctx)
+	// Connection hygiene belongs to the listener, not to this value: cmd/prism
+	// builds every served http.Server through NewListenerServer, which is the
+	// single place ReadHeaderTimeout/IdleTimeout/MaxHeaderBytes are applied.
+	return &Server{mux: mux}
 }
 
 // Handler returns the underlying http.Handler for testing.

@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"prism/internal/api"
 )
 
 var errHalfCloseUnsupported = errors.New("half-close unsupported")
@@ -42,7 +44,10 @@ type inboundDemuxServer struct {
 
 func newInboundDemuxServer(httpServer *http.Server, socksHandler inboundConnHandler) *inboundDemuxServer {
 	if httpServer == nil {
-		httpServer = &http.Server{Handler: http.NotFoundHandler()}
+		// Even the fallback gets the connection bounds: the demux clears the
+		// sniff read deadline before enqueueing, so a server without
+		// ReadHeaderTimeout would leave the header phase unbounded.
+		httpServer = api.NewListenerServer(http.NotFoundHandler())
 	}
 	return &inboundDemuxServer{
 		httpServer:   httpServer,
