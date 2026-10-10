@@ -4,16 +4,16 @@ import type { QualitySummary } from "./types";
 export const riskLabels = { unknown: "评级未知", low: "较低风险", moderate: "一般风险", high: "较高风险", severe: "严重风险" };
 export const typeLabels = { unknown: "类型未知", residential: "住宅网络", non_residential: "非住宅网络", datacenter: "数据中心", mobile: "移动网络", business: "企业网络", wireless: "无线网络", conflicting: "来源有分歧" };
 
-export const verdictLabels = { pending: "等待 IPPure 评分", incomplete: "特征未齐", review: "需要复核", conflicting: "类型有分歧", caution: "谨慎使用", high_risk: "风险较高", favorable: "未见明显风险" };
+export const verdictLabels = { pending: "等待评分", incomplete: "特征未齐", review: "需要复核", conflicting: "类型有分歧", caution: "谨慎使用", high_risk: "风险较高", favorable: "未见明显风险" };
 export const assessmentReasons: Record<string, string> = {
-  IPPURE_REQUIRED: "尚未取得 IPPure 评分", IPPURE_SCORE_UNAVAILABLE: "IPPure 未提供评分",
+  IPPURE_REQUIRED: "尚未取得纯净度评分", IPPURE_SCORE_UNAVAILABLE: "未提供纯净度评分",
   NETWORK_EVIDENCE_MISSING: "缺少有效的网络特征", NETWORK_EVIDENCE_INCOMPLETE: "部分网络标记未知",
-  PROXY_DETECTED: "ProxyCheck 标记为代理", VPN_DETECTED: "ProxyCheck 标记为 VPN",
-  TOR_DETECTED: "ProxyCheck 标记为 Tor", SCRAPER_DETECTED: "来源发现爬取特征",
-  ANONYMOUS_DETECTED: "来源发现匿名网络特征", COMPROMISED: "来源发现被入侵记录",
-  ATTACK_HISTORY: "来源存在攻击记录", RECENT_ABUSE: "存在近期高置信度举报",
-  IPPURE_HIGH_RISK: "IPPure 风险分偏高", NETWORK_TYPE_CONFLICT: "两家来源的网络分类有分歧",
-  TOR_PUBLIC_RELAY: "Tor Project 公开资料中存在此地址",
+  PROXY_DETECTED: "检测到代理特征", VPN_DETECTED: "检测到 VPN 特征",
+  TOR_DETECTED: "检测到 Tor 特征", SCRAPER_DETECTED: "检测到爬取特征",
+  ANONYMOUS_DETECTED: "检测到匿名网络特征", COMPROMISED: "检测到被入侵记录",
+  ATTACK_HISTORY: "存在攻击记录", RECENT_ABUSE: "存在近期高置信度举报",
+  IPPURE_HIGH_RISK: "纯净度风险分偏高", NETWORK_TYPE_CONFLICT: "网络分类存在分歧",
+  TOR_PUBLIC_RELAY: "公开中继资料中存在此地址",
 };
 export const torRoleLabels = { exit: "Tor 出口", guard: "Tor 入口守卫（候选）", relay: "Tor 中继" };
 
@@ -39,8 +39,6 @@ export function purityScore(risk?: number | null): number | null {
   return typeof risk === "number" && Number.isInteger(risk) && risk >= 0 && risk <= 100 ? 100 - risk : null;
 }
 export const purityBand = (score: number | null) => score === null ? undefined : purityBands.find(band => score >= band.min && score <= band.max);
-export const providerName = (id?: string) => id === "proxycheck" ? "ProxyCheck v3" : id === "ippure" ? "IPPure" : id === "abuseipdb" ? "AbuseIPDB" : id || "—";
-
 export function hasCurrentEvidence(summary: QualitySummary | null | undefined, now: number) {
   return Boolean(summary?.evidence) && (summary?.state === "valid" || summary?.state === "conflicting") && Date.parse(summary!.evidence!.valid_until) > now;
 }

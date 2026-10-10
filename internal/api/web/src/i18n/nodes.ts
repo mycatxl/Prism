@@ -26,4 +26,13 @@ export const NODES_TRANSLATIONS: Record<string, string> = {
   "已导出 {{count}} 个节点": "Exported {{count}} nodes",
   "跳过 {{count}} 个": "{{count}} skipped",
   "超出上限 {{count}} 个未导出": "{{count}} over the limit not exported",
+  // 解锁检测筛选（NodesPage 的“检测结果”多选）。解锁结果是标签，不是准入门槛。
+  添加检测项: "Add check",
+  "添加检测项…": "Add a check…",
+  任意结果: "Any outcome",
+  移除: "Remove",
+  "未选择检测项：不按解锁结果筛选。":
+    "No check selected: results do not filter anything.",
+  "解锁结果是标签，不是准入条件：这里只筛选节点，不改变节点是否可用。":
+    "Unlock results are labels, not an admission gate: this only filters the list, it never changes whether a node is usable.",
 };

@@ -800,7 +800,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "爬取特征": "Scraper",
   "滥用记录": "Abuse reports",
   "托管网络": "Hosting",
-  "DNSBL 命中": "DNSBL listed",
+  "黑名单命中": "Blocklist listed",
   "攻击历史": "Attack history",
   "网络类型": "IP type",
   "全部原生类型": "Any native type",
@@ -861,6 +861,14 @@ Note: Once enabled, requests without authentication information are rejected ins
   "保留的排除项（旧配置）：": "Kept exclusions (legacy configuration):",
   "排除": "Exclude",
   "高级：旧版标签正则规则（可选）": "Advanced: legacy tag regex rules (optional)",
+  "高级：解锁要求（可选）": "Advanced: unlock requirements (optional)",
+  "解锁要求": "Unlock requirements",
+  "留空表示不要求任何解锁结果。勾选后，缺少对应检测结果的节点不会进入该平台。":
+    "Leave empty to require no unlock result. Once set, a node without the matching check result does not enter this platform.",
+  "未设置解锁要求。": "No unlock requirement is set.",
+  "要求的结果": "Required outcome",
+  "添加解锁要求": "Add unlock requirement",
+  "添加解锁要求…": "Add an unlock requirement…",
   "仅供旧配置使用：普通正则命中其一即可、* 开头必须匹配、! 开头排除；它与上面的条件同时生效（AND）。":
     "Legacy configurations only: a plain regex hits on any line, a line starting with * must match, and a line starting with ! excludes. It applies together with the criteria above (AND).",
   "每行一条正则表达式，例如：\n香港\n*专线\n!失效": "One regular expression per line, for example:\nHong Kong\n*Dedicated\n!Expired",

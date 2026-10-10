@@ -77,7 +77,7 @@ export function ExitRecordsPanel() {
       {[
         { label: "已查询 IP", value: status.data?.known_ips },
         { label: "网络证据", value: status.data?.checked_ips },
-        { label: "IPPure 有效评分", value: status.data?.manual_sources?.find(source => source.id === "ippure")?.current_ips },
+        { label: "有效纯净度评分", value: status.data?.manual_sources?.find(source => source.id === "ippure")?.current_ips },
         { label: "证据已过期", value: status.data?.stale_ips },
       ].map(item => (
         <ReadoutCell key={item.label}>
@@ -170,9 +170,9 @@ export function ExitRecordsPanel() {
                 <TH>{t("出口 IP")}</TH>
                 <TH>{t("网络组织")}</TH>
                 <TH>{t("IP 类型")}</TH>
-                <TH>{t("IPPure 纯净度参考")}</TH>
+                <TH>{t("纯净度参考")}</TH>
                 <TH>{t("综合判定")}</TH>
-                <TH className="text-right">{t("IPPure 复核时间")}</TH>
+                <TH className="text-right">{t("复核时间")}</TH>
               </TR>
             </THead>
             <TBody>

@@ -8,7 +8,7 @@ import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Reado
 import { useI18n } from "../../../i18n";
 import { formatDateTime, formatRelativeTime } from "../../../lib/time";
 import type { QualityEvidence, QualitySummary } from "./types";
-import { assessmentReasons, evidenceFor, inspectionErrorLabel, providerName, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, useQualityTime, verdictLabels } from "./presentation";
+import { assessmentReasons, evidenceFor, inspectionErrorLabel, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, useQualityTime, verdictLabels } from "./presentation";
 import { PurityGuide } from "./PurityGuide";
 import { IPPureReviewPanel } from "./IPPureReview";
 
@@ -59,16 +59,16 @@ export function QualityBadge({ summary, showScore = true }: { summary?: QualityS
   const { t } = useI18n();
   const now = useQualityTime();
   const evidence = evidenceFor(summary, "ippure");
-  if (evidence && !sourceIsFresh(summary, "ippure", now)) return <Badge tone="warn"><Clock3 size={11} aria-hidden />{t("IPPure 已过期")}</Badge>;
+  if (evidence && !sourceIsFresh(summary, "ippure", now)) return <Badge tone="warn"><Clock3 size={11} aria-hidden />{t("纯净度评分已过期")}</Badge>;
   if (sourceIsFresh(summary, "ippure", now)) {
     const score = purityScore(evidence!.risk_score);
     const band = purityBand(score);
     return <Badge tone={bandTones[band?.variant ?? ""] ?? "neutral"}>
-      {showScore && score !== null && <span className="readout font-semibold">{score}</span>}{t(band?.label || "IPPure 未提供评分")}
+      {showScore && score !== null && <span className="readout font-semibold">{score}</span>}{t(band?.label || "未提供纯净度评分")}
     </Badge>;
   }
   if (summary?.state === "unsupported") return <Badge tone="neutral">{t("不支持检测")}</Badge>;
-  return <Badge tone="neutral">{t("待 IPPure 复核")}</Badge>;
+  return <Badge tone="neutral">{t("待纯净度复核")}</Badge>;
 }
 
 export function VerdictBadge({ summary }: { summary?: QualitySummary | null }) {
@@ -171,7 +171,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
         <ReadoutStrip>
           <ReadoutCell>
             <Readout
-              label={t("IPPure 纯净度参考")}
+              label={t("纯净度参考")}
               value={pureFresh ? pureScore ?? "—" : "—"}
               unit="/ 100"
               size="lg"
@@ -181,7 +181,6 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           <ReadoutCell>
             <Readout
               label={t("来源原始风险")}
-              hint="IPPure"
               value={pure?.risk_score ?? "—"}
               unit="/ 100"
             />
@@ -208,7 +207,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
 
     {pure && <div className="space-y-2">
       <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
-        <Fact label={t("IPPure 分类")}>{t(pure.source_type === "Residential" ? "住宅网络" : pure.source_type === "Non-residential" ? "非住宅网络" : "未知")}</Fact>
+        <Fact label={t("来源分类")}>{pure.source_type === "Residential" ? t("住宅网络") : pure.source_type === "Non-residential" ? t("非住宅网络") : t("未知")}</Fact>
         <Fact label={t("地址归属")}>{t(pure.native === true ? "原生 IP" : pure.native === false ? "广播 IP" : "未知")}</Fact>
         <Fact label="ASN"><span className="readout">{pure.asn || "—"}</span></Fact>
       </dl>
@@ -226,9 +225,8 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </p>}
 
     {evidence && <section className="space-y-3 border-t border-rule pt-3">
-      <SectionTitle>{t("ProxyCheck 网络证据")}</SectionTitle>
+      <SectionTitle>{t("网络证据")}</SectionTitle>
       <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
-        <Fact label={t("数据来源")}>{providerName(evidence.provider)}</Fact>
         <Fact label="ASN"><span className="readout">{evidence.asn || "—"}</span></Fact>
         <Fact label={t("网络组织")}><span className="block max-w-[46ch] truncate" title={evidence.organization || undefined}>{evidence.organization || "—"}</span></Fact>
         <Fact label={t("来源分类")}>{evidence.source_type || "—"}</Fact>
@@ -279,7 +277,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </section>}
 
     {tor && <section className="space-y-2 border-t border-rule pt-3">
-      <SectionTitle trailing={<span className="text-2xs text-ink-faint">Tor Project</span>}>
+      <SectionTitle>
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={15} aria-hidden className="text-ink-faint" />
           {t("Tor 角色核验")}
@@ -298,7 +296,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </section>}
 
     {(abuse?.configured || abuse?.evidence) && <section className="space-y-2 border-t border-rule pt-3">
-      <SectionTitle trailing={<span className="text-2xs text-ink-faint">AbuseIPDB</span>}>
+      <SectionTitle>
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={15} aria-hidden className="text-ink-faint" />
           {t("近期滥用记录")}
@@ -321,12 +319,12 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
         <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("没有举报不等于没有风险；此项与网络类型、代理识别分别展示。")}</p>
       </> : <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t(abuse?.configured
         ? (abuse.task?.error_code ? inspectionErrorLabel(abuse.task.error_code) : "等待近期滥用记录")
-        : "可配置免费的 AbuseIPDB API Key，补充近 30 天的举报记录。")}</p>}
+        : "可配置举报数据源，补充近 30 天的举报记录。")}</p>}
     </section>}
 
     {nodeHash ? <IPPureReviewPanel key={nodeHash + ":" + nodeIP} nodeHash={nodeHash} nodeIP={nodeIP} ready={nodeReady} /> : <div className="space-y-1 border-t border-rule pt-3">
       <Link className="inline-flex items-center gap-1 text-sm" to={"/nodes?egress_ip=" + encodeURIComponent(summary?.ip || "")}>{t("查看此出口的节点")}<ArrowUpRight size={12} aria-hidden /></Link>
-      <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("IPPure 需要经目标节点查询，可在节点详情中直接复核。")}</p>
+      <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("纯净度评分需要经目标节点查询，可在节点详情中直接复核。")}</p>
     </div>}
   </div>;
 }

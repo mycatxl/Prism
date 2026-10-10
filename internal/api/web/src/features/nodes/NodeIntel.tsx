@@ -41,7 +41,7 @@ const flagLabels: Record<string, string> = {
   abuse: "滥用记录",
   anonymous: "匿名网络",
   hosting: "托管网络",
-  dnsbl: "DNSBL 命中",
+  dnsbl: "黑名单命中",
   attack_history: "攻击历史",
 };
 

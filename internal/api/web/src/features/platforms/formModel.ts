@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { allocationPolicies, emptyAccountBehaviors, missActions } from "./constants";
 import { parseHeaderLines, parseLinesToList } from "./formParsers";
-import type { Platform, PlatformCreateInput, PlatformScopeSpec, PlatformUpdateInput } from "./types";
+import type {
+  Platform,
+  PlatformCreateInput,
+  PlatformQualityPolicy,
+  PlatformScopeSpec,
+  PlatformUpdateInput,
+} from "./types";
 
 const platformNameForbiddenChars = ".:|/\\@?#%~";
 const platformNameForbiddenSpacing = " \t\r\n";
@@ -44,6 +50,11 @@ export const platformFormSchema = z.object({
   reverse_proxy_fixed_account_header: z.string().optional(),
   allocation_policy: z.enum(allocationPolicies),
   passive_circuit_breaker_disabled: z.boolean(),
+  // The unlock requirements stay line-based ("<check id>:<outcome>"), the same
+  // shape the region criterion uses: it keeps the value the backend stores
+  // (a map) reachable without a nested form array, and an entry the picker
+  // cannot render survives an edit instead of being dropped.
+  required_checks_text: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (
     value.reverse_proxy_empty_account_behavior === "FIXED_HEADER" &&
@@ -73,6 +84,9 @@ export const defaultPlatformFormValues: PlatformFormValues = {
   reverse_proxy_fixed_account_header: "Authorization",
   allocation_policy: "BALANCED",
   passive_circuit_breaker_disabled: false,
+  // Empty on purpose: an unlock requirement is an operator decision, and the
+  // product treats an unlock result as a label rather than an admission gate.
+  required_checks_text: "",
 };
 
 export function platformToFormValues(platform: Platform): PlatformFormValues {
@@ -93,7 +107,41 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
     reverse_proxy_fixed_account_header: platform.reverse_proxy_fixed_account_header,
     allocation_policy: platform.allocation_policy,
     passive_circuit_breaker_disabled: platform.passive_circuit_breaker_disabled,
+    required_checks_text: requiredChecksToText(platform.quality_policy?.required_checks),
   };
+}
+
+/**
+ * requiredChecksToText renders the stored required_checks map as the line-based
+ * form value. Entries are sorted so the same policy always renders the same
+ * text, which keeps the dirty check stable.
+ */
+export function requiredChecksToText(required: Record<string, string> | undefined | null): string {
+  if (!required || typeof required !== "object") {
+    return "";
+  }
+  return Object.keys(required)
+    .sort()
+    .map((checkID) => `${checkID}:${required[checkID] ?? ""}`)
+    .join("\n");
+}
+
+/**
+ * textToRequiredChecks parses the line-based form value back into the map the
+ * backend stores. A line without a colon means "any outcome", which the model
+ * treats as an empty outcome value.
+ */
+export function textToRequiredChecks(text: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of listValues(text)) {
+    const separator = line.indexOf(":");
+    const checkID = (separator < 0 ? line : line.slice(0, separator)).trim();
+    const outcome = separator < 0 ? "" : line.slice(separator + 1).trim();
+    if (checkID) {
+      out[checkID] = outcome;
+    }
+  }
+  return out;
 }
 
 /** listValues reads the values of one newline-separated form field. */
@@ -156,16 +204,49 @@ function toPlatformPayloadBase(values: PlatformFormValues) {
   };
 }
 
-export function toPlatformCreateInput(values: PlatformFormValues): PlatformCreateInput {
+/**
+ * toQualityPolicy builds the policy payload of the unlock-requirement editor.
+ *
+ * PATCH replaces the whole quality_policy object, so the fields this form does
+ * not edit are copied over from the loaded platform: sending only
+ * required_checks would silently clear min_purity, allowed_verdicts and the
+ * rest. An empty map is sent as undefined, which is the model's "no
+ * requirement" value.
+ */
+export function toQualityPolicy(
+  values: PlatformFormValues,
+  current: PlatformQualityPolicy | undefined,
+): PlatformQualityPolicy | undefined {
+  const required = textToRequiredChecks(values.required_checks_text);
+  const policy: PlatformQualityPolicy = { ...(current ?? {}) };
+  if (Object.keys(required).length === 0) {
+    delete policy.required_checks;
+  } else {
+    policy.required_checks = required;
+  }
+  // An all-default policy is the model's zero value: sending it back is the
+  // same as sending nothing, and leaving it out keeps the wire payload clean.
+  return Object.keys(policy).length > 0 ? policy : undefined;
+}
+
+export function toPlatformCreateInput(
+  values: PlatformFormValues,
+  currentPolicy?: PlatformQualityPolicy,
+): PlatformCreateInput {
   return {
     ...toPlatformPayloadBase(values),
     sticky_ttl: values.sticky_ttl?.trim() || undefined,
+    quality_policy: toQualityPolicy(values, currentPolicy),
   };
 }
 
-export function toPlatformUpdateInput(values: PlatformFormValues): PlatformUpdateInput {
+export function toPlatformUpdateInput(
+  values: PlatformFormValues,
+  currentPolicy?: PlatformQualityPolicy,
+): PlatformUpdateInput {
   return {
     ...toPlatformPayloadBase(values),
     sticky_ttl: values.sticky_ttl?.trim() || "",
+    quality_policy: toQualityPolicy(values, currentPolicy),
   };
 }
