@@ -17,7 +17,7 @@ services:
     # use it, and pin the release you intend (`latest` follows the newest
     # non-prerelease release). Bump this line with each release you deploy.
     # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
-    image: ghcr.io/mycatxl/prism:0.1.0
+    image: ghcr.io/mycatxl/prism:0.1.1
     container_name: prism
     restart: unless-stopped
     environment:

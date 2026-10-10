@@ -37,12 +37,35 @@ this document and the code it describes change in the same work packages.
 A missing `Authorization` header, a malformed header and a wrong token all
 fail; the management routes are unreachable without the token.
 
+One route on that mux is deliberately outside the middleware:
+`GET /api/v1/intel/jobs/{id}/events` is registered as its own pattern
+(`internal/api/server.go`), so it wins over the `/api/` catch-all and never
+passes through `AuthMiddleware`, because an `EventSource` cannot set an
+`Authorization` header. It authenticates itself through
+`intelEventAuthorized` / `accessTokenFromRequest`
+(`internal/api/handler_intel.go`), which is the **only** place where the admin
+token may be taken from `?access_token=`, and which — unlike `AuthMiddleware` —
+also takes an `Authorization` value **without** the `Bearer ` prefix verbatim as
+the token. Every other `/api/v1/*` route requires `Authorization: Bearer
+<PRISM_ADMIN_TOKEN>`. The compare is the same
+`crypto/subtle.ConstantTimeCompare` and failed attempts feed the same per-IP
+limiter. (The proxy-plane route
+`POST /{PRISM_PROXY_TOKEN}/api/v1/{platform}/actions/inherit-lease` is not part
+of this surface: the inbound mux routes it by its path token, and
+`NewTokenActionHandler` compares that token in constant time.)
+
 Verified by:
 
 - `scripts/smoke.sh` check `/api/v1/system/info rejects missing token` → 401.
 - `scripts/smoke.sh` check `/api/v1/system/info accepts the admin token` → 200.
 - `TestAuthRateLimit_SuccessfulRequestsAreNotCounted`
   (`internal/api/wp04_security_test.go`) exercises the successful path.
+- `TestIntelJobEvents_Authentication` (`internal/api/handler_intel_events_test.go`)
+  pins all seven accepted and rejected shapes of the SSE route, including the
+  bare `Authorization` value and `?access_token=`.
+- `TestIntelJobEvents_QueryTokenDoesNotAuthenticateOtherRoutes` (same file)
+  pins that the query-parameter fallback is scoped to this one route.
+- `TestIntelJobEvents_FailedAuthsAreRateLimited` (same file).
 
 ### 1.2 Admin authentication failure limiting
 
@@ -98,7 +121,8 @@ has no status line; a blocked client gets the `0x05 0xFF` "no acceptable
 methods" reply and a closed session), and the checks `internal/proxy` meters
 itself: the forward-proxy `Proxy-Authorization` header and the CONNECT entry
 (`internal/proxy/forward.go`), and the path token inside the reverse handler
-(`internal/proxy/reverse.go`). The default `0` disables all of it; §3.2 lists
+(`internal/proxy/reverse.go`). The default is `30` (a positive limit, so the
+limiter is on by default); `0` disables it for the proxy entrypoints; §3.2 lists
 what the limiter does *not* cover.
 
 Verified by:
@@ -119,8 +143,12 @@ The URL reverse proxy uses the path layout `/<PRISM_PROXY_TOKEN>/...`
 (`cmd/prism/inbound_mux.go`, `shouldRejectReverseProxyByToken`). A request whose
 first path segment does not match the configured proxy token is answered with
 `403` and the header `X-Prism-Error: AUTH_FAILED`; it never reaches the
-reverse-proxy handler. Inside the reverse proxy the token is compared again in
-constant time (`internal/proxy/reverse.go`, `parsePathV1`).
+reverse-proxy handler. That gate is a plain string comparison (`return token !=
+proxyToken`, `cmd/prism/inbound_mux.go`) and is therefore **not** constant time —
+it is the check an unauthenticated client can actually reach. Inside the reverse
+proxy the token is compared a second time in constant time
+(`subtle.ConstantTimeCompare` in `parsePathV1`, `internal/proxy/reverse.go`), but
+that comparison only runs after the mux has already accepted the token.
 
 Verified by `TestInboundMux_RejectsReverseWhenTokenMissingOrWrong`
 (`cmd/prism/inbound_mux_test.go`).
@@ -144,8 +172,9 @@ management surface — `/`, `/healthz`, `/api/*` and `/ui/*` — and `CONNECT` p
 `404` (`cmd/prism/admin_runtime.go`, `newAdminOnlyHandler` / `isManagementPath`).
 An empty value disables the listener instead of binding one.
 
-The management surface is gated as a whole by the endpoint's `allow_management`
-flag (`cmd/prism/inbound_mux.go`, `shouldRouteControlPlane`).
+The management surface is gated by the endpoint's `allow_management` flag
+(`cmd/prism/inbound_mux.go`, `shouldRouteControlPlane`); `/healthz` is the one
+path served even when the flag is off.
 
 With an empty admin or proxy token the listener must stay on loopback:
 `LoadEnvConfig` rejects a non-loopback `PRISM_ADMIN_LISTEN` unless
@@ -158,14 +187,14 @@ Verified by:
   (`cmd/prism/subcommands_test.go`).
 - `TestStartAdminListenerDisabledWhenAddressEmpty`
   (`cmd/prism/subcommands_test.go`).
-- `TestInboundMuxRoutesSubscriptionPathToManagementHandler`,
-  `TestInboundMuxSubscriptionPathHonoursAllowManagement` and
-  `TestAdminListenerServesSubscriptionPath`
-  (`cmd/prism/subscription_routing_test.go`).
 - `TestEmptyTokenRequiresLoopbackAdminListen` and
   `TestEmptyProxyTokenRequiresLoopbackAdminListen`
   (`internal/config/env_test.go`).
 - `scripts/smoke.sh` check `admin listener refuses CONNECT`.
+- The `allow_management` gate that `shouldRouteControlPlane`
+  (`cmd/prism/inbound_mux.go`) applies to the management routes is covered by
+  `TestEndpointInboundMux_AppliesCapabilities` (`cmd/prism/inbound_mux_test.go`,
+  §1.4).
 
 ### 1.6 Audit logging of management writes
 
@@ -286,7 +315,7 @@ Verified by:
   (`internal/proxy/reverse_wp04_test.go`) pin the restored upstream host
   validation.
 
-### 1.9 Node target policy (`PRISM_DENY_PRIVATE_NODES`)
+### 1.8 Node target policy (`PRISM_DENY_PRIVATE_NODES`)
 
 `PRISM_DIRECT_DENY_PRIVATE` (1.7) governs the *local direct* branches, i.e. where
 Prism itself dials a request target. It deliberately does not touch the nodes: a
@@ -330,9 +359,11 @@ Two deliberate properties:
   `198.18.x.x` in the node document is still refused, and a name that answers
   with a fake IP *and* a real private address is still refused.
 
-The switch is off by default because a deployment may deliberately route through
-a node on a private network (a home server, a jump host). Turning it on is the
-recommended setting for a node pool fed by public sources.
+The switch is **on by default** (`internal/config/env.go`,
+`envBool("PRISM_DENY_PRIVATE_NODES", true, ...)`), so a node on a private network
+is refused out of the box. Set `PRISM_DENY_PRIVATE_NODES=false` to allow it when
+a deployment deliberately routes through a node on a private network (a home
+server, a jump host).
 
 Verified by:
 
@@ -346,15 +377,17 @@ Verified by:
   `TestNodeTargetIsForbidden_FailsClosed` (an unresolvable name is refused, and
   no resolver call happens for a literal).
 - `TestEnsureNodeOutbound_DeniesForbiddenTargets` (nine node shapes, including a
-  chain whose *dep* is loopback), `TestEnsureNodeOutbound_PolicyIsOptIn` (the
-  default keeps a private node working) and
+  chain whose *dep* is loopback), `TestEnsureNodeOutbound_PolicyIsOptIn` (a
+  manager whose policy was never enabled keeps a private node working — the
+  switch is applied explicitly by `cmd/prism/main.go`, and the environment
+  default is what turns it on) and
   `TestEnsureNodeOutbound_PublicTargetBuilds`
   (`internal/outbound/target_policy_test.go`).
 - `TestNodeServerHosts` and `TestNodeServerHosts_DepthBound` pin the extraction of
   every dial target from a node document (a wireguard endpoint names its target
   in the peer's `address`, not `server`) and the depth bound on the walk.
 
-### 1.8 Token material: file mode and no silent overwrite
+### 1.9 Token material: file mode and no silent overwrite
 
 `prism init` is the only writer of `.env`. It writes the file with mode `0600`
 (`cmd/prism/subcommands.go`, `writeFile0600`), refuses to touch an existing
@@ -369,7 +402,7 @@ Verified by:
 - `TestInitCommandWithForceCreatesTimestampedBackup`
   (`cmd/prism/subcommands_test.go`).
 
-### 1.9 Configuration reporting never discloses secrets
+### 1.10 Configuration reporting never discloses secrets
 
 `prism check-config` prints the effective configuration with
 `PRISM_ADMIN_TOKEN`, `PRISM_PROXY_TOKEN`, `PRISM_QUALITY_API_KEY` and
@@ -381,7 +414,7 @@ Verified by:
 - `TestCheckConfigNeverPrintsSecrets` (`cmd/prism/subcommands_test.go`).
 - `scripts/smoke.sh` check `check-config succeeds without printing any token`.
 
-### 1.10 Online backup is a consistent snapshot and excludes secrets
+### 1.11 Online backup is a consistent snapshot and excludes secrets
 
 `prism backup --out DIR` copies `state.db`, `cache.db` and `intel.db` with
 SQLite `VACUUM INTO` over read-only connections, so a running service is not
@@ -397,7 +430,7 @@ Verified by:
 - `scripts/smoke.sh` check `online backup databases are consistent (quick_check ok)`.
 - `scripts/smoke.sh` check `backup does not contain .env`.
 
-### 1.11 Restore verifies the backup before it touches live data
+### 1.12 Restore verifies the backup before it touches live data
 
 `prism restore --from DIR` verifies the manifest and the size and sha256 of
 every file before it moves anything, refuses to run while an instance is active
@@ -417,7 +450,7 @@ Verified by:
 `scripts/prism-backup.sh` is a thin wrapper over these two subcommands; it adds
 `--keep N` retention and never packages a live database with `tar`.
 
-### 1.12 Node documents from subscriptions cannot name local files
+### 1.13 Node documents from subscriptions cannot name local files
 
 A node document is untrusted subscription content: a sing-box JSON outbound is
 stored verbatim and a Clash/Surge or share-link `ca:` is mapped onto
@@ -452,7 +485,7 @@ Verified by:
 - `TestParseKeepsInlineCertificateMaterial` and
   `TestEnsureNodeOutboundRecordsBoundedRefusal` (same file).
 
-### 1.13 State and cache databases are private
+### 1.14 State and cache databases are private
 
 `state.db` stores provider API keys in clear (`intel_provider_settings.api_key`),
 the audit log and subscription URLs, so the
@@ -491,10 +524,14 @@ that the gap is visible; they are not guarantees.
   `TestEmptyProxyTokenRequiresLoopbackAdminListen`, `internal/config/env_test.go`
   — before that check existed only `PRISM_LISTEN_ADDRESS` was gated, so an empty
   token could still expose the management plane through `PRISM_ADMIN_LISTEN`).
-  `ValidateProxyTokenForV1` additionally requires 16+ characters for the proxy
-  token, forbids `. : | / \ @ ? # % ~` and whitespace, and rejects the reserved
-  words `api`, `healthz`, `ui`. The check is a length check — there is no
-  entropy, dictionary or pattern analysis.
+  `LoadEnvConfig` additionally requires 16+ characters for both tokens
+  (`PRISM_ADMIN_TOKEN` and `PRISM_PROXY_TOKEN`) while
+  `PRISM_ENFORCE_STRONG_TOKENS` is true (the default), and rejects the reserved
+  proxy-token words `api`, `healthz`, `ui`. That length rule is a plain length
+  check — there is no entropy, dictionary or pattern analysis.
+  `ValidateProxyTokenForV1` itself does **neither**: it only rejects the
+  characters `. : | / \ @ ? # % ~` and whitespace, and its own comment says the
+  16-character minimum is a separate Prism policy enforced by `LoadEnvConfig`.
 - **Credential fields are excluded from JSON serialization** (`json:"-"` on the
   `AdminToken` and `ProxyToken` fields of `EnvConfig`,
   `internal/config/env.go`) so a marshalled `EnvConfig` cannot leak them.
@@ -536,15 +573,17 @@ The listeners speak plain HTTP; there is no TLS listener and no HSTS. Terminate
 TLS in a reverse proxy in front of Prism and keep `PRISM_LISTEN_ADDRESS` on
 loopback unless the network path is trusted.
 
-### 3.2 Proxy entry failure limiting is off by default
+### 3.2 Proxy entry failure limiting is on by default
 
-`PRISM_PROXY_AUTH_FAIL_LIMIT` defaults to `30` (set `0` to disable failure limiting)
-on the proxy entrypoints (407/403 responses and the SOCKS5 username/password
-rejection); only the management API is protected by default (§1.2). This keeps
-the upstream Resin behaviour (`cmd/prism/app_runtime.go`,
-`internal/proxy/auth_guard.go`, `cmd/prism/proxy_auth_guard.go`). Set a positive
-value to enable the same limiter for proxy authentication failures; §1.2 lists
-the entry points it then covers.
+`PRISM_PROXY_AUTH_FAIL_LIMIT` defaults to `30` (`internal/config/env.go`,
+`envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 30, ...)`), so the proxy entrypoints
+(407/403 responses and the SOCKS5 username/password rejection) are rate limited
+by default, exactly like the management API (§1.2, which keeps its own fixed
+limiter); set `0` to disable it for the proxy entrypoints only, which restores
+the upstream Resin behaviour (no failure limiting there). The guard is built only
+when the value is positive (`cmd/prism/app_runtime.go`;
+`internal/proxy/auth_guard.go`, `cmd/prism/proxy_auth_guard.go`); §1.2 lists the
+entry points it covers.
 
 Deliberate exceptions, so the next reader does not have to grep for them:
 
@@ -562,15 +601,18 @@ The SOCKS5 entry has no HTTP status to answer, so a blocked client receives the
 RFC 1928 `0x05 0xFF` ("no acceptable methods") method-selection reply and a
 closed session instead of the `429 RATE_LIMITED` the HTTP entries return.
 
-### 3.3 Direct target policy is off by default
+### 3.3 Direct target policy is on by default
 
-With `PRISM_DIRECT_DENY_PRIVATE=false` (the default before v0.1.0) **none** of Prism's local
-dial paths (the reverse-proxy bypass branch, the forward HTTP proxy, CONNECT and
-SOCKS5) applies an address policy unless it is enabled (§1.7). Without it, a
-client that holds the proxy token can reach loopback, private, CGNAT, reserved
-and cloud-metadata addresses through those paths. Enable it whenever the proxy
-token is handed to untrusted clients and the host can reach metadata services or
-internal networks; node-routed requests are unaffected either way.
+`PRISM_DIRECT_DENY_PRIVATE` defaults to `true` (`internal/config/env.go`,
+`envBool("PRISM_DIRECT_DENY_PRIVATE", true, ...)`, since v0.1.0), so all of
+Prism's local dial paths (the reverse-proxy bypass branch, the forward HTTP
+proxy, CONNECT and SOCKS5) apply the address policy of §1.7. Setting
+`PRISM_DIRECT_DENY_PRIVATE=false` disables it everywhere at once, which restores
+the behaviour before v0.1.0: a client that holds the proxy token can then reach
+loopback, private, CGNAT, reserved and cloud-metadata addresses through those
+paths. Keep the switch on whenever the proxy token is handed to untrusted
+clients and the host can reach metadata services or internal networks;
+node-routed requests are unaffected either way.
 
 ## 4. Reporting a problem
 

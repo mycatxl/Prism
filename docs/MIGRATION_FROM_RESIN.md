@@ -31,7 +31,7 @@ docker run --rm \
     -v prism-cache:/var/cache/prism \
     -e PRISM_STATE_DIR=/var/lib/prism \
     -e PRISM_CACHE_DIR=/var/cache/prism \
-    ghcr.io/mycatxl/prism:0.1.0-rc3 import-resin \
+    ghcr.io/mycatxl/prism:0.1.1 import-resin \
       --from-state /var/lib/resin --from-cache /var/cache/resin
 ```
 
