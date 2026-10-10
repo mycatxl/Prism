@@ -1,13 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useWatch, type UseFormReturn } from "react-hook-form";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Checkbox } from "../../components/ui/Checkbox";
 import { Fieldset, Textarea } from "../../components/ui/Input";
+import { Select } from "../../components/ui/Select";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
+import { INTEL_CHECK_OUTCOMES, listIntelChecks } from "../intel/checks";
 import { listPlatformNodeFacets, previewPlatformScope } from "./api";
 import {
   defaultPlatformFormValues,
@@ -475,6 +477,16 @@ export function NodeCriteriaFields({
       <details className="rounded-control border border-rule bg-paper-raised">
         <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-ink-soft">
           <ChevronDown size={14} aria-hidden />
+          {t("高级：解锁要求（可选）")}
+        </summary>
+        <div className="space-y-2 border-t border-rule px-3 py-2">
+          <UnlockRequirementsField form={form} />
+        </div>
+      </details>
+
+      <details className="rounded-control border border-rule bg-paper-raised">
+        <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-ink-soft">
+          <ChevronDown size={14} aria-hidden />
           {t("高级：旧版标签正则规则（可选）")}
         </summary>
         <div className="space-y-2 border-t border-rule px-3 py-2">
@@ -496,5 +508,126 @@ export function NodeCriteriaFields({
         </div>
       </details>
     </div>
+  );
+}
+
+/**
+ * UnlockRequirementsField edits `quality_policy.required_checks`.
+ *
+ * This is the only admission criterion built from unlock results, and it is
+ * deliberately empty by default: a missing unlock result is a label on a node,
+ * not a reason to keep it out of a platform. An operator who wants the gate
+ * picks a rule and the outcome it must have; every rule and outcome the backend
+ * accepts comes from the server, because an unknown check id is rejected with
+ * 400 rather than ignored.
+ */
+function UnlockRequirementsField({
+  form,
+}: {
+  form: UseFormReturn<PlatformFormValues>;
+}) {
+  const { t } = useI18n();
+  const checksQuery = useQuery({
+    queryKey: ["intel", "checks"],
+    queryFn: ({ signal }) => listIntelChecks(signal),
+    staleTime: 300_000,
+  });
+  const text = useWatch({ control: form.control, name: "required_checks_text" }) ?? "";
+  const entries = useMemo(() => {
+    const out: { checkID: string; outcome: string }[] = [];
+    for (const line of listValues(text)) {
+      const separator = line.indexOf(":");
+      const checkID = (separator < 0 ? line : line.slice(0, separator)).trim();
+      if (checkID) {
+        out.push({ checkID, outcome: separator < 0 ? "" : line.slice(separator + 1).trim() });
+      }
+    }
+    return out;
+  }, [text]);
+  const checks = checksQuery.data ?? [];
+  const chosen = new Set(entries.map((entry) => entry.checkID));
+
+  const write = (next: { checkID: string; outcome: string }[]) =>
+    form.setValue(
+      "required_checks_text",
+      next.map((entry) => `${entry.checkID}:${entry.outcome}`).join("\n"),
+      { shouldDirty: true },
+    );
+
+  return (
+    <Fieldset
+      label={t("解锁要求")}
+      hint={t("留空表示不要求任何解锁结果。勾选后，缺少对应检测结果的节点不会进入该平台。")}
+    >
+      <div className="space-y-2">
+        {entries.length === 0 ? (
+          <p className="text-2xs text-ink-faint">{t("未设置解锁要求。")}</p>
+        ) : (
+          <ul className="space-y-1">
+            {entries.map((entry) => {
+              const rule = checks.find((check) => check.id === entry.checkID);
+              const label =
+                rule?.name && rule.name !== rule.id ? `${rule.name} (${entry.checkID})` : entry.checkID;
+              return (
+                <li key={entry.checkID} className="flex items-center gap-1.5">
+                  <span className="min-w-0 flex-1 truncate text-xs text-ink-soft" title={entry.checkID}>
+                    {label}
+                  </span>
+                  <Select
+                    aria-label={t("要求的结果")}
+                    className="w-36 shrink-0"
+                    value={entry.outcome}
+                    onChange={(event) =>
+                      write(
+                        entries.map((item) =>
+                          item.checkID === entry.checkID
+                            ? { ...item, outcome: event.target.value }
+                            : item,
+                        ),
+                      )
+                    }
+                  >
+                    <option value="">{t("任意结果")}</option>
+                    {INTEL_CHECK_OUTCOMES.map((outcome) => (
+                      <option key={outcome} value={outcome}>
+                        {outcome}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="sm"
+                    aria-label={t("移除")}
+                    onClick={() => write(entries.filter((item) => item.checkID !== entry.checkID))}
+                  >
+                    <X size={12} />
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <Select
+          aria-label={t("添加解锁要求")}
+          value=""
+          onChange={(event) => {
+            const checkID = event.target.value;
+            if (checkID && !chosen.has(checkID)) {
+              write([...entries, { checkID, outcome: "" }]);
+            }
+          }}
+        >
+          <option value="">{t("添加解锁要求…")}</option>
+          {checks
+            .filter((check) => !chosen.has(check.id))
+            .map((check) => (
+              <option key={check.id} value={check.id}>
+                {check.name && check.name !== check.id ? `${check.name} (${check.id})` : check.id}
+              </option>
+            ))}
+        </Select>
+      </div>
+    </Fieldset>
   );
 }

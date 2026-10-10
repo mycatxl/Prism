@@ -297,7 +297,7 @@ export function PlatformDetailPage() {
         throw new Error("平台不存在或已被删除");
       }
 
-      return updatePlatform(platform.id, toPlatformUpdateInput(formData));
+      return updatePlatform(platform.id, toPlatformUpdateInput(formData, platform.quality_policy));
     },
     onSuccess: async (updated) => {
       await invalidatePlatform(updated.id);

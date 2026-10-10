@@ -27,6 +27,7 @@ export type Platform = {
   reverse_proxy_fixed_account_header: string;
   allocation_policy: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled: boolean;
+  quality_policy?: PlatformQualityPolicy;
   updated_at: string;
 };
 
@@ -47,6 +48,27 @@ export type PlatformScopeSpec = {
   protocols?: string[];
 };
 
+/**
+ * The quality policy of a platform.
+ *
+ * PATCH /api/v1/platforms/{id} replaces the whole object, so an editor that
+ * touches one field has to send every other field back unchanged - an omitted
+ * key clears it.
+ */
+export type PlatformQualityPolicy = {
+  min_purity?: number;
+  ip_types?: string[];
+  allowed_verdicts?: string[];
+  min_confidence?: string;
+  require_native?: boolean;
+  required_checks?: Record<string, string>;
+  max_assessment_age?: string;
+  max_egress_age?: string;
+  unknown_action?: string;
+  exclude_tor?: boolean;
+  exclude_high_risk?: boolean;
+};
+
 export type PlatformCreateInput = {
   name: string;
   sticky_ttl?: string;
@@ -61,6 +83,7 @@ export type PlatformCreateInput = {
   reverse_proxy_fixed_account_header?: string;
   allocation_policy?: PlatformAllocationPolicy;
   passive_circuit_breaker_disabled?: boolean;
+  quality_policy?: PlatformQualityPolicy;
 };
 
 export type PlatformUpdateInput = PlatformCreateInput;

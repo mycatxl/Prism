@@ -53,6 +53,13 @@ import { listSubscriptions } from "../subscriptions/api";
 import { createIntelJob } from "../jobs/api";
 import type { IntelJobScope } from "../jobs/types";
 import {
+  checkFilterValue,
+  INTEL_CHECK_OUTCOMES,
+  listIntelChecks,
+  parseCheckFilterValue,
+  type IntelCheck,
+} from "../intel/checks";
+import {
   exportNodes,
   getNode,
   listNodes,
@@ -143,6 +150,107 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
   );
 }
 
+/**
+ * UnlockCheckFilter is the "检测结果" picker.
+ *
+ * The filter value is "<check id>:<outcome>" and repeatable, and the outcome is
+ * optional ("<check id>" alone means any outcome). The rules come from
+ * GET /api/v1/intel/checks because the backend rejects an unknown id, so a
+ * hand-typed one only ever produced a 400. The outcome stays a select because
+ * its value set is fixed by node_checks.outcome.
+ */
+function UnlockCheckFilter({
+  checks,
+  selected,
+  onChange,
+}: {
+  checks: IntelCheck[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const { t } = useI18n();
+  const entries = selected.map(parseCheckFilterValue);
+  const chosen = new Set(entries.map((entry) => entry.checkID));
+
+  const addCheck = (checkID: string) => {
+    if (!checkID || chosen.has(checkID)) {
+      return;
+    }
+    onChange([...selected, checkID]);
+  };
+  const removeCheck = (checkID: string) => {
+    onChange(entries.filter((entry) => entry.checkID !== checkID).map((entry) => checkFilterValue(entry.checkID, entry.outcome)));
+  };
+  const setOutcome = (checkID: string, outcome: string) => {
+    onChange(
+      entries.map((entry) =>
+        entry.checkID === checkID ? checkFilterValue(entry.checkID, outcome) : checkFilterValue(entry.checkID, entry.outcome),
+      ),
+    );
+  };
+
+  return (
+    <div className="space-y-2">
+      {entries.length === 0 ? (
+        <p className="text-2xs text-ink-faint">{t("未选择检测项：不按解锁结果筛选。")}</p>
+      ) : (
+        <ul className="space-y-1">
+          {entries.map((entry) => {
+            const rule = checks.find((item) => item.id === entry.checkID);
+            const label = rule?.name && rule.name !== rule.id ? `${rule.name} (${entry.checkID})` : entry.checkID;
+            return (
+              <li key={entry.checkID} className="flex items-center gap-1.5">
+                <span className="min-w-0 flex-1 truncate text-xs text-ink-soft" title={entry.checkID}>
+                  {label}
+                </span>
+                <Select
+                  aria-label={t("结果")}
+                  className="w-32 shrink-0"
+                  value={entry.outcome}
+                  onChange={(event) => setOutcome(entry.checkID, event.target.value)}
+                >
+                  <option value="">{t("任意结果")}</option>
+                  {INTEL_CHECK_OUTCOMES.map((outcome) => (
+                    <option key={outcome} value={outcome}>
+                      {outcome}
+                    </option>
+                  ))}
+                </Select>
+                <Button
+                  type="button"
+                  variant="quiet"
+                  size="sm"
+                  aria-label={t("移除")}
+                  onClick={() => removeCheck(entry.checkID)}
+                >
+                  <X size={12} />
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <Select
+        aria-label={t("添加检测项")}
+        value=""
+        onChange={(event) => addCheck(event.target.value)}
+      >
+        <option value="">{t("添加检测项…")}</option>
+        {checks
+          .filter((check) => !chosen.has(check.id))
+          .map((check) => (
+            <option key={check.id} value={check.id}>
+              {check.name && check.name !== check.id ? `${check.name} (${check.id})` : check.id}
+            </option>
+          ))}
+      </Select>
+      <p className="text-2xs text-ink-faint">
+        {t("解锁结果是标签，不是准入条件：这里只筛选节点，不改变节点是否可用。")}
+      </p>
+    </div>
+  );
+}
+
 export function NodesPage() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
@@ -219,6 +327,9 @@ export function NodesPage() {
     country: filter.country || undefined,
     check: params.getAll("check").map((value) => value.trim()).filter(Boolean),
   };
+  // The picker and the API read the same repeatable parameter, so both stay in
+  // sync with the URL - including an entry typed before the picker existed.
+  const selectedChecks = params.getAll("check").map((value) => value.trim()).filter(Boolean);
   const qualityStatus = useQuery({
     queryKey: ["quality", "status"],
     queryFn: getQualityStatus,
@@ -252,6 +363,30 @@ export function NodesPage() {
     enabled: view === "nodes",
     staleTime: 60_000,
   });
+  // The unlock-check rule list is what turns the free-text filter into a picker:
+  // the backend rejects an unknown check id, so the options must come from the
+  // server rather than from a hand-typed string.
+  const intelChecks = useQuery({
+    queryKey: ["intel", "checks"],
+    queryFn: ({ signal }) => listIntelChecks(signal),
+    enabled: view === "nodes",
+    staleTime: 300_000,
+  });
+  // `check` is repeatable, so its writer replaces every occurrence instead of
+  // setting one value.
+  const updateChecks = (values: string[]) =>
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete("check");
+        for (const value of values) {
+          if (value) next.append("check", value);
+        }
+        next.delete("page");
+        return next;
+      },
+      { replace: true, state: location.state },
+    );
   const update = (key: string, value: string) =>
     setParams(
       (previous) => {
@@ -713,7 +848,8 @@ export function NodesPage() {
               {purityBands.map(band => (
                 <option value={band.id} key={band.id}>{band.min}–{band.max} {t(band.label)}</option>
               ))}
-              <option value="review">{t("需要复核")}</option>
+              {/* unknown is a real band (PurityBand(nil) in internal/quality), so it belongs
+                  here; review is not - it is a verdict, and the 判定 select already carries it. */}
               <option value="unknown">{t("评级未知")}</option>
             </Select>
             <Select
@@ -898,12 +1034,10 @@ export function NodesPage() {
                 />
               </Fieldset>
               <Fieldset label={t("检测结果")}>
-                <Input
-                  aria-label={t("检测结果")}
-                  className="w-full"
-                  value={filter.check}
-                  onChange={(event) => update("check", event.target.value)}
-                  placeholder={t("格式 检测项:结果，如 chatgpt:available")}
+                <UnlockCheckFilter
+                  checks={intelChecks.data ?? []}
+                  selected={selectedChecks}
+                  onChange={updateChecks}
                 />
               </Fieldset>
               {/* The reset is the panel's own action, not a condition, so it takes the
@@ -997,10 +1131,7 @@ export function NodesPage() {
                     <TH>{t("出口 IP")}</TH>
                     {sortableTH("region", "地区 / 网络类型")}
                     {sortableTH("purity_score", "纯净度", "prism-purity-v2")}
-                    <TH className="w-auto">
-                      {t("网络特征")}
-                      <span className="ml-1 text-2xs font-normal text-ink-faint">ProxyCheck</span>
-                    </TH>
+                    <TH className="w-auto">{t("网络特征")}</TH>
                     {sortableTH("latency", "参考延迟")}
                     <TH className="w-24 text-right">{t("操作")}</TH>
                   </TR>
