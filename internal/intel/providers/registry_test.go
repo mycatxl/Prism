@@ -346,8 +346,8 @@ func TestRegisterBuiltinsCatalog(t *testing.T) {
 	RegisterBuiltins(registry, BuiltinConfig{Now: func() time.Time { return testNow }})
 	want := []string{
 		"abuseipdb", "dbip_lite", "dnsbl", "geo_country", "ip_api", "ipapi_is",
-		"ipinfo_lite", "ippure", "ipqs", "maxmind_geolite2", "proxycheck",
-		"proxycheck_node", "torproject",
+		"ipapi_is_node", "ipinfo_lite", "ippure", "ipqs", "maxmind_geolite2",
+		"proxycheck", "proxycheck_node", "torproject",
 	}
 	got := registry.IDs()
 	if strings.Join(got, ",") != strings.Join(want, ",") {

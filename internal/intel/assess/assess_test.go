@@ -127,7 +127,7 @@ func TestAssess_Table(t *testing.T) {
 		noReasons  []string
 	}{
 		{
-			name: "clean_all_seven_sources",
+			name: "clean_all_scoring_sources",
 			evidence: evidence(
 				ev("proxycheck").risk(5),
 				ev("ippure").fraud(5).residential(true),
@@ -143,7 +143,31 @@ func TestAssess_Table(t *testing.T) {
 			verdict:    VerdictFavorable,
 			confidence: ConfidenceHigh,
 			ipType:     IPTypeResidential,
-			components: []string{"proxycheck", "ippure", "ipqs", "abuseipdb", "ipapi_is", "ip_api", "dnsbl"},
+			components: []string{"proxycheck", "ippure", "ipapi_is", "ip_api", "dnsbl"},
+			penalty:    0,
+		},
+		{
+			// ipqs and abuseipdb appear in the evidence but carry no weight
+			// (both vendors reject a keyless request), so they produce no
+			// component. This case pins that down from both sides: ipqs reports
+			// a terrible 90, and if it were still scored the weighted base
+			// would fall to 66; the coverage denominator ignores the two
+			// unweighted sources, so one of three enabled sources still covers
+			// 3/5.
+			name: "unweighted_sources_do_not_score_or_shrink_coverage",
+			evidence: evidence(
+				ev("proxycheck").risk(0),
+				ev("ipqs").fraud(90),
+				ev("abuseipdb").abuse(0, 0),
+			),
+			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true, SourceAbuseIPDB: true},
+			score:      ip(100),
+			band:       "excellent",
+			state:      StateValid,
+			verdict:    VerdictFavorable,
+			confidence: ConfidenceMedium,
+			ipType:     IPTypeUnknown,
+			components: []string{"proxycheck"},
 			penalty:    0,
 		},
 		{
@@ -254,16 +278,18 @@ func TestAssess_Table(t *testing.T) {
 			hasReasons: []string{ReasonCompromised},
 		},
 		{
+			// ipqs carries no weight, so the VPN signal rides on the
+			// proxycheck row: the flag still costs its 10 points.
 			name:       "vpn_deducts_10_and_reviews",
-			evidence:   evidence(ev("ipqs").fraud(0).flag("vpn", true)),
-			enabled:    map[string]bool{SourceIPQS: true},
+			evidence:   evidence(ev("proxycheck").risk(0).flag("vpn", true)),
+			enabled:    map[string]bool{SourceProxycheck: true},
 			score:      ip(90),
 			band:       "clean",
 			state:      StateValid,
 			verdict:    VerdictReview,
 			confidence: ConfidenceMedium,
 			ipType:     IPTypeUnknown,
-			components: []string{"ipqs"},
+			components: []string{"proxycheck"},
 			penalty:    -10,
 			hasReasons: []string{ReasonVPN},
 		},
@@ -283,15 +309,15 @@ func TestAssess_Table(t *testing.T) {
 		},
 		{
 			name:       "scraper_deducts_10_and_reviews",
-			evidence:   evidence(ev("ipqs").fraud(0).flag("scraper", true)),
-			enabled:    map[string]bool{SourceIPQS: true},
+			evidence:   evidence(ev("proxycheck").risk(0).flag("scraper", true)),
+			enabled:    map[string]bool{SourceProxycheck: true},
 			score:      ip(90),
 			band:       "clean",
 			state:      StateValid,
 			verdict:    VerdictReview,
 			confidence: ConfidenceMedium,
 			ipType:     IPTypeUnknown,
-			components: []string{"ipqs"},
+			components: []string{"proxycheck"},
 			penalty:    -10,
 			hasReasons: []string{ReasonScraper},
 		},
@@ -363,45 +389,49 @@ func TestAssess_Table(t *testing.T) {
 			},
 		},
 		{
-			name:       "abuse_25_deducts_but_is_not_recent_abuse",
+			// abuseipdb keeps feeding the §1.1 abuse deduction even though it
+			// carries no weight: with no scoring source enabled the assessment
+			// is unsupported, yet AbuseConfidence is still read by detectFlags
+			// and costs its 10 points. It is never a silent "clean".
+			name:       "abuse_without_weighted_component_is_unsupported_but_flags",
 			evidence:   evidence(ev("abuseipdb").abuse(25, 1)),
 			enabled:    map[string]bool{SourceAbuseIPDB: true},
-			score:      ip(65),
-			band:       "mixed",
-			state:      StateValid,
-			verdict:    VerdictCaution,
-			confidence: ConfidenceMedium,
+			score:      nil,
+			band:       "unknown",
+			state:      StateUnsupported,
+			verdict:    VerdictPending,
 			ipType:     IPTypeUnknown,
-			components: []string{"abuseipdb"},
 			penalty:    -10,
-			hasReasons: []string{ReasonAbuseConfidence},
+			hasReasons: []string{ReasonAbuseConfidence, ReasonNoScoringSource},
 			noReasons:  []string{ReasonRecentAbuse},
 		},
 		{
-			name:       "abuse_80_with_reports_is_high_risk",
+			// The §1.6 high_risk rule reads AbuseConfidence directly, so it
+			// still fires for an unweighted source.
+			name:       "abuse_high_confidence_with_reports_is_high_risk",
 			evidence:   evidence(ev("abuseipdb").abuse(80, 5)),
 			enabled:    map[string]bool{SourceAbuseIPDB: true},
-			score:      ip(10),
-			band:       "poor",
-			state:      StateValid,
+			score:      nil,
+			band:       "unknown",
+			state:      StateUnsupported,
 			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
 			ipType:     IPTypeUnknown,
-			components: []string{"abuseipdb"},
 			penalty:    -10,
-			hasReasons: []string{ReasonRecentAbuse},
+			hasReasons: []string{ReasonRecentAbuse, ReasonNoScoringSource},
 		},
 		{
-			name:       "abuse_76_without_reports_is_not_high_risk",
+			// 76 with no reports is not "recent abuse", and the row is not
+			// scored: the verdict follows the weighted sources alone.
+			name:       "abuse_76_without_reports_is_not_recent_abuse",
 			evidence:   evidence(ev("abuseipdb").abuse(76, 0), ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business")),
 			enabled:    map[string]bool{SourceAbuseIPDB: true, SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(65),
-			band:       "mixed",
+			score:      ip(90),
+			band:       "clean",
 			state:      StateValid,
-			verdict:    VerdictCaution,
-			confidence: ConfidenceMedium,
+			verdict:    VerdictFavorable,
+			confidence: ConfidenceHigh,
 			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "abuseipdb", "ipapi_is"},
+			components: []string{"proxycheck", "ipapi_is"},
 			penalty:    -10,
 			noReasons:  []string{ReasonRecentAbuse},
 		},
@@ -409,7 +439,7 @@ func TestAssess_Table(t *testing.T) {
 			name:       "ipapi_is_abuser_is_compromised",
 			evidence:   evidence(ev("ipapi_is").flag("compromised", true), ev("proxycheck").risk(0)),
 			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(45),
+			score:      ip(36),
 			band:       "poor",
 			state:      StateValid,
 			verdict:    VerdictHighRisk,
@@ -423,8 +453,8 @@ func TestAssess_Table(t *testing.T) {
 			name:       "ipapi_is_proxy_flag",
 			evidence:   evidence(ev("ipapi_is").flag("proxy", true), ev("proxycheck").risk(0)),
 			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(80),
-			band:       "fair",
+			score:      ip(74),
+			band:       "mixed",
 			state:      StateValid,
 			verdict:    VerdictReview,
 			confidence: ConfidenceMedium,
@@ -450,6 +480,9 @@ func TestAssess_Table(t *testing.T) {
 			components: []string{"proxycheck"},
 		},
 		{
+			// ipqs still votes on the §1.4 network type even though it carries
+			// no weight: voteOf reads the row's own payload, not the weight
+			// table. Only the scoring sources decide the score.
 			name: "conflicting_residential_vs_datacenter",
 			evidence: evidence(
 				ev("proxycheck").risk(0).typeOf("mobile"),
@@ -464,14 +497,14 @@ func TestAssess_Table(t *testing.T) {
 			verdict:    VerdictConflicting,
 			confidence: ConfidenceHigh,
 			ipType:     IPTypeConflicting,
-			components: []string{"proxycheck", "ipqs", "ipapi_is", "ip_api"},
+			components: []string{"proxycheck", "ipapi_is", "ip_api"},
 			hasReasons: []string{ReasonIPTypeConflicting},
 		},
 		{
 			name: "tie_prefers_non_datacenter_without_residential_vote",
 			evidence: evidence(
 				ev("proxycheck").risk(0).typeOf("datacenter"),
-				ev("ipqs").fraud(0).typeOf("business"),
+				ev("ipapi_is").typeOf("business"),
 			),
 			score:      ip(100),
 			band:       "excellent",
@@ -479,22 +512,22 @@ func TestAssess_Table(t *testing.T) {
 			verdict:    VerdictFavorable,
 			confidence: ConfidenceMedium,
 			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipqs"},
+			components: []string{"proxycheck", "ipapi_is"},
 		},
 		{
 			name: "tie_between_business_and_wireless_is_deterministic",
 			evidence: evidence(
 				ev("proxycheck").risk(0).typeOf("business"),
-				ev("ipqs").fraud(0).typeOf("wireless"),
+				ev("ipapi_is").typeOf("wireless"),
 			),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true},
+			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
 			score:      ip(100),
 			band:       "excellent",
 			state:      StateValid,
 			verdict:    VerdictFavorable,
 			confidence: ConfidenceHigh,
 			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipqs"},
+			components: []string{"proxycheck", "ipapi_is"},
 		},
 		{
 			name:       "non_residential_only_vote",
@@ -621,16 +654,19 @@ func TestAssess_Table(t *testing.T) {
 			hasReasons: []string{ReasonAllSourcesFailed},
 		},
 		{
-			name:       "partial_failure_stays_pending",
+			// ipqs is enabled but unweighted, so it is not part of the coverage
+			// denominator: the single weighted source that failed is the whole
+			// denominator, which makes the state unsupported rather than
+			// pending. Pending now needs a weighted source that has not failed.
+			name:       "all_weighted_enabled_sources_failed_is_unsupported",
 			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true},
 			failed:     map[string]string{SourceProxycheck: "PROVIDER_UNAVAILABLE"},
 			score:      nil,
 			band:       "unknown",
-			state:      StatePending,
+			state:      StateUnsupported,
 			verdict:    VerdictPending,
 			ipType:     IPTypeUnknown,
-			hasReasons: []string{ReasonNoValidEvidence},
-			noReasons:  []string{ReasonAllSourcesFailed},
+			hasReasons: []string{ReasonAllSourcesFailed},
 		},
 		{
 			name:       "no_evidence_at_all_is_pending",
@@ -653,15 +689,18 @@ func TestAssess_Table(t *testing.T) {
 			hasReasons: []string{ReasonNoValidEvidence},
 		},
 		{
-			name:       "confidence_medium_for_two_sources_without_full_coverage",
+			// One weighted source against the whole keyless denominator (11)
+			// covers 3/11 = 0.27, the §1.2 "low" row.
+			name:       "one_weighted_source_is_low_without_full_coverage",
 			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0)),
 			score:      ip(100),
 			band:       "excellent",
 			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
+			verdict:    VerdictIncomplete,
+			confidence: ConfidenceLow,
 			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ipqs"},
+			components: []string{"proxycheck"},
+			hasReasons: []string{ReasonIncompleteCoverage},
 		},
 		{
 			name:       "confidence_high_needs_coverage_and_agreement",
@@ -673,13 +712,13 @@ func TestAssess_Table(t *testing.T) {
 			verdict:    VerdictFavorable,
 			confidence: ConfidenceHigh,
 			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipqs", "abuseipdb", "ipapi_is"},
+			components: []string{"proxycheck", "ipapi_is"},
 		},
 		{
 			name:       "disagreement_blocks_high_confidence",
 			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").flag("compromised", true)),
 			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(45),
+			score:      ip(36),
 			band:       "poor",
 			state:      StateValid,
 			verdict:    VerdictHighRisk,
@@ -696,9 +735,9 @@ func TestAssess_Table(t *testing.T) {
 			band:       "clean",
 			state:      StateValid,
 			verdict:    VerdictReview,
-			confidence: ConfidenceHigh,
+			confidence: ConfidenceMedium,
 			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ipqs"},
+			components: []string{"proxycheck"},
 			penalty:    -10,
 			hasReasons: []string{ReasonProxy},
 		},
@@ -727,6 +766,8 @@ func TestAssess_Table(t *testing.T) {
 			hasReasons: []string{ReasonNoValidEvidence},
 		},
 		{
+			// ipqs is enabled but unweighted, so this is one component out of a
+			// 3-weight denominator: coverage is 1.0, and agreement is exact.
 			name:       "score_100_is_excellent",
 			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0)),
 			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true},
@@ -734,9 +775,9 @@ func TestAssess_Table(t *testing.T) {
 			band:       "excellent",
 			state:      StateValid,
 			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
+			confidence: ConfidenceMedium,
 			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ipqs"},
+			components: []string{"proxycheck"},
 		},
 	}
 
@@ -847,10 +888,10 @@ func TestAssess_Deterministic(t *testing.T) {
 		IP: netip.MustParseAddr(testIPv4),
 		Evidence: evidence(
 			ev("proxycheck").risk(0).typeOf("business"),
-			ev("ipqs").fraud(0).typeOf("wireless"),
+			ev("ipapi_is").typeOf("wireless"),
 			ev("dnsbl").dnsbl([]string{"a", "b"}, []string{"b"}),
 			ev("abuseipdb").abuse(30, 2),
-			ev("ipapi_is").typeOf("business"),
+			ev("ipqs").fraud(10).typeOf("datacenter"),
 		),
 		Enabled: map[string]bool{
 			SourceProxycheck: true, SourceIPQS: true, SourceDNSBL: true, SourceAbuseIPDB: true, SourceIPAPIIs: true,
@@ -921,8 +962,8 @@ func TestAssess_ConfidenceBoundaries(t *testing.T) {
 			confidence: ConfidenceNone,
 		},
 		{
-			// One source of many enabled ones covers 3/14 < 0.4, which is the
-			// §1.2 "low" row.
+			// One weighted source covers 3/11 = 0.27 of the keyless
+			// denominator: the §1.2 "low" row.
 			name:       "one_source_with_low_coverage_is_low",
 			evidence:   evidence(ev("proxycheck").risk(0)),
 			confidence: ConfidenceLow,
@@ -934,14 +975,16 @@ func TestAssess_ConfidenceBoundaries(t *testing.T) {
 			confidence: ConfidenceMedium,
 		},
 		{
-			name:       "two_sources_coverage_0_43_is_medium",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0)),
+			// Two weighted sources cover 5/11 = 0.45 without full coverage, so
+			// they take the ">= 0.4" branch of §1.2: medium.
+			name:       "two_sources_coverage_0_45_is_medium",
+			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business")),
 			confidence: ConfidenceMedium,
 		},
 		{
 			name:       "two_sources_high_coverage_and_agreement_is_high",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0), ev("ipapi_is").typeOf("business")),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true, SourceIPAPIIs: true},
+			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business"), ev("ip_api").flag("proxy", false)),
+			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true, SourceIPAPI: true},
 			confidence: ConfidenceHigh,
 		},
 	}

@@ -42,6 +42,10 @@ const (
 	// DefaultViaNodeDeferral so a rate-limited node is parked and retried
 	// inside the same item instead of being reported as an exhausted source.
 	maxViaNodeCooldown = 15 * time.Minute
+	// checkRetryDeferral parks an item whose unlock rules did not get to run.
+	// jobs.Manager raises it to the exponential backoff floor (30s and up), so
+	// this is the lower bound of the wait, not the whole one.
+	checkRetryDeferral = 15 * time.Second
 )
 
 // Named step failure codes. They land in job_items.error_code and in the step
@@ -56,6 +60,17 @@ const (
 	CodeJobUnavailable = "JOB_UNAVAILABLE"
 	// CodeProviderUnavailable marks a provider that is not runnable.
 	CodeProviderUnavailable = "PROVIDER_UNAVAILABLE"
+	// CodeNoEgressObservation marks a provider step that ran before the node
+	// had an egress observation (step 1) or whose stored row holds no usable
+	// address. It is an error code rather than a skip on purpose: `skipped`
+	// only sets Summary, so jobs.Manager keeps walking the remaining steps and
+	// finally finishes the item as ItemDone - a node whose egress probe had not
+	// landed yet was recorded as a finished, fully-checked node that in fact
+	// produced no evidence at all, and its job settled as succeeded. Returning
+	// a named error instead routes the item through the ordinary retry path:
+	// exponential backoff, bounded by jobs.maxItemAttempts, and a terminal
+	// ItemFailed (hence JobPartial) when the observation never arrives.
+	CodeNoEgressObservation = "NO_EGRESS_OBSERVATION"
 )
 
 // StepOptions supplies the runtime dependencies of the WP09 pipeline steps
@@ -202,8 +217,26 @@ func newStepExecutor(opts StepOptions) *stepExecutor {
 
 // skipped builds the pipeline's no-op result: the step did nothing for a named
 // reason but the item still reaches a terminal state.
+//
+// Use it only when doing nothing is the correct, final outcome for the item
+// (e.g. an optional data source is switched off). Never use it to report a
+// missing prerequisite that may still arrive: a skip is terminal, so the item
+// would be recorded as finished even though it produced no evidence. Use a
+// named error code instead - see CodeNoEgressObservation.
 func skipped(reason string) jobs.StepResult {
 	return jobs.StepResult{Summary: map[string]any{"skipped": reason}}
+}
+
+// noEgressObservation reports a step that cannot run because the node has no
+// egress observation (step 1) or its stored row holds no usable address. The
+// step name and the human reason are carried in the summary; the error code
+// makes jobs.Manager retry the item with backoff and finally settle it as
+// ItemFailed once the attempts run out.
+func noEgressObservation(step, reason string) jobs.StepResult {
+	return jobs.StepResult{
+		ErrorCode: CodeNoEgressObservation,
+		Summary:   map[string]any{"step": step, "reason": reason},
+	}
 }
 
 func (e *stepExecutor) now() time.Time { return e.clock.Now().UTC() }
@@ -433,10 +466,10 @@ func (e *stepExecutor) offlineStep(ctx context.Context, jobID, nodeHash string) 
 		return jobs.StepResult{ErrorCode: "EVIDENCE_READ_FAILED", Summary: map[string]any{"error": err.Error()}}
 	}
 	if !ok {
-		return skipped("no egress observation for this node yet")
+		return noEgressObservation("offline", "no egress observation for this node yet")
 	}
 	if len(ips) == 0 {
-		return skipped("the node has no usable egress address")
+		return noEgressObservation("offline", "the node has no usable egress address")
 	}
 	specs := e.offlineSpecs(jc.request.Providers)
 	if len(specs) == 0 {
@@ -494,10 +527,10 @@ func (e *stepExecutor) enqueueOnlineStep(ctx context.Context, jobID, nodeHash st
 		return jobs.StepResult{ErrorCode: "EVIDENCE_READ_FAILED", Summary: map[string]any{"error": err.Error()}}
 	}
 	if !ok {
-		return skipped("no egress observation for this node yet")
+		return noEgressObservation("enqueue_online", "no egress observation for this node yet")
 	}
 	if len(ips) == 0 {
-		return skipped("the node has no usable egress address")
+		return noEgressObservation("enqueue_online", "the node has no usable egress address")
 	}
 	specs := e.onlineSpecs(jc.request.Providers)
 	if len(specs) == 0 {
@@ -595,10 +628,10 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 		return jobs.StepResult{ErrorCode: "EVIDENCE_READ_FAILED", Summary: map[string]any{"error": err.Error()}}
 	}
 	if !ok {
-		return skipped("no egress observation for this node yet")
+		return noEgressObservation("via_node", "no egress observation for this node yet")
 	}
 	if len(ips) == 0 {
-		return skipped("the node has no usable egress address")
+		return noEgressObservation("via_node", "the node has no usable egress address")
 	}
 	specs := e.viaNodeSpecs(jc.request.Providers)
 	if len(specs) == 0 {
@@ -877,8 +910,19 @@ func (e *stepExecutor) checksStep(ctx context.Context, jobID, nodeHash string) j
 
 	now := e.now()
 	outcomes := make(map[string]any, len(results))
+	var notRun []string
 	stored := 0
 	for _, result := range results {
+		if checks.NotExecuted(result.ErrorCode) {
+			// The rule never ran: its per-rule slot was still taken or the
+			// context was already done. Storing the error outcome would write a
+			// fake property of the node into node_checks, and the retry would
+			// then go through the item error path - a growing backoff that ends
+			// in ItemFailed and drops the rule for good. Park the item instead:
+			// no failure, no row, and the rules run on the next attempt.
+			notRun = append(notRun, result.CheckID)
+			continue
+		}
 		ttl := result.TTL
 		if ttl <= 0 {
 			ttl = checks.DefaultTTL
@@ -901,6 +945,19 @@ func (e *stepExecutor) checksStep(ctx context.Context, jobID, nodeHash string) j
 		}
 		stored++
 		outcomes[result.CheckID] = result.Outcome
+	}
+	if len(notRun) > 0 {
+		// The rules that did run are already stored; the item comes back for the
+		// rest. UpsertNodeCheck is idempotent, so the next attempt re-running a
+		// rule costs one request and overwrites its own row.
+		return jobs.StepResult{
+			DeferUntilNs: now.Add(checkRetryDeferral).UnixNano(),
+			Summary: map[string]any{
+				"checks":         outcomes,
+				"checks_stored":  stored,
+				"checks_not_run": notRun,
+			},
+		}
 	}
 	if stored == 0 {
 		return jobs.StepResult{ErrorCode: "CHECK_STORE_FAILED", Summary: map[string]any{"reason": "no check result could be stored"}}

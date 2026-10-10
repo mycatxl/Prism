@@ -38,8 +38,32 @@ const DefaultHotReload = 60 * time.Second
 // DefaultConcurrencyPerCheck bounds the global concurrency of one rule (§5.3).
 //
 // One rule runs against many nodes at once, each through its own node, so this is
-// a resource bound rather than a vendor one.
-const DefaultConcurrencyPerCheck = 16
+// a resource bound rather than a vendor one. It is set high on purpose: the
+// requests of two nodes never share a connection or a rate, and the pool of node
+// workers (intel_node_workers, up to 512) is what really bounds the fan-out, so a
+// low per-rule ceiling only serialises work that could run in parallel - and each
+// node's own step timeout starts counting while it waits.
+const DefaultConcurrencyPerCheck = 512
+
+// Error codes of a rule that was selected but never executed. They are not
+// failures of the node: Run returns them as OutcomeError results, and the caller
+// has to turn them back into a lossless retry instead of storing a node_checks
+// row, because a stored "error" would read as a property of the node.
+const (
+	// CodeCheckBusy means the per-rule concurrency slot was still taken when the
+	// caller's context ran out.
+	CodeCheckBusy = "CHECK_BUSY"
+	// CodeCheckCanceled means the caller's context was already done, so the rule
+	// was not started at all.
+	CodeCheckCanceled = "CHECK_CANCELED"
+)
+
+// NotExecuted reports whether an error code means "the rule never ran" rather
+// than "the rule ran and the node failed". A caller that stores results has to
+// retry those instead of persisting them.
+func NotExecuted(errorCode string) bool {
+	return errorCode == CodeCheckBusy || errorCode == CodeCheckCanceled
+}
 
 // userRuleDirName is the directory below $PRISM_STATE_DIR holding user rules.
 const userRuleDirName = "checks.d"
@@ -302,7 +326,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) []Result {
 		if err := ctx.Err(); err != nil {
 			results = append(results, Result{
 				CheckID: rule.ID, Version: rule.Version, Outcome: OutcomeError,
-				Detail: map[string]any{}, ErrorCode: "CHECK_CANCELED",
+				Detail: map[string]any{}, ErrorCode: CodeCheckCanceled,
 			})
 			continue
 		}
@@ -310,7 +334,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) []Result {
 		if !ok {
 			results = append(results, Result{
 				CheckID: rule.ID, Version: rule.Version, Outcome: OutcomeError,
-				Detail: map[string]any{}, ErrorCode: "CHECK_BUSY",
+				Detail: map[string]any{}, ErrorCode: CodeCheckBusy,
 			})
 			continue
 		}

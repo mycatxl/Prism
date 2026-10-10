@@ -601,6 +601,145 @@ func (s *Store) ClaimProviderItems(ctx context.Context, provider string, nowNs, 
 	return claimed, nil
 }
 
+// LiftProviderPauseForRotatedCredential clears a pause that was recorded for a
+// credential which has since been replaced, and reports whether it changed
+// anything.
+//
+// It is the idle-round counterpart of the same rule inside
+// ConsumeProviderBudget: a 401/403 belongs to the key that produced it, so a new
+// key must take effect without waiting for the provider's next request. Since
+// the worker now claims before it consumes, an empty queue never reaches
+// ConsumeProviderBudget, and without this call a rotated key would leave the
+// provider reported as paused until new work appeared.
+//
+// The write only happens when the stored credential really differs from the
+// given one, so an idle poll costs one indexed read. An empty credentialID means
+// the provider needs no key: there is no rotation to observe and a keyless
+// source never records a credential-bound pause.
+func (s *Store) LiftProviderPauseForRotatedCredential(ctx context.Context, provider, credentialID string) (bool, error) {
+	if strings.TrimSpace(provider) == "" {
+		return false, fmt.Errorf("lift provider pause: provider is required")
+	}
+	if credentialID == "" {
+		return false, nil
+	}
+	db, err := s.conn()
+	if err != nil {
+		return false, err
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	st, err := scanProviderState(tx.QueryRowContext(ctx, providerStateSelect+` WHERE provider = ?`, provider))
+	if errors.Is(err, sql.ErrNoRows) {
+		// No state means no pause: nothing to lift.
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !st.Paused || st.CredentialID == credentialID {
+		return false, nil
+	}
+	st.Paused = false
+	st.ErrorCode = ""
+	st.CredentialID = credentialID
+	if err := upsertProviderStateTx(ctx, tx, st); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// providerReleaseChunk bounds one release statement: SQLite has a finite number
+// of bound variables per statement, and one claim is bounded by the provider's
+// batch size.
+const providerReleaseChunk = 400
+
+// ReleaseProviderItems returns freshly claimed rows to the queue after a closed
+// budget gate and reports how many rows went back. It is the counterpart of the
+// claim in front of the budget: the worker claims first so that an idle queue
+// spends nothing, and hands the rows back when the gate it then hits is shut.
+//
+// Only rows this owner still holds are touched (status = 'running' AND
+// lease_owner = ?): a row another worker took over after this lease expired, and
+// a row this worker already resolved or failed, must never be dragged back into
+// the queue.
+//
+// next_run_at_ns is stamped with nowNs rather than left at the value the claim
+// read. A released row is not waiting for a retry backoff - backoff only exists
+// after a real attempt - it is waiting for the provider gate, and that deadline
+// lives in provider_state (next_request_at_ns / blocked_until_ns / paused). The
+// worker that got its gate closed sleeps budgetWait() for exactly that deadline
+// before it claims again, so a row that is due right here cannot become a busy
+// loop; stamping nowNs keeps the row honest and lets a gate that opens early
+// (operator resume, credential rotation, next UTC day) be picked up immediately
+// instead of behind a stale timestamp.
+//
+// attempts is deliberately untouched. ClaimProviderItems does not count an
+// attempt - the outcome does, in applyOutcome - so there is nothing to roll back
+// and a closed gate must not spend a retry (§3.3).
+func (s *Store) ReleaseProviderItems(ctx context.Context, provider string, ips []string, owner string, nowNs int64) (int64, error) {
+	if strings.TrimSpace(provider) == "" {
+		return 0, fmt.Errorf("release provider items: provider is required")
+	}
+	if strings.TrimSpace(owner) == "" {
+		// Without an owner the statement would match every running row of the
+		// provider, including the rows of another worker.
+		return 0, fmt.Errorf("release provider items: owner is required")
+	}
+	if len(ips) == 0 {
+		return 0, nil
+	}
+	db, err := s.conn()
+	if err != nil {
+		return 0, err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var released int64
+	for start := 0; start < len(ips); start += providerReleaseChunk {
+		end := start + providerReleaseChunk
+		if end > len(ips) {
+			end = len(ips)
+		}
+		chunk := ips[start:end]
+		args := make([]any, 0, len(chunk)+5)
+		args = append(args, QueueQueued, nowNs, provider, QueueRunning, owner)
+		for _, ip := range chunk {
+			args = append(args, ip)
+		}
+		res, err := tx.ExecContext(ctx, `
+			UPDATE provider_queue SET status = ?, next_run_at_ns = ?,
+				lease_owner = '', lease_until_ns = 0
+			WHERE provider = ? AND status = ? AND lease_owner = ?
+			  AND ip IN (`+sqlPlaceholders(len(chunk))+`)`,
+			args...)
+		if err != nil {
+			return released, err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return released, err
+		}
+		released += affected
+	}
+	if err := tx.Commit(); err != nil {
+		return released, err
+	}
+	return released, nil
+}
+
 // ResolveProviderItem marks one queued lookup done and clears its lease.
 func (s *Store) ResolveProviderItem(ctx context.Context, provider, ip string) error {
 	db, err := s.conn()

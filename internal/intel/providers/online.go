@@ -773,6 +773,14 @@ func (p *IPAPIIS) lookupOne(ctx context.Context, ip netip.Addr) Result {
 
 // DecodeIPAPIIS validates one ipapi.is payload.
 func DecodeIPAPIIS(body []byte, ip netip.Addr, now time.Time, ttl time.Duration) (*quality.Evidence, error) {
+	return DecodeIPAPIISAs(body, ip, now, ttl, "ipapi_is", IPAPIISProfile)
+}
+
+// DecodeIPAPIISAs is DecodeIPAPIIS with an explicit source identity, so the
+// anonymous via-node variant can record its own provider id and profile while
+// sharing one strict decoder. It is strict: a mismatched address, a payload that
+// carries no signal at all and unparsable blocks are all rejected.
+func DecodeIPAPIISAs(body []byte, ip netip.Addr, now time.Time, ttl time.Duration, provider, profile string) (*quality.Evidence, error) {
 	invalid := func() (*quality.Evidence, error) {
 		return nil, &ProviderError{Code: CodeResponse, Message: "ipapi.is returned incomplete or mismatched evidence"}
 	}
@@ -832,7 +840,7 @@ func DecodeIPAPIIS(body []byte, ip netip.Addr, now time.Time, ttl time.Duration)
 		ipType = "business"
 	}
 	evidence := &quality.Evidence{
-		IP: ip.Unmap().String(), Provider: "ipapi_is", Profile: IPAPIISProfile,
+		IP: ip.Unmap().String(), Provider: provider, Profile: profile,
 		IPType: ipType, SourceType: boundedText(payload.Company.Type, 80),
 		UsageType: boundedText(payload.Company.Type, 80), Organization: boundedText(payload.Company.Name, 240),
 		CountryCode: boundedText(payload.Location.CountryCode, 8), City: boundedText(payload.Location.City, 120),

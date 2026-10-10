@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/netip"
@@ -102,6 +103,12 @@ type Manager struct {
 	workerTarget atomic.Int64
 	activeJobs   atomic.Value // []string
 
+	// progress tracks the terminal-item count observed for each active job, so
+	// refreshActiveJobs can tell a job that is still finishing items from one
+	// that is stalled behind a gate it cannot pass (jobStallYield).
+	progressMu sync.Mutex
+	progress   map[string]jobProgress
+
 	schedulingFailures atomic.Int64
 	cleanupRuns        atomic.Int64
 	nodesPruned        atomic.Int64
@@ -154,6 +161,8 @@ func New(opts Options) *Manager {
 		owner:  "intel-worker-" + newShortID(),
 		hub:    newHub(time.Second),
 		stopCh: make(chan struct{}),
+
+		progress: make(map[string]jobProgress),
 	}
 	m.activeJobs.Store([]string(nil))
 	if opts.ProviderSpecs != nil && opts.Lookup != nil {
@@ -294,12 +303,21 @@ func (m *Manager) Cancel(ctx context.Context, jobID string) error {
 }
 
 // RetryFailed requeues the failed items of a job (§3.5).
+//
+// publish only runs when an item was actually requeued. RefreshJob recomputes
+// the job from its item set, so publishing after a no-op retry rewrites the job
+// status from that set - and once the retention pass has pruned the items
+// (DeleteJobItemsFinishedBefore, seven days after the job finished, while the job
+// row lives for thirty) the set is empty and RefreshJob settles a partial job as
+// succeeded. The retry returned 0, so there is nothing to publish either way.
 func (m *Manager) RetryFailed(ctx context.Context, jobID string) (int64, error) {
 	retried, err := m.store.RetryFailedJobItems(ctx, jobID, m.nowNs())
 	if err != nil {
 		return 0, err
 	}
-	m.publish(ctx, jobID, true)
+	if retried > 0 {
+		m.publish(ctx, jobID, true)
+	}
 	return retried, nil
 }
 
@@ -370,7 +388,15 @@ func (m *Manager) scheduleLoop() {
 
 // refreshActiveJobs picks the jobs allowed to run. Running jobs keep their slot
 // so newly created high-priority jobs queue behind them instead of preempting
-// in-flight work (§3.4).
+// in-flight work (§3.4). Two cases override that order:
+//
+//   - a running job that has settled no item for jobStallYield is sorted behind
+//     the queued jobs, so a job whose items are all parked behind a closed gate
+//     yields to work that can actually progress. It keeps its slot when nothing
+//     else wants it;
+//   - a job stalled that way for jobStallTimeout while another job waits for a
+//     slot is settled as partial and leaves the set, so it reaches a terminal
+//     state instead of lingering as running forever.
 func (m *Manager) refreshActiveJobs(cfg Config) {
 	ctx := context.Background()
 	active, err := m.store.ListActiveJobs(ctx, maxActiveJobsFetched)
@@ -379,17 +405,33 @@ func (m *Manager) refreshActiveJobs(cfg Config) {
 		m.logf("[intel] list active jobs: %v", err)
 		return
 	}
+	m.trackProgress(active)
+
 	ordered := make([]store.Job, 0, len(active))
+	var stalled []store.Job
+	queuedWaiting := 0
 	for _, job := range active {
-		if job.Status == store.JobRunning {
-			ordered = append(ordered, job)
+		if job.Status != store.JobRunning {
+			continue
 		}
+		if m.stallFor(job) >= jobStallYield {
+			stalled = append(stalled, job)
+			continue
+		}
+		ordered = append(ordered, job)
 	}
 	for _, job := range active {
 		if job.Status == store.JobQueued {
 			ordered = append(ordered, job)
+			queuedWaiting++
 		}
 	}
+	// A stalled job is only given up on when its slot is actually wanted: with
+	// no queued job waiting it still runs at the end of the order.
+	if queuedWaiting > 0 {
+		stalled = m.settleAbandonedJobs(ctx, stalled)
+	}
+	ordered = append(ordered, stalled...)
 	limit := cfg.MaxRunningJobs
 	if limit > len(ordered) {
 		limit = len(ordered)
@@ -404,6 +446,100 @@ func (m *Manager) refreshActiveJobs(cfg Config) {
 func (m *Manager) currentActiveJobIDs() []string {
 	ids, _ := m.activeJobs.Load().([]string)
 	return ids
+}
+
+// jobProgress is the last observed terminal-item count of one active job plus
+// the moment that count last changed.
+type jobProgress struct {
+	settled    int
+	observedNs int64
+}
+
+// settleAbandonedJobs fails the pending items of every stalled job that has made
+// no progress for jobStallTimeout and returns the jobs still worth running.
+//
+// Settling is deliberately a partial result rather than a cancel: the items that
+// did run keep their evidence, and the job stays retryable through the normal
+// RetryFailedJobItems path. See jobStallTimeout for why this is a no-progress
+// bound applied under queued pressure rather than a wall-clock deadline.
+func (m *Manager) settleAbandonedJobs(ctx context.Context, stalled []store.Job) []store.Job {
+	if len(stalled) == 0 {
+		return stalled
+	}
+	now := m.nowNs()
+	kept := make([]store.Job, 0, len(stalled))
+	for _, job := range stalled {
+		if m.stallFor(job) < jobStallTimeout {
+			kept = append(kept, job)
+			continue
+		}
+		failed, err := m.store.FailPendingJobItems(ctx, job.ID, CodeJobTimeout, now)
+		if err != nil {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] settle abandoned job %s: %v", job.ID, err)
+			kept = append(kept, job)
+			continue
+		}
+		m.forgetProgress(job.ID)
+		m.logf("[intel] job %s settled no item for %s while another job waited: failed %d pending item(s) as %s",
+			job.ID, jobStallTimeout, failed, CodeJobTimeout)
+		m.publish(ctx, job.ID, true)
+	}
+	return kept
+}
+
+// trackProgress records how many items of each active job have settled, and when
+// that count last moved. The very first observation of a job stores its start
+// time as the reference point so a job that has made no progress at all since it
+// began is measured from the beginning, not from the first refresh.
+func (m *Manager) trackProgress(active []store.Job) {
+	now := m.nowNs()
+	m.progressMu.Lock()
+	defer m.progressMu.Unlock()
+	if m.progress == nil {
+		m.progress = make(map[string]jobProgress)
+	}
+	seen := make(map[string]struct{}, len(active))
+	for _, job := range active {
+		seen[job.ID] = struct{}{}
+		settled := job.Done + job.Failed + job.Skipped
+		previous, ok := m.progress[job.ID]
+		switch {
+		case !ok:
+			observed := job.StartedAtNs
+			if observed == 0 {
+				observed = now
+			}
+			m.progress[job.ID] = jobProgress{settled: settled, observedNs: observed}
+		case settled != previous.settled:
+			m.progress[job.ID] = jobProgress{settled: settled, observedNs: now}
+		}
+	}
+	for id := range m.progress {
+		if _, ok := seen[id]; !ok {
+			delete(m.progress, id)
+		}
+	}
+}
+
+// stallFor reports how long a running job has settled no item. A job the tracker
+// has not seen yet reports zero, which keeps a freshly created job from being
+// treated as stalled.
+func (m *Manager) stallFor(job store.Job) time.Duration {
+	m.progressMu.Lock()
+	tracked, ok := m.progress[job.ID]
+	m.progressMu.Unlock()
+	if !ok {
+		return 0
+	}
+	return time.Duration(m.nowNs() - tracked.observedNs)
+}
+
+// forgetProgress drops the tracked progress of a job that left the active set.
+func (m *Manager) forgetProgress(jobID string) {
+	m.progressMu.Lock()
+	delete(m.progress, jobID)
+	m.progressMu.Unlock()
 }
 
 func (m *Manager) ensureWorkers(target int) {
@@ -485,6 +621,12 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 		m.finishItem(parent, item, store.ItemCanceled, "", nil)
 		return
 	}
+	if job.Terminal() {
+		// The job settled while this item was in flight (the timeout sweep
+		// failed its pending items). The item is already accounted for, so stop
+		// without writing anything back - a late defer would reopen the job.
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(parent, itemTimeout)
 	defer cancel()
@@ -493,13 +635,19 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 	lastCompleted := item.StepIndex
 	summary := map[string]any{}
 	for _, step := range PendingSteps(kind, lastCompleted) {
-		// A canceled job stops the item before the next step starts (§3.5).
-		if m.jobCanceled(ctx, item.JobID) {
+		// A canceled job stops the item before the next step starts (§3.5); a
+		// job settled by the timeout sweep stops it too, because the sweep
+		// already failed this item and writing it back would revive both the
+		// item and the job holding a max_running_jobs slot.
+		switch m.jobGate(ctx, item.JobID) {
+		case gateCanceled:
 			m.finishItem(parent, item, store.ItemCanceled, "", summary)
+			return
+		case gateSettled:
 			return
 		}
 		if ctx.Err() != nil {
-			m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoff(item.Attempts-1)), "ITEM_TIMEOUT", summary)
+			m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoff(item.Attempts-1)), CodeItemTimeout, summary)
 			return
 		}
 
@@ -528,6 +676,11 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 		}
 		if err := m.store.SaveJobItemStep(ctx, item.JobID, item.NodeHash, lastCompleted,
 			summaryJSON(summary), m.nowNs()+int64(itemLease), m.nowNs()); err != nil {
+			if errors.Is(err, store.ErrJobItemSettled) {
+				// The timeout sweep settled this item while the step ran; the
+				// breakpoint is moot and the item must stay as the sweep left it.
+				return
+			}
 			m.logf("[intel] save job item step: %v", err)
 			m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoffBase), "", summary)
 			return
@@ -536,25 +689,84 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 	m.finishItem(parent, item, store.ItemDone, "", summary)
 }
 
-func (m *Manager) jobCanceled(ctx context.Context, jobID string) bool {
+// jobGate is what the scheduler tells a running item about its job. One read
+// serves both questions, so an item running several steps costs one job lookup
+// per step rather than two.
+type jobGate int
+
+const (
+	gateOpen jobGate = iota
+	gateCanceled
+	gateSettled
+)
+
+// jobGate reports whether an in-flight item may keep going. A canceled job stops
+// its item (§3.5). A job that reached any other terminal status was settled by
+// the timeout sweep while this item was executing: the sweep already failed it,
+// so the worker drops it without writing anything back - a late defer or finish
+// would reopen the job and take a max_running_jobs slot again.
+func (m *Manager) jobGate(ctx context.Context, jobID string) jobGate {
 	job, err := m.store.GetJob(ctx, jobID)
 	if err != nil {
-		return false
+		return gateOpen
 	}
-	return job.Status == store.JobCanceled
+	switch {
+	case job.Status == store.JobCanceled:
+		return gateCanceled
+	case job.Terminal():
+		return gateSettled
+	default:
+		return gateOpen
+	}
 }
 
+// finishItem writes one terminal item status and republishes the job. A settled
+// item (ErrJobItemSettled) means the timeout sweep got there first: the write is
+// refused by the store, and publishing would recompute the job from a state that
+// no longer describes it, so the call returns without touching the hub.
+//
+// A canceled job is left alone unless this call is the one that records the
+// cancellation: CancelJob settles the queued items itself, so a later write of a
+// different terminal status would overwrite what the operator asked for.
 func (m *Manager) finishItem(ctx context.Context, item store.JobItem, status, errorCode string, summary map[string]any) {
-	if err := m.store.FinishJobItem(ctx, item.JobID, item.NodeHash, status, errorCode,
-		summaryJSON(summary), m.nowNs()); err != nil {
+	if status != store.ItemCanceled && m.jobGate(ctx, item.JobID) == gateCanceled {
+		return
+	}
+	err := m.store.FinishJobItem(ctx, item.JobID, item.NodeHash, status, errorCode,
+		summaryJSON(summary), m.nowNs())
+	switch {
+	case errors.Is(err, store.ErrJobItemSettled):
+		return
+	case err != nil:
 		m.logf("[intel] finish job item: %v", err)
 	}
 	m.publish(ctx, item.JobID, false)
 }
 
+// deferItem returns an item to the queue and republishes the job. Like
+// finishItem it stays silent on ErrJobItemSettled: the item is already settled,
+// so requeueing it would strand it inside a terminal job (a queued item of a
+// settled job is never claimed again) and the publish would revive the job.
+//
+// A canceled job is refused for the same reason. CancelJob only settles the
+// items that are still queued, so an item inside a step at that moment stays
+// running and reaches this function with the job already terminal. The store's
+// guard accepts the write (the item is still running), and the item would go
+// back to queued inside a canceled job - where neither ListActiveJobs (it lists
+// jobs) nor RetryFailedJobItems (it refuses canceled jobs) can ever reach it.
+// The item is settled as canceled instead, which is the status the loop-top
+// gate would have given it one step later.
 func (m *Manager) deferItem(ctx context.Context, item store.JobItem, stepIndex int, nextRunAtNs int64, errorCode string, summary map[string]any) {
-	if err := m.store.DeferJobItem(ctx, item.JobID, item.NodeHash, stepIndex, nextRunAtNs,
-		summaryJSON(summary), m.nowNs()); err != nil {
+	if m.jobGate(ctx, item.JobID) == gateCanceled {
+		m.finishItem(ctx, item, store.ItemCanceled, "", summary)
+		return
+	}
+	err := m.store.DeferJobItem(ctx, item.JobID, item.NodeHash, stepIndex, nextRunAtNs,
+		summaryJSON(summary), m.nowNs())
+	switch {
+	case errors.Is(err, store.ErrJobItemSettled):
+		return
+	case err != nil:
 		m.logf("[intel] defer job item: %v", err)
 	}
 	m.publish(ctx, item.JobID, false)

@@ -210,4 +210,11 @@ func RegisterBuiltins(reg *Registry, cfg BuiltinConfig) {
 			Timeout: cfg.timeout(), Now: now,
 		})
 	})
+
+	reg.Define(NewIPAPIISViaNodeProvider(IPAPIISViaNodeOptions{}).Spec(), func(setting Setting) any {
+		return NewIPAPIISViaNodeProvider(IPAPIISViaNodeOptions{
+			URL: urlOverride(setting), TTL: setting.EffectiveTTL(),
+			Timeout: cfg.timeout(), Now: now,
+		})
+	})
 }

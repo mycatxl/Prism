@@ -287,6 +287,22 @@ func (p *GlobalNodePool) ReplacePlatform(next *platform.Platform) error {
 // SetQualitySnapshot injects the intel projection used by quality admission
 // (WP10 §2) and propagates it to every registered platform and to platforms
 // registered later.
+//
+// The injection point is also the repair point: the projection arrives after the
+// bootstrap rebuild (cmd/prism: bootstrapFromPersistence → RebuildAllPlatforms
+// runs before initIntelJobs → SetQualitySnapshot), so the views built during
+// bootstrap were evaluated without it and every quality criterion failed closed.
+// Nothing else rebuilds them — a node that recovers from a probe failure and a
+// node of a disabled subscription both produce no dirty event — so the platforms
+// are rebuilt here with the projection in place.
+//
+// Caveat for the real startup path: the reader injected by initIntelJobs is the
+// *intel.Snapshot that Service.Snapshot() returns empty (NewService builds it with
+// NewSnapshot) and Service.Start() → ReloadSnapshot fills in place afterwards. The
+// rebuild below therefore still evaluates against an empty projection at startup.
+// The rest of the repair is the RebuildAllPlatforms that startIntel runs right
+// after intelSvc.Start() (cmd/prism/intel_runtime.go), once ReloadSnapshot has
+// loaded the persisted rows into this very snapshot.
 func (p *GlobalNodePool) SetQualitySnapshot(snap platform.QualitySnapshotReader) {
 	p.platMu.Lock()
 	p.qualitySnapshot = snap
@@ -298,6 +314,12 @@ func (p *GlobalNodePool) SetQualitySnapshot(snap platform.QualitySnapshotReader)
 	for _, plat := range platforms {
 		plat.SetQualitySnapshot(snap)
 	}
+	// Withdrawing the projection never repairs a view, it can only empty the
+	// quality-constrained ones, so the rebuild is skipped for a nil snapshot.
+	if snap == nil || len(platforms) == 0 {
+		return
+	}
+	p.RebuildAllPlatforms()
 }
 
 // instrumentQuality wires the injected snapshot into one platform.
@@ -510,6 +532,18 @@ func (p *GlobalNodePool) notifyAllPlatformsDirty(hash node.Hash) {
 }
 
 // RebuildAllPlatforms triggers a full rebuild on all registered platforms.
+//
+// The intel projection is re-installed on every platform first, exactly like
+// RebuildPlatform: the node-selection criteria read it (ip_type, purity_band and
+// the quality policy), so a rebuild that ran before the snapshot was injected
+// would fail those criteria closed and leave the platform with an empty routable
+// view. The bootstrap rebuild (cmd/prism bootstrapFromPersistence) is that case,
+// and so is any platform whose copy of the projection went stale (RegisterPlatform
+// reads the pool field without platMu).
+//
+// Installing the projection is necessary but not sufficient at startup: the pool
+// field is still nil during bootstrap, and the object injected later is empty
+// until intel.Service.Start fills it (see SetQualitySnapshot).
 func (p *GlobalNodePool) RebuildAllPlatforms() {
 	platforms := p.platformSnapshot()
 	if len(platforms) == 0 {
@@ -537,6 +571,10 @@ func (p *GlobalNodePool) RebuildAllPlatforms() {
 		go func(plat *platform.Platform) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// instrumentQuality only reads the pool field under platMu.RLock and
+			// writes the per-platform field, so concurrent calls on distinct
+			// platforms do not share mutable state.
+			p.instrumentQuality(plat)
 			plat.FullRebuild(poolRange, subLookup, p.geoLookup, p.qualityLookup)
 		}(plat)
 	}

@@ -64,6 +64,10 @@ func TestMapIntelError(t *testing.T) {
 		{name: "invalid job", err: fmt.Errorf("%w: empty provider id", jobs.ErrInvalidJob), want: "INVALID_ARGUMENT"},
 		{name: "too many subscribers", err: jobs.ErrTooManySubscribers, want: "RATE_LIMITED"},
 		{name: "unknown job", err: store.ErrJobNotFound, want: "NOT_FOUND", message: "job not found"},
+		// A cancel against a job that already settled is a conflict, not a
+		// missing job: the id is real, the job is just final (AUDIT F4).
+		{name: "terminal job", err: fmt.Errorf("%w: status is succeeded", store.ErrJobNotActive),
+			want: "CONFLICT", message: "job is not active: status is succeeded"},
 		{name: "anything else", err: errors.New("boom"), want: "INTERNAL", message: "intel job"},
 	}
 	for _, tt := range tests {

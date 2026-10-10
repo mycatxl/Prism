@@ -11,6 +11,19 @@ import (
 // ErrJobNotFound is returned when a job id does not exist.
 var ErrJobNotFound = errors.New("job not found")
 
+// ErrJobNotActive is returned by CancelJob when the job exists but already
+// reached a terminal status. A terminal job is final: rewriting it (for example
+// turning a succeeded job into canceled) would contradict what actually ran.
+// The service layer maps it to CONFLICT / HTTP 409.
+var ErrJobNotActive = errors.New("job is not active")
+
+// ErrJobItemSettled is returned by FinishJobItem, DeferJobItem and
+// SaveJobItemStep when the item is no longer queued or running. The job timeout
+// sweep (FailPendingJobItems) already settled it, so the caller must not write
+// the item back to life: a late finish or defer would revive the item and, via
+// RefreshJob, move a settled job out of its terminal status (see §3.4).
+var ErrJobItemSettled = errors.New("job item already settled")
+
 // CreateJob inserts a job and its node items in one transaction.
 func (s *Store) CreateJob(ctx context.Context, job Job, items []JobItem) error {
 	db, err := s.conn()
@@ -176,12 +189,26 @@ func (s *Store) CancelJob(ctx context.Context, id string) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	res, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ? WHERE id = ?`, JobCanceled, id)
+	// Only an active job can be canceled: a job that already settled keeps the
+	// status its items produced, so a second cancel (a double click, a retried
+	// request) cannot rewrite a succeeded job into canceled.
+	res, err := tx.ExecContext(ctx, `UPDATE jobs SET status = ? WHERE id = ? AND status IN ('queued','running')`,
+		JobCanceled, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrJobNotFound
+		// No row changed: either the job does not exist (404) or it already
+		// reached a terminal status (409) - the caller must tell them apart.
+		var status string
+		switch err := tx.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = ?`, id).Scan(&status); {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrJobNotFound
+		case err != nil:
+			return err
+		default:
+			return fmt.Errorf("%w: status is %s", ErrJobNotActive, status)
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE job_items SET status = ? WHERE job_id = ? AND status = ?`,
@@ -192,6 +219,23 @@ func (s *Store) CancelJob(ctx context.Context, id string) error {
 }
 
 // RetryFailedJobItems requeues failed items and reopens the job (§3.5).
+//
+// The job is only reopened when at least one item was actually requeued, and
+// only from a status that means "this job produced failures": partial or failed.
+//
+// Both restrictions are deliberate semantic decisions:
+//   - a job with no failed item has nothing to retry, so touching its row would
+//     reset finished_at_ns and hand an already settled job back to the scheduler
+//     (RefreshJob would then recompute it from items that never changed);
+//   - canceled is terminal even when the job has failed items. The operator
+//     canceled it, and "retry the failures" must not silently revive work the
+//     operator stopped.
+//
+// A canceled job is skipped entirely rather than only left unreopened: requeueing
+// its failed items would strand them as queued items of a canceled job (nothing
+// claims items of a non-active job, and the retry path only looks at failed
+// items) and would erase the failure records the operator is reading. The call is
+// a no-op that returns 0.
 func (s *Store) RetryFailedJobItems(ctx context.Context, id string, nowNs int64) (int64, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -203,6 +247,18 @@ func (s *Store) RetryFailedJobItems(ctx context.Context, id string, nowNs int64)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var jobStatus string
+	switch err := tx.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id = ?`, id).Scan(&jobStatus); {
+	case errors.Is(err, sql.ErrNoRows):
+		// Unknown job: nothing to retry. The service layer reports NOT_FOUND
+		// through its own GetJob, so the store stays silent here.
+		return 0, nil
+	case err != nil:
+		return 0, err
+	case jobStatus == JobCanceled:
+		return 0, nil
+	}
+
 	res, err := tx.ExecContext(ctx, `
 		UPDATE job_items SET status = ?, attempts = 0, next_run_at_ns = ?, lease_owner = '',
 			lease_until_ns = 0, error_code = '', updated_at_ns = ?
@@ -212,10 +268,12 @@ func (s *Store) RetryFailedJobItems(ctx context.Context, id string, nowNs int64)
 	}
 	retried, _ := res.RowsAffected()
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE jobs SET status = ?, finished_at_ns = 0 WHERE id = ? AND status IN ('partial','failed','canceled')`,
-		JobQueued, id); err != nil {
-		return 0, err
+	if retried > 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE jobs SET status = ?, finished_at_ns = 0 WHERE id = ? AND status IN ('partial','failed')`,
+			JobQueued, id); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -319,9 +377,11 @@ func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Items whose lease expired are reclaimable: an item lease is three minutes
-	// while a single step may take at most 90 seconds (§3.4), so an expired lease
-	// always means the owning worker died.
+	// Items whose lease expired are reclaimable: an item lease is five minutes
+	// while one item runs at most three minutes of pipeline work (§3.4), so an
+	// expired lease always means the owning worker died. The invariant is
+	// itemLease > itemTimeout - at an equal or shorter lease a live worker's item
+	// would be claimable by a second worker, and both would run the same node.
 	args := []any{opts.NowNs, opts.NowNs}
 	query := jobItemSelect + "\n\t\tWHERE ((status = 'queued' AND next_run_at_ns <= ?)" +
 		"\n\t\t   OR (status = 'running' AND lease_until_ns <= ?))\n\t\t  AND job_id IN ("
@@ -388,18 +448,24 @@ func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem
 
 // SaveJobItemStep stores the pipeline breakpoint after a successful step so a
 // restarted process continues at the next step (§3.2, §3.5).
+//
+// The status predicate is the authority that keeps a worker from writing to an
+// item the timeout sweep already settled: it returns ErrJobItemSettled instead.
 func (s *Store) SaveJobItemStep(ctx context.Context, jobID, nodeHash string, stepIndex int, resultJSON string, leaseUntilNs, updatedAtNs int64) error {
 	db, err := s.conn()
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE job_items SET status = ?, step_index = ?, result_json = ?, error_code = '',
 			lease_until_ns = ?, updated_at_ns = ?
-		WHERE job_id = ? AND node_hash = ?`,
+		WHERE job_id = ? AND node_hash = ? AND status IN ('queued','running')`,
 		ItemRunning, stepIndex, truncateJSON(resultJSON, MaxResultJSONBytes), leaseUntilNs, updatedAtNs,
 		jobID, nodeHash)
-	return err
+	if err != nil {
+		return err
+	}
+	return jobItemSettledIfUnchanged(res)
 }
 
 // DeferJobItem returns an item to the queue with a later next_run_at without
@@ -409,13 +475,16 @@ func (s *Store) DeferJobItem(ctx context.Context, jobID, nodeHash string, stepIn
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE job_items SET status = ?, step_index = ?, next_run_at_ns = ?, result_json = ?,
 			lease_owner = '', lease_until_ns = 0, updated_at_ns = ?
-		WHERE job_id = ? AND node_hash = ?`,
+		WHERE job_id = ? AND node_hash = ? AND status IN ('queued','running')`,
 		ItemQueued, stepIndex, nextRunAtNs, truncateJSON(resultJSON, MaxResultJSONBytes), updatedAtNs,
 		jobID, nodeHash)
-	return err
+	if err != nil {
+		return err
+	}
+	return jobItemSettledIfUnchanged(res)
 }
 
 // FinishJobItem moves an item to a terminal status and clears its lease.
@@ -424,12 +493,50 @@ func (s *Store) FinishJobItem(ctx context.Context, jobID, nodeHash, status, erro
 	if err != nil {
 		return err
 	}
-	_, err = db.ExecContext(ctx, `
+	res, err := db.ExecContext(ctx, `
 		UPDATE job_items SET status = ?, error_code = ?, result_json = ?, lease_owner = '',
 			lease_until_ns = 0, updated_at_ns = ?
-		WHERE job_id = ? AND node_hash = ?`,
+		WHERE job_id = ? AND node_hash = ? AND status IN ('queued','running')`,
 		status, errorCode, truncateJSON(resultJSON, MaxResultJSONBytes), updatedAtNs, jobID, nodeHash)
-	return err
+	if err != nil {
+		return err
+	}
+	return jobItemSettledIfUnchanged(res)
+}
+
+// jobItemSettledIfUnchanged turns "no row matched the status predicate" into
+// ErrJobItemSettled. A missing row reports the same sentinel: from the caller's
+// point of view there is no live item left to write to, which is exactly the
+// condition the guard exists for.
+func jobItemSettledIfUnchanged(res sql.Result) error {
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrJobItemSettled
+	}
+	return nil
+}
+
+// FailPendingJobItems moves every queued or running item of a job to failed and
+// clears its lease, returning the number of items that changed.
+//
+// The timeout sweep of §3.4 uses it to settle a job that ran past its budget:
+// with no pending item left, RefreshJob settles the job as partial and it stops
+// holding one of the max_running_jobs slots. Running items are included on
+// purpose - a worker still inside one of them notices the settled job and stops
+// without writing the item back to life.
+func (s *Store) FailPendingJobItems(ctx context.Context, jobID, errorCode string, updatedAtNs int64) (int64, error) {
+	db, err := s.conn()
+	if err != nil {
+		return 0, err
+	}
+	res, err := db.ExecContext(ctx, `
+		UPDATE job_items SET status = ?, error_code = ?, lease_owner = '', lease_until_ns = 0,
+			updated_at_ns = ?
+		WHERE job_id = ? AND status IN ('queued','running')`,
+		ItemFailed, errorCode, updatedAtNs, jobID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ResetRunningJobItems clears leases left behind by a crash and returns the

@@ -323,11 +323,12 @@ func validateIntelConfig(cfg *config.RuntimeConfig) *ServiceError {
 	if cfg.IntelNodeWorkers < 1 || cfg.IntelNodeWorkers > jobs.MaxNodeWorkers {
 		return invalidArg(fmt.Sprintf("intel_node_workers: must be between 1 and %d", jobs.MaxNodeWorkers))
 	}
-	if cfg.IntelMaxRunningJobs < 1 {
-		return invalidArg("intel_max_running_jobs: must be at least 1")
+	if cfg.IntelMaxRunningJobs < 1 || cfg.IntelMaxRunningJobs > jobs.MaxRunningJobs {
+		return invalidArg(fmt.Sprintf("intel_max_running_jobs: must be between 1 and %d", jobs.MaxRunningJobs))
 	}
-	if cfg.IntelCheckConcurrencyPerCheck < 1 {
-		return invalidArg("intel_check_concurrency_per_check: must be at least 1")
+	if cfg.IntelCheckConcurrencyPerCheck < 1 || cfg.IntelCheckConcurrencyPerCheck > jobs.MaxCheckConcurrencyPerCheck {
+		return invalidArg(fmt.Sprintf("intel_check_concurrency_per_check: must be between 1 and %d",
+			jobs.MaxCheckConcurrencyPerCheck))
 	}
 	schedule := strings.TrimSpace(cfg.IntelRefreshSchedule)
 	if schedule == "" {

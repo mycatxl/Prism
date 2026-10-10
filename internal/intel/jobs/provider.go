@@ -162,18 +162,12 @@ func (p *providerPool) runOnce(provider string, spec ProviderQueueSpec) time.Dur
 		batchSize = 1
 	}
 
-	state, err := m.store.ConsumeProviderBudget(ctx, store.BudgetRequest{
-		Provider:     provider,
-		Day:          store.DayString(m.clock.Now()),
-		DailyLimit:   spec.DailyLimit,
-		QPS:          spec.QPS,
-		NowNs:        now,
-		CredentialID: spec.CredentialID,
-	})
-	if err != nil {
-		return budgetWait(state, now)
-	}
-
+	// Claim before the budget. The daily quota and the QPS slot reserve one
+	// request to the vendor, so they may only be spent when there is a request
+	// to make. Consuming first burned one unit of the day and one request
+	// interval on every idle poll: an empty queue claimed nothing but still
+	// advanced provider_state, and the idle sleep is one second while the
+	// built-in sources default to QPS 1 (§3.3).
 	items, err := m.store.ClaimProviderItems(ctx, provider, now, now+int64(providerLease), batchSize, m.owner)
 	if err != nil {
 		m.schedulingFailures.Add(1)
@@ -181,6 +175,19 @@ func (p *providerPool) runOnce(provider string, spec ProviderQueueSpec) time.Dur
 		return providerIdleSleep
 	}
 	if len(items) == 0 {
+		// Nothing to do: no work, no budget. The claim is the only store call
+		// of this round, apart from the pause lift below.
+		//
+		// The rotation rule used to ride along on ConsumeProviderBudget, which
+		// this round no longer reaches: a replaced key has to clear the pause
+		// the old one caused even while the queue is empty, or the provider
+		// keeps reporting itself paused until new work shows up. A keyless
+		// source has no credential to rotate, so it skips the read.
+		if spec.CredentialID != "" {
+			if _, err := m.store.LiftProviderPauseForRotatedCredential(ctx, provider, spec.CredentialID); err != nil {
+				m.logf("[intel] lift pause of %s: %v", provider, err)
+			}
+		}
 		return providerIdleSleep
 	}
 
@@ -191,11 +198,32 @@ func (p *providerPool) runOnce(provider string, spec ProviderQueueSpec) time.Dur
 		}
 	}
 	if len(ips) == 0 {
+		// A row without a usable address is settled without a request, so it
+		// must not spend a unit either.
 		for _, item := range items {
 			_ = m.store.FailProviderItem(ctx, provider, item.IP, item.Attempts+1, now,
 				"UNSUPPORTED_IP", true)
 		}
 		return providerIdleSleep
+	}
+
+	state, err := m.store.ConsumeProviderBudget(ctx, store.BudgetRequest{
+		Provider:     provider,
+		Day:          store.DayString(m.clock.Now()),
+		DailyLimit:   spec.DailyLimit,
+		QPS:          spec.QPS,
+		NowNs:        now,
+		CredentialID: spec.CredentialID,
+	})
+	if err != nil {
+		// The gate is shut, so the lookup cannot happen. The rows are already
+		// leased by the claim above but nothing was sent and nothing failed:
+		// hand them back instead of holding them for the whole lease, and sleep
+		// until the gate opens. This is the price of claiming first, and it is
+		// why the release matches on the owner: only rows this worker still
+		// holds are touched.
+		p.releaseItems(ctx, provider, items, now)
+		return budgetWait(state, now)
 	}
 
 	outcome := p.lookup.Lookup(ctx, provider, ips)
@@ -218,6 +246,27 @@ func (p *providerPool) runOnce(provider string, spec ProviderQueueSpec) time.Dur
 		p.onEvidence(ips)
 	}
 	return providerIdleSleep
+}
+
+// releaseItems hands freshly claimed rows back to the queue after a closed
+// budget gate. Nothing was sent and nothing failed, so no row may be resolved,
+// failed or counted: only the lease of this worker's own rows is cleared.
+func (p *providerPool) releaseItems(ctx context.Context, provider string, items []store.QueueItem, nowNs int64) {
+	ips := make([]string, 0, len(items))
+	for _, item := range items {
+		ips = append(ips, item.IP)
+	}
+	released, err := p.manager.store.ReleaseProviderItems(ctx, provider, ips, p.manager.owner, nowNs)
+	if err != nil {
+		// The rows stay leased by this worker; their lease expires and the next
+		// claim picks them up again (§3.5), so this is not a lost item.
+		p.manager.logf("[intel] release provider items for %s: %v", provider, err)
+		return
+	}
+	if released != int64(len(items)) {
+		p.manager.logf("[intel] released %d of %d claimed items for %s",
+			released, len(items), provider)
+	}
 }
 
 // applyOutcome resolves or reschedules every claimed queue row.
