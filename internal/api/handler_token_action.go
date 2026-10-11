@@ -58,5 +58,11 @@ func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, a
 	if cp.Engine != nil {
 		handler = AuditMiddleware(cp.Engine, proxyToken, apiMaxBodyBytes, mux)
 	}
-	return RequestBodyLimitMiddleware(apiMaxBodyBytes, handler)
+	handler = RequestBodyLimitMiddleware(apiMaxBodyBytes, handler)
+	// This route carries a body and is served by the same listener as the
+	// management API, so it needs the same body-phase bound: the listener's
+	// ReadHeaderTimeout stops at the end of the header block, and ReadTimeout is
+	// unset for the SSE stream. It wraps the body-limit layer because the
+	// controller has to reach the connection.
+	return RequestBodyDeadlineMiddleware(RequestBodyTimeout, handler)
 }

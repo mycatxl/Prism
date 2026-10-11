@@ -43,7 +43,6 @@ func LoadQualityConfig() (QualityConfig, error) {
 	}{
 		{"PRISM_QUALITY_DAILY_LIMIT", &cfg.DailyLimit, 1, 900},
 		{"PRISM_QUALITY_WORKERS", &cfg.Workers, 1, 8},
-		{"PRISM_QUALITY_QUEUE_SIZE", &cfg.QueueSize, 1, 4096},
 	} {
 		if raw := os.Getenv(setting.name); raw != "" {
 			value, err := strconv.Atoi(raw)
@@ -53,6 +52,12 @@ func LoadQualityConfig() (QualityConfig, error) {
 			*setting.value = value
 		}
 	}
+	// PRISM_QUALITY_QUEUE_SIZE is deprecated and ignored: the provider queue is
+	// bounded by intel_node_workers. It is deliberately NOT validated here -
+	// rejecting a value the process never uses would turn a harmless leftover
+	// variable from an older deployment into a startup failure. The deprecation
+	// warning is emitted where the setting is actually seeded
+	// (internal/intel/providers/settings.go).
 	// Anonymous requests share a provider quota by public source IP. Leave
 	// headroom for other clients and never attempt to bypass that limit.
 	if cfg.APIKey == "" && cfg.DailyLimit > 80 {

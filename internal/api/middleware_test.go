@@ -363,6 +363,17 @@ func TestServerWiresTheBodyDeadline(t *testing.T) {
 	if limit >= 0 && deadline >= 0 && deadline < limit {
 		t.Error("RequestBodyDeadlineMiddleware is installed inside RequestBodyLimitMiddleware; the controller cannot reach the connection through the body-limit wrapper")
 	}
+
+	// The token-action route is a POST with a body on the same listener, so it
+	// needs the same bound. It is a separate handler (cmd/prism mounts it beside
+	// the API), which is exactly why it is easy to forget.
+	tokenSrc, err := os.ReadFile("handler_token_action.go")
+	if err != nil {
+		t.Fatalf("read handler_token_action.go: %v", err)
+	}
+	if !strings.Contains(stripGoLineComments(string(tokenSrc)), "RequestBodyDeadlineMiddleware(RequestBodyTimeout,") {
+		t.Error("NewTokenActionHandler does not install RequestBodyDeadlineMiddleware: the token-action POST body would be unbounded")
+	}
 }
 
 // stripGoLineComments removes // comments so a source scan does not match a
