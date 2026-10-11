@@ -22,6 +22,9 @@ type tunnelDeps struct {
 	metricsSink MetricsEventSink
 	bypass      *TargetBypassMatcher
 	directGuard DirectDialGuard
+	// dialTimeout bounds the local direct dial (PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT).
+	// Zero falls back to the guard default.
+	dialTimeout time.Duration
 }
 
 type preparedTunnel struct {
@@ -48,8 +51,7 @@ type tunnelRelayResult struct {
 }
 
 type tunnelPumpOptions struct {
-	requireBidirectionalTraffic bool
-	onFirstIngressByte          func()
+	onFirstIngressByte func()
 }
 
 type firstByteReader struct {
@@ -143,7 +145,7 @@ func prepareConnectTunnel(
 func prepareDirectConnectTunnel(ctx context.Context, deps tunnelDeps, target string) tunnelPrepareResult {
 	// The dial-time half of the guard runs inside this dialer, so the address
 	// connected to is validated even after a re-resolution.
-	dialer := deps.directGuard.dialer()
+	dialer := deps.directGuard.dialerWithTimeout(deps.dialTimeout)
 	rawConn, err := dialer.DialContext(ctx, "tcp", target)
 	if err != nil {
 		proxyErr := classifyConnectError(err)
@@ -254,6 +256,10 @@ func pumpPreparedTunnelReader(
 		egressBytes:  egressResult.n,
 		netOK:        true,
 	}
+	// Zero or one-way traffic is not a node failure: whether the tunnel carries
+	// bytes is decided by the client and the target, not by node quality. The
+	// SOCKS5 inbound has always behaved this way; CONNECT now matches it. Only
+	// a real copy error below marks the relay as failed.
 	switch {
 	case !ingressErrBenign:
 		result.netOK = false
@@ -265,17 +271,6 @@ func pumpPreparedTunnelReader(
 		result.proxyErr = ErrUpstreamRequestFailed
 		result.upstreamStage = "connect_client_to_upstream_copy"
 		result.upstreamErr = egressResult.err
-	case opts.requireBidirectionalTraffic && (ingressResult.n == 0 || egressResult.n == 0):
-		result.netOK = false
-		result.proxyErr = ErrUpstreamRequestFailed
-		switch {
-		case ingressResult.n == 0 && egressResult.n == 0:
-			result.upstreamStage = "connect_zero_traffic"
-		case ingressResult.n == 0:
-			result.upstreamStage = "connect_no_ingress_traffic"
-		default:
-			result.upstreamStage = "connect_no_egress_traffic"
-		}
 	}
 	return result
 }

@@ -88,7 +88,8 @@ const SUBSCRIPTION_DISABLE_HINT = "禁用订阅后，相关节点不会参与平
 const SUBSCRIPTION_EPHEMERAL_HINT = "临时订阅的非健康节点会在一段时间后被自动删除。订阅本身不会被删除。";
 const SUBSCRIPTION_INCREMENTAL_HINT = "开启后刷新时保留当前仍存活的旧节点，仅清理失效旧节点，并合并新订阅内容；关闭后仅保留刷新后的订阅内容。";
 const SUBSCRIPTION_AUTO_INTEL_HINT = "开启后，该订阅刷新新增的节点会自动进入 Intel 批量检测；关闭后该订阅不会自动排队检测。";
-const SUBSCRIPTION_PARSE_REPORT_HINT = "解析报告按原因分组列出被丢弃的节点：原因、数量以及一个有限的名称样例。";
+const SUBSCRIPTION_PARSE_REPORT_HINT =
+  "解析报告按原因分组列出被丢弃的节点：原因、数量以及一个有限的名称样例。另有被导入时改写了配置的节点（悬空的 detour 或 dialer-proxy 被剥离），它们不算丢弃。";
 
 function extractHostname(url: string): string {
   try {
@@ -203,6 +204,20 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
               {t("另有 {{count}} 种原因只计入数量。", { count: summary.reasons_overflow })}
             </p>
           ) : null}
+          {/* A note is not a drop: the node is imported, but a dangling detour
+              or dialer-proxy reference was stripped from it (or cut from its
+              chain). Without this line the operator would only see the node
+              arrive with fewer hops than the subscription declared. */}
+          {summary.notes ? (
+            <p className="mt-1 max-w-[68ch] text-xs text-ink-soft">
+              {t("另有 {{count}} 个节点被导入时改写了配置（悬空的 detour 或 dialer-proxy 被剥离）。", {
+                count: summary.notes,
+              })}
+              {summary.notes_overflow
+                ? t("其中 {{count}} 条只计入数量。", { count: summary.notes_overflow })
+                : ""}
+            </p>
+          ) : null}
 
           <Button
             variant="ghost"
@@ -229,16 +244,32 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
                 {t("解析报告超过 64 KiB，只保留了截断标记。")}
               </p>
             ) : (
-              <ul className="mt-2 divide-y divide-rule border-y border-rule">
-                {detail.skipped.map((entry) => (
-                  <li key={`${entry.type}|${entry.name}|${entry.reason}`} className="py-2">
-                    <h4 className="text-xs font-medium">
-                      {`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}
-                    </h4>
-                    <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">{`${entry.reason}: ${entry.detail}`}</p>
-                  </li>
-                ))}
-              </ul>
+              <>
+                {detail.notes?.length ? (
+                  <ul className="mt-2 divide-y divide-rule border-y border-rule">
+                    {detail.notes.map((entry) => (
+                      <li key={`${entry.type}|${entry.name}|${entry.reason}`} className="py-2">
+                        <h4 className="text-xs font-medium">
+                          {`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}
+                        </h4>
+                        <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
+                          {`${t("导入时已改写")}: ${entry.detail}`}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <ul className="mt-2 divide-y divide-rule border-y border-rule">
+                  {detail.skipped.map((entry) => (
+                    <li key={`${entry.type}|${entry.name}|${entry.reason}`} className="py-2">
+                      <h4 className="text-xs font-medium">
+                        {`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}
+                      </h4>
+                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">{`${entry.reason}: ${entry.detail}`}</p>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )
           ) : null}
         </>

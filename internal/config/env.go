@@ -62,7 +62,19 @@ type EnvConfig struct {
 	ProxyTransportMaxIdleConns        int
 	ProxyTransportMaxIdleConnsPerHost int
 	ProxyTransportIdleConnTimeout     time.Duration
-	ProxyBypassRules                  []string
+	// ProxyTransportResponseHeaderTimeout bounds the wait for upstream response
+	// headers after the request was written. Without it an upstream that
+	// accepts the connection and never answers pins the request forever (the
+	// main listener has no read timeout: the SSE endpoint needs it).
+	ProxyTransportResponseHeaderTimeout time.Duration
+	// ProxyTransportTLSHandshakeTimeout bounds the TLS handshake of a bypassed
+	// HTTPS target.
+	ProxyTransportTLSHandshakeTimeout time.Duration
+	// ProxyTransportDialTimeout bounds the dial phase of an outbound HTTP
+	// request, including a node outbound's own dial, and the local direct
+	// dialer used by the bypass branch, CONNECT and SOCKS5.
+	ProxyTransportDialTimeout time.Duration
+	ProxyBypassRules          []string
 	// TrustedProxies lists the CIDRs (or plain IP literals) whose
 	// X-Forwarded-For header is trusted when deriving the client IP used for
 	// authentication failure limiting. Empty means "trust no proxy".
@@ -186,6 +198,17 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.ProxyTransportMaxIdleConns = envInt("PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS", 1024, &errs)
 	cfg.ProxyTransportMaxIdleConnsPerHost = envInt("PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS_PER_HOST", 64, &errs)
 	cfg.ProxyTransportIdleConnTimeout = envDuration("PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT", 90*time.Second, &errs)
+	cfg.ProxyTransportResponseHeaderTimeout = envDuration(
+		"PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT",
+		60*time.Second,
+		&errs,
+	)
+	cfg.ProxyTransportTLSHandshakeTimeout = envDuration(
+		"PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT",
+		10*time.Second,
+		&errs,
+	)
+	cfg.ProxyTransportDialTimeout = envDuration("PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT", 30*time.Second, &errs)
 	cfg.ProxyBypassRules = envDelimitedStringSlice("PRISM_PROXY_BYPASS", []string{})
 	cfg.TrustedProxies = envDelimitedStringSlice("PRISM_TRUSTED_PROXIES", []string{})
 	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", true, &errs)
@@ -409,6 +432,17 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	if cfg.ProxyTransportIdleConnTimeout <= 0 {
 		errs = append(errs, "PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT must be positive")
 	}
+	// A zero or negative deadline here would silently restore the "no timeout"
+	// behaviour these settings exist to remove.
+	if cfg.ProxyTransportResponseHeaderTimeout <= 0 {
+		errs = append(errs, "PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT must be positive")
+	}
+	if cfg.ProxyTransportTLSHandshakeTimeout <= 0 {
+		errs = append(errs, "PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT must be positive")
+	}
+	if cfg.ProxyTransportDialTimeout <= 0 {
+		errs = append(errs, "PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT must be positive")
+	}
 	if cfg.ProxyTransportMaxIdleConnsPerHost > cfg.ProxyTransportMaxIdleConns {
 		errs = append(
 			errs,
@@ -433,8 +467,14 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		errs = append(errs, "PRISM_REQUEST_LOG_QUEUE_FLUSH_INTERVAL must be positive")
 	}
 
-	// Queue size must be >= 2x batch size
-	if cfg.RequestLogQueueSize < 2*cfg.RequestLogQueueFlushBatchSize {
+	// Queue size must be at least 2x the batch size.
+	//
+	// Written as a division rather than `size < 2*batch`: the multiplication
+	// overflows to a negative number for a batch size at or above 2^62, which
+	// made the comparison true for every size and let the invalid pair through.
+	// Both values are validated positive above, so `batch > size/2` is exactly
+	// `2*batch > size` with integer truncation, and cannot overflow.
+	if cfg.RequestLogQueueFlushBatchSize > cfg.RequestLogQueueSize/2 {
 		errs = append(errs, "PRISM_REQUEST_LOG_QUEUE_SIZE must be at least 2x PRISM_REQUEST_LOG_QUEUE_FLUSH_BATCH_SIZE")
 	}
 

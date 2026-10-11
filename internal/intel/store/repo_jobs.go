@@ -488,16 +488,23 @@ func (s *Store) SaveJobItemStep(ctx context.Context, jobID, nodeHash string, ste
 
 // DeferJobItem returns an item to the queue with a later next_run_at without
 // recording a failure (budget or QPS gate closed, §3.2 step 4).
-func (s *Store) DeferJobItem(ctx context.Context, jobID, nodeHash string, stepIndex int, nextRunAtNs int64, resultJSON string, updatedAtNs int64) error {
+//
+// errorCode records why the item was parked, so a parked item still explains
+// itself to the operator (the item list renders it): the item timeout and a
+// step error that still has attempts left both reach here with a code, while a
+// deliberately parked item (closed provider gate, logged breakpoint failure)
+// passes "" and clears it - the same "the last thing that happened" rule
+// SaveJobItemStep follows when a step completes.
+func (s *Store) DeferJobItem(ctx context.Context, jobID, nodeHash string, stepIndex int, nextRunAtNs int64, resultJSON, errorCode string, updatedAtNs int64) error {
 	db, err := s.conn()
 	if err != nil {
 		return err
 	}
 	res, err := db.ExecContext(ctx, `
 		UPDATE job_items SET status = ?, step_index = ?, next_run_at_ns = ?, result_json = ?,
-			lease_owner = '', lease_until_ns = 0, updated_at_ns = ?
+			error_code = ?, lease_owner = '', lease_until_ns = 0, updated_at_ns = ?
 		WHERE job_id = ? AND node_hash = ? AND status IN ('queued','running')`,
-		ItemQueued, stepIndex, nextRunAtNs, truncateJSON(resultJSON, MaxResultJSONBytes), updatedAtNs,
+		ItemQueued, stepIndex, nextRunAtNs, truncateJSON(resultJSON, MaxResultJSONBytes), errorCode, updatedAtNs,
 		jobID, nodeHash)
 	if err != nil {
 		return err

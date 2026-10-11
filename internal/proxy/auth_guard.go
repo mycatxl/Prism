@@ -1,10 +1,8 @@
 package proxy
 
 import (
-	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -20,18 +18,6 @@ type AuthFailureGuard interface {
 	Blocked(clientIP string) (bool, time.Duration)
 	// RecordFailure records one failed proxy authentication for the client.
 	RecordFailure(clientIP string)
-}
-
-// ProxyClientIP returns the client address of a proxy request.
-func ProxyClientIP(r *http.Request) string {
-	if r == nil {
-		return ""
-	}
-	host := r.RemoteAddr
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	return strings.Trim(host, "[]")
 }
 
 // guardProxyAuthFailure writes 429 RATE_LIMITED when the guard already blocks

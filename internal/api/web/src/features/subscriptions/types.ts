@@ -14,6 +14,8 @@ export type SubscriptionParseReport = {
   skipped_overflow?: number;
   reasons: SubscriptionParseReason[];
   reasons_overflow?: number;
+  notes?: number;
+  notes_overflow?: number;
 };
 
 export type SubscriptionSkippedNode = {
@@ -37,8 +39,11 @@ export type SubscriptionParseReportDetail = {
     skipped_overflow?: number;
     by_engine?: Record<string, number>;
     by_protocol?: Record<string, number>;
+    notes?: number;
+    notes_overflow?: number;
   };
   skipped: SubscriptionSkippedNode[];
+  notes?: SubscriptionSkippedNode[];
 };
 
 export type Subscription = {

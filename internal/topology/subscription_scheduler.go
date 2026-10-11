@@ -42,8 +42,9 @@ type SubscriptionScheduler struct {
 	// cannot bloat the database.
 	onParseReport func(subscriptionID string, reportJSON string)
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 // SchedulerConfig configures the SubscriptionScheduler.
@@ -91,10 +92,17 @@ func (s *SubscriptionScheduler) Start() {
 	}()
 }
 
-// Stop signals the scheduler to stop and waits for it to finish.
+// Stop signals the scheduler to stop and waits for it to finish. It is
+// idempotent: the two one-time stop signals - closing stopCh (a second close
+// would panic) and cancelling the download context - run inside stopOnce, so a
+// repeated call performs neither again. Only the wait stays outside: it is a
+// no-op once the scan goroutine has exited, which makes the second Stop return
+// immediately. Shutdown paths and tests may call it more than once.
 func (s *SubscriptionScheduler) Stop() {
-	close(s.stopCh)
-	s.cancelDownload()
+	s.stopOnce.Do(func() {
+		close(s.stopCh)
+		s.cancelDownload()
+	})
 	s.wg.Wait()
 }
 

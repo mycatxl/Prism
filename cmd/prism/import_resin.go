@@ -238,6 +238,13 @@ func printImportResinSummary(w io.Writer, summary *importResinSummary) {
 
 // moveDatabaseAside renames an existing database, including its WAL sidecars,
 // to *.pre-import-<stamp> before the import writes new files.
+//
+// os.Rename keeps the source mode, so a world-readable state.db (it holds the
+// intel provider api keys) would leave a world-readable copy behind under a name
+// the operator is not watching. The aside is therefore forced to 0600, exactly
+// like the fresh database the import writes next (see the os.Chmod calls at the
+// two call sites). A failure to secure it is fatal: leaving a readable copy of a
+// credential database is worse than aborting the import.
 func moveDatabaseAside(path, stamp string, logw io.Writer) error {
 	for _, candidate := range []string{path, path + "-wal", path + "-shm"} {
 		if _, err := os.Stat(candidate); err != nil {
@@ -249,6 +256,10 @@ func moveDatabaseAside(path, stamp string, logw io.Writer) error {
 		aside := candidate + preImportSuffix + stamp
 		if err := os.Rename(candidate, aside); err != nil {
 			return fmt.Errorf("import-resin: move %s aside: %w", candidate, err)
+		}
+		if err := os.Chmod(aside, 0o600); err != nil {
+			return fmt.Errorf("import-resin: the previous %s is now at %s but could not be made private (mode 0600): %w",
+				candidate, aside, err)
 		}
 		fmt.Fprintf(logw, "Moved %s to %s\n", candidate, aside)
 	}

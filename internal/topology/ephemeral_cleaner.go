@@ -17,8 +17,9 @@ type EphemeralCleaner struct {
 	pool          *GlobalNodePool
 	onNodeEvicted func(subID string, hash node.Hash)
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh   chan struct{}
+	stopOnce sync.Once
+	wg       sync.WaitGroup
 }
 
 // NewEphemeralCleaner creates an EphemeralCleaner that reads per-subscription
@@ -48,9 +49,13 @@ func (c *EphemeralCleaner) Start() {
 	}()
 }
 
-// Stop signals the cleaner to stop and waits for it to finish.
+// Stop signals the cleaner to stop and waits for it to finish. It is
+// idempotent: stopCh is closed exactly once (a second close would panic), and
+// the wait below is a no-op once the scan goroutine has exited, so a repeated
+// Stop returns immediately. Shutdown paths and tests may call it more than
+// once.
 func (c *EphemeralCleaner) Stop() {
-	close(c.stopCh)
+	c.stopOnce.Do(func() { close(c.stopCh) })
 	c.wg.Wait()
 }
 

@@ -16,12 +16,29 @@ type OutboundTransportConfig struct {
 	MaxIdleConns        int
 	MaxIdleConnsPerHost int
 	IdleConnTimeout     time.Duration
+	// ResponseHeaderTimeout bounds the wait for upstream response headers after
+	// the request has been written. Without it a peer that accepts the
+	// connection and never answers pins the request and its goroutine until the
+	// client gives up.
+	ResponseHeaderTimeout time.Duration
+	// TLSHandshakeTimeout bounds the TLS handshake of a bypassed HTTPS target.
+	TLSHandshakeTimeout time.Duration
+	// DialTimeout bounds the dial phase, including a node outbound's own dial.
+	// The main listener deliberately has no read timeout (the SSE endpoint
+	// needs it), so this is the only bound on a black-holed target.
+	DialTimeout time.Duration
 }
 
 const (
-	defaultTransportMaxIdleConns        = 1024
-	defaultTransportMaxIdleConnsPerHost = 64
-	defaultTransportIdleConnTimeout     = 90 * time.Second
+	defaultTransportMaxIdleConns          = 1024
+	defaultTransportMaxIdleConnsPerHost   = 64
+	defaultTransportIdleConnTimeout       = 90 * time.Second
+	defaultTransportResponseHeaderTimeout = 60 * time.Second
+	defaultTransportTLSHandshakeTimeout   = 10 * time.Second
+	defaultTransportDialTimeout           = 30 * time.Second
+	// defaultTransportExpectContinueTimeout matches the standard library
+	// default: without it a 100-continue request can stall on the body write.
+	defaultTransportExpectContinueTimeout = time.Second
 )
 
 func normalizeOutboundTransportConfig(cfg OutboundTransportConfig) OutboundTransportConfig {
@@ -33,6 +50,15 @@ func normalizeOutboundTransportConfig(cfg OutboundTransportConfig) OutboundTrans
 	}
 	if cfg.IdleConnTimeout <= 0 {
 		cfg.IdleConnTimeout = defaultTransportIdleConnTimeout
+	}
+	if cfg.ResponseHeaderTimeout <= 0 {
+		cfg.ResponseHeaderTimeout = defaultTransportResponseHeaderTimeout
+	}
+	if cfg.TLSHandshakeTimeout <= 0 {
+		cfg.TLSHandshakeTimeout = defaultTransportTLSHandshakeTimeout
+	}
+	if cfg.DialTimeout <= 0 {
+		cfg.DialTimeout = defaultTransportDialTimeout
 	}
 	return cfg
 }
@@ -94,8 +120,17 @@ func (p *OutboundTransportPool) CloseAll() {
 }
 
 func (p *OutboundTransportPool) newReusableOutboundTransport(ob adapter.Outbound, sink MetricsEventSink) *http.Transport {
+	dialTimeout := p.config.DialTimeout
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			// The node outbound owns its own dial path, so the deadline is
+			// applied to the context it is handed: a node that accepts the
+			// request and never completes the dial must not hold the slot.
+			if dialTimeout > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, dialTimeout)
+				defer cancel()
+			}
 			conn, err := ob.DialContext(ctx, network, M.ParseSocksaddr(addr))
 			if err != nil {
 				return nil, err
@@ -106,11 +141,14 @@ func (p *OutboundTransportPool) newReusableOutboundTransport(ob adapter.Outbound
 			}
 			return conn, nil
 		},
-		DisableKeepAlives:   false,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        p.config.MaxIdleConns,
-		MaxIdleConnsPerHost: p.config.MaxIdleConnsPerHost,
-		IdleConnTimeout:     p.config.IdleConnTimeout,
+		DisableKeepAlives:     false,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          p.config.MaxIdleConns,
+		MaxIdleConnsPerHost:   p.config.MaxIdleConnsPerHost,
+		IdleConnTimeout:       p.config.IdleConnTimeout,
+		ResponseHeaderTimeout: p.config.ResponseHeaderTimeout,
+		TLSHandshakeTimeout:   p.config.TLSHandshakeTimeout,
+		ExpectContinueTimeout: defaultTransportExpectContinueTimeout,
 	}
 }
 
@@ -120,7 +158,7 @@ func (p *OutboundTransportPool) newReusableOutboundTransport(ob adapter.Outbound
 // again after the request was checked.
 func newDirectHTTPTransport(cfg OutboundTransportConfig, sink MetricsEventSink, guard DirectDialGuard) *http.Transport {
 	cfg = normalizeOutboundTransportConfig(cfg)
-	dialer := guard.dialer()
+	dialer := guard.dialerWithTimeout(cfg.DialTimeout)
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			conn, err := dialer.DialContext(ctx, network, addr)
@@ -133,10 +171,13 @@ func newDirectHTTPTransport(cfg OutboundTransportConfig, sink MetricsEventSink, 
 			}
 			return conn, nil
 		},
-		DisableKeepAlives:   false,
-		ForceAttemptHTTP2:   true,
-		MaxIdleConns:        cfg.MaxIdleConns,
-		MaxIdleConnsPerHost: cfg.MaxIdleConnsPerHost,
-		IdleConnTimeout:     cfg.IdleConnTimeout,
+		DisableKeepAlives:     false,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          cfg.MaxIdleConns,
+		MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,
+		IdleConnTimeout:       cfg.IdleConnTimeout,
+		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout,
+		TLSHandshakeTimeout:   cfg.TLSHandshakeTimeout,
+		ExpectContinueTimeout: defaultTransportExpectContinueTimeout,
 	}
 }

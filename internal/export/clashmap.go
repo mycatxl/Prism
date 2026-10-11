@@ -305,6 +305,17 @@ func clashSSH(object map[string]any) (map[string]any, bool) {
 }
 
 func clashSOCKS(object map[string]any) (map[string]any, bool) {
+	// mihomo v1.19.31 has no SOCKS4 outbound: adapter/parser.go maps exactly one
+	// SOCKS spelling, "socks5" (parser.go:44), and every other type ends in
+	// "unsupport proxy type", which makes mihomo refuse the whole document.
+	// Emitting `type: socks5` for a SOCKS4 node would silently change its
+	// semantics (no username/password auth, different remote-DNS handling), so
+	// the node is refused with a reason instead — the same rule openconnect
+	// follows above.
+	switch socksNodeVersion(object) {
+	case "4", "4a":
+		return nil, false
+	}
 	proxy := clashBase(object, "socks5")
 	if username := mapString(object, "username"); username != "" {
 		proxy["username"] = username
@@ -760,26 +771,6 @@ func mapUint(object map[string]any, key string) uint64 {
 		return parsed
 	}
 	return 0
-}
-
-func mapUintSlice(object map[string]any, key string) []int {
-	value, ok := object[key]
-	if !ok {
-		return nil
-	}
-	items, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]int, 0, len(items))
-	for _, item := range items {
-		number, ok := item.(float64)
-		if !ok {
-			return nil
-		}
-		out = append(out, int(number))
-	}
-	return out
 }
 
 // wireGuardReserved reads a wireguard peer's `reserved` field in either spelling.

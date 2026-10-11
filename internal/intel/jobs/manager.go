@@ -758,13 +758,27 @@ func (m *Manager) finishItem(ctx context.Context, item store.JobItem, status, er
 // RetryFailedJobItems (it refuses canceled jobs) can ever reach it. The gate check
 // here is what turns the common case into an explicit canceled item instead of a
 // silent no-op, matching what the loop-top gate does one step later.
+//
+// errorCode carries the reason the item is parked. Two of the four call sites in
+// runItem pass a meaningful code: CodeItemTimeout when the pipeline ran out of
+// its itemTimeout budget (runItem:650) and the failing step's own code when the
+// step errored but the item still has attempts left (runItem:664, the branch is
+// guarded by result.ErrorCode != ""). The other two park the item on purpose and
+// pass "": a closed provider gate (runItem:668) and a breakpoint write that
+// failed and is only logged (runItem:685).
+//
+// The store records it on the parked row, so an item that reappears later still
+// explains why it disappeared: without that write the only surviving trace of an
+// ITEM_TIMEOUT was whatever the last completed step had put into the summary.
+// A "" code clears the column, matching SaveJobItemStep's "the last thing that
+// happened" rule.
 func (m *Manager) deferItem(ctx context.Context, item store.JobItem, stepIndex int, nextRunAtNs int64, errorCode string, summary map[string]any) {
 	if m.jobGate(ctx, item.JobID) == gateCanceled {
 		m.finishItem(ctx, item, store.ItemCanceled, "", summary)
 		return
 	}
 	err := m.store.DeferJobItem(ctx, item.JobID, item.NodeHash, stepIndex, nextRunAtNs,
-		summaryJSON(summary), m.nowNs())
+		summaryJSON(summary), errorCode, m.nowNs())
 	switch {
 	case errors.Is(err, store.ErrJobItemSettled):
 		return

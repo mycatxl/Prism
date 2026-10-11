@@ -613,8 +613,8 @@ Note: Once enabled, requests without authentication information are rejected ins
   "开启后，该订阅刷新新增的节点会自动进入 Intel 批量检测；关闭后该订阅不会自动排队检测。":
     "When enabled, nodes added by a refresh of this subscription are queued for Intel checks automatically. When disabled, this subscription never queues checks on its own.",
   "解析报告": "Parse Report",
-  "解析报告按原因分组列出被丢弃的节点：原因、数量以及一个有限的名称样例。":
-    "The parse report groups the dropped nodes by reason: reason, count, and a bounded sample of names.",
+  "解析报告按原因分组列出被丢弃的节点：原因、数量以及一个有限的名称样例。另有被导入时改写了配置的节点（悬空的 detour 或 dialer-proxy 被剥离），它们不算丢弃。":
+    "The parse report groups the dropped nodes by reason: reason, count, and a bounded sample of names. It also lists the nodes whose configuration was rewritten on the way in (a dangling detour or dialer-proxy was stripped); those are not drops.",
   "该订阅尚未解析；刷新一次后会在这里列出被丢弃的节点及原因。":
     "This subscription has not been parsed yet. Refresh it once to list the dropped nodes and their reasons here.",
   "共 {{total}} 个节点：导入 {{imported}} 个，丢弃 {{skipped}} 个。":
@@ -626,6 +626,10 @@ Note: Once enabled, requests without authentication information are rejected ins
   "另有 {{count}} 个被丢弃的节点只计入数量，未记录名称。":
     "{{count}} further dropped nodes are counted only; their names were not stored.",
   "另有 {{count}} 种原因只计入数量。": "{{count}} further reasons are counted only.",
+  "另有 {{count}} 个节点被导入时改写了配置（悬空的 detour 或 dialer-proxy 被剥离）。":
+    "{{count}} imported nodes had their configuration rewritten on the way in (a dangling detour or dialer-proxy was stripped).",
+  "其中 {{count}} 条只计入数量。": "{{count}} of those are counted only.",
+  "导入时已改写": "Rewritten on import",
   "查看完整列表": "Show the full list",
   "收起完整列表": "Hide the full list",
   "该订阅尚未解析。": "This subscription has not been parsed yet.",

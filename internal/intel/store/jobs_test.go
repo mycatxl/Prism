@@ -412,6 +412,71 @@ func queueRow(t *testing.T, st *Store, provider, ip string) QueueItem {
 	return item
 }
 
+// TestDeferJobItemKeepsTheReasonItWasParked pins the diagnostic that the UPDATE
+// used to drop: runItem passes the failing step's own code (or ITEM_TIMEOUT) to
+// deferItem, and the parked row must carry it, otherwise an item that reappears
+// later cannot explain why it went away.
+func TestDeferJobItemKeepsTheReasonItWasParked(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if err := st.CreateJob(ctx, Job{
+		ID: "job", Kind: "intel", Priority: 100, RequestJSON: `{"kind":"intel"}`,
+		CreatedBy: "admin", CreatedAtNs: 5,
+	}, []JobItem{{NodeHash: "n1", NextRunAtNs: 10, UpdatedAtNs: 10}}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if _, err := st.ClaimJobItems(ctx, ClaimOptions{NowNs: 10, LeaseUntilNs: 100, Limit: 10, Owner: "w1"}); err != nil {
+		t.Fatalf("ClaimJobItems: %v", err)
+	}
+	if err := st.DeferJobItem(ctx, "job", "n1", 2, 500, `{"steps":[1,2]}`, "ITEM_TIMEOUT", 11); err != nil {
+		t.Fatalf("DeferJobItem: %v", err)
+	}
+	item, ok, err := st.GetJobItem(ctx, "job", "n1")
+	if err != nil || !ok {
+		t.Fatalf("GetJobItem: ok=%v err=%v", ok, err)
+	}
+	if item.Status != ItemQueued {
+		t.Fatalf("status = %s, want %s: a parked item must stay claimable", item.Status, ItemQueued)
+	}
+	if item.ErrorCode != "ITEM_TIMEOUT" {
+		t.Errorf("error_code = %q, want %q: the reason the item was parked must survive the defer",
+			item.ErrorCode, "ITEM_TIMEOUT")
+	}
+}
+
+// TestDeferJobItemClearsTheCodeWhenNoReasonIsGiven pins the other direction: the
+// two call sites that park an item on purpose pass "" (a closed provider gate, a
+// logged breakpoint write failure), and the row must not keep a stale code from
+// an earlier attempt - the same "the last thing that happened" rule
+// SaveJobItemStep follows when a step completes.
+func TestDeferJobItemClearsTheCodeWhenNoReasonIsGiven(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if err := st.CreateJob(ctx, Job{
+		ID: "job", Kind: "intel", Priority: 100, RequestJSON: `{"kind":"intel"}`,
+		CreatedBy: "admin", CreatedAtNs: 5,
+	}, []JobItem{{NodeHash: "n1", NextRunAtNs: 10, UpdatedAtNs: 10}}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	if _, err := st.ClaimJobItems(ctx, ClaimOptions{NowNs: 10, LeaseUntilNs: 100, Limit: 10, Owner: "w1"}); err != nil {
+		t.Fatalf("ClaimJobItems: %v", err)
+	}
+	if err := st.DeferJobItem(ctx, "job", "n1", 2, 500, `{"steps":[1,2]}`, "SOME_STEP_ERROR", 11); err != nil {
+		t.Fatalf("first DeferJobItem: %v", err)
+	}
+	if err := st.DeferJobItem(ctx, "job", "n1", 2, 600, `{"steps":[1,2]}`, "", 12); err != nil {
+		t.Fatalf("second DeferJobItem: %v", err)
+	}
+	item, _, err := st.GetJobItem(ctx, "job", "n1")
+	if err != nil {
+		t.Fatalf("GetJobItem: %v", err)
+	}
+	if item.ErrorCode != "" {
+		t.Errorf("error_code = %q, want it cleared: a park with no reason must not keep a stale code",
+			item.ErrorCode)
+	}
+}
+
 func TestJobs_CreateClaimAndPipelineBreakpoint(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
@@ -450,7 +515,7 @@ func TestJobs_CreateClaimAndPipelineBreakpoint(t *testing.T) {
 	}
 
 	// Breakpoint: store step 3 and requeue for a later restart.
-	if err := st.DeferJobItem(ctx, "job", "n1", 3, 500, `{"steps":[1,2,3]}`, 11); err != nil {
+	if err := st.DeferJobItem(ctx, "job", "n1", 3, 500, `{"steps":[1,2,3]}`, "", 11); err != nil {
 		t.Fatalf("DeferJobItem: %v", err)
 	}
 	item, ok, err := st.GetJobItem(ctx, "job", "n1")

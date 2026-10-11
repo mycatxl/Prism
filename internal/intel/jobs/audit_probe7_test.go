@@ -50,7 +50,7 @@ func TestAudit_CanceledJobRejectsALateDefer(t *testing.T) {
 		t.Fatalf("Cancel: %v", err)
 	}
 	// DeferJobItem must now be refused: the row was settled by CancelJob.
-	if err := st.DeferJobItem(ctx, job.ID, item.NodeHash, 0, clock.Now().UnixNano(), "{}", clock.Now().UnixNano()); !errors.Is(err, store.ErrJobItemSettled) {
+	if err := st.DeferJobItem(ctx, job.ID, item.NodeHash, 0, clock.Now().UnixNano(), "{}", "", clock.Now().UnixNano()); !errors.Is(err, store.ErrJobItemSettled) {
 		t.Errorf("late DeferJobItem = %v, want ErrJobItemSettled", err)
 	}
 	// And the manager path stays silent, leaving the canceled item alone.

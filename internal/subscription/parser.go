@@ -318,8 +318,8 @@ func parseClashProxies(proxies []map[string]any, report *parseReport) []ParsedNo
 		}
 	}
 	// WP06 §6.4: dialer-proxy references that resolve inside this document
-	// become chain nodes; the rest stay dangling for the parse report.
-	return applyClashDialerChains(nodes)
+	// become chain nodes; the rest are stripped and reported.
+	return applyClashDialerChains(nodes, report)
 }
 
 type surgeProxyLine struct {
@@ -1337,6 +1337,15 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		// WP06 §6.2: a Clash shadow-tls plugin becomes a shadowtls detour chain.
 		if chainRaw, ok := clashShadowTLSChain(defaultTag(tag, "shadowsocks", server, port), server, port, proxy, outbound); ok {
 			return ParsedNode{Tag: defaultTag(tag, "shadowsocks", server, port), RawOptions: chainRaw}, true
+		}
+		// The proxy declares the shadow-tls plugin but the chain could not be
+		// built. setSSPluginFromClash already wrote plugin=shadow-tls into the
+		// outbound, which sing-box rejects at dial time with "plugin not found:
+		// shadow-tls" - so importing it as a bare ss node would hand the
+		// operator a node that can never connect. Refuse it here; the caller
+		// reports the reason through clashProxySkip (see shadowTLSRefusal).
+		if isShadowTLSPlugin(proxy) {
+			return ParsedNode{}, false
 		}
 		return buildParsedNode(outbound)
 	case "vmess":

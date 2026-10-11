@@ -589,6 +589,12 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		MaxIdleConns:        a.envCfg.ProxyTransportMaxIdleConns,
 		MaxIdleConnsPerHost: a.envCfg.ProxyTransportMaxIdleConnsPerHost,
 		IdleConnTimeout:     a.envCfg.ProxyTransportIdleConnTimeout,
+		// The three outbound deadlines: without them a peer that accepts the
+		// connection and never answers pins the request indefinitely, because
+		// the listener has no read timeout (the SSE endpoint needs it).
+		ResponseHeaderTimeout: a.envCfg.ProxyTransportResponseHeaderTimeout,
+		TLSHandshakeTimeout:   a.envCfg.ProxyTransportTLSHandshakeTimeout,
+		DialTimeout:           a.envCfg.ProxyTransportDialTimeout,
 	}
 	if a.transportPool == nil {
 		a.transportPool = proxy.NewOutboundTransportPool(outboundTransportCfg)
@@ -596,6 +602,10 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 
 	// WP04 §4.6: proxy-entry (407/403) failure limiting is opt-in and disabled
 	// by default (PRISM_PROXY_AUTH_FAIL_LIMIT=0 keeps Resin behaviour).
+	// The proxy entry points resolve their client key with the same trusted
+	// proxy list the management API uses, so a client behind a listed proxy
+	// gets one bucket per client instead of one per proxy.
+	proxy.SetTrustedProxies(a.envCfg.TrustedProxies)
 	var proxyAuthGuard proxy.AuthFailureGuard
 	if a.envCfg.ProxyAuthFailLimit > 0 {
 		proxyAuthGuard = api.NewAuthFailureLimiter(
@@ -644,6 +654,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		MetricsSink:       a.metricsManager,
 		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
 		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
+		DialTimeout:       a.envCfg.ProxyTransportDialTimeout,
 	})
 	// WP04 §4.6: the SOCKS5 username/password check happens on a raw TCP
 	// session, so the mux cannot meter it with an http.ResponseWriter; the

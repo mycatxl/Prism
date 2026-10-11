@@ -451,25 +451,42 @@ func TestClashTypedAccessors(t *testing.T) {
 		}
 	})
 
-	t.Run("mapUintSlice", func(t *testing.T) {
+	t.Run("wireGuardReserved", func(t *testing.T) {
+		// The base64 spelling is what Go's JSON codec produces for the canonical
+		// []uint8 field; the number array is the legacy/hand-written form.
 		object := map[string]any{
-			"ok": []any{float64(1), float64(2), float64(3)}, "bad": []any{float64(1), "2"},
-			"string": "1", "nil": nil, "empty": []any{}, "fraction": []any{float64(1.9)},
+			"base64": "AQID",
+			"array":  []any{float64(1), float64(2), float64(3)},
+			"empty":  "",
+			"nil":    nil,
+			"bad":    "!!!not-base64!!!",
+			"other":  float64(3),
 		}
-		if got := mapUintSlice(object, "ok"); !reflect.DeepEqual(got, []int{1, 2, 3}) {
-			t.Errorf("mapUintSlice(ok) = %#v", got)
+		if got := wireGuardReserved(object); got != nil {
+			t.Errorf("wireGuardReserved(nil peer) = %#v, want nil", got)
 		}
-		if got := mapUintSlice(object, "fraction"); !reflect.DeepEqual(got, []int{1}) {
-			t.Errorf("mapUintSlice(fraction) = %#v", got)
+		peer := map[string]any{"reserved": object["base64"]}
+		if got := wireGuardReserved(peer); !reflect.DeepEqual(got, []int{1, 2, 3}) {
+			t.Errorf("wireGuardReserved(base64) = %#v, want [1 2 3]", got)
 		}
-		// One unreadable entry drops the whole list.
-		for _, key := range []string{"bad", "string", "nil", "missing"} {
-			if got := mapUintSlice(object, key); got != nil {
-				t.Errorf("mapUintSlice(%s) = %#v, want nil", key, got)
+		peer["reserved"] = object["array"]
+		if got := wireGuardReserved(peer); !reflect.DeepEqual(got, []int{1, 2, 3}) {
+			t.Errorf("wireGuardReserved(array) = %#v, want [1 2 3]", got)
+		}
+		// Anything that is not a byte triple reads as "not set" rather than as
+		// a partial or truncated list, which is what the link writer checks
+		// (`len(reserved) == 3`).
+		for _, key := range []string{"empty", "nil", "bad", "other", "missing"} {
+			peer["reserved"] = object[key]
+			if got := wireGuardReserved(peer); len(got) == 3 {
+				t.Errorf("wireGuardReserved(%s) = %#v, want a value the writer refuses", key, got)
 			}
 		}
-		if got := mapUintSlice(object, "empty"); len(got) != 0 {
-			t.Errorf("mapUintSlice(empty) = %#v", got)
+		// The empty base64 string is the one spelling that yields an empty
+		// slice instead of nil; it is still not a triple.
+		peer["reserved"] = object["empty"]
+		if got := wireGuardReserved(peer); got == nil || len(got) != 0 {
+			t.Errorf("wireGuardReserved(empty) = %#v, want an empty list", got)
 		}
 	})
 

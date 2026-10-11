@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // DirectDialGuard is the single address policy for every path where Prism
@@ -114,10 +115,31 @@ func (g DirectDialGuard) CheckTarget(ctx context.Context, host string) error {
 	return nil
 }
 
+// defaultDirectDialTimeout is the dial deadline of every local direct dial when
+// the caller does not inject one. A bare net.Dialer has no timeout at all, so a
+// black-holed target would hold the connection (and the request) indefinitely.
+const defaultDirectDialTimeout = 30 * time.Second
+
+// defaultDirectDialKeepAlive matches the standard library default. It is set
+// explicitly so the keep-alive probe interval cannot regress to zero (which
+// disables TCP keep-alives) if the dialer is ever built differently.
+const defaultDirectDialKeepAlive = 30 * time.Second
+
 // dialer returns the dialer every local direct dial must use. With the policy
-// disabled it is a plain net.Dialer, which keeps Resin behaviour.
+// disabled it is a plain net.Dialer plus the dial deadline, which keeps Resin
+// behaviour apart from that robustness bound.
 func (g DirectDialGuard) dialer() *net.Dialer {
-	dialer := &net.Dialer{}
+	return g.dialerWithTimeout(defaultDirectDialTimeout)
+}
+
+// dialerWithTimeout returns the guard dialer carrying the given dial deadline.
+// A non-positive timeout falls back to the default, so a missing configuration
+// can never reintroduce an unbounded dial.
+func (g DirectDialGuard) dialerWithTimeout(timeout time.Duration) *net.Dialer {
+	if timeout <= 0 {
+		timeout = defaultDirectDialTimeout
+	}
+	dialer := &net.Dialer{Timeout: timeout, KeepAlive: defaultDirectDialKeepAlive}
 	if !g.enabled {
 		return dialer
 	}

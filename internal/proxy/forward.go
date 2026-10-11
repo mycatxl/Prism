@@ -361,6 +361,7 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 			metricsSink: p.metricsSink,
 			bypass:      p.bypass,
 			directGuard: p.directGuard,
+			dialTimeout: p.transportConfig.DialTimeout,
 		},
 		platName,
 		account,
@@ -423,8 +424,7 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	}
 	lifecycle.setHTTPStatus(http.StatusOK)
 	relay := pumpPreparedTunnel(clientConn, clientBuf.Reader, prepare.session, tunnelPumpOptions{
-		requireBidirectionalTraffic: true,
-		onFirstIngressByte:          lifecycle.markFirstByteReceived,
+		onFirstIngressByte: lifecycle.markFirstByteReceived,
 	})
 	lifecycle.addIngressBytes(relay.ingressBytes)
 	lifecycle.addEgressBytes(relay.egressBytes)

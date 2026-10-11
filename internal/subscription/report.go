@@ -44,7 +44,13 @@ const ReasonDepthExceeded = "DEPTH_EXCEEDED"
 type ParseResult struct {
 	Nodes   []ParsedNode  `json:"-"`
 	Skipped []SkippedNode `json:"skipped"`
-	Stats   ParseStats    `json:"stats"`
+	// Notes records nodes that were imported with a modification the operator
+	// should know about: today, a node kept because a dangling detour or
+	// dialer-proxy reference was stripped from it. They are not drops, so they
+	// stay out of Skipped and out of Stats.Total - otherwise one node would be
+	// counted as both imported and dropped.
+	Notes []SkippedNode `json:"notes,omitempty"`
+	Stats ParseStats    `json:"stats"`
 }
 
 // ParseStats summarises a parse.
@@ -56,6 +62,13 @@ type ParseStats struct {
 	ByProtocol map[string]int `json:"by_protocol"`
 	// SkippedOverflow counts skip records beyond MaxSkippedNodes.
 	SkippedOverflow int `json:"skipped_overflow,omitempty"`
+	// Notes counts imported nodes that carry a note (see ParseResult.Notes),
+	// including the ones past MaxSkippedNodes that only NotesOverflow counts.
+	// They are part of Imported, never of Skipped.
+	Notes int `json:"notes,omitempty"`
+	// NotesOverflow counts note records beyond MaxSkippedNodes; they are part of
+	// Notes but have no entry in ParseResult.Notes.
+	NotesOverflow int `json:"notes_overflow,omitempty"`
 }
 
 // SkippedNode is one explainable drop.
@@ -110,9 +123,11 @@ var singboxInfrastructureTypes = map[string]bool{
 
 // parseReport accumulates one parse.
 type parseReport struct {
-	nodes    []ParsedNode
-	skipped  []SkippedNode
-	overflow int
+	nodes         []ParsedNode
+	skipped       []SkippedNode
+	notes         []SkippedNode
+	overflow      int
+	notesOverflow int
 }
 
 func newParseReport() *parseReport {
@@ -137,14 +152,36 @@ func (r *parseReport) addSkip(skipped SkippedNode) {
 	r.skipped = append(r.skipped, skipped)
 }
 
+// addNote records one imported node that was modified on the way in - today, a
+// node kept because a dangling detour or dialer-proxy reference was stripped or
+// cut from its chain. A note is not a drop: the node is in Nodes and in
+// Stats.Imported, and it must not appear in Skipped, or the report would claim
+// to have both kept and dropped the same node.
+//
+// Notes are bounded like skips: past MaxSkippedNodes the record is counted in
+// NotesOverflow only, so the stored report cannot grow without bound and the
+// count still tells the operator how many notes exist.
+func (r *parseReport) addNote(note SkippedNode) {
+	if note.Reason == "" {
+		note.Reason = node.ReasonInvalid
+	}
+	if len(r.notes) >= MaxSkippedNodes {
+		r.notesOverflow++
+		return
+	}
+	r.notes = append(r.notes, note)
+}
+
 // result renders the accumulated state.
 func (r *parseReport) result() ParseResult {
 	stats := ParseStats{
 		Imported:        len(r.nodes),
 		Skipped:         len(r.skipped) + r.overflow,
+		Notes:           len(r.notes) + r.notesOverflow,
 		ByEngine:        map[string]int{},
 		ByProtocol:      map[string]int{},
 		SkippedOverflow: r.overflow,
+		NotesOverflow:   r.notesOverflow,
 	}
 	stats.Total = stats.Imported + stats.Skipped
 	for _, parsed := range r.nodes {
@@ -168,6 +205,7 @@ func (r *parseReport) result() ParseResult {
 	return ParseResult{
 		Nodes:   append([]ParsedNode(nil), r.nodes...),
 		Skipped: append([]SkippedNode(nil), r.skipped...),
+		Notes:   append([]SkippedNode(nil), r.notes...),
 		Stats:   stats,
 	}
 }
@@ -307,6 +345,13 @@ type SkipSummary struct {
 	Reasons []SkipReason `json:"reasons"`
 	// ReasonsOverflow counts distinct reasons beyond MaxSkipSummaryReasons.
 	ReasonsOverflow int `json:"reasons_overflow,omitempty"`
+	// Notes counts imported nodes that were modified on the way in (a stripped
+	// or cut dangling detour or dialer-proxy). They are part of Imported and are
+	// never part of Skipped.
+	Notes int `json:"notes,omitempty"`
+	// NotesOverflow counts note records beyond MaxSkippedNodes; they are part of
+	// Notes but are not listed in the stored report.
+	NotesOverflow int `json:"notes_overflow,omitempty"`
 }
 
 // SummarizeParseResult renders the grouped summary of one parse report.
@@ -316,6 +361,8 @@ func SummarizeParseResult(result ParseResult) SkipSummary {
 		Imported:        result.Stats.Imported,
 		Skipped:         result.Stats.Skipped,
 		SkippedOverflow: result.Stats.SkippedOverflow,
+		Notes:           result.Stats.Notes,
+		NotesOverflow:   result.Stats.NotesOverflow,
 		Reasons:         []SkipReason{},
 	}
 

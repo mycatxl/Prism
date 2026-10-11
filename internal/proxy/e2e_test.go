@@ -1001,7 +1001,12 @@ func TestForwardProxy_CONNECTResponseFlushFailureDoesNotPenalizeNode(t *testing.
 	}
 }
 
-func TestForwardProxy_CONNECTZeroTrafficMarkedFailed(t *testing.T) {
+// TestForwardProxy_CONNECTZeroTrafficNotMarkedFailed pins the corrected
+// semantics: a client that completes the CONNECT handshake and then closes
+// without exchanging a byte is a client decision, not a node failure. The
+// tunnel must be recorded as a success so a node is never circuit-broken by
+// idle clients.
+func TestForwardProxy_CONNECTZeroTrafficNotMarkedFailed(t *testing.T) {
 	env := newProxyE2EEnv(t)
 	emitter := newMockEventEmitter()
 	health := &mockHealthRecorder{}
@@ -1075,14 +1080,14 @@ func TestForwardProxy_CONNECTZeroTrafficMarkedFailed(t *testing.T) {
 		if logEv.HTTPStatus != http.StatusOK {
 			t.Fatalf("HTTPStatus: got %d, want %d", logEv.HTTPStatus, http.StatusOK)
 		}
-		if logEv.NetOK {
-			t.Fatal("CONNECT zero-traffic log net_ok: got true, want false")
+		if !logEv.NetOK {
+			t.Fatal("CONNECT zero-traffic log net_ok: got false, want true (an idle client is not a node failure)")
 		}
-		if logEv.PrismError != "UPSTREAM_REQUEST_FAILED" {
-			t.Fatalf("CONNECT zero-traffic resin_error: got %q, want %q", logEv.PrismError, "UPSTREAM_REQUEST_FAILED")
+		if logEv.PrismError != "" {
+			t.Fatalf("CONNECT zero-traffic resin_error: got %q, want empty", logEv.PrismError)
 		}
-		if logEv.UpstreamStage != "connect_zero_traffic" {
-			t.Fatalf("CONNECT zero-traffic upstream_stage: got %q, want %q", logEv.UpstreamStage, "connect_zero_traffic")
+		if logEv.UpstreamStage != "" {
+			t.Fatalf("CONNECT zero-traffic upstream_stage: got %q, want empty", logEv.UpstreamStage)
 		}
 		if logEv.EgressBytes != 0 || logEv.IngressBytes != 0 {
 			t.Fatalf("CONNECT zero-traffic bytes: ingress=%d egress=%d, want both 0", logEv.IngressBytes, logEv.EgressBytes)
@@ -1094,16 +1099,19 @@ func TestForwardProxy_CONNECTZeroTrafficMarkedFailed(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if health.resultCalls.Load() > 0 {
-			if health.lastSuccess.Load() != 0 {
-				t.Fatalf("RecordResult lastSuccess: got %d, want 0", health.lastSuccess.Load())
+			if health.lastSuccess.Load() != 1 {
+				t.Fatalf("RecordResult lastSuccess: got %d, want 1 (zero traffic must not penalise the node)", health.lastSuccess.Load())
 			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("expected RecordResult call for CONNECT zero-traffic failure")
+	t.Fatal("expected RecordResult call for the CONNECT zero-traffic tunnel")
 }
 
+// TestForwardProxy_CONNECTHalfTrafficNotMarkedZeroTraffic pins the other half
+// of the same rule: upstream-push-only traffic (the client sends nothing) is a
+// successful tunnel too. The client is the one that decides whether to speak.
 func TestForwardProxy_CONNECTHalfTrafficNotMarkedZeroTraffic(t *testing.T) {
 	env := newProxyE2EEnv(t)
 	emitter := newMockEventEmitter()
@@ -1184,14 +1192,14 @@ func TestForwardProxy_CONNECTHalfTrafficNotMarkedZeroTraffic(t *testing.T) {
 
 	select {
 	case logEv := <-emitter.logCh:
-		if logEv.NetOK {
-			t.Fatal("CONNECT half-traffic log net_ok: got true, want false")
+		if !logEv.NetOK {
+			t.Fatal("CONNECT half-traffic log net_ok: got false, want true (one-way traffic is not a node failure)")
 		}
-		if logEv.UpstreamStage != "connect_no_egress_traffic" {
-			t.Fatalf("CONNECT half-traffic upstream_stage: got %q, want %q", logEv.UpstreamStage, "connect_no_egress_traffic")
+		if logEv.PrismError != "" {
+			t.Fatalf("CONNECT half-traffic resin_error: got %q, want empty", logEv.PrismError)
 		}
-		if logEv.UpstreamStage == "connect_zero_traffic" {
-			t.Fatal("CONNECT half-traffic must not be marked as connect_zero_traffic")
+		if logEv.UpstreamStage != "" {
+			t.Fatalf("CONNECT half-traffic upstream_stage: got %q, want empty", logEv.UpstreamStage)
 		}
 		if logEv.IngressBytes == 0 || logEv.EgressBytes != 0 {
 			t.Fatalf("CONNECT half-traffic bytes: ingress=%d egress=%d, want ingress>0 and egress=0", logEv.IngressBytes, logEv.EgressBytes)
@@ -1203,12 +1211,12 @@ func TestForwardProxy_CONNECTHalfTrafficNotMarkedZeroTraffic(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
 		if health.resultCalls.Load() > 0 {
-			if health.lastSuccess.Load() != 0 {
-				t.Fatalf("RecordResult lastSuccess: got %d, want 0", health.lastSuccess.Load())
+			if health.lastSuccess.Load() != 1 {
+				t.Fatalf("RecordResult lastSuccess: got %d, want 1 (half traffic must not penalise the node)", health.lastSuccess.Load())
 			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("expected RecordResult call for CONNECT half-traffic failure")
+	t.Fatal("expected RecordResult call for the CONNECT half-traffic tunnel")
 }

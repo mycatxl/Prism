@@ -68,6 +68,12 @@ func clashProxySkip(proxy map[string]any, source string) SkippedNode {
 		if plugin := canonicalSSPluginName(getString(proxy, "plugin")); plugin == "restls" || plugin == "kcptun" || plugin == "gost-plugin" {
 			return skipNode(tag, "shadowsocks", source, node.ReasonEngineNotBuilt, "ss("+plugin+")")
 		}
+		// A shadow-tls plugin that could not become a chain: the converter
+		// refuses it rather than emitting a bare ss node whose plugin sing-box
+		// cannot load.
+		if reason := shadowTLSRefusal(proxy); reason != "" {
+			return skipNode(tag, "shadowsocks", source, node.ReasonInvalid, reason)
+		}
 	}
 
 	if protocol, convertible := clashProtocolNames[nodeType]; convertible {

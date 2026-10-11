@@ -414,8 +414,10 @@ func TestParseGeneralSubscription_ClashJSON_NewProtocolsAndDialFields(t *testing
 	if got := socks["network"]; got != "tcp" {
 		t.Fatalf("socks network: got %v", got)
 	}
-	if got := socks["detour"]; got != "detour-a" {
-		t.Fatalf("socks detour: got %v", got)
+	// §6: "detour-a" names no proxy of this document, so the reference is
+	// reported and stripped instead of being kept as an unresolvable detour.
+	if got, present := socks["detour"]; present {
+		t.Fatalf("socks detour: got %v, want the dangling reference stripped", got)
 	}
 	if got := socks["bind_interface"]; got != "eth0" {
 		t.Fatalf("socks bind_interface: got %v", got)
@@ -2216,9 +2218,11 @@ func TestParseGeneralSubscription_ClashJSON_DialFieldsAppliedToVMessAndHY2(t *te
 	}
 	byTag := parseNodesByTag(t, nodes)
 
+	// §6: neither dialer-proxy resolves inside this document, so both
+	// references are stripped; the rest of the dial fields stay.
 	vmess := byTag["vmess-dial"]
-	if got := vmess["detour"]; got != "chain-a" {
-		t.Fatalf("vmess detour: got %v", got)
+	if got, present := vmess["detour"]; present {
+		t.Fatalf("vmess detour: got %v, want the dangling reference stripped", got)
 	}
 	if got := vmess["bind_interface"]; got != "eth1" {
 		t.Fatalf("vmess bind_interface: got %v", got)
@@ -2228,8 +2232,8 @@ func TestParseGeneralSubscription_ClashJSON_DialFieldsAppliedToVMessAndHY2(t *te
 	}
 
 	hy2 := byTag["hy2-dial"]
-	if got := hy2["detour"]; got != "chain-b" {
-		t.Fatalf("hy2 detour: got %v", got)
+	if got, present := hy2["detour"]; present {
+		t.Fatalf("hy2 detour: got %v, want the dangling reference stripped", got)
 	}
 	if got := hy2["bind_interface"]; got != "eth2" {
 		t.Fatalf("hy2 bind_interface: got %v", got)

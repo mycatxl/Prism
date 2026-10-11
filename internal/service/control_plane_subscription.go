@@ -140,6 +140,10 @@ type SubscriptionParseReportResponse struct {
 	Summary       subscription.SkipSummary   `json:"summary"`
 	Stats         subscription.ParseStats    `json:"stats"`
 	Skipped       []subscription.SkippedNode `json:"skipped"`
+	// Notes lists imported nodes that were modified on the way in (a stripped
+	// dangling detour or dialer-proxy reference). They are not drops: the node
+	// is in the pool and counts as imported.
+	Notes []subscription.SkippedNode `json:"notes,omitempty"`
 }
 
 // GetSubscriptionParseReport returns the stored parse report of one
@@ -190,6 +194,9 @@ func (s *ControlPlaneService) GetSubscriptionParseReport(id string) (*Subscripti
 	resp.Stats = result.Stats
 	if len(result.Skipped) > 0 {
 		resp.Skipped = result.Skipped
+	}
+	if len(result.Notes) > 0 {
+		resp.Notes = result.Notes
 	}
 	resp.Summary = subscription.SummarizeParseResult(result)
 	return resp, nil

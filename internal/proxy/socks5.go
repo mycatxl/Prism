@@ -48,6 +48,9 @@ type Socks5InboundConfig struct {
 	// DirectDenyPrivate enables the local dial guard (PRISM_DIRECT_DENY_PRIVATE)
 	// on this inbound's local direct branch, keeping Resin behaviour when false.
 	DirectDenyPrivate bool
+	// DialTimeout bounds the local direct dial
+	// (PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT). Zero uses the guard default.
+	DialTimeout time.Duration
 }
 
 // Socks5Inbound implements SOCKS5 CONNECT over a raw TCP connection.
@@ -79,6 +82,7 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 			metricsSink: cfg.MetricsSink,
 			bypass:      NewTargetBypassMatcher(cfg.ProxyBypassRules),
 			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate),
+			dialTimeout: cfg.DialTimeout,
 		},
 		events: ev,
 	}

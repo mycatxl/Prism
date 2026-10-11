@@ -408,6 +408,12 @@ func TestImportResinRequiresForceAndMovesExistingDatabasesAside(t *testing.T) {
 			t.Fatalf("write %s: %v", path, err)
 		}
 	}
+	// A legacy installation may hold a world-readable state.db (it carries the
+	// intel provider api keys). The aside the import leaves behind must not
+	// inherit that mode, so this fixture is deliberately 0644.
+	if err := os.Chmod(staleState, 0o644); err != nil {
+		t.Fatalf("chmod %s: %v", staleState, err)
+	}
 
 	target := importResinTarget{StateDir: targetState, CacheDir: targetCache}
 	src := importResinSources{StateDir: fromState, CacheDir: fromCache}
@@ -440,6 +446,9 @@ func TestImportResinRequiresForceAndMovesExistingDatabasesAside(t *testing.T) {
 	if got := readFileString(t, asides[0]); got != "stale" {
 		t.Fatalf("pre-import backup content = %q, want %q", got, "stale")
 	}
+	// os.Rename keeps the source mode: a 0644 state.db must not leave a 0644
+	// aside holding the provider api keys.
+	assertMode0600(t, asides[0])
 	if got := databaseIntValue(t, staleState, "SELECT COUNT(*) FROM platforms"); got != 1 {
 		t.Fatalf("imported platforms = %d, want 1", got)
 	}

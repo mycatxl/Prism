@@ -165,7 +165,7 @@ func TestViaNodeStepRetriesASourceWhoseEvidenceDidNotLand(t *testing.T) {
 		t.Fatalf("marshal the step summary: %v", err)
 	}
 	if err := st.DeferJobItem(ctx, jobID, nodeHash, 3,
-		clock.now.Add(time.Minute).UnixNano(), string(stored), clock.now.UnixNano()); err != nil {
+		clock.now.Add(time.Minute).UnixNano(), string(stored), "", clock.now.UnixNano()); err != nil {
 		t.Fatalf("DeferJobItem: %v", err)
 	}
 	parked, ok, err := st.GetJobItem(ctx, jobID, nodeHash)

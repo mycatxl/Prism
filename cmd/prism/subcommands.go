@@ -180,6 +180,14 @@ func renderInitEnv(adminToken, proxyToken string, now time.Time) string {
 
 // moveAsideForBackup renames path to "<path>.bak.<timestamp>" and returns the
 // backup path. A numeric suffix is appended when that name is already taken.
+//
+// The backup is forced to 0600. os.Rename keeps the source mode, so a legacy
+// .env that is still 0644 would otherwise leave a world-readable copy of the
+// admin and proxy tokens behind - the opposite of what `prism init` promises
+// for this file. A chmod failure is fatal on purpose: the caller aborts and the
+// new .env is never written, which is the safe outcome for a file holding
+// secrets. The error names the backup path because by then the rename has
+// already happened and the operator has to know where the old file went.
 func moveAsideForBackup(path string) (string, error) {
 	stamp := time.Now().Format("20060102-150405")
 	backupPath := path + ".bak." + stamp
@@ -195,6 +203,9 @@ func moveAsideForBackup(path string) (string, error) {
 	}
 	if err := os.Rename(path, backupPath); err != nil {
 		return "", err
+	}
+	if err := os.Chmod(backupPath, 0o600); err != nil {
+		return "", fmt.Errorf("the previous file is now at %s but could not be made private (mode 0600): %w", backupPath, err)
 	}
 	return backupPath, nil
 }
@@ -601,11 +612,26 @@ func restoreBackup(opts restoreOptions, fromDir string, force bool, logw io.Writ
 		}
 		for _, candidate := range []string{dest, dest + "-wal", dest + "-shm"} {
 			if _, err := os.Stat(candidate); err != nil {
+				// Only "it is not there" may be skipped: any other failure
+				// (a permission error on the directory, say) means the check
+				// could not be made, and carrying on would let the copy below
+				// truncate a live database that was never moved aside.
+				if !os.IsNotExist(err) {
+					return fmt.Errorf("restore: inspect %s: %w", candidate, err)
+				}
 				continue
 			}
 			aside := candidate + ".pre-restore-" + stamp
 			if err := os.Rename(candidate, aside); err != nil {
 				return fmt.Errorf("restore: move %s aside: %w", candidate, err)
+			}
+			// The aside keeps the source mode, and state.db holds the intel
+			// provider api keys, so a legacy 0644 database would leave a
+			// world-readable copy next to the restored one. Refuse to continue
+			// when it cannot be made private: the caller then stops before the
+			// backup is copied over the live data.
+			if err := os.Chmod(aside, 0o600); err != nil {
+				return fmt.Errorf("restore: the previous %s is now at %s but could not be made private (mode 0600): %w", candidate, aside, err)
 			}
 			fmt.Fprintf(logw, "Moved %s to %s\n", candidate, aside)
 		}

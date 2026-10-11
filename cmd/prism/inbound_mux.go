@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -122,7 +123,7 @@ func shouldRouteTokenAPI(r *http.Request, proxyToken string) bool {
 	if !ok {
 		return false
 	}
-	if proxyToken != "" && token != proxyToken {
+	if proxyToken != "" && !tokenMatches(token, proxyToken) {
 		return false
 	}
 	apiSeg, ok := decodePathSegment(segments[1])
@@ -142,7 +143,21 @@ func shouldRejectReverseProxyByToken(r *http.Request, proxyToken string) bool {
 		// Keep malformed percent-encoding behavior in reverse parser.
 		return false
 	}
-	return token != proxyToken
+	return !tokenMatches(token, proxyToken)
+}
+
+// tokenMatches reports whether the path token equals the configured proxy
+// token, comparing the two in constant time so a wrong token cannot be
+// discovered byte by byte from the response latency of this gate. The mux
+// owns this decision (internal/proxy only sees the requests the mux lets
+// through), so this is the real gate for #33.
+//
+// Known limit: crypto/subtle returns 0 immediately when the lengths differ, so
+// the length of the configured token is observable. The token length is not a
+// secret (the token itself is the secret, and it is a fixed-length hex string),
+// so this is accepted; only the content comparison is constant time.
+func tokenMatches(got, want string) bool {
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // PRISM-DEVIATION: X4 — error responses carry both the Prism and the upstream

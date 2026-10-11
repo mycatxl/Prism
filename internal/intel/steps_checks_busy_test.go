@@ -333,7 +333,7 @@ func TestChecksStepParkRoundTripsThroughTheStore(t *testing.T) {
 		t.Fatalf("marshal the step summary: %v", err)
 	}
 	now := time.Now().UTC().UnixNano()
-	if err := st.DeferJobItem(ctx, jobID, nodeHash, 1, now, string(raw), now); err != nil {
+	if err := st.DeferJobItem(ctx, jobID, nodeHash, 1, now, string(raw), "", now); err != nil {
 		t.Fatalf("DeferJobItem: %v", err)
 	}
 	parked, ok, err := st.GetJobItem(ctx, jobID, nodeHash)

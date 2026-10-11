@@ -82,6 +82,9 @@ func TestLoadEnvConfig_Defaults(t *testing.T) {
 	assertEqual(t, "ProxyTransportMaxIdleConns", cfg.ProxyTransportMaxIdleConns, 1024)
 	assertEqual(t, "ProxyTransportMaxIdleConnsPerHost", cfg.ProxyTransportMaxIdleConnsPerHost, 64)
 	assertEqual(t, "ProxyTransportIdleConnTimeout", cfg.ProxyTransportIdleConnTimeout, 90*time.Second)
+	assertEqual(t, "ProxyTransportResponseHeaderTimeout", cfg.ProxyTransportResponseHeaderTimeout, 60*time.Second)
+	assertEqual(t, "ProxyTransportTLSHandshakeTimeout", cfg.ProxyTransportTLSHandshakeTimeout, 10*time.Second)
+	assertEqual(t, "ProxyTransportDialTimeout", cfg.ProxyTransportDialTimeout, 30*time.Second)
 	assertEqual(t, "ProxyBypassRulesLength", len(cfg.ProxyBypassRules), 0)
 
 	// Request log
@@ -126,6 +129,9 @@ func TestLoadEnvConfig_EnvOverrides(t *testing.T) {
 	envs["PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS"] = "2048"
 	envs["PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS_PER_HOST"] = "128"
 	envs["PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT"] = "2m"
+	envs["PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT"] = "45s"
+	envs["PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT"] = "5s"
+	envs["PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT"] = "12s"
 	envs["PRISM_PROXY_BYPASS"] = "localhost;127.*; 192.168.*\n<local>,10.0.0.0/8"
 	envs["PRISM_REQUEST_LOG_QUEUE_FLUSH_INTERVAL"] = "10m"
 	setEnvs(t, envs)
@@ -169,6 +175,9 @@ func TestLoadEnvConfig_EnvOverrides(t *testing.T) {
 	assertEqual(t, "ProxyTransportMaxIdleConns", cfg.ProxyTransportMaxIdleConns, 2048)
 	assertEqual(t, "ProxyTransportMaxIdleConnsPerHost", cfg.ProxyTransportMaxIdleConnsPerHost, 128)
 	assertEqual(t, "ProxyTransportIdleConnTimeout", cfg.ProxyTransportIdleConnTimeout, 2*time.Minute)
+	assertEqual(t, "ProxyTransportResponseHeaderTimeout", cfg.ProxyTransportResponseHeaderTimeout, 45*time.Second)
+	assertEqual(t, "ProxyTransportTLSHandshakeTimeout", cfg.ProxyTransportTLSHandshakeTimeout, 5*time.Second)
+	assertEqual(t, "ProxyTransportDialTimeout", cfg.ProxyTransportDialTimeout, 12*time.Second)
 	assertEqual(t, "ProxyBypassRulesLength", len(cfg.ProxyBypassRules), 5)
 	assertEqual(t, "ProxyBypassRules[0]", cfg.ProxyBypassRules[0], "localhost")
 	assertEqual(t, "ProxyBypassRules[1]", cfg.ProxyBypassRules[1], "127.*")
@@ -501,6 +510,22 @@ func TestLoadEnvConfig_QueueSizeTooSmall(t *testing.T) {
 	assertContains(t, err.Error(), "at least 2x")
 }
 
+// TestLoadEnvConfig_QueueSizeOverflowIsRejected pins the integer-overflow hole
+// in that comparison: `size < 2*batch` wraps to a negative product once batch
+// reaches 2^62, so the guard used to accept a batch far larger than the queue.
+func TestLoadEnvConfig_QueueSizeOverflowIsRejected(t *testing.T) {
+	envs := requiredEnvs()
+	envs["PRISM_REQUEST_LOG_QUEUE_SIZE"] = "1024"
+	envs["PRISM_REQUEST_LOG_QUEUE_FLUSH_BATCH_SIZE"] = "4611686018427387904" // 2^62
+	setEnvs(t, envs)
+
+	_, err := LoadEnvConfig()
+	if err == nil {
+		t.Fatal("expected error: a batch of 2^62 overflows 2*batch and must not pass the guard")
+	}
+	assertContains(t, err.Error(), "at least 2x")
+}
+
 func TestLoadEnvConfig_InvalidDuration(t *testing.T) {
 	envs := requiredEnvs()
 	envs["PRISM_REQUEST_LOG_QUEUE_FLUSH_INTERVAL"] = "not-a-duration"
@@ -652,6 +677,50 @@ func TestLoadEnvConfig_InvalidProxyTransportSettings(t *testing.T) {
 	}
 	assertContains(t, err.Error(), "PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT")
 	assertContains(t, err.Error(), "PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS_PER_HOST")
+}
+
+// TestLoadEnvConfig_InvalidProxyTransportTimeouts pins that the three outbound
+// deadline settings are rejected when they are not positive: a zero value would
+// silently restore the "no timeout" behaviour the settings exist to remove.
+func TestLoadEnvConfig_InvalidProxyTransportTimeouts(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"zero response header timeout", "PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT", "0s"},
+		{"negative response header timeout", "PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT", "-1s"},
+		{"zero TLS handshake timeout", "PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT", "0s"},
+		{"negative TLS handshake timeout", "PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT", "-30s"},
+		{"zero dial timeout", "PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT", "0s"},
+		{"negative dial timeout", "PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT", "-5s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envs := requiredEnvs()
+			envs[tc.key] = tc.value
+			setEnvs(t, envs)
+
+			_, err := LoadEnvConfig()
+			if err == nil {
+				t.Fatalf("%s=%s must be rejected", tc.key, tc.value)
+			}
+			assertContains(t, err.Error(), tc.key)
+		})
+	}
+}
+
+// TestLoadEnvConfig_InvalidProxyTransportTimeoutSyntax covers a value that is
+// not a duration at all.
+func TestLoadEnvConfig_InvalidProxyTransportTimeoutSyntax(t *testing.T) {
+	envs := requiredEnvs()
+	envs["PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT"] = "soon"
+	setEnvs(t, envs)
+
+	_, err := LoadEnvConfig()
+	if err == nil {
+		t.Fatal("expected error for an unparsable duration")
+	}
+	assertContains(t, err.Error(), "PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT")
 }
 
 // --- test helpers ---
