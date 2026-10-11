@@ -23,6 +23,91 @@ import (
 // makes it match no row, and refreshJob re-reads and recomputes, bounded by
 // refreshJobPublishAttempts.
 
+// TestRefreshJob_ReadsTheRowBeforeTheCounters pins the read order that makes the
+// guarded UPDATE sound.
+//
+// The guard compares the row it writes against the row refreshJob read, so that
+// snapshot must never be newer than the counters it publishes. With the reverse
+// order - counters first, row second - a publisher can take its counters before
+// another publisher settled the job and its row after: it then holds a fresh row
+// and stale counters at once, the guard matches the row against itself, and the
+// settlement is overwritten by the counters from before it. That is the CI
+// failure this test pins: a succeeded job with done=2 written back as done=1,
+// because the stale counters still showed a pending item.
+//
+// The seam commits the other publisher's settlement in exactly that window, so
+// the assertions below fail if the two reads are ever swapped back.
+func TestRefreshJob_ReadsTheRowBeforeTheCounters(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	now := int64(1_000)
+	if err := st.CreateJob(ctx,
+		Job{ID: "j", Kind: "intel", Status: JobRunning, CreatedAtNs: now},
+		[]JobItem{
+			{JobID: "j", NodeHash: "n1", Status: ItemRunning, NextRunAtNs: now, UpdatedAtNs: now},
+			{JobID: "j", NodeHash: "n2", Status: ItemRunning, NextRunAtNs: now, UpdatedAtNs: now},
+		}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	// The publisher under test reads the row, and the other publisher then
+	// finishes its item and settles the job before the counters are read.
+	var fired atomic.Bool
+	st.jobReadHook = func() {
+		if !fired.CompareAndSwap(false, true) {
+			return
+		}
+		if err := st.FinishJobItem(ctx, "j", "n1", ItemDone, "", "{}", now); err != nil {
+			t.Errorf("FinishJobItem inside the window: %v", err)
+			return
+		}
+		if err := st.FinishJobItem(ctx, "j", "n2", ItemDone, "", "{}", now); err != nil {
+			t.Errorf("FinishJobItem inside the window: %v", err)
+			return
+		}
+		// The other publisher settles the job row itself: both items are
+		// terminal, so its publish writes succeeded/done=2.
+		if _, err := st.refreshJob(ctx, "j", now, 0); err != nil {
+			t.Errorf("competing publish inside the window: %v", err)
+		}
+	}
+
+	job, err := st.RefreshJob(ctx, "j", now)
+	st.jobReadHook = nil
+	if err != nil {
+		t.Fatalf("RefreshJob: %v", err)
+	}
+
+	counters, err := st.JobItemCounters(ctx, "j")
+	if err != nil {
+		t.Fatalf("JobItemCounters: %v", err)
+	}
+	t.Logf("published: status=%s total=%d done=%d (items total=%d done=%d)",
+		job.Status, job.Total, job.Done, counters.Total, counters.Done)
+
+	if job.Done != 2 || job.Total != 2 {
+		t.Errorf("jobs row total=%d done=%d, want 2/2: the counters were read before the "+
+			"competing settlement and published over it", job.Total, job.Done)
+	}
+	if job.Status != JobSucceeded {
+		t.Errorf("job = %s, want %s", job.Status, JobSucceeded)
+	}
+
+	// The stored row must agree with its items, which is the invariant the API
+	// and the scheduler read.
+	stored, err := st.GetJob(ctx, "j")
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if stored.Total != counters.Total || stored.Done != counters.Done ||
+		stored.Failed != counters.Failed || stored.Skipped != counters.Skipped {
+		t.Errorf("stored jobs row total=%d done=%d failed=%d skipped=%d contradicts the items "+
+			"total=%d done=%d failed=%d skipped=%d",
+			stored.Total, stored.Done, stored.Failed, stored.Skipped,
+			counters.Total, counters.Done, counters.Failed, counters.Skipped)
+	}
+}
+
 // TestRefreshJob_ConcurrentPublishKeepsCountersInSync is the promoted form of the
 // audit probe: rounds of two workers that each finish one item of the same job
 // and then publish it, asserting the invariant the API and the scheduler rely on

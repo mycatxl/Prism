@@ -40,6 +40,14 @@ type Store struct {
 	// deterministic interleaving. It is nil in production.
 	refreshHook func()
 
+	// jobReadHook is a test seam that runs inside RefreshJob immediately after
+	// the job row is read and before the item counters are. The guarded UPDATE
+	// compares against that row, so the row must not be newer than the counters:
+	// this seam is where a test commits another publisher's settlement to prove
+	// the counters are re-read afterwards rather than published from before it.
+	// It is nil in production.
+	jobReadHook func()
+
 	mu     sync.RWMutex
 	closed bool
 }

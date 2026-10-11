@@ -664,11 +664,23 @@ func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attem
 	if err != nil {
 		return Job{}, err
 	}
-	counters, err := s.JobItemCounters(ctx, jobID)
+	// The job row is read first and the item counters second, and the order is
+	// load bearing. The guarded UPDATE below compares the row it writes against
+	// the row read here, so this snapshot must never be *newer* than the
+	// counters it publishes. Read the other way round - counters first, row
+	// second - a publisher could take its counters before another publisher
+	// settled the job and its row after, and would then hold a fresh row and
+	// stale counters at once: the guard matched the row against itself, and the
+	// settlement was overwritten by the counters from before it (a succeeded
+	// job with done=2 written back as done=1).
+	job, err := s.GetJob(ctx, jobID)
 	if err != nil {
 		return Job{}, err
 	}
-	job, err := s.GetJob(ctx, jobID)
+	if s.jobReadHook != nil {
+		s.jobReadHook()
+	}
+	counters, err := s.JobItemCounters(ctx, jobID)
 	if err != nil {
 		return Job{}, err
 	}
