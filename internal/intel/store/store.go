@@ -32,6 +32,14 @@ type Store struct {
 	db   *sql.DB
 	path string
 
+	// refreshHook is a test seam, mirroring ScheduledRotator.sweepHook and
+	// AutoEnqueuer.flushHook: it runs inside RefreshJob between the reads the
+	// status is computed from and the guarded UPDATE that publishes it - the
+	// window §3.6 is about. A test holds one publisher there while another one
+	// finishes an item and commits, which turns a 0.05% race into a
+	// deterministic interleaving. It is nil in production.
+	refreshHook func()
+
 	mu     sync.RWMutex
 	closed bool
 }

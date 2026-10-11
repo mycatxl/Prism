@@ -705,6 +705,18 @@ const (
 // the timeout sweep while this item was executing: the sweep already failed it,
 // so the worker drops it without writing anything back - a late defer or finish
 // would reopen the job and take a max_running_jobs slot again.
+//
+// It fails open when the store cannot be read. That is deliberate and it is not
+// the invariant: what makes a settled item final is the store's own SQL guard
+// (FinishJobItem/DeferJobItem carry a WHERE precondition and report
+// ErrJobItemSettled), so a gate that opens on a transient DB error costs one
+// extra step that the store then refuses - it cannot reopen a terminal job.
+// Failing closed here would instead fail healthy items whenever the DB hiccups,
+// which is the worse trade.
+//
+// The corollary for anyone changing this: if those SQL guards are ever relaxed,
+// this function stops being a mere efficiency gate and must fail closed (or
+// return a third "unknown" state the call sites handle conservatively).
 func (m *Manager) jobGate(ctx context.Context, jobID string) jobGate {
 	job, err := m.store.GetJob(ctx, jobID)
 	if err != nil {

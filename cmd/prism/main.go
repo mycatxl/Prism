@@ -905,6 +905,13 @@ func restoreBootstrapNodeDynamics(
 		if nd.EgressIP != "" {
 			if ip, err := netip.ParseAddr(nd.EgressIP); err == nil {
 				entry.SetEgressIP(ip)
+				// The direct SetEgressIP above bypasses the pool, so the
+				// egress reverse index has to be seeded explicitly: without it
+				// NotifyEgressIPDirty never resolves this node and a dirty
+				// assessment of its egress IP leaves it routable (audit 3.3
+				// [#10]). Seeding is side-effect free by design — the platform
+				// views are rebuilt right after bootstrap.
+				pool.SeedEgressIndex(hash, ip)
 			}
 		}
 		entry.SetEgressRegion(nd.EgressRegion)

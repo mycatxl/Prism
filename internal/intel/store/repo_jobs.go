@@ -631,9 +631,35 @@ func (s *Store) JobItemCounters(ctx context.Context, jobID string) (JobCounters,
 	return counters, rows.Err()
 }
 
+// refreshJobPublishAttempts bounds the optimistic publish of refreshJob (§3.6).
+//
+// The guarded UPDATE fails only when another writer changed the job row between
+// the reads and the write. That is the window two publishers of the same job
+// race in - two workers that finished an item each, or a worker and the timeout
+// sweep - and it is measured in a few instructions, so a second attempt almost
+// always wins. Three attempts leave room for that without turning a pathological
+// writer (something rewriting the job row in a tight loop) into unbounded work:
+// on the last attempt refreshJob returns the job it read and writes nothing,
+// and the writer holding the newer counters publishes on its own turn.
+const refreshJobPublishAttempts = 3
+
 // RefreshJob recomputes the job counters from its items and settles the job
 // status once every item is terminal (§3.5). It returns the updated job.
+//
+// The counters are read from job_items and written back to jobs, which is not
+// one atomic step (§3.6): the UPDATE is therefore conditional on the counters
+// the job row had when it was read, and a lost race is retried against a fresh
+// read instead of overwriting the newer state. Without the guard a slower
+// publisher wrote total/done/failed/skipped from before another item finished,
+// rolling the counters back and dropping status from partial to running - which
+// puts the job back into ListActiveJobs and takes a max_running_jobs slot.
 func (s *Store) RefreshJob(ctx context.Context, jobID string, nowNs int64) (Job, error) {
+	return s.refreshJob(ctx, jobID, nowNs, 0)
+}
+
+// refreshJob is one publish attempt. attempt is the number of attempts already
+// spent on a lost race; see refreshJobPublishAttempts for the bound.
+func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attempt int) (Job, error) {
 	db, err := s.conn()
 	if err != nil {
 		return Job{}, err
@@ -667,11 +693,35 @@ func (s *Store) RefreshJob(ctx context.Context, jobID string, nowNs int64) (Job,
 		finishedAt = nowNs
 	}
 
-	if _, err := db.ExecContext(ctx, `
+	if s.refreshHook != nil {
+		s.refreshHook()
+	}
+
+	// The WHERE clause carries every column this statement writes, with the
+	// values the row had when it was read, so a concurrent publisher makes the
+	// UPDATE match no row and the stale state is never written back. The
+	// counters alone are not enough: CancelJob rewrites only `status`, and a
+	// publisher that read the row before the cancel would otherwise put the
+	// canceled job back to running (its counters are unchanged by a cancel).
+	res, err := db.ExecContext(ctx, `
 		UPDATE jobs SET status = ?, total = ?, done = ?, failed = ?, skipped = ?,
-			finished_at_ns = ? WHERE id = ?`,
-		status, counters.Total, counters.Done, counters.Failed, counters.Skipped, finishedAt, jobID); err != nil {
+			finished_at_ns = ?
+		WHERE id = ? AND status = ? AND total = ? AND done = ? AND failed = ? AND skipped = ?
+			AND finished_at_ns = ?`,
+		status, counters.Total, counters.Done, counters.Failed, counters.Skipped, finishedAt,
+		jobID, job.Status, job.Total, job.Done, job.Failed, job.Skipped, job.FinishedAtNs)
+	if err != nil {
 		return Job{}, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// The row changed under us (a missing row cannot reach this point:
+		// GetJob above would have returned ErrJobNotFound). Recompute from a
+		// fresh read - or, at the bound, return what was read and write
+		// nothing rather than overwrite the newer state.
+		if attempt+1 >= refreshJobPublishAttempts {
+			return job, nil
+		}
+		return s.refreshJob(ctx, jobID, nowNs, attempt+1)
 	}
 	return s.GetJob(ctx, jobID)
 }

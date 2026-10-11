@@ -851,6 +851,23 @@ func (p *GlobalNodePool) UpdateNodeEgressIP(hash node.Hash, ip *netip.Addr, loc 
 	}
 }
 
+// SeedEgressIndex records an egress IP that was restored from persistence
+// without treating it as a fresh observation: no platform dirty notification,
+// no persistence callback. The index is what NotifyEgressIPDirty resolves
+// "every node that used this IP" through, so a node restored with a direct
+// entry.SetEgressIP is otherwise invisible to it for the whole process
+// lifetime.
+//
+// It is meant for bootstrap, where the platform views are rebuilt right after
+// (bootstrapFromPersistence → RebuildAllPlatforms), so no dirty event is
+// needed.
+func (p *GlobalNodePool) SeedEgressIndex(hash node.Hash, ip netip.Addr) {
+	if !ip.IsValid() {
+		return
+	}
+	p.indexEgressIP(hash, netip.Addr{}, ip)
+}
+
 // indexEgressIP moves one node between the egress-IP buckets.
 func (p *GlobalNodePool) indexEgressIP(hash node.Hash, oldIP, newIP netip.Addr) {
 	p.egressMu.Lock()

@@ -59,7 +59,17 @@ type Platform struct {
 	RotationAvoidPreviousIP bool
 	// Routable view & its lock.
 	// viewMu serializes both FullRebuild and NotifyDirty.
-	view   *RoutableView
+	//
+	// view is an atomic pointer rather than a plain field because the readers
+	// (View().RandomPick / Range / Contains in the data plane) deliberately do
+	// not take viewMu: a rebuild that mutated the published view in place would
+	// expose an empty or half-filled view to them, and RandomPick reporting
+	// "nothing routable" is a 503 (audit 3.1 #9). FullRebuild therefore fills a
+	// private view and publishes it in one atomic store, so a reader sees either
+	// the previous complete generation or the next complete one. NotifyDirty
+	// keeps mutating the published generation in place, which is safe because it
+	// only ever adds or removes single entries.
+	view   atomic.Pointer[RoutableView]
 	viewMu sync.Mutex
 
 	// qualitySnapshot is the read-only intel projection the quality admission
@@ -92,23 +102,34 @@ func NewPlatform(id, name string, regexFilters []*regexp.Regexp, regionFilters [
 
 // NewPlatformWithTagFilter creates a Platform with compiled line-oriented tag rules.
 func NewPlatformWithTagFilter(id, name string, regexFilters node.TagFilter, regionFilters []string) *Platform {
-	return &Platform{
+	p := &Platform{
 		ID:            id,
 		Name:          name,
 		RegexFilters:  regexFilters,
 		RegionFilters: regionFilters,
-		view:          NewRoutableView(),
 	}
+	p.view.Store(NewRoutableView())
+	return p
 }
 
 // View returns the platform's routable view as a read-only interface.
-// External callers cannot Add/Remove/Clear — only FullRebuild and NotifyDirty can mutate.
+// External callers cannot Add/Remove — only FullRebuild and NotifyDirty can mutate.
+//
+// The load is atomic and lock-free on purpose: the data plane calls this on
+// every request, and FullRebuild publishes whole views rather than mutating the
+// published one (audit 3.1 #9).
 func (p *Platform) View() ReadOnlyView {
-	return p.view
+	return p.view.Load()
 }
 
-// FullRebuild clears the routable view and re-evaluates all nodes from the pool.
-// Acquires viewMu — any concurrent NotifyDirty calls block until rebuild completes.
+// FullRebuild re-evaluates all nodes from the pool and publishes the resulting
+// routable view in a single atomic store.
+//
+// Acquires viewMu — any concurrent NotifyDirty calls block until rebuild
+// completes. The new view is filled privately and only then published, so a
+// reader that does not hold viewMu (View().RandomPick / Range / Contains) sees
+// either the previous complete view or the next complete one — never the empty
+// or half-filled intermediate state (audit 3.1 #9).
 func (p *Platform) FullRebuild(
 	poolRange PoolRangeFunc,
 	subLookup node.SubLookupFunc,
@@ -118,17 +139,18 @@ func (p *Platform) FullRebuild(
 	p.viewMu.Lock()
 	defer p.viewMu.Unlock()
 
-	p.view.Clear()
+	next := NewRoutableView()
 	poolRange(func(h node.Hash, entry *node.NodeEntry) bool {
 		if p.evaluateNode(entry, subLookup, geoLookup, qualityLookup) {
-			p.view.Add(h)
+			next.Add(h)
 		}
 		return true
 	})
+	p.view.Store(next)
 }
 
-// NotifyDirty re-evaluates a single node and adds/removes it from the view.
-// Acquires viewMu — serialized with FullRebuild.
+// NotifyDirty re-evaluates a single node and adds/removes it from the published
+// view. Acquires viewMu — serialized with FullRebuild.
 func (p *Platform) NotifyDirty(
 	h node.Hash,
 	getEntry GetEntryFunc,
@@ -139,17 +161,18 @@ func (p *Platform) NotifyDirty(
 	p.viewMu.Lock()
 	defer p.viewMu.Unlock()
 
+	view := p.view.Load()
 	entry, ok := getEntry(h)
 	if !ok {
 		// Node was deleted from pool.
-		p.view.Remove(h)
+		view.Remove(h)
 		return
 	}
 
 	if p.evaluateNode(entry, subLookup, geoLookup, qualityLookup) {
-		p.view.Add(h)
+		view.Add(h)
 	} else {
-		p.view.Remove(h)
+		view.Remove(h)
 	}
 }
 

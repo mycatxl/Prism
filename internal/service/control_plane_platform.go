@@ -796,6 +796,13 @@ func (s *ControlPlaneService) DeletePlatform(id string) error {
 		return internal("delete platform", err)
 	}
 	s.Pool.UnregisterPlatform(id)
+	// The platform is gone, so its routing state is unreachable: drop the
+	// leases and the per-IP load counters instead of leaking them for the
+	// lifetime of the process (audit 3.2 #11). DB-side orphan leases are
+	// repaired on the next bootstrap (state.RepairConsistency).
+	if s.Router != nil {
+		s.Router.PurgePlatformState(id)
+	}
 	return nil
 }
 

@@ -96,18 +96,6 @@ func (rv *RoutableView) Size() int {
 	return int(rv.size.Load())
 }
 
-// Clear removes all entries from all shards.
-func (rv *RoutableView) Clear() {
-	for i := range rv.shards {
-		s := &rv.shards[i]
-		s.mu.Lock()
-		s.nodes = s.nodes[:0]
-		s.index = make(map[node.Hash]int)
-		s.mu.Unlock()
-	}
-	rv.size.Store(0)
-}
-
 // RandomPick selects a random hash from the view.
 // Returns ok=false if the view is empty.
 func (rv *RoutableView) RandomPick(rng *rand.Rand) (node.Hash, bool) {

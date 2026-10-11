@@ -2260,8 +2260,46 @@ func shareLinkSkip(line string) SkippedNode {
 		return skipNode(name, "vless", SourceURI, node.ReasonInvalid, "unparsable vless share link")
 	case "hysteria":
 		return skipNode(name, "hysteria", SourceURI, node.ReasonInvalid, "unparsable hysteria share link")
+	case "ss":
+		// Audit 3.8 (#39): parseSSURI refuses a link whose plugin sing-box has
+		// no engine for. Name that plugin in the report - the same ss(<plugin>)
+		// detail clashProxySkip uses - so the operator can see why the node was
+		// dropped instead of a generic "unparsable share link".
+		if plugin := ssUnsupportedPlugin(line); plugin != "" {
+			return skipNode(name, "shadowsocks", SourceURI, node.ReasonEngineNotBuilt, "ss("+canonicalSSPluginName(plugin)+")")
+		}
+		return skipNode(name, "ss", SourceURI, node.ReasonInvalid, "unparsable share link")
 	}
 	return skipNode(name, scheme, SourceURI, node.ReasonInvalid, "unparsable share link")
+}
+
+// ssUnsupportedPlugin returns the plugin name that made parseSSURI refuse an
+// ss:// share link, or "" when the link carries no plugin, carries one sing-box
+// can dial, or fails for an unrelated reason.
+//
+// The last case matters: a link with both an unsupported plugin and, say, an
+// unusable port must keep the generic detail rather than blame the plugin. The
+// link is re-parsed with its plugin query removed - parseSSURI reads nothing
+// else out of the query, so a stripped link that parses proves the plugin was
+// the only blocker.
+func ssUnsupportedPlugin(line string) string {
+	beforeFragment, fragment, _ := strings.Cut(line, "#")
+	beforeQuery, rawQuery, hasQuery := strings.Cut(beforeFragment, "?")
+	if !hasQuery {
+		return ""
+	}
+	plugin, _ := parseSSPluginFromQuery(rawQuery)
+	if plugin == "" || ssPluginHasEngine(plugin) {
+		return ""
+	}
+	stripped := beforeQuery
+	if fragment != "" {
+		stripped += "#" + fragment
+	}
+	if _, ok := parseSSURI(stripped); !ok {
+		return ""
+	}
+	return plugin
 }
 
 func parsePlainHTTPProxyLine(line string) (ParsedNode, bool) {
@@ -3771,6 +3809,15 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 		if pluginOpts != "" {
 			outbound["plugin_opts"] = pluginOpts
 		}
+		// Audit 3.8 (#39): only a plugin sing-box has an engine for may be written
+		// into the outbound. Anything else (shadow-tls, restls, kcptun,
+		// gost-plugin, an unknown value) would import a node that enters the pool
+		// and every platform view, then fails at dial time with "plugin not
+		// found: <name>" and never connects. The Clash path refuses the same
+		// plugins in clashProxySkip; this is the share-link twin.
+		if !ssPluginHasEngine(plugin) {
+			return ParsedNode{}, false
+		}
 		return buildParsedNode(outbound)
 	}
 
@@ -3807,6 +3854,11 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 	}
 	if pluginOpts != "" {
 		outbound["plugin_opts"] = pluginOpts
+	}
+	// Audit 3.8 (#39): same guard as the SIP002 branch above - the legacy
+	// base64 form carries the plugin in its query too.
+	if !ssPluginHasEngine(plugin) {
+		return ParsedNode{}, false
 	}
 	return buildParsedNode(outbound)
 }
@@ -3944,6 +3996,23 @@ func canonicalSSPluginName(plugin string) string {
 		return "obfs-local"
 	default:
 		return strings.ToLower(strings.TrimSpace(plugin))
+	}
+}
+
+// ssPluginHasEngine reports whether a shadowsocks plugin name can be dialled by
+// the bundled sing-box. The empty name means "no plugin" and is always allowed.
+//
+// sing-box registers exactly two SIP003 plugins in this build - obfs-local and
+// v2ray-plugin (transport/sip003/obfs.go, transport/sip003/v2ray.go) - and
+// fails every other name at dial time with "plugin not found: <name>"
+// (transport/sip003/plugin.go). Names are compared after canonicalSSPluginName,
+// so the obfs / simple-obfs aliases are accepted as obfs-local.
+func ssPluginHasEngine(plugin string) bool {
+	switch canonicalSSPluginName(plugin) {
+	case "", "obfs-local", "v2ray-plugin":
+		return true
+	default:
+		return false
 	}
 }
 

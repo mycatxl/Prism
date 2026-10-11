@@ -90,19 +90,12 @@ func TestRoutableView_RandomPick_Distribution(t *testing.T) {
 	}
 }
 
-func TestRoutableView_Clear(t *testing.T) {
-	rv := NewRoutableView()
-	for i := 0; i < 10; i++ {
-		rv.Add(makeHash(`{"n":` + strconv.Itoa(i) + `}`))
-	}
-	if rv.Size() != 10 {
-		t.Fatal("expected 10")
-	}
-	rv.Clear()
-	if rv.Size() != 0 {
-		t.Fatalf("expected 0 after clear, got %d", rv.Size())
-	}
-}
+// TestRoutableView_Clear was removed with RoutableView.Clear (audit 3.1 #9):
+// FullRebuild no longer clears the published view in place — it fills a private
+// view and publishes it with one atomic store, so a reader that does not hold
+// viewMu can never observe the "emptied then refilled" intermediate state.
+// The publication contract is pinned by
+// TestPlatform_FullRebuild_NeverExposesEmptyView in rebuild_atomicity_test.go.
 
 func TestRoutableView_Range(t *testing.T) {
 	rv := NewRoutableView()

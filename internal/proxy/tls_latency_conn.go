@@ -6,8 +6,23 @@ import (
 	"time"
 )
 
-// tlsLatencyConn wraps a net.Conn to measure TLS handshake latency by
-// detecting the Client Hello write and Server Hello read boundaries.
+// tlsLatencyConn wraps a net.Conn to measure the round trip between the first
+// write and the first read on that connection.
+//
+// The name is narrower than the behaviour: for a TLS tunnel the first write is
+// the Client Hello and the first read the Server Hello, so the sample really is
+// the handshake latency. For a plaintext tunnel (an HTTP CONNECT that forwards
+// cleartext, SOCKS5) the same interval is the time to first byte of the
+// application exchange. The wrapper cannot tell the two apart - prepareConnectTunnel
+// only knows "host:port", and a CONNECT request never states whether the target
+// speaks TLS - so the samples are recorded under one label either way.
+//
+// Both quantities are "one round trip plus server processing" for the same node
+// and domain, so the TD-EWMA ordering they feed stays meaningful; the caveat is
+// that a node serving both kinds of traffic mixes two distributions in one
+// table. Distinguishing them would need first-byte sniffing (a TLS record starts
+// 0x16 0x03) with the timer started on demand, which is not worth it unless a
+// bimodal latency distribution is actually observed.
 //
 // State machine (atomic uint32):
 //

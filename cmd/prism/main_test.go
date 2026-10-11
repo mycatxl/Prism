@@ -1059,3 +1059,90 @@ func TestLoadRuntimeConfig_EgressTraceURLEnvOverrideAndLegacyFallback(t *testing
 		t.Fatalf("legacy row egress_trace_url: got %q, want %q", got, config.DefaultEgressTraceURL)
 	}
 }
+
+// TestBootstrapNodes_RestoredEgressIPEntersTheReverseIndex pins audit 3.3
+// [#10]: a node whose egress IP is restored from nodes_dynamic must be
+// resolvable through the pool's egress index, otherwise NotifyEgressIPDirty
+// (called by the intel pipeline after an assessment change) never finds it and
+// a dirty egress IP leaves the node routable for the whole process lifetime.
+func TestBootstrapNodes_RestoredEgressIPEntersTheReverseIndex(t *testing.T) {
+	engine, closer, err := state.PersistenceBootstrap(t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	const subID = "sub-bootstrap-egress-index"
+	now := time.Now().UnixNano()
+	if err := engine.UpsertSubscription(model.Subscription{
+		ID:               subID,
+		Name:             "BootstrapSub",
+		URL:              "https://example.com/sub",
+		UpdateIntervalNs: int64(30 * time.Minute),
+		Enabled:          true,
+		Ephemeral:        false,
+		CreatedAtNs:      now,
+		UpdatedAtNs:      now,
+	}); err != nil {
+		t.Fatalf("UpsertSubscription: %v", err)
+	}
+
+	raw := json.RawMessage(`{"type":"stub","server":"198.51.100.211","server_port":443}`)
+	hash := node.HashFromRawOptions(raw)
+	if err := engine.BulkUpsertNodesStatic([]model.NodeStatic{{
+		Hash:        hash.Hex(),
+		RawOptions:  raw,
+		CreatedAtNs: now - int64(time.Hour),
+	}}); err != nil {
+		t.Fatalf("BulkUpsertNodesStatic: %v", err)
+	}
+	if err := engine.BulkUpsertSubscriptionNodes([]model.SubscriptionNode{{
+		SubscriptionID: subID,
+		NodeHash:       hash.Hex(),
+		Tags:           []string{"bootstrap-tag"},
+	}}); err != nil {
+		t.Fatalf("BulkUpsertSubscriptionNodes: %v", err)
+	}
+
+	const restoredIP = "203.0.113.201"
+	if err := engine.BulkUpsertNodesDynamic([]model.NodeDynamic{{
+		Hash:              hash.Hex(),
+		CircuitOpenSince:  0,
+		EgressIP:          restoredIP,
+		EgressRegion:      "us",
+		EgressUpdatedAtNs: now - int64(time.Minute),
+	}}); err != nil {
+		t.Fatalf("BulkUpsertNodesDynamic: %v", err)
+	}
+
+	runtimeCfg := config.NewDefaultRuntimeConfig()
+	envCfg := newDefaultPlatformEnvConfig()
+	envCfg.MaxLatencyTableEntries = 16
+	subManager, pool := newBootstrapTestRuntime(runtimeCfg)
+
+	if err := bootstrapTopology(engine, subManager, pool, envCfg); err != nil {
+		t.Fatalf("bootstrapTopology: %v", err)
+	}
+
+	outboundMgr := outbound.NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
+	if err := bootstrapNodes(engine, pool, subManager, outboundMgr, envCfg, runtimeCfg.LatencyAuthorities); err != nil {
+		t.Fatalf("bootstrapNodes: %v", err)
+	}
+
+	entry, ok := pool.GetEntry(hash)
+	if !ok {
+		t.Fatalf("node %s missing after bootstrapNodes", hash.Hex())
+	}
+	ip := netip.MustParseAddr(restoredIP)
+	if got := entry.GetEgressIP(); got != ip {
+		t.Fatalf("restored egress IP = %v, want %v", got, ip)
+	}
+
+	owners := pool.EgressIPOwners(ip)
+	if len(owners) != 1 || owners[0] != hash {
+		t.Fatalf("EgressIPOwners(%s) = %v, want [%s]: bootstrap must seed the egress reverse index", ip, owners, hash.Hex())
+	}
+	if got := pool.NotifyEgressIPDirty(ip); got != 1 {
+		t.Fatalf("NotifyEgressIPDirty(%s) = %d, want 1 after bootstrap restore", ip, got)
+	}
+}

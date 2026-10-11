@@ -229,7 +229,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	} else {
 		body, err = s.Fetcher(attemptURL)
 		if err != nil {
-			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "fetch", err)
+			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "fetch", err, nil)
 			return
 		}
 	}
@@ -237,10 +237,16 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	// 2. Parse (lock-free). ParseWithReport keeps the parse report: every node
 	// the parser refuses carries a reason, and the report is both persisted and
 	// exposed through the subscription API instead of being discarded here.
+	//
+	// The report is NOT written here. Both the success path below and
+	// handleUpdateFailure write it inside their WithOpLock block and after the
+	// stale guards, because the summary must describe the attempt that actually
+	// lands: writing it earlier would let an attempt that is about to be
+	// discarded overwrite the summary of the newer attempt that won, so the API
+	// would report a node set the pool does not hold.
 	result, parseErr := subscription.ParseWithReport(body)
-	s.recordParseReport(sub, result)
 	if parseErr != nil {
-		s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", parseErr)
+		s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", parseErr, &result)
 		return
 	}
 	parsed := result.Nodes
@@ -249,7 +255,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	// lease; treat it as a failed update and keep the previous nodes.
 	if len(parsed) == 0 {
 		if cur := sub.ManagedNodes(); cur != nil && cur.Size() > 0 {
-			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", errEmptyRefresh)
+			s.handleUpdateFailure(sub, attemptStartedNs, attemptSeq, attemptConfigVersion, "parse", errEmptyRefresh, &result)
 			return
 		}
 	}
@@ -355,6 +361,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 		}
 		// 5. Update timestamps (inside lock, using current time).
 		now := time.Now().UnixNano()
+		s.recordParseReportLocked(sub, result)
 		sub.LastCheckedNs.Store(now)
 		sub.LastUpdatedNs.Store(now)
 		sub.MarkAppliedAttempt(attemptSeq)
@@ -371,12 +378,21 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	}
 }
 
-// recordParseReport keeps the parse report of one attempt: the grouped summary
-// on the subscription (read by the API responses), one log line with the reason
-// counts, and the full bounded JSON through the persistence hook
+// recordParseReportLocked keeps the parse report of one attempt: the grouped
+// summary on the subscription (read by the API responses), one log line with the
+// reason counts, and the full bounded JSON through the persistence hook
 // (StateRepo.SetSubscriptionParseReport). Nothing here contains node content
 // beyond the redacted sample names of the in-memory summary.
-func (s *SubscriptionScheduler) recordParseReport(sub *subscription.Subscription, result subscription.ParseResult) {
+//
+// The caller must hold sub's operation lock and must have already passed the
+// stale guards. That is what makes the summary agree with the node set the pool
+// ends up holding: an attempt that is about to be discarded as stale never
+// reaches this function, so it cannot overwrite the winner's summary.
+//
+// The persistence hook writes one row and takes the state repo's own lock; it is
+// deliberately kept here rather than moved after the lock because the report and
+// the state it describes must land together.
+func (s *SubscriptionScheduler) recordParseReportLocked(sub *subscription.Subscription, result subscription.ParseResult) {
 	summary := subscription.SummarizeParseResult(result)
 	sub.SetParseSummary(&summary)
 
@@ -410,6 +426,11 @@ func shouldRemoveUnhealthyNodeForIncrementalMode(entry *node.NodeEntry) bool {
 // handleUpdateFailure applies a fetch/parse failure to subscription state.
 // It ignores stale failures from an outdated attempt (config-version guard +
 // LastUpdatedNs stale-success guard).
+//
+// report is the parse report of this attempt, or nil when the attempt failed
+// before parsing (a fetch error has no report). A non-nil report is written
+// inside the same lock and after the same guards as the error itself, so a
+// discarded attempt cannot leave its summary behind.
 func (s *SubscriptionScheduler) handleUpdateFailure(
 	sub *subscription.Subscription,
 	attemptStartedNs int64,
@@ -417,6 +438,7 @@ func (s *SubscriptionScheduler) handleUpdateFailure(
 	attemptConfigVersion int64,
 	stage string,
 	err error,
+	report *subscription.ParseResult,
 ) {
 	applied := false
 	sub.WithOpLock(func() {
@@ -426,6 +448,9 @@ func (s *SubscriptionScheduler) handleUpdateFailure(
 		}
 		if sub.LastAppliedSeq() > attemptSeq {
 			return
+		}
+		if report != nil {
+			s.recordParseReportLocked(sub, *report)
 		}
 		now := time.Now().UnixNano()
 		sub.LastCheckedNs.Store(now)

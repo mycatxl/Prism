@@ -625,6 +625,17 @@ func validateProviderConfig(spec Spec, config map[string]any) error {
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
 			return invalidSetting("config.url: must be an absolute http(s) URL")
 		}
+		// Credentials belong in a credential field, where they are fingerprinted
+		// and never rendered back. A userinfo in the URL would be echoed by the
+		// settings response and by anything that logs the config, so it is
+		// refused at the write rather than redacted later.
+		//
+		// The host itself is deliberately not screened against private ranges:
+		// an intranet mirror is a real deployment, and this field is only
+		// writable with the admin token.
+		if parsed.User != nil {
+			return invalidSetting("config.url: must not carry credentials; put them in a credential field")
+		}
 	}
 	switch spec.ID {
 	case "dnsbl":
@@ -740,9 +751,36 @@ func publicConfig(spec Spec, config map[string]any) map[string]any {
 		if secretConfigKey(spec, key) || value == nil {
 			continue
 		}
-		out[key] = value
+		out[key] = redactConfigValue(key, value)
 	}
 	return out
+}
+
+// redactConfigValue strips the userinfo out of a URL-valued config key.
+//
+// Dropping secret-looking *keys* is not enough for the mirror URL: a deployment
+// that stored "https://user:pass@mirror/" before the write-side check existed
+// would keep echoing the password on every settings read. Rewriting the value
+// here closes that without touching the stored row, so a rollout does not need
+// an operator to fix the config by hand.
+//
+// A value that carries no userinfo is returned unchanged, and anything that is
+// not a parseable URL is passed through: this must never turn a working setting
+// into a different one.
+func redactConfigValue(key string, value any) any {
+	if !strings.EqualFold(strings.TrimSpace(key), "url") {
+		return value
+	}
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	parsed, err := url.Parse(text)
+	if err != nil || parsed.User == nil {
+		return value
+	}
+	parsed.User = nil
+	return parsed.String()
 }
 
 // status renders the API view of one provider.

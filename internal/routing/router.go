@@ -733,3 +733,40 @@ func (r *Router) DeleteAllLeases(platformID string) int {
 	})
 	return count
 }
+
+// PurgePlatformState removes every routing state the platform owned. It is
+// called when the platform itself is gone, so the leases and the IP load
+// statistics can never be reached again; keeping them would leak the whole
+// account table for the lifetime of the process (and make every LeaseCleaner
+// sweep walk them).
+//
+// It emits LeaseRemove for each dropped lease, exactly like DeleteAllLeases,
+// so a console watching lease events sees the platform's leases go away.
+func (r *Router) PurgePlatformState(platformID string) int {
+	if r == nil || r.states == nil || platformID == "" {
+		return 0
+	}
+	// LoadAndDelete is atomic: once the state has left the map no new lease can
+	// be created for this platform, so the draining below cannot race a writer.
+	state, ok := r.states.LoadAndDelete(platformID)
+	if !ok || state == nil || state.Leases == nil {
+		return 0
+	}
+	count := 0
+	state.Leases.Range(func(account string, _ Lease) bool {
+		removed, deleted := state.Leases.DeleteLease(account, nil)
+		if deleted {
+			r.emitLeaseEvent(LeaseEvent{
+				Type:        LeaseRemove,
+				PlatformID:  platformID,
+				Account:     account,
+				NodeHash:    removed.NodeHash,
+				EgressIP:    removed.EgressIP,
+				CreatedAtNs: removed.CreatedAtNs,
+			})
+			count++
+		}
+		return true
+	})
+	return count
+}
