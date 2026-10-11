@@ -9,8 +9,8 @@ import (
 	"prism/internal/intel/store"
 )
 
-// TestAudit_CanceledJobRejectsALateDefer is the second half of the F1/F4
-// cancellation contract, added after the first review pass.
+// TestCanceledJobRejectsALateDefer is the second half of the
+// cancellation contract.
 //
 // The store guard only looks at the ITEM status (status IN ('queued','running')),
 // so a defer that lands while the row is still running used to be accepted even
@@ -22,7 +22,7 @@ import (
 // the same transaction that cancels the job. The item is therefore already
 // canceled when the late write arrives, and the guard refuses it. The probe
 // reproduces the ordering by canceling between the gate read and the write.
-func TestAudit_CanceledJobRejectsALateDefer(t *testing.T) {
+func TestCanceledJobRejectsALateDefer(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))

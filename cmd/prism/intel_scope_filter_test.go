@@ -37,7 +37,7 @@ func markScopeFilterEntryHealthy(entry *node.NodeEntry) {
 	entry.CircuitOpenSince.Store(0)
 }
 
-// setScopeFilterAssessment projects one assessment of the WP10 §4 shape into
+// setScopeFilterAssessment projects one assessment of the shape into
 // the in-memory snapshot the purity keys read.
 func setScopeFilterAssessment(snap *intel.Snapshot, ip, band, verdict, ipType string) {
 	snap.SetAssessment(netip.MustParseAddr(ip), intel.AssessmentLite{
@@ -53,7 +53,7 @@ func setScopeFilterAssessment(snap *intel.Snapshot, ip, band, verdict, ipType st
 
 // --- per-key matching ------------------------------------------------------
 
-// TestNodeFilter_ProtocolAndEngine pins the two pre-WP10 keys: the extension
+// TestNodeFilter_ProtocolAndEngine pins the two pre-keys: the extension
 // must not change what they match.
 func TestNodeFilter_ProtocolAndEngine(t *testing.T) {
 	entry := newScopeFilterEntry(t, `{"type":"ss","server":"1.1.1.1","port":443}`)
@@ -309,7 +309,7 @@ func TestIntelScopeLookupAccessorsDegradeWhenServicesAreMissing(t *testing.T) {
 // --- scope expansion -------------------------------------------------------
 
 // TestResolveIntelScope_ExpandsWp10FilterKeys drives the whole expansion:
-// a real pool plus the intel projection, filtered by the §4 keys. It pins both
+// a real pool plus the intel projection, filtered by the keys. It pins both
 // the wiring of newNodeFilter and the union semantics of the scope (explicit
 // node_hashes are never filtered).
 func TestResolveIntelScope_ExpandsWp10FilterKeys(t *testing.T) {

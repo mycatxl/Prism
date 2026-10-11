@@ -6,7 +6,7 @@ import (
 	"prism/internal/node"
 )
 
-// TestAudit_QualitySnapshotIsNotWrittenWhileTheViewIsRead pins the lock
+// TestQualitySnapshotIsNotWrittenWhileTheViewIsRead pins the lock
 // discipline of Platform.qualitySnapshot.
 //
 // SetQualitySnapshot writes the field, evaluateNode reads it under viewMu (via
@@ -20,7 +20,7 @@ import (
 // view (the read side), the other keeps re-installing the snapshot (the write
 // side). Run with -race to observe the report; without -race the test still
 // asserts that both paths ran.
-func TestAudit_QualitySnapshotIsNotWrittenWhileTheViewIsRead(t *testing.T) {
+func TestQualitySnapshotIsNotWrittenWhileTheViewIsRead(t *testing.T) {
 	plat := NewPlatform("race", "Race", nil, nil)
 	entry := &node.NodeEntry{}
 	entry.Hash = node.Hash{1}

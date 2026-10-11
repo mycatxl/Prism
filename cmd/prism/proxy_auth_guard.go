@@ -8,7 +8,7 @@ import (
 	"prism/internal/proxy"
 )
 
-// Proxy-entry authentication failure limiting in cmd/prism (WP04 §4.6).
+// Proxy-entry authentication failure limiting in cmd/prism.
 //
 // internal/proxy meters the credential checks it owns itself (the forward and
 // CONNECT Proxy-Authorization check and the reverse-proxy path token: see

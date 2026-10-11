@@ -10,7 +10,7 @@ import (
 	"prism/internal/node"
 )
 
-// exportMihomo renders a mihomo (Clash Meta) configuration (WP11 §2.2).
+// exportMihomo renders a mihomo (Clash Meta) configuration.
 //
 // mihomo is not a Prism runtime kernel (decision D-1); this is pure
 // serialisation and adds no dependency.

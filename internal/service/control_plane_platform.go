@@ -196,7 +196,7 @@ func (cfg platformConfig) toRuntime(id string) (*platform.Platform, error) {
 	if err != nil {
 		return nil, err
 	}
-	// WP10 §3: the pool objects built here are what the scheduled rotator reads
+	// the pool objects built here are what the scheduled rotator reads
 	// on every sweep, so the rotation fields must be part of the construction
 	// call instead of being patched on afterwards (a missed patch leaves the
 	// platform rotating nothing).
@@ -341,7 +341,7 @@ func validatePlatformConfig(cfg *platformConfig, validateRegionFilters bool) *Se
 	return validateQualityPolicy(cfg.QualityPolicy)
 }
 
-// validateQualityPolicy enforces the WP10 §2.1 enum, range and duration rules.
+// validateQualityPolicy enforces the enum, range and duration rules.
 func validateQualityPolicy(policy model.QualityPolicy) *ServiceError {
 	if policy.MinPurity != nil && (*policy.MinPurity < 0 || *policy.MinPurity > 100) {
 		return invalidArg("quality_policy.min_purity must be between 0 and 100")
@@ -397,7 +397,7 @@ func validateQualityPolicy(policy model.QualityPolicy) *ServiceError {
 }
 
 // qualityIPTypes, qualityVerdicts and qualityConfidences mirror the enum values
-// of WP10 §2.1.
+// of
 var qualityIPTypes = map[string]bool{
 	"residential": true, "mobile": true, "business": true,
 	"wireless": true, "datacenter": true, "non_residential": true,
@@ -410,7 +410,7 @@ var qualityVerdicts = map[string]bool{
 
 var qualityConfidences = map[string]bool{"low": true, "medium": true, "high": true}
 
-// validCheckID matches the WP09 rule id shape ([a-z0-9_]+). The live rule set is
+// validCheckID matches the rule id shape ([a-z0-9_]+). The live rule set is
 // not consulted here because the checks registry belongs to the intel service;
 // an unknown id simply never passes admission (fail-closed).
 func validCheckID(id string) bool {
@@ -798,7 +798,7 @@ func (s *ControlPlaneService) DeletePlatform(id string) error {
 	s.Pool.UnregisterPlatform(id)
 	// The platform is gone, so its routing state is unreachable: drop the
 	// leases and the per-IP load counters instead of leaking them for the
-	// lifetime of the process (audit 3.2 #11). DB-side orphan leases are
+	// lifetime of the process . DB-side orphan leases are
 	// repaired on the next bootstrap (state.RepairConsistency).
 	if s.Router != nil {
 		s.Router.PurgePlatformState(id)
@@ -848,7 +848,7 @@ type PreviewFilterRequest struct {
 	PlatformID   *string             `json:"platform_id"`
 	PlatformSpec *PlatformSpecFilter `json:"platform_spec"`
 	// QualityPolicy overrides the platform's stored quality policy for this
-	// preview only (WP10 §2.1). When it is nil the platform's own policy is
+	// preview only. When it is nil the platform's own policy is
 	// used, so the preview counts match the platform's routable view.
 	QualityPolicy *model.QualityPolicy `json:"quality_policy,omitempty"`
 }
@@ -946,7 +946,7 @@ func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEn
 
 	egressIP := entry.GetEgressIP()
 	ns.Quality = s.nodeQuality(egressIP)
-	// WP10 §4: the assessment view of the node's egress IP, read from the
+	// the assessment view of the node's egress IP, read from the
 	// in-memory projection. The node_egress display facts are added by
 	// FillNodeIntelEgress for a whole page at once.
 	ns.Intel = s.nodeIntel(entry, time.Now().UTC())
@@ -1020,7 +1020,7 @@ const (
 	PreviewExcludedRegion = "region"
 )
 
-// PreviewFilterResult is the WP10 §2.1 preview outcome: the matching nodes plus
+// PreviewFilterResult is the preview outcome: the matching nodes plus
 // the per-rule exclusion counters, so a caller can see why a platform's routable
 // view is smaller than the node pool.
 type PreviewFilterResult struct {
@@ -1088,7 +1088,7 @@ const previewScanLimit = 20000
 // the UI shows; the sample only exists to prove which nodes match.
 const previewSampleLimit = 8
 
-// PreviewFilterReport runs the preview and returns the §2.1 excluded_by
+// PreviewFilterReport runs the preview and returns the excluded_by
 // counters with it.
 //
 // Every criterion is evaluated by platform.MatchNodeCriteria — the same
@@ -1110,7 +1110,7 @@ const previewSampleLimit = 8
 // with).
 //
 // Unlike PreviewPlatformScope this endpoint returns every matching node and is
-// therefore unbounded: it exists for the §2.1 explain view, not for the
+// therefore unbounded: it exists for the explain view, not for the
 // interactive form preview.
 func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (PreviewFilterResult, error) {
 	criteria, svcErr := s.previewCriteria(req)
@@ -1143,7 +1143,7 @@ func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (Pre
 }
 
 // previewExclusionKey maps an admission reason onto the exclusion counter key of
-// the §2.1 preview. The tag and region criteria keep the legacy keys this
+// the preview. The tag and region criteria keep the legacy keys this
 // endpoint has always used; every other criterion is reported under its own
 // reason, so a caller can tell the new criteria apart.
 func previewExclusionKey(reason string) string {

@@ -129,7 +129,7 @@ type Subscription struct {
 	// ephemeralNodeEvictDelayNs is the per-subscription eviction delay for
 	// circuit-broken nodes when Ephemeral is enabled.
 	ephemeralNodeEvictDelayNs int64
-	// autoIntel is the per-subscription switch of the §3.6 automatic intel
+	// autoIntel is the per-subscription switch of the automatic intel
 	// batch. Persisted as `subscriptions.auto_intel` (default true) and read by
 	// the intel pipeline through the state store, not through this struct.
 	autoIntel bool
@@ -153,7 +153,7 @@ type Subscription struct {
 	managedNodes atomic.Pointer[ManagedNodes]
 
 	// parseSummary is the grouped summary of the last refresh attempt's parse
-	// report (Workplan WP06 §9). Nil until the first parse. Read by the API
+	// report. Nil until the first parse. Read by the API
 	// response, written by the scheduler after every parse.
 	parseSummary atomic.Pointer[SkipSummary]
 

@@ -67,7 +67,7 @@ func newestBucket(t *testing.T, repo *MetricsRepo, table string) int64 {
 
 // TestRetentionRules_CoverEveryPersistedMetricTable fails when a metrics table is
 // added to the schema without a retention rule, which is how the tables were
-// left unpruned before G-08.
+// left unpruned before.
 func TestRetentionRules_CoverEveryPersistedMetricTable(t *testing.T) {
 	createTable := regexp.MustCompile(`CREATE TABLE IF NOT EXISTS ([a-z_]+)`)
 	matches := createTable.FindAllStringSubmatch(MetricsDBDDL, -1)
@@ -90,7 +90,7 @@ func TestRetentionRules_CoverEveryPersistedMetricTable(t *testing.T) {
 	}
 }
 
-// TestPruneExpired_RemovesRowsOlderThanRetention covers G-08: rows past the
+// TestPruneExpired_RemovesRowsOlderThanRetention covers: rows past the
 // retention window are gone from every metric table, rows inside it survive.
 func TestPruneExpired_RemovesRowsOlderThanRetention(t *testing.T) {
 	repo := newRetentionRepo(t)

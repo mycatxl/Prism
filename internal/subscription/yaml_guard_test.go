@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// Tests for the YAML resource guard (WP06 §9 hardening, yaml_guard.go).
+// Tests for the YAML resource guard.
 //
 // The guard exists because yaml.v3's decoder costs O(n²) time for one mapping
 // with n keys (its duplicate-key check compares every new key against the keys

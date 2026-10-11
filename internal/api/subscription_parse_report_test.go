@@ -9,8 +9,8 @@ import (
 )
 
 // parseReportTestContent is a syntactically valid subscription with two
-// importable nodes and four refused ones. The refused types are the ones
-// docs/ENGINE_DECISIONS.md D-1 rejects, plus one type Prism never knew.
+// importable nodes and four refused ones. The refused types are the ones the
+// engine rejects, plus one type Prism never knew.
 const parseReportTestContent = `{"outbounds":[
 	{"type":"shadowsocks","tag":"keep-1","server":"1.1.1.1","server_port":443,"method":"aes-256-gcm","password":"synthetic-one"},
 	{"type":"shadowsocks","tag":"keep-2","server":"2.2.2.2","server_port":443,"method":"aes-256-gcm","password":"synthetic-two"},
@@ -20,7 +20,7 @@ const parseReportTestContent = `{"outbounds":[
 	{"type":"not-a-protocol","tag":"drop-unknown","server":"6.6.6.6","server_port":443}
 ]}`
 
-// TestAPIContract_SubscriptionParseReport_ExposesDroppedNodes covers the WP06 §9
+// TestAPIContract_SubscriptionParseReport_ExposesDroppedNodes covers the
 // promise that a node which cannot be represented is reported with a reason and
 // never dropped silently: the reason counts must match the input, the summary
 // must be part of the subscription response and the full report must be
@@ -210,7 +210,7 @@ func assertSampleNames(t *testing.T, bucket map[string]any, want []string) {
 }
 
 // TestAPIContract_SubscriptionAutoIntel_RoundTripsAndReachesTheStore covers
-// WP08 §3.6: auto_intel is settable per subscription through the API and the
+// auto_intel is settable per subscription through the API and the
 // value that the intel pipeline reads is the value that was set. The pipeline
 // resolves the flag through prismApp.intelSubscriptionAutoIntel
 // (cmd/prism/intel_runtime.go), which reads the auto_intel column through

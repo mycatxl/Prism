@@ -7,7 +7,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// Progress is one SSE frame payload (§7).
+// Progress is one SSE frame payload.
 type Progress struct {
 	Done    int    `json:"done"`
 	Failed  int    `json:"failed"`
@@ -89,7 +89,7 @@ func (h *hub) Subscribe(jobID string) (*Subscription, error) {
 	return subscription, nil
 }
 
-// push fans a frame out to every client of one job. The rate limit of §7 ("at
+// push fans a frame out to every client of one job. The rate limit of ("at
 // most one push per second") is enforced per job against the injected clock.
 func (h *hub) push(jobID string, frame Progress, nowNs int64, force bool) {
 	h.mu.Lock()

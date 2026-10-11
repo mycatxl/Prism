@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestExportCSVGolden pins the analysis columns (WP11 §2.4).
+// TestExportCSVGolden pins the analysis columns.
 func TestExportCSVGolden(t *testing.T) {
 	items := []Item{
 		fixtureNodes(t)[0],

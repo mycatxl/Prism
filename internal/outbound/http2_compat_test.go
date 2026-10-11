@@ -27,7 +27,7 @@ func TestHTTP2TransportResetRetainsWorkingConnections(t *testing.T) {
 	// The classic x/net/http2 transport is the type sing-box's v2rayhttp close
 	// path asserts on; x/net deprecates the whole type in favour of
 	// http.Transport, which is exactly the implementation this test keeps out of
-	// that path (docs/UPSTREAM_BASELINE.md). Close through the v2rayhttp helper
+	// that path. Close through the v2rayhttp helper
 	// so the reset path itself is what runs here.
 	clientTLS := server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
 	transport := &http2.Transport{TLSClientConfig: clientTLS} //nolint:staticcheck // see above

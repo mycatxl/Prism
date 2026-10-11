@@ -6,7 +6,7 @@ export type NodeTag = {
   tag: string;
 };
 
-// NodeIntel is the WP10 purity assessment of a node's egress IP (API field
+// NodeIntel is the purity assessment of a node's egress IP (API field
 // `intel`). Every field of an unassessed node is empty and state is
 // "unassessed": a missing assessment is never reported as a score of 0.
 export type NodeIntel = {
@@ -86,7 +86,7 @@ export type NodeListFilters = {
   enabled?: boolean;
   circuit_open?: boolean;
   has_outbound?: boolean;
-  // WP10 §4 intel filters. `check` is repeatable and each entry is
+ // intel filters. `check` is repeatable and each entry is
   // "<check id>:<outcome>".
   purity_min?: number;
   purity_max?: number;

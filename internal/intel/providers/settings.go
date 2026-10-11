@@ -12,7 +12,7 @@ import (
 
 // Setting is the effective configuration of one data source: the spec defaults
 // merged with the persisted intel_provider_settings row and, only on the first
-// start, with the legacy environment variables (WP09 §1).
+// start, with the legacy environment variables.
 type Setting struct {
 	Spec       Spec
 	Enabled    bool
@@ -104,7 +104,7 @@ func (s Setting) ConfigStrings(key string) []string {
 }
 
 // CredentialID is sha256(provider + credential). It lets a key rotation lift a
-// pause automatically without ever storing the key (WP08 §2, WP09 §1).
+// pause automatically without ever storing the key.
 func (s Setting) CredentialID() string {
 	secret := s.APIKey
 	for _, field := range s.Spec.CredentialFields {
@@ -152,7 +152,7 @@ type envBinding struct {
 	config     map[string]string
 }
 
-// envBindings is the migration table of WP09 §1. PRISM_QUALITY_ENABLED and
+// envBindings is the migration table of PRISM_QUALITY_ENABLED and
 // PRISM_QUALITY_WORKERS are handled by the runtime configuration
 // (intel_enabled / intel_node_workers), and PRISM_QUALITY_QUEUE_SIZE is
 // ignored with a deprecation warning.
@@ -284,7 +284,7 @@ func ResolveSettings(specs []Spec, rows []model.IntelProviderSetting, env EnvSou
 }
 
 // SeedSettings writes the environment defaults once, for the providers that do
-// not have a row yet (WP09 §1). It returns the number of rows written and the
+// not have a row yet. It returns the number of rows written and the
 // deprecation warnings to log.
 func SeedSettings(store SettingsStore, specs []Spec, env EnvSource, nowNs int64) (int, []string, error) {
 	if store == nil || env == nil {

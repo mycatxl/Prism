@@ -775,7 +775,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "最近错误：{{message}}": "Recent error: {{message}}",
   "配置已更新（{{count}} 项变更）": "Config updated ({{count}} changes)",
 
-  // WP10 §4: node purity assessment (intel) surface of the node list.
+ // node purity assessment (intel) surface of the node list.
   "纯净度评估": "Purity assessment",
   "纯净度评分": "Purity score",
   "评估状态": "Assessment state",
@@ -826,7 +826,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "是": "Yes",
   "否": "No",
   "格式 检测项:结果，如 chatgpt:available": "Format check:outcome, for example chatgpt:available",
-  // WP09 §4/§5.4: the intel data source and unlock check settings page.
+ // /: the intel data source and unlock check settings page.
   "解锁检测": "Unlock Checks",
   "经节点查询": "Via node",
   "已暂停": "Paused",

@@ -31,7 +31,7 @@ func decodeMihomo(t *testing.T, body []byte) mihomoDocument {
 	return document
 }
 
-// TestExportMihomoGolden pins the full mihomo document (WP11 §5).
+// TestExportMihomoGolden pins the full mihomo document.
 func TestExportMihomoGolden(t *testing.T) {
 	items := append(fixtureNodes(t), fixtureEndpointNode(t), fixtureChainNode(t))
 	body, contentType, report, err := Export(items, FormatMihomo, Options{IncludeIntel: true})
@@ -128,7 +128,7 @@ func TestExportMihomoEveryProxyIsParseableByClash(t *testing.T) {
 	}
 }
 
-// TestExportMihomoMihomoNodeIsOutputVerbatim checks the §2.2 rule that a mihomo
+// TestExportMihomoMihomoNodeIsOutputVerbatim checks the rule that a mihomo
 // node's proxy map is written as-is with only its name replaced.
 func TestExportMihomoMihomoNodeIsOutputVerbatim(t *testing.T) {
 	body, _, _, err := Export([]Item{fixtureMihomoNode(t)}, FormatMihomo, Options{})
@@ -148,7 +148,7 @@ func TestExportMihomoMihomoNodeIsOutputVerbatim(t *testing.T) {
 	}
 }
 
-// TestExportMihomoFieldMapping pins the reverse mapping of §2.2 for the
+// TestExportMihomoFieldMapping pins the reverse mapping of for the
 // protocols with the most fields.
 func TestExportMihomoFieldMapping(t *testing.T) {
 	items := fixtureNodes(t)
@@ -256,7 +256,7 @@ func TestExportMihomoWireGuardWithHostnameEndpointIsSkipped(t *testing.T) {
 	}
 }
 
-// TestExportMihomoShadowsocksShadowTLSChain checks the §2.2 ss+shadow-tls row.
+// TestExportMihomoShadowsocksShadowTLSChain checks the ss+shadow-tls row.
 func TestExportMihomoShadowsocksShadowTLSChain(t *testing.T) {
 	body, _, report, err := Export([]Item{fixtureChainNode(t)}, FormatMihomo, Options{})
 	if err != nil {

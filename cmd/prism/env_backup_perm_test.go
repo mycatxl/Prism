@@ -37,7 +37,7 @@ func assertMode(t *testing.T, path string, want os.FileMode) {
 	}
 }
 
-// TestMoveAsideForBackupSecuresTheBackup is the recurrence guard for #31.
+// TestMoveAsideForBackupSecuresTheBackup is the recurrence guard for.
 //
 // os.Rename keeps the source mode, so moving a world-readable .env aside used
 // to leave a world-readable copy of the admin and proxy tokens behind - the

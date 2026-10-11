@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// The three tests in this file pin §3.6 (#37): RefreshJob recomputed a job from
+// The tests in this file pin the RefreshJob contract: it recomputed a job from
 // two independent reads (JobItemCounters, then GetJob) and wrote the result back
 // with an unconditional UPDATE. Two publishers of the same job - two workers
 // that finished their own item, or a worker and the timeout sweep - could
@@ -18,7 +18,7 @@ import (
 // back and status could fall from partial to running, which makes ListActiveJobs
 // report the job again and takes one of the max_running_jobs slots (manager.go).
 //
-// The fix is an optimistic guarded write (the "SQL guard" style of §3.4/§3.5):
+// The fix is an optimistic guarded write:
 // the UPDATE carries the counters of the job row it read, so a concurrent writer
 // makes it match no row, and refreshJob re-reads and recomputes, bounded by
 // refreshJobPublishAttempts.
@@ -108,13 +108,13 @@ func TestRefreshJob_ReadsTheRowBeforeTheCounters(t *testing.T) {
 	}
 }
 
-// TestRefreshJob_ConcurrentPublishKeepsCountersInSync is the promoted form of the
-// audit probe: rounds of two workers that each finish one item of the same job
+// TestRefreshJob_ConcurrentPublishKeepsCountersInSync is the stochastic form of
+// the check: rounds of two workers that each finish one item of the same job
 // and then publish it, asserting the invariant the API and the scheduler rely on
 // - the counters of the jobs row are exactly the item tally, and a job whose
 // items are all terminal is terminal itself.
 //
-// The window is a few instructions wide (the audit measured 1/300 rounds), so a
+// The window is a few instructions wide (measured at roughly 1/300 rounds), so a
 // green run here is not proof on its own:
 // TestRefreshJob_PublishInterleavedWithFinishDoesNotLoseCounters holds one
 // publisher inside the window with the refreshHook seam and is the deterministic

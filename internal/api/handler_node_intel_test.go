@@ -17,7 +17,7 @@ import (
 	"prism/internal/subscription"
 )
 
-// WP10 §4 API surface: the `intel` node field, its filters, the new sort keys
+// API surface: the `intel` node field, its filters, the new sort keys
 // and the preview-filter excluded_by counters. Everything is served through
 // httptest, no test touches the network.
 

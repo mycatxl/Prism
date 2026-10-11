@@ -15,7 +15,7 @@ import (
 )
 
 // TestExportSingboxIsAcceptedByBoxNew is the strongest offline validity proof
-// for the §2.1 output: sing-box itself deserializes the exported document into
+// for the output: sing-box itself deserializes the exported document into
 // option.Options and constructs a box instance (it is never started, and no
 // socket is opened).
 //

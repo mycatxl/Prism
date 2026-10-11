@@ -82,7 +82,7 @@ func intPtr(v int) *int { return &v }
 
 func boolPtr(v bool) *bool { return &v }
 
-// TestAdmitQuality_Rules covers every rule of WP10 §2 with a passing and a
+// TestAdmitQuality_Rules covers every rule of with a passing and a
 // rejecting case.
 func TestAdmitQuality_Rules(t *testing.T) {
 	cases := []struct {

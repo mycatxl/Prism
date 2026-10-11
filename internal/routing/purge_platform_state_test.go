@@ -10,8 +10,8 @@ import (
 	"prism/internal/platform"
 )
 
-// TestPurgePlatformState_RemovesStateAndEmitsRemoveEvents covers audit 3.2
-// (#11): a deleted platform used to keep its whole PlatformRoutingState (lease
+// TestPurgePlatformState_RemovesStateAndEmitsRemoveEvents covers
+// : a deleted platform used to keep its whole PlatformRoutingState (lease
 // table + per-IP load counters) alive in Router.states for the lifetime of the
 // process, and every LeaseCleaner sweep had to walk it.
 func TestPurgePlatformState_RemovesStateAndEmitsRemoveEvents(t *testing.T) {

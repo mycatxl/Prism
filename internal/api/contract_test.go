@@ -1605,7 +1605,7 @@ func TestAPIContract_RequestLogEndpoints(t *testing.T) {
 		t.Fatalf("first item type: got %T", items[0])
 	}
 	// PRISM-DEVIATION: X4 the upstream resin_error response field is emitted as
-	// prism_error; the rename was applied repo-wide (see docs/MIGRATION_FROM_RESIN.md).
+	// prism_error; the rename was applied repo-wide.
 	for _, key := range []string{"first_byte_duration_ms", "prism_error", "upstream_stage", "upstream_err_kind", "upstream_errno", "upstream_err_msg"} {
 		if _, exists := firstItem[key]; !exists {
 			t.Fatalf("first item missing field %q", key)

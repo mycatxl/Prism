@@ -1,4 +1,4 @@
--- WP09 §3.2 step 4 follow-up: per-node budgets for the via-node data sources.
+-- per-node budgets for the via-node data sources.
 --
 -- A via-node lookup leaves through the node under test, so the vendor sees the
 -- node's own address and its anonymous quota belongs to that address, not to

@@ -1,4 +1,4 @@
-// Package jobs implements the persistent batch job system of WP08 §3: job
+// Package jobs implements the persistent batch job system of job
 // creation and scope expansion, the per-node worker pool with a resumable step
 // pipeline, the per-provider queue workers and the SSE progress hub.
 package jobs
@@ -13,7 +13,7 @@ import (
 	"prism/internal/model"
 )
 
-// Kind is the job pipeline selector (WP08 §3.2).
+// Kind is the job pipeline selector.
 type Kind string
 
 const (
@@ -68,7 +68,7 @@ func Plan(kind Kind) []Step {
 
 // PendingSteps returns the steps after lastCompleted (0 = every step). The
 // item's step_index stores the last completed step so a restart resumes at the
-// following step (§3.2, §3.5).
+// following step ().
 func PendingSteps(kind Kind, lastCompleted int) []Step {
 	plan := kindPlans[kind]
 	out := make([]Step, 0, len(plan))
@@ -80,17 +80,17 @@ func PendingSteps(kind Kind, lastCompleted int) []Step {
 	return out
 }
 
-// Job priorities (§3.6).
+// Job priorities.
 const (
 	PriorityManual       = 100
 	PrioritySubscription = 50
 	PriorityRefresh      = 10
 )
 
-// MaxNodesPerJob is the hard scope limit of §3.1.
+// MaxNodesPerJob is the hard scope limit of
 const MaxNodesPerJob = 200_000
 
-// Timing constants of §3.4 and §3.5.
+// Timing constants of and
 const (
 	// itemTimeout bounds one item's whole pipeline run, every step included. It
 	// has to stay above the sum of the unlock-check rule timeouts (94s for the
@@ -104,7 +104,7 @@ const (
 	itemLease = 5 * time.Minute
 	// jobStallYield is how long a running job may settle no item before the
 	// scheduler sorts it behind the queued jobs. A running job keeps its slot by
-	// default (§3.4) so a newly created job queues behind in-flight work instead
+	// default so a newly created job queues behind in-flight work instead
 	// of preempting it - but a job whose items only ever get parked (a closed
 	// provider gate, a via-node budget that never reopens) would then hold that
 	// slot forever, which is what made every later job wait on 2026-10-02.
@@ -195,12 +195,12 @@ const (
 	// budget while a step was still executing.
 	CodeItemTimeout = "ITEM_TIMEOUT"
 	// CodeJobTimeout marks an item failed by the job-level timeout sweep of
-	// §3.4: the job as a whole ran past jobTimeout and its pending items were
+	//: the job as a whole ran past jobTimeout and its pending items were
 	// failed so the job stops holding a max_running_jobs slot.
 	CodeJobTimeout = "JOB_TIMEOUT"
 )
 
-// Scope selects the nodes of a job. Every entry is a union (§3.1).
+// Scope selects the nodes of a job. Every entry is a union.
 type Scope struct {
 	All             bool              `json:"all"`
 	SubscriptionIDs []string          `json:"subscription_ids"`
@@ -245,7 +245,7 @@ func (r Request) Validate() error {
 // StepResult is the outcome of one pipeline step.
 type StepResult struct {
 	// DeferUntilNs > 0 returns the item to the queue with that next_run_at_ns
-	// without recording a failure (budget or QPS gate closed, §3.2 step 4).
+	// without recording a failure (budget or QPS gate closed, step 4).
 	DeferUntilNs int64
 	// Skip marks the item as skipped: no further steps run.
 	Skip bool
@@ -255,8 +255,8 @@ type StepResult struct {
 	Summary map[string]any
 }
 
-// StepRunner executes one pipeline step for one node. WP09 (providers and
-// checks) and WP10 (assessment) provide the implementations; WP08 only
+// StepRunner executes one pipeline step for one node. (providers and
+// checks) and (assessment) provide the implementations; only
 // schedules them.
 type StepRunner interface {
 	RunStep(ctx context.Context, kind Kind, step Step, jobID, nodeHash string) StepResult
@@ -271,7 +271,7 @@ func (f StepRunnerFunc) RunStep(ctx context.Context, kind Kind, step Step, jobID
 }
 
 // ScopeResolver expands a job scope into node hashes. The expansion happens
-// server-side and is a union of every selector (§3.1).
+// server-side and is a union of every selector.
 type ScopeResolver interface {
 	ResolveScope(ctx context.Context, scope Scope) ([]string, error)
 }
@@ -294,7 +294,7 @@ type SystemClock struct{}
 func (SystemClock) Now() time.Time { return time.Now() }
 
 // Config is the hot-reloadable slice of the runtime configuration the executor
-// needs (§3.4).
+// needs.
 type Config struct {
 	Enabled                  bool
 	NodeWorkers              int
@@ -332,7 +332,7 @@ func CreatedBySubscription(id string) string { return "system:subscription:" + i
 // CreatedByRefresh is the created_by value of the scheduled refresh job.
 func CreatedByRefresh() string { return "system:refresh" }
 
-// backoff returns the exponential retry delay of §3.3: 30s * 2^attempts capped
+// backoff returns the exponential retry delay of: 30s * 2^attempts capped
 // at six hours.
 func backoff(attempts int) time.Duration {
 	delay := backoffBase
@@ -346,7 +346,7 @@ func backoff(attempts int) time.Duration {
 }
 
 // SubscriptionKindOf maps an intel job request to the job kind recorded for a
-// subscription or refresh trigger (§3.6).
+// subscription or refresh trigger.
 func SubscriptionKindOf(autoChecks bool) Kind {
 	if autoChecks {
 		return KindFull
@@ -354,6 +354,6 @@ func SubscriptionKindOf(autoChecks bool) Kind {
 	return KindIntel
 }
 
-// Ensure model stays referenced for WP09/WP10 callers that build scopes from
+// Ensure model stays referenced for /callers that build scopes from
 // node models.
 var _ = model.QualityPolicy{}

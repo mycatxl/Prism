@@ -68,7 +68,7 @@ func newEndpointInboundMux(
 			return
 		}
 		if shouldRejectReverseProxyByToken(r, proxyToken) {
-			// WP04 §4.6: this path-token decision lives in the mux, so the mux
+			// this path-token decision lives in the mux, so the mux
 			// meters it too; internal/proxy meters the checks it owns itself.
 			// A blocked client is answered 429 before the comparison, exactly
 			// like the forward and CONNECT entries.
@@ -150,7 +150,7 @@ func shouldRejectReverseProxyByToken(r *http.Request, proxyToken string) bool {
 // token, comparing the two in constant time so a wrong token cannot be
 // discovered byte by byte from the response latency of this gate. The mux
 // owns this decision (internal/proxy only sees the requests the mux lets
-// through), so this is the real gate for #33.
+// through), so this is the real gate for.
 //
 // Known limit: crypto/subtle returns 0 immediately when the lengths differ, so
 // the length of the configured token is observable. The token length is not a

@@ -161,7 +161,7 @@ func TestRebuildAllPlatforms_InstallsTheProjectionBeforeEvaluating(t *testing.T)
 }
 
 // TestSetQualitySnapshot_HealsTheViewBuiltWithoutTheProjection reproduces the real
-// startup order (AUDIT_REPORT #8): bootstrap registers the platforms and rebuilds
+// startup order: bootstrap registers the platforms and rebuilds
 // them while the intel projection is still nil (app_runtime.go bootstrap →
 // RebuildAllPlatforms, before initIntelJobs → SetQualitySnapshot). Every quality
 // criterion fails closed at that point, so the view is empty, and nothing else

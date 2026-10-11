@@ -8,7 +8,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// TestAudit_RetryFailedDoesNotResurrectAJobWhoseItemsAreGone probes the second
+// TestRetryFailedDoesNotResurrectAJobWhoseItemsAreGone probes the second
 // escape from a terminal job status.
 //
 // DeleteJobItemsFinishedBefore (repo_jobs.go:684) removes the items of jobs that
@@ -23,7 +23,7 @@ import (
 // now EMPTY: no pending, no failed, so it takes its default branch and writes
 // succeeded. A job the operator saw as partial turns into a success because its
 // items were pruned.
-func TestAudit_RetryFailedDoesNotResurrectAJobWhoseItemsAreGone(t *testing.T) {
+func TestRetryFailedDoesNotResurrectAJobWhoseItemsAreGone(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))

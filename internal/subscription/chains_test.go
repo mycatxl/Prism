@@ -1,8 +1,8 @@
 package subscription
 
-// Tests for the detour chain conversion of chains.go (§6):
-//   - a Clash shadow-tls plugin keeps the version the source declared (C1/#21);
-//   - a dangling detour reference is stripped and reported (C2/#23).
+// Tests for the detour chain conversion of chains.go:
+//   - a Clash shadow-tls plugin keeps the version the source declared;
+//   - a dangling detour reference is stripped and reported.
 
 import (
 	"encoding/json"
@@ -62,7 +62,7 @@ func clashShadowTLSDep(t *testing.T, pluginOpts map[string]any) map[string]any {
 	return dep
 }
 
-// TestClashShadowTLSChainPassesVersionThrough pins §6.2: the version a Clash
+// TestClashShadowTLSChainPassesVersionThrough pins: the version a Clash
 // shadow-tls plugin declares is the sing-box shadowtls version. The converter
 // used to keep only "is it 1?", so a v2 hop was rewritten to v3 — a hop that
 // imports and then never completes a handshake.
@@ -107,7 +107,7 @@ func TestClashShadowTLSChainPassesVersionThrough(t *testing.T) {
 	}
 }
 
-// TestClashShadowTLSChainRefusesUnmappableVersion pins the other half of §6.2:
+// TestClashShadowTLSChainRefusesUnmappableVersion pins the other half of:
 // a version sing-box cannot express is refused instead of being guessed at.
 func TestClashShadowTLSChainRefusesUnmappableVersion(t *testing.T) {
 	for _, version := range []any{"4", "abc", "1.5", 0, -1} {
@@ -174,7 +174,7 @@ func TestParseWithReport_ClashShadowTLSKeepsVersionTwo(t *testing.T) {
 	}
 }
 
-// TestParseWithReport_DanglingDetourIsStrippedAndReported pins §6 for the
+// TestParseWithReport_DanglingDetourIsStrippedAndReported pins for the
 // sing-box path: an unresolvable reference is reported instead of being
 // guessed, and the detour is stripped so the object stays dialable (it would
 // otherwise fail every dial with "outbound detour not found").
@@ -228,7 +228,7 @@ func TestParseWithReport_DanglingDetourIsStrippedAndReported(t *testing.T) {
 	}
 }
 
-// TestParseWithReport_ClashDanglingDialerProxyIsStripped pins §6 for the Clash
+// TestParseWithReport_ClashDanglingDialerProxyIsStripped pins for the Clash
 // path: a dialer-proxy that names no proxy of the document is stripped, the
 // node survives with its other dial fields.
 func TestParseWithReport_ClashDanglingDialerProxyIsStripped(t *testing.T) {

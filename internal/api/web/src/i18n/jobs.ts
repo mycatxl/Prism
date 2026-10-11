@@ -1,4 +1,4 @@
-// WP08 §3/§7 — 「检测任务」页面的英文词条（中文文案即 key）。
+// /— 「检测任务」页面的英文词条（中文文案即 key）。
 // 在 i18n/workbench.ts 中展开进 WORKBENCH_TRANSLATIONS。
 export const JOBS_TRANSLATIONS: Record<string, string> = {
   检测任务: "Inspection jobs",

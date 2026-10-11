@@ -13,7 +13,7 @@ import (
 	"prism/internal/intel/jobs"
 )
 
-// SubscriptionAutoIntel is the per-subscription input of the §3.6 automatic
+// SubscriptionAutoIntel is the per-subscription input of the automatic
 // job: the persisted auto_intel flag and the node hashes that were imported or
 // refreshed.
 type SubscriptionAutoIntel struct {
@@ -22,7 +22,7 @@ type SubscriptionAutoIntel struct {
 	NodeHashes     []string
 }
 
-// AutoEnqueueOptions configures the subscription auto-enqueue path (§3.6). It
+// AutoEnqueueOptions configures the subscription auto-enqueue path. It
 // honours both switches the plan requires: the subscription's auto_intel flag
 // and the system-level intel_enabled setting (through the job manager).
 type AutoEnqueueOptions struct {
@@ -58,7 +58,7 @@ const (
 var ErrAutoEnqueueDisabled = jobs.ErrDisabled
 
 // autoEnqueueQueue coalesces the node additions of one subscription refresh
-// into a single job per subscription (§3.6).
+// into a single job per subscription.
 type autoEnqueueQueue struct {
 	svc  *Service
 	opts AutoEnqueueOptions
@@ -284,7 +284,7 @@ func (q *autoEnqueueQueue) counters() (created, skipped, dropped, failed int64) 
 	return q.created, q.skipped, q.dropped, q.failed
 }
 
-// EnableAutoEnqueue installs the §3.6 subscription auto-enqueue hook. It is a
+// EnableAutoEnqueue installs the subscription auto-enqueue hook. It is a
 // no-op until Start launches the coalescer.
 func (s *Service) EnableAutoEnqueue(opts AutoEnqueueOptions) {
 	if s == nil {
@@ -321,7 +321,7 @@ func (s *Service) AutoEnqueueCounters() (created, skipped, dropped, failed int64
 	return s.auto.counters()
 }
 
-// AutoEnqueueSubscriptions creates the automatic jobs of §3.6 for a batch of
+// AutoEnqueueSubscriptions creates the automatic jobs of for a batch of
 // subscriptions. It honours intel_enabled (through the job manager) and the
 // per-subscription auto_intel flag, merges the node hashes of one subscription
 // into a single job, and refuses - with a named error - a batch that exceeds the
@@ -331,7 +331,7 @@ func (s *Service) AutoEnqueueSubscriptions(ctx context.Context, subs []Subscript
 		return 0, 0, nil
 	}
 	if !s.manager.Enabled() {
-		// intel_enabled=false: no automatic job at all (WP08 §3.4).
+		// intel_enabled=false: no automatic job at all.
 		return 0, 0, ErrAutoEnqueueDisabled
 	}
 	kind := jobs.SubscriptionKindOf(autoChecks)
@@ -372,7 +372,7 @@ func (s *Service) AutoEnqueueSubscriptions(ctx context.Context, subs []Subscript
 }
 
 // AutoEnqueueSubscriptionNodes is the single-subscription form used at import
-// time: it wraps the node hashes into the §3.6 request shape.
+// time: it wraps the node hashes into the request shape.
 func (s *Service) AutoEnqueueSubscriptionNodes(ctx context.Context, subscriptionID string, autoIntel bool, nodeHashes []string, autoChecks bool) (bool, error) {
 	created, _, err := s.AutoEnqueueSubscriptions(ctx, []SubscriptionAutoIntel{{
 		SubscriptionID: subscriptionID,

@@ -35,7 +35,7 @@ const BrowserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/
 // DefaultHotReload is how often the user rule directory is re-read.
 const DefaultHotReload = 60 * time.Second
 
-// DefaultConcurrencyPerCheck bounds the global concurrency of one rule (§5.3).
+// DefaultConcurrencyPerCheck bounds the global concurrency of one rule.
 //
 // One rule runs against many nodes at once, each through its own node, so this is
 // a resource bound rather than a vendor one. It is set high on purpose: the
@@ -78,7 +78,7 @@ func UserRuleDir(stateDir string) string {
 
 // CheckSettingID is the provider_id under which the per-check enabled override
 // is stored in intel_provider_settings, and read back by SourceRecordsEnabled
-// (§5.4).
+// .
 func CheckSettingID(checkID string) string { return "check:" + checkID }
 
 // EnabledSource resolves the persisted enabled flag of one check.
@@ -166,7 +166,7 @@ func NewEngine(opts Options) *Engine {
 }
 
 // Reload re-reads the built-in and user rules. A user rule with the same id as a
-// built-in replaces it (§5.1).
+// built-in replaces it.
 func (e *Engine) Reload() error {
 	builtinRules, builtinErrs := LoadFS(e.builtinFS, builtinDir, "builtin")
 	userRules, userErrs := LoadDir(e.userDir, "user")
@@ -256,7 +256,7 @@ func (e *Engine) Rules() []RuleInfo {
 			steps = append(steps, step.ID)
 		}
 		// Only a user rule reports its file: a built-in rule is identified by
-		// its id and its calibration date (§5.4).
+		// its id and its calibration date.
 		path := ""
 		if rule.Source == "user" {
 			path = rule.Path
@@ -315,7 +315,7 @@ func (e *Engine) Run(ctx context.Context, req RunRequest) []Result {
 		return nil
 	}
 	if req.NodeKey != "" {
-		// §5.3: one check per node at a time.
+		//: one check per node at a time.
 		stripe := &e.nodeStripes[stripeIndex(req.NodeKey)]
 		stripe.Lock()
 		defer stripe.Unlock()
@@ -393,7 +393,6 @@ func (e *Engine) acquire(ctx context.Context, ruleID string) (func(), bool) {
 
 // SetConcurrencyPerCheck updates the global per-rule concurrency bound. The
 // existing semaphores are dropped so the change applies to the next run
-// (WP09 §5.3, intel_check_concurrency_per_check is hot-reloadable).
 func (e *Engine) SetConcurrencyPerCheck(n int) {
 	if e == nil {
 		return

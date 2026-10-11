@@ -19,7 +19,7 @@ COPY . ./
 COPY --from=web-builder /src/internal/api/web/dist ./internal/api/web/dist
 
 # TAGS must stay identical to the Makefile's TAGS. with_mihomo is
-# deliberately absent (docs/ENGINE_DECISIONS.md D-1): compiling it in would make
+# deliberately absent: compiling it in would make
 # GET /api/v1/system/capabilities report mihomo as built while every mihomo node
 # still fails with ENGINE_NOT_BUILT.
 ARG TAGS="with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy"

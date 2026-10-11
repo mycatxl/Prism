@@ -55,7 +55,7 @@ export function IPPureReviewPanel({ nodeHash, nodeIP, ready }: { nodeHash: strin
   const band = purityBand(score);
   const expired = evidence && Date.parse(evidence.valid_until) <= now;
   const sameExit = result?.matches_node_ip && evidence?.ip === nodeIP;
-  // WP08 §9: the review waits up to 15 seconds for the evidence; a 202 means the
+ // the review waits up to 15 seconds for the evidence; a 202 means the
   // intel job is still running, so the panel says so instead of showing a score.
   const queued = Boolean(result?.queued && !evidence);
   const errorCode = review.error && "code" in review.error ? String(review.error.code) : "";

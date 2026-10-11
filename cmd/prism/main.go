@@ -171,7 +171,7 @@ type metricsManagerSettings struct {
 	LeasesIntervalSec           int
 	LeasesRealtimeCapacity      int
 	// Published retention windows (PRISM_METRIC_*_RETENTION_SECONDS); they bound
-	// the realtime rings and, since G-08, the persisted metrics history.
+	// the realtime rings and, since, the persisted metrics history.
 	ThroughputRetentionSec  int
 	ConnectionsRetentionSec int
 	LeasesRetentionSec      int
@@ -242,7 +242,7 @@ func newTopologyRuntime(
 	onNodeRemoved func(node.Hash),
 ) (*topologyRuntime, error) {
 	// 7. Topology objects. GeoLookup is wired to the GeoIP service; QualityLookup
-	// stays nil until WP10 injects the intel-backed lookup.
+	// stays nil until injects the intel-backed lookup.
 	subManager := topology.NewSubscriptionManager()
 
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
@@ -274,7 +274,7 @@ func newTopologyRuntime(
 	})
 	log.Println("Topology: GlobalNodePool initialized")
 
-	// 6. Node builder: outbound.NewSingboxBuilderWithConfig today, WP06 replaces
+	// 6. Node builder: outbound.NewSingboxBuilderWithConfig today, replaces
 	// it with outbound.NewSingboxRuntime.
 	singboxBuilder, err := outbound.NewSingboxBuilderWithConfig(outbound.SingboxBuilderConfig{
 		DNSUpstreams: envCfg.NodeDNSUpstreams,
@@ -290,7 +290,7 @@ func newTopologyRuntime(
 	outboundMgr.SetDenyForbiddenTargets(envCfg.DenyPrivateNodes)
 
 	// 8. Probe manager. SetOnProbeEvent is registered in
-	// startBackgroundServices; WP08 attaches SetOnEgressObserved there as well.
+	// startBackgroundServices; attaches SetOnEgressObserved there as well.
 	// Probe outcomes are recorded on each node entry; the pool logs only
 	// failure-class transitions so the frequent probes do not flood the log.
 	pool.SetLogf(log.Printf)
@@ -367,7 +367,7 @@ func newTopologyRuntime(
 			probeMgr.TriggerImmediateEgressProbe(hash)
 			probeMgr.TriggerImmediateLatencyProbe(hash)
 		},
-		// WP06 §9: the parse report of every refresh is persisted, so the API can
+		// the parse report of every refresh is persisted, so the API can
 		// answer which nodes were dropped and why (StateRepo keeps at most 64 KiB
 		// per subscription).
 		OnParseReport: func(subscriptionID string, reportJSON string) {
@@ -908,8 +908,8 @@ func restoreBootstrapNodeDynamics(
 				// The direct SetEgressIP above bypasses the pool, so the
 				// egress reverse index has to be seeded explicitly: without it
 				// NotifyEgressIPDirty never resolves this node and a dirty
-				// assessment of its egress IP leaves it routable (audit 3.3
-				// [#10]). Seeding is side-effect free by design — the platform
+				// assessment of its egress IP leaves it routable (
+				//. Seeding is side-effect free by design — the platform
 				// views are rebuilt right after bootstrap.
 				pool.SeedEgressIndex(hash, ip)
 			}

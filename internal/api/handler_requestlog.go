@@ -301,7 +301,7 @@ type logListItem struct {
 	UpstreamErrKind     string `json:"upstream_err_kind"`
 	UpstreamErrno       string `json:"upstream_errno"`
 	UpstreamErrMsg      string `json:"upstream_err_msg"`
-	// Events lists routing advisories recorded for the request (WP10 §3).
+	// Events lists routing advisories recorded for the request.
 	Events               []string `json:"events"`
 	IngressBytes         int64    `json:"ingress_bytes"`
 	EgressBytes          int64    `json:"egress_bytes"`

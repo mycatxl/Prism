@@ -10,31 +10,31 @@ import (
 	"prism/internal/intel/store"
 )
 
-// TestAudit_ConcurrentRefreshJobLosesUpdates measures the read-modify-write
+// TestConcurrentRefreshJobLosesUpdates measures the read-modify-write
 // sequence of RefreshJob (repo_jobs.go): it counts the items, reads the job row,
 // computes the next status in Go and writes it back - several statements with no
 // transaction around them. Two workers finishing two items of the same job call
 // publish() (and so RefreshJob) concurrently, so the slower writer could
 // overwrite the newer settlement with a status derived from a stale counter set.
 //
-// This one is a known, deliberately unfixed narrow window (AUDIT_FIX_PLAN.md:
-// "RefreshJob 非事务读-改-写", measured at 0.05%): the test is the anchor that
+// This one is a known, deliberately unfixed narrow window
+// (non-transactional read-modify-write, measured at 0.05%): the test is the anchor that
 // keeps the defect from getting worse, but it must not redden a normal test run.
 // The window is real, so a green 300-round run is a coin toss rather than a
 // property of the code - leaving it enabled would make CI flaky for a defect
 // this change set explicitly does not fix. It runs only when
-// PRISM_AUDIT_REFRESH_RACE=1 is set, which is how the audit measured it:
+// PRISM_REFRESH_RACE_PROBE=1 is set, which is how the audit measured it:
 //
-//	PRISM_AUDIT_REFRESH_RACE=1 go test -tags "$TAGS" \
-//	  -run TestAudit_ConcurrentRefreshJobLosesUpdates -count=20 ./internal/intel/jobs/
-func TestAudit_ConcurrentRefreshJobLosesUpdates(t *testing.T) {
+//	PRISM_REFRESH_RACE_PROBE=1 go test -tags "$TAGS" \
+//	  -run TestConcurrentRefreshJobLosesUpdates -count=20 ./internal/intel/jobs/
+func TestConcurrentRefreshJobLosesUpdates(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 
 	const rounds = 300
 	regressions := 0
-	if os.Getenv("PRISM_AUDIT_REFRESH_RACE") == "" {
-		t.Skip("known unfixed RefreshJob race (AUDIT_REPORT #7): set PRISM_AUDIT_REFRESH_RACE=1 to measure it")
+	if os.Getenv("PRISM_REFRESH_RACE_PROBE") == "" {
+		t.Skip("known unfixed RefreshJob race: set PRISM_REFRESH_RACE_PROBE=1 to measure it")
 	}
 	var lastSeen store.Job
 
@@ -89,7 +89,7 @@ func TestAudit_ConcurrentRefreshJobLosesUpdates(t *testing.T) {
 	}
 }
 
-// Regression test for F5 of AUDIT_REPORT.md (fixed): RetryFailedJobItems
+// Regression test for the retry contract: RetryFailedJobItems
 // (repo_jobs.go) requeued the FAILED items and then, unconditionally, reopened
 // the job with "UPDATE jobs SET status = 'queued', finished_at_ns = 0 WHERE
 // id = ? AND status IN ('partial','failed','canceled')". A canceled job has no
@@ -103,7 +103,7 @@ func TestAudit_ConcurrentRefreshJobLosesUpdates(t *testing.T) {
 // success, with the cancel recorded in the audit log. The fix runs the reopen
 // only when retried > 0 and drops canceled from the status list: cancel is
 // terminal even when the job has failed items.
-func TestAudit_RetryFailedTurnsACanceledJobIntoSuccess(t *testing.T) {
+func TestRetryFailedTurnsACanceledJobIntoSuccess(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -152,14 +152,14 @@ func TestAudit_RetryFailedTurnsACanceledJobIntoSuccess(t *testing.T) {
 	}
 }
 
-// TestAudit_RetryFailedDoesNotReviveACanceledJobWithFailedItems pins the second
-// half of the F5 decision: the reopen list is ('partial','failed') and no longer
+// TestRetryFailedDoesNotReviveACanceledJobWithFailedItems pins the second
+// half of the  decision: the reopen list is ('partial','failed') and no longer
 // contains canceled. A job that was canceled after some of its items had already
 // failed still has failed items, so the old code did requeue them - and then
 // reopened the job. The fix skips a canceled job entirely: the retry is a no-op,
 // the failure records the operator is reading survive, and no queued item is
 // stranded inside a canceled job (nothing claims items of a non-active job).
-func TestAudit_RetryFailedDoesNotReviveACanceledJobWithFailedItems(t *testing.T) {
+func TestRetryFailedDoesNotReviveACanceledJobWithFailedItems(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 

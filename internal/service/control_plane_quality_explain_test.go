@@ -17,7 +17,7 @@ import (
 	"prism/internal/topology"
 )
 
-// WP10 §2.1 explain endpoint. These tests exercise the service layer directly,
+// explain endpoint. These tests exercise the service layer directly,
 // because internal/api has no handler test for GET
 // /api/v1/platforms/{id}/nodes/{hash}/explain: every branch here (unknown
 // platform, malformed hash, unknown node, the admission reasons) is reachable

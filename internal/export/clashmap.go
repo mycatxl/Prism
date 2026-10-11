@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Reverse mapping sing-box outbound -> mihomo (Clash Meta) proxy (WP11 §2.2).
+// Reverse mapping sing-box outbound -> mihomo (Clash Meta) proxy.
 //
 // Every unsupported case returns ok == false so the caller can skip the node
 // with a reason instead of emitting a broken proxy entry.
@@ -46,7 +46,7 @@ func clashProxyFromSingbox(object map[string]any) (map[string]any, bool) {
 		// and this repository's own Clash importer (subscription.clashProtocolNames)
 		// does not recognise one either. Emitting `type: openconnect` would produce a
 		// document mihomo refuses to load, so the node is skipped with a reason
-		// instead. §2.2 lists only the openvpn-client form for the same reason.
+		// instead. lists only the openvpn-client form for the same reason.
 	}
 	return nil, false
 }

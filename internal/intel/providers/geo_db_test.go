@@ -26,7 +26,7 @@ import (
 	"prism/internal/netutil"
 )
 
-// WP09 §3: the offline database refresher. Every test serves its files from
+// the offline database refresher. Every test serves its files from
 // httptest into a t.TempDir() cache directory; no test touches the network.
 
 // --- minimal MaxMind database writer ---------------------------------------
@@ -420,7 +420,7 @@ func TestGeoFixtureDatabasesAreValid(t *testing.T) {
 
 // --- downloads -------------------------------------------------------------
 
-// TestGeoMonthFallbackDownloadsThePreviousMonth is the DB-IP rule of WP09 §3:
+// TestGeoMonthFallbackDownloadsThePreviousMonth is the DB-IP rule of
 // the file of the current month is tried first and the previous month is used
 // when the current one is not published yet. The assertion is the request
 // sequence, not a real download.
@@ -473,7 +473,7 @@ func TestGeoMonthFallbackDownloadsThePreviousMonth(t *testing.T) {
 }
 
 // TestGeoCorruptDownloadNeverReplacesAWorkingDatabase is the central
-// protection of WP09 §3: a body that is not a MaxMind database is rejected
+// protection of a body that is not a MaxMind database is rejected
 // before the swap, the installed file stays byte-identical and the failure is
 // recorded.
 func TestGeoCorruptDownloadNeverReplacesAWorkingDatabase(t *testing.T) {
@@ -716,7 +716,7 @@ func TestGeoHTTPFailureKeepsTheDatabaseAndBacksOff(t *testing.T) {
 }
 
 // TestGeoRefreshSkipsUnconfiguredDatabases is the "not configured and not
-// required" rule of WP09 §3: a missing licence key or token is a recorded
+// required" rule of a missing licence key or token is a recorded
 // skip, no request is made and the settings API shows why.
 func TestGeoRefreshSkipsUnconfiguredDatabases(t *testing.T) {
 	requests := &geoRequests{}

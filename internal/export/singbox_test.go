@@ -9,7 +9,7 @@ import (
 	"prism/internal/subscription"
 )
 
-// TestExportSingboxGolden pins the full sing-box document (WP11 §5).
+// TestExportSingboxGolden pins the full sing-box document.
 func TestExportSingboxGolden(t *testing.T) {
 	items := append(fixtureNodes(t), fixtureEndpointNode(t), fixtureChainNode(t))
 	body, contentType, report, err := Export(items, FormatSingbox, Options{IncludeIntel: true})
@@ -57,7 +57,7 @@ func TestExportSingboxRoundTripsThroughTheParser(t *testing.T) {
 	}
 }
 
-// TestExportSingboxChainShape pins the §2.1 chain rules: the main object keeps
+// TestExportSingboxChainShape pins the chain rules: the main object keeps
 // the node name, the dep is renamed to "<name>/d0" and the main detour is
 // rewritten to point at it.
 func TestExportSingboxChainShape(t *testing.T) {
@@ -171,7 +171,7 @@ func TestExportSingboxDocumentIsReReadableByOptionDecoding(t *testing.T) {
 	}
 }
 
-// singboxCollisionItems is the tag-collision fixture of AUDIT §3.5 (#22): the
+// singboxCollisionItems is the tag-collision fixture: the
 // chain node "x" emits its dependency as "x/d0", and the second node is
 // literally called "x/d0". Both tags used to reach the document, which sing-box
 // rejects as a whole ("duplicate outbound/endpoint tag").
@@ -215,7 +215,7 @@ func (d singboxDocument) objects() []map[string]any {
 	return append(append([]map[string]any{}, d.Outbounds...), d.Endpoints...)
 }
 
-// TestExportSingboxTagsAreUniqueAcrossNodesAndDeps pins AUDIT §3.5 (#22): a node
+// TestExportSingboxTagsAreUniqueAcrossNodesAndDeps pins the collision: a node
 // name that repeats a chain dependency tag used to write the same tag into the
 // document twice, and sing-box refuses the *whole* configuration on a duplicate
 // outbound/endpoint tag, so one colliding node made the entire export unusable.
@@ -258,8 +258,8 @@ func TestExportSingboxTagsAreUniqueAcrossNodesAndDeps(t *testing.T) {
 	}
 }
 
-// TestExportSingboxChainReferencesSurviveTagDedup pins the reference half of
-// AUDIT §3.5 (#22): when a dependency tag has to be renamed, every reference to
+// TestExportSingboxChainReferencesSurviveTagDedup pins the reference half of the
+// rename: when a dependency tag has to be renamed, every reference to
 // it has to follow the rename. A reference left on the canonical "<name>/d0"
 // spelling names either nothing or — worse — an unrelated node that happens to
 // carry that tag.

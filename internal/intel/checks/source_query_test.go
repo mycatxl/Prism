@@ -20,7 +20,7 @@ func (c *countingEnabledSource) CheckEnabled(checkID string) (bool, bool) {
 	return false, false
 }
 
-// TestAudit_EnabledSourceIsQueriedOncePerRulePerRun measures the query pattern of
+// TestEnabledSourceIsQueriedOncePerRulePerRun measures the query pattern of
 // selectRules (engine.go:349): for every rule it consults e.enabledRule, which
 // calls EnabledSource.CheckEnabled. The production implementation of that
 // interface (cmd/prism/intel_runtime.go:279) runs a full table scan -
@@ -30,7 +30,7 @@ func (c *countingEnabledSource) CheckEnabled(checkID string) (bool, bool) {
 //
 // The engine has the whole rule list in memory already; the enabled flags are
 // only needed for the rules that are actually selected.
-func TestAudit_EnabledSourceIsQueriedOncePerRulePerRun(t *testing.T) {
+func TestEnabledSourceIsQueriedOncePerRulePerRun(t *testing.T) {
 	rules := fstest.MapFS{}
 	const ruleCount = 8
 	for i := 0; i < ruleCount; i++ {

@@ -1,6 +1,6 @@
 package providers
 
-// WP09 §3: download and refresh the offline databases (DB-IP Lite, MaxMind
+// download and refresh the offline databases (DB-IP Lite, MaxMind
 // GeoLite2, IPinfo Lite) into $PRISM_CACHE_DIR/geo.
 //
 // Rules of this file:
@@ -18,7 +18,7 @@ package providers
 //     reaches the request. It is never logged, returned or repeated in an
 //     error message (R6).
 //   - A database whose provider is not configured is skipped with a recorded
-//     reason instead of failing (WP09 §3).
+//     reason instead of failing.
 
 import (
 	"archive/tar"
@@ -44,7 +44,7 @@ import (
 	"prism/internal/netutil"
 )
 
-// Vendor endpoints of the offline databases (WP09 §3). The download base URLs
+// Vendor endpoints of the offline databases. The download base URLs
 // are overridable through GeoDBBaseURLs so tests point them at httptest.
 const (
 	dbipDownloadBaseURL    = "https://download.db-ip.com/free/"
@@ -165,7 +165,7 @@ type GeoDBSource struct {
 }
 
 // GeoDBBaseURLs overrides the vendor endpoints. The zero value uses the
-// vendors of WP09 §3; tests point every field at one httptest server.
+// vendors of; tests point every field at one httptest server.
 type GeoDBBaseURLs struct {
 	DBIP    string
 	MaxMind string
@@ -274,7 +274,7 @@ type GeoRefreshFileResult struct {
 }
 
 // GeoRefreshResult is the outcome of POST
-// /api/v1/intel/providers/{id}/actions/refresh (WP09 §3).
+// /api/v1/intel/providers/{id}/actions/refresh.
 type GeoRefreshResult struct {
 	ProviderID string                 `json:"provider_id"`
 	Outcome    string                 `json:"outcome"`
@@ -327,7 +327,7 @@ type geoDBState struct {
 	downloading bool
 }
 
-// GeoManager keeps the offline databases of WP09 §3 up to date. It is safe for
+// GeoManager keeps the offline databases of up to date. It is safe for
 // concurrent use: one download runs at a time and the state of every file is
 // recorded behind a mutex.
 type GeoManager struct {
@@ -427,7 +427,7 @@ func positiveBytesOrDefault(value, fallback int64) int64 {
 
 // Start launches the background refresher. It never blocks: the first pass runs
 // in its own goroutine, so a missing database only degrades the offline
-// providers to PROVIDER_UNAVAILABLE until the download lands (WP09 §3).
+// providers to PROVIDER_UNAVAILABLE until the download lands.
 func (m *GeoManager) Start() {
 	if m == nil {
 		return
@@ -932,7 +932,7 @@ func (m *GeoManager) note(fileName, reason string) {
 }
 
 // recordSkip records a database that was not downloaded because its provider
-// is not configured or disabled (WP09 §3).
+// is not configured or disabled.
 func (m *GeoManager) recordSkip(src GeoDBSource, code, reason string) GeoRefreshFileResult {
 	m.mu.Lock()
 	state := m.stateLocked(src.FileName)

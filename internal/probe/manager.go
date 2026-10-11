@@ -295,7 +295,7 @@ func (m *ProbeManager) SetOnProbeEvent(fn func(kind string)) {
 // SetOnEgressObserved installs a lightweight observer after a successful sample.
 // The callback must not perform network or database I/O: it receives the node
 // hash, the observed IP and the trace loc so the intel subsystem can record
-// WHICH node produced the IP (WP08 §4).
+// WHICH node produced the IP.
 func (m *ProbeManager) SetOnEgressObserved(fn func(node.Hash, netip.Addr, string)) {
 	if fn == nil {
 		m.onEgressObserved.Store(nil)

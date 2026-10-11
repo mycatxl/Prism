@@ -17,7 +17,7 @@ type refreshTestClock struct{ now time.Time }
 
 func (c refreshTestClock) Now() time.Time { return c.now }
 
-// Four distinct, well-formed node hashes: one per §3.6 condition plus a control.
+// Four distinct, well-formed node hashes: one per condition plus a control.
 const (
 	refreshExpiredEvidenceHash = "11111111111111111111111111111111"
 	refreshExpiredCheckHash    = "22222222222222222222222222222222"
@@ -53,7 +53,7 @@ func newRefreshServiceBare(t *testing.T, now time.Time) (*Service, *store.Store)
 	return svc, st
 }
 
-// newRefreshServiceWithSchedule enables the §3.6 scheduler on a schedule that
+// newRefreshServiceWithSchedule enables the scheduler on a schedule that
 // never fires during a test, which is what lets the scope tests call the
 // collector directly.
 func newRefreshServiceWithSchedule(t *testing.T, now time.Time) (*Service, *store.Store) {
@@ -118,7 +118,7 @@ func seedExpiredCheck(t *testing.T, st *store.Store, now time.Time, hash string)
 	}
 }
 
-// seedAllThreeConditions plants one node per §3.6 condition plus a fresh control.
+// seedAllThreeConditions plants one node per condition plus a fresh control.
 func seedAllThreeConditions(t *testing.T, st *store.Store, now time.Time) {
 	t.Helper()
 	// Condition 1: expired evidence on the node's current egress address.
@@ -133,7 +133,7 @@ func seedAllThreeConditions(t *testing.T, st *store.Store, now time.Time) {
 	seedEgress(t, st, now, refreshFreshHash, "198.51.100.13", time.Minute)
 }
 
-// TestRefreshScopeCollectsTheThreeConditions pins the §3.6 scope definition.
+// TestRefreshScopeCollectsTheThreeConditions pins the scope definition.
 func TestRefreshScopeCollectsTheThreeConditions(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	svc, st := newRefreshServiceWithSchedule(t, now)
@@ -193,7 +193,7 @@ func TestRefreshScopeDropsNodesThePoolForgot(t *testing.T) {
 	}
 }
 
-// TestRefreshScheduleCreatesTheSystemJob checks the §3.6 contract of the created
+// TestRefreshScheduleCreatesTheSystemJob checks the contract of the created
 // job: created_by "system:refresh", priority 10, and the kind the auto-checks
 // switch selects.
 func TestRefreshScheduleCreatesTheSystemJob(t *testing.T) {

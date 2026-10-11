@@ -9,7 +9,7 @@ import (
 	"prism/internal/subscription"
 )
 
-// TestAudit_WireGuardRoundTripKeepsMultiValueAllowedIPs is the F2 regression
+// TestWireGuardRoundTripKeepsMultiValueAllowedIPs is the regression
 // test for the wireguard share link. The two sides used to disagree:
 //
 //   - the exporter writes every allowed-ips entry as ONE comma-joined query
@@ -27,7 +27,7 @@ import (
 // The fix splits comma-joined allowed-ips entries in wireGuardSinglePeer
 // (node/wireguard.go, splitWireGuardPrefixEntries) and keeps the export format
 // unchanged, so this test must stay green.
-func TestAudit_WireGuardRoundTripKeepsMultiValueAllowedIPs(t *testing.T) {
+func TestWireGuardRoundTripKeepsMultiValueAllowedIPs(t *testing.T) {
 	raw := json.RawMessage(`{"prism_node":1,"engine":"singbox","kind":"endpoint","name":"wg-default",` +
 		`"main":{"type":"wireguard","address":["10.7.0.2/32"],"private_key":"WG-PRIVATE-KEY-FIXTURE",` +
 		`"peers":[{"address":"203.0.113.9","port":51820,"public_key":"WG-PUBLIC-KEY-FIXTURE",` +

@@ -25,7 +25,7 @@ func stopReturnsPromptly(t *testing.T, stop func()) bool {
 }
 
 // secondStopMustNotPanic converts the panic of a repeated Stop (a second close
-// of stopCh, #26) into a test failure instead of crashing the test binary, so
+// of stopCh,) into a test failure instead of crashing the test binary, so
 // the regression is reported as a FAIL of this test.
 func secondStopMustNotPanic(t *testing.T, stop func()) {
 	t.Helper()
@@ -41,7 +41,7 @@ func secondStopMustNotPanic(t *testing.T, stop func()) {
 	}
 }
 
-// TestEphemeralCleanerStopIsIdempotent pins #26 on the cleaner: Stop may be
+// TestEphemeralCleanerStopIsIdempotent pins  on the cleaner: Stop may be
 // called more than once (shutdown paths and tests both do it), and the second
 // call must be a no-op rather than a close of an already closed channel.
 func TestEphemeralCleanerStopIsIdempotent(t *testing.T) {
@@ -67,7 +67,7 @@ func TestEphemeralCleanerStopIsIdempotent(t *testing.T) {
 	secondStopMustNotPanic(t, cleaner.Stop)
 }
 
-// TestSubscriptionSchedulerStopIsIdempotent pins #26 on the scheduler. It also
+// TestSubscriptionSchedulerStopIsIdempotent pins  on the scheduler. It also
 // checks that the first Stop still cancels the download context, because that
 // is the part of Stop that a naive "guard everything" rewrite would drop.
 func TestSubscriptionSchedulerStopIsIdempotent(t *testing.T) {

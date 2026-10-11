@@ -1060,8 +1060,8 @@ func TestLoadRuntimeConfig_EgressTraceURLEnvOverrideAndLegacyFallback(t *testing
 	}
 }
 
-// TestBootstrapNodes_RestoredEgressIPEntersTheReverseIndex pins audit 3.3
-// [#10]: a node whose egress IP is restored from nodes_dynamic must be
+// TestBootstrapNodes_RestoredEgressIPEntersTheReverseIndex pins
+// : a node whose egress IP is restored from nodes_dynamic must be
 // resolvable through the pool's egress index, otherwise NotifyEgressIPDirty
 // (called by the intel pipeline after an assessment change) never finds it and
 // a dirty egress IP leaves the node routable for the whole process lifetime.

@@ -25,7 +25,7 @@ import (
 const (
 	// envMaxEndpoints bounds the number of concurrently active endpoint nodes.
 	envMaxEndpoints = "PRISM_MAX_ENDPOINTS"
-	// defaultMaxEndpoints is the default endpoint budget (WP06 §2).
+	// defaultMaxEndpoints is the default endpoint budget.
 	defaultMaxEndpoints = int64(256)
 
 	errEndpointsExhausted = "ENDPOINT_LIMIT: too many active endpoint nodes"
@@ -35,7 +35,7 @@ const (
 )
 
 // SingboxRuntime owns an embedded sing-box instance and creates node outbounds,
-// endpoints and detour chains inside it (WP06 §2, decisions D2 and D4).
+// endpoints and detour chains inside it.
 //
 // Every node gets a unique tag (`n/<hash>/<seq>`) because
 // OutboundManager.Create replaces an existing instance with the same tag; two
@@ -316,7 +316,7 @@ var _ OutboundBuilder = (*SingboxRuntime)(nil)
 // init registers the engine runtimes this package can construct. Only sing-box
 // is registered: Build rejects mihomo proxy documents with ENGINE_NOT_BUILT, so
 // node.EngineCapabilities() must keep reporting mihomo as not built even in a
-// `with_mihomo` build (docs/ENGINE_DECISIONS.md D-1). Registering an engine here
+// `with_mihomo` build. Registering an engine here
 // is the only way a capability can be reported as built.
 func init() {
 	node.RegisterEngineRuntime(node.EngineSingbox)

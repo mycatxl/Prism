@@ -7,7 +7,7 @@ import (
 	"prism/internal/quality"
 )
 
-// Name template rules (WP11 §3).
+// Name template rules.
 const (
 	// maxNameLength is the hard cap of a rendered node name.
 	maxNameLength = 64

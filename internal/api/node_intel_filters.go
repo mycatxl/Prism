@@ -11,7 +11,7 @@ import (
 	"prism/internal/service"
 )
 
-// WP10 §4 node filters. The live query parameters and the stored export filter
+// node filters. The live query parameters and the stored export filter
 // JSON are validated by these helpers, so a saved export profile and a live
 // query accept exactly the same values and can never disagree about a node.
 //
@@ -30,7 +30,7 @@ const (
 	maxNodeCountryBytes = 4
 )
 
-// nodeIntelFilterValues is the raw text form of the §4 intel filters. Both the
+// nodeIntelFilterValues is the raw text form of the intel filters. Both the
 // query parameters and the stored export filter are projected onto it before
 // validation.
 type nodeIntelFilterValues struct {

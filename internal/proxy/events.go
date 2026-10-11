@@ -53,7 +53,7 @@ type RequestLogEntry struct {
 	TargetHost          string
 	TargetURL           string
 	NodeHash            string
-	NodeTag             string // display tag: "<Subscription>/<Tag>" (DESIGN.md §601)
+	NodeTag             string // display tag: "<Subscription>/<Tag>"
 	EgressIP            string
 	DurationNs          int64
 	FirstByteDurationNs int64
@@ -68,7 +68,7 @@ type RequestLogEntry struct {
 	IngressBytes        int64  // bytes from upstream to client (header + body)
 	EgressBytes         int64  // bytes from client to upstream (header + body)
 	// Events carries routing advisories emitted while serving this request,
-	// e.g. "rotation_fallback_same_ip" (WP10 §3). Persisted as a JSON array.
+	// e.g. "rotation_fallback_same_ip". Persisted as a JSON array.
 	Events []string
 
 	// Optional detail payload (mainly for reverse proxy request logging).

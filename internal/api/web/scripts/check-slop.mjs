@@ -214,7 +214,7 @@ const findings = parse(output);
  *
  *   - **provenance**: the code is not ours (a vendored chunk);
  *   - **decision**: the code is ours and the pattern is deliberate, recorded in the
- *     root `DESIGN.md` with its bound.
+ * the design system with its bound.
  */
 function attribution(finding) {
   let body = null;
@@ -240,7 +240,7 @@ function attribution(finding) {
    */
   if (finding.rule === "ai-color-palette" && /(^|\/)ui\/index\.html$/.test(finding.file ?? "")) {
     return /prism/i.test(read())
-      ? "our own shell; the indigo→violet accent is pinned by the operator's brief and bounded in DESIGN.md"
+ ? "our own shell; the indigo→violet accent is pinned by the operator's brief and bounded in the design system"
       : null;
   }
 

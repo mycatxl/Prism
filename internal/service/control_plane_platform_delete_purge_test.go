@@ -15,7 +15,7 @@ import (
 	"prism/internal/topology"
 )
 
-// TestDeletePlatform_PurgesRouterState covers audit 3.2 (#11): DeletePlatform
+// TestDeletePlatform_PurgesRouterState covers: DeletePlatform
 // removed the platform from the engine and the topology pool but left its
 // Router.states entry (lease table + per-IP load counters) behind forever.
 func TestDeletePlatform_PurgesRouterState(t *testing.T) {
@@ -115,7 +115,7 @@ func TestDeletePlatform_PurgesRouterState(t *testing.T) {
 		t.Fatalf("platform %s should be removed from pool", platformRow.ID)
 	}
 	if router.RangeLeases(platformRow.ID, func(string, routing.Lease) bool { return true }) {
-		t.Fatal("Router.states kept the deleted platform's leases (audit 3.2 leak)")
+		t.Fatal("Router.states kept the deleted platform's leases (leak)")
 	}
 	if snap := router.SnapshotIPLoad(platformRow.ID); len(snap) != 0 {
 		t.Fatalf("Router kept the deleted platform's IP load stats: %v", snap)

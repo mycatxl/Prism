@@ -9,7 +9,7 @@ import (
 	"prism/internal/quality"
 )
 
-// ExportItem projects one node summary onto an export.Item (WP11 §1). ok is
+// ExportItem projects one node summary onto an export.Item. ok is
 // false when the node has no document to export, or when the node is no longer
 // in the pool.
 //
@@ -81,7 +81,7 @@ func (s *ControlPlaneService) ExportSubscriptionName(hash node.Hash) string {
 	return ""
 }
 
-// NodeQualityForEgress exposes the projected WP10 summary of an egress IP. It
+// NodeQualityForEgress exposes the projected summary of an egress IP. It
 // is the same projection the node list uses, so an export and the UI never
 // disagree about a purity band.
 func (s *ControlPlaneService) NodeQualityForEgress(ip netip.Addr) quality.Summary {

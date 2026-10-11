@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestSystemCapabilities_NeverClaimsAnUnbuiltEngine pins the promise of
-// docs/ENGINE_DECISIONS.md D-1 at the wire level: GET
+// TestSystemCapabilities_NeverClaimsAnUnbuiltEngine pins the promise at the wire
+// level: GET
 // /api/v1/system/capabilities must never advertise a kernel the binary cannot
 // deliver. mihomo has no runtime in this tree, so `built` stays false and
 // `fallback_types` is the only mihomo information a client may rely on.

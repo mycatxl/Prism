@@ -54,7 +54,7 @@ func ageEgress(t *testing.T, st *store.Store, now time.Time, age time.Duration) 
 	}
 }
 
-// TestChecksPipelineReusesFreshEgress pins the §3.2 rule: the checks pipeline's
+// TestChecksPipelineReusesFreshEgress pins the rule: the checks pipeline's
 // step 1 is "出口探测（15 分钟内已探测则跳过）". Only that pipeline may reuse an
 // observation; intel, full and egress re-probe because there the address is a
 // product of the run. The boundary is exclusive: an observation that is exactly
@@ -122,7 +122,7 @@ func TestChecksPipelineReusesFreshEgress(t *testing.T) {
 }
 
 // TestChecksPipelineReuseDoesNotNotifyOnChange: a reused observation cannot have
-// changed, so the §4 OnEgressChange hook must stay quiet.
+// changed, so the OnEgressChange hook must stay quiet.
 func TestChecksPipelineReuseDoesNotNotifyOnChange(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	st := newTestStore(t)

@@ -108,7 +108,7 @@ func (s *SubscriptionScheduler) Stop() {
 
 // ForceRefreshAll unconditionally updates ALL enabled subscriptions, regardless
 // of their next-check timestamps. Called once at startup to compensate for
-// lost data from weak persistence (DESIGN.md step 8 batch 3).
+// lost data from weak persistence (the design system step 8 batch 3).
 // Updates run in parallel, and this method waits until all started updates exit.
 func (s *SubscriptionScheduler) ForceRefreshAll() {
 	select {

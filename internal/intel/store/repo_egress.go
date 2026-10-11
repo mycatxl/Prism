@@ -26,7 +26,7 @@ type EgressObservation struct {
 
 // RecordEgress persists one egress observation and appends egress_history rows
 // for every address that changed. It returns the stored row and whether an
-// address changed, so callers can react to IP churn (§4).
+// address changed, so callers can react to IP churn.
 func (s *Store) RecordEgress(ctx context.Context, obs EgressObservation) (NodeEgress, bool, error) {
 	var row NodeEgress
 	db, err := s.conn()
@@ -172,7 +172,7 @@ func (s *Store) ListNodeEgress(ctx context.Context) ([]NodeEgress, error) {
 }
 
 // ListStaleNodeEgress returns the hashes of nodes whose IPv4 observation is
-// older than observedBeforeNs, oldest first. It feeds the §3.6 scheduled
+// older than observedBeforeNs, oldest first. It feeds the scheduled
 // refresh: "存在已过期证据、已过期检测，或出口观测超过 48 小时" is one of the
 // three conditions that put a node back into a refresh scope. The limit is
 // applied in SQL, so a large inventory never loads the whole table into memory;
@@ -217,7 +217,7 @@ const egressLookupChunk = 400
 
 // NodeEgressByHashes returns the stored egress rows of the given node hashes.
 // It reads them in chunks of egressLookupChunk so a caller can render a whole
-// page of nodes without one query per node (WP10 §4). At most
+// page of nodes without one query per node. At most
 // MaxEgressLookupHashes distinct hashes are resolved; empty and duplicate
 // hashes are ignored and hashes without a stored row are simply absent from the
 // result.
@@ -312,7 +312,7 @@ func (s *Store) ListNodeHashes(ctx context.Context) ([]string, error) {
 }
 
 // ListNodesByIP returns the node hashes whose IPv4 or IPv6 equals ip, capped by
-// limit (WP08 §7: GET /api/v1/intel/ip/{ip} lists at most 100 nodes).
+// limit.
 func (s *Store) ListNodesByIP(ctx context.Context, ip string, limit int) ([]string, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -369,7 +369,7 @@ func (s *Store) ListEgressHistory(ctx context.Context, nodeHash string, limit in
 	return out, rows.Err()
 }
 
-// PruneEgressHistory keeps only the newest keepPerNode rows per node (§6).
+// PruneEgressHistory keeps only the newest keepPerNode rows per node.
 func (s *Store) PruneEgressHistory(ctx context.Context, keepPerNode int) (int64, error) {
 	db, err := s.conn()
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 	"prism/internal/model"
 )
 
-// Provider settings API (WP09 §4). This file is the write path behind
+// Provider settings API. This file is the write path behind
 // GET/PATCH /api/v1/intel/providers: it validates a patch, persists it in
 // intel_provider_settings and applies the new effective settings to the live
 // registry, so the running scheduler picks the change up without a restart.
@@ -43,7 +43,7 @@ const (
 	MaxConfigStringBytes = 1024
 )
 
-// Settings errors of the §4 write path. The API layer maps them onto
+// Settings errors of the write path. The API layer maps them onto
 // 404 NOT_FOUND and 400 INVALID_ARGUMENT.
 var (
 	// ErrUnknownProvider reports an id that is not registered.
@@ -55,7 +55,7 @@ var (
 	ErrSettingsUnavailable = errors.New("intel provider settings are unavailable")
 )
 
-// ProviderPatch is the PATCH /api/v1/intel/providers/{id} body (WP09 §4). Every
+// ProviderPatch is the PATCH /api/v1/intel/providers/{id} body. Every
 // field is optional: an absent field keeps the persisted value.
 //
 //   - api_key is write-only. An explicit empty string clears the stored
@@ -73,7 +73,7 @@ type ProviderPatch struct {
 	Config     map[string]any `json:"config,omitempty"`
 }
 
-// ProviderUsage is today's budget and queue state of one provider (WP08 §2
+// ProviderUsage is today's budget and queue state of one provider (
 // provider_state/provider_queue). Remaining is -1 when the provider is
 // unlimited, so a client can tell "no quota" from "quota exhausted".
 type ProviderUsage struct {
@@ -94,7 +94,7 @@ type ProviderUsage struct {
 	Failed          int    `json:"failed"`
 }
 
-// DatabaseFileStatus is one file of a downloaded offline database (WP09 §3).
+// DatabaseFileStatus is one file of a downloaded offline database.
 type DatabaseFileStatus struct {
 	// Name is the file name inside $PRISM_CACHE_DIR/geo.
 	Name string `json:"name"`
@@ -119,7 +119,7 @@ type DatabaseFileStatus struct {
 
 // DatabaseStatus is the download state of the offline databases of one
 // provider: whether they are installed, how old they are, when the last
-// download was attempted and how it ended (WP09 §3).
+// download was attempted and how it ended.
 type DatabaseStatus struct {
 	// Installed is true when every file of the provider exists.
 	Installed bool `json:"installed"`
@@ -142,7 +142,7 @@ type ProviderStatus struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Website string `json:"website,omitempty"`
-	// Terms is the vendor quota/terms hint shown on the settings page (§3).
+	// Terms is the vendor quota/terms hint shown on the settings page.
 	Terms string `json:"terms,omitempty"`
 	// Category is the kind in its documented wire form:
 	// offline | online-ip | via-node.
@@ -184,7 +184,7 @@ type ProviderStatus struct {
 
 	// Database reports the state of the downloaded offline database of this
 	// provider: installed, size and age, last attempt and its outcome. It is
-	// nil for a provider without one and never carries a credential (WP09 §3).
+	// nil for a provider without one and never carries a credential.
 	Database *DatabaseStatus `json:"database,omitempty"`
 }
 
@@ -201,12 +201,12 @@ type SettingsService struct {
 	env      EnvSource
 	now      func() time.Time
 	mu       sync.Mutex
-	// databases is the offline database refresher of WP09 §3, attached once
+	// databases is the offline database refresher of, attached once
 	// during assembly (SetDatabases).
 	databases *GeoManager
 }
 
-// NewSettingsService builds the §4 settings surface. A nil store keeps the
+// NewSettingsService builds the settings surface. A nil store keeps the
 // surface read-only: every read falls back to the environment/defaults and
 // Update fails with ErrSettingsUnavailable.
 func NewSettingsService(registry *Registry, store SettingsStore, env EnvSource, now func() time.Time) *SettingsService {
@@ -233,7 +233,7 @@ func (s *SettingsService) databaseState(providerID string) *DatabaseStatus {
 	return s.databases.DatabaseStatus(providerID)
 }
 
-// SetDatabases attaches the offline database refresher (WP09 §3) so the
+// SetDatabases attaches the offline database refresher so the
 // settings surface can report its state and trigger a refresh. It must be
 // called while the application is assembled, before the surface is served.
 func (s *SettingsService) SetDatabases(databases *GeoManager) {
@@ -294,8 +294,8 @@ func (s *SettingsService) Status(id string, usage UsageFunc) (ProviderStatus, er
 }
 
 // Update validates and persists one patch, then applies the resolved settings to
-// the live registry (WP09 §4). A changed key also produces a new credential
-// fingerprint, which lifts a pause on the provider's next request (§3.3).
+// the live registry. A changed key also produces a new credential
+// fingerprint, which lifts a pause on the provider's next request.
 func (s *SettingsService) Update(id string, patch ProviderPatch, usage UsageFunc) (ProviderStatus, error) {
 	if s == nil || s.registry == nil {
 		return ProviderStatus{}, ErrSettingsUnavailable
@@ -339,7 +339,7 @@ func (s *SettingsService) Update(id string, patch ProviderPatch, usage UsageFunc
 
 // Reload re-reads the persisted rows and applies them to the running registry.
 // The queue workers and the pipeline steps resolve the registry on every use,
-// so the change is effective without a restart (WP09 §1/§4).
+// so the change is effective without a restart.
 func (s *SettingsService) Reload() error {
 	if s == nil || s.registry == nil {
 		return ErrSettingsUnavailable
@@ -613,7 +613,7 @@ func configStrings(value any) ([]string, bool) {
 	}
 }
 
-// validateProviderConfig enforces the provider-private config rules of §3: the
+// validateProviderConfig enforces the provider-private config rules of: the
 // DNSBL zones and resolver, and the mirror URL overrides of the HTTP sources.
 func validateProviderConfig(spec Spec, config map[string]any) error {
 	if raw, ok := config["url"]; ok {

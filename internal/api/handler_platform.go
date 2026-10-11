@@ -198,7 +198,7 @@ func HandleRebuildPlatform(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
-// previewFilterResponse is the WP10 §2.1 preview envelope: the standard page
+// previewFilterResponse is the preview envelope: the standard page
 // plus the excluded_by counters. The page fields are embedded, so the
 // pagination contract (items/total/limit/offset) stays exactly the one every
 // other list endpoint uses.

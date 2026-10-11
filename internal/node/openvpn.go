@@ -1,12 +1,12 @@
 package node
 
-// OpenVPN .ovpn profile parsing (WP06 §4).
+// OpenVPN.ovpn profile parsing.
 //
 // sing-box ships no .ovpn reader: the openvpn-client endpoint only consumes
 // option.OpenVPNClientEndpointOptions. This file turns the supported directive
 // subset of an OpenVPN client profile into those options, and refuses anything
 // the endpoint cannot represent with an explicit reason instead of letting
-// box.New fail later (fact F8).
+// box.New fail later.
 
 import (
 	"bufio"
@@ -103,7 +103,7 @@ func (p OpenVPNProfile) EnvelopeObject(tag string) (json.RawMessage, error) {
 }
 
 // LooksLikeOpenVPN reports whether text is an OpenVPN client profile rather
-// than JSON, YAML, Surge or a share-link list (WP06 §4.1).
+// than JSON, YAML, Surge or a share-link list.
 func LooksLikeOpenVPN(text string) bool {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -161,7 +161,7 @@ func LooksLikeOpenVPN(text string) bool {
 	return hasClient || hasDevTun || hasCA
 }
 
-// openVPNRejectedDirectives lists the directives WP06 §4.2 refuses outright.
+// openVPNRejectedDirectives lists the directives refuses outright.
 // They are either outside what an endpoint can express or would require Prism
 // to read files from the host.
 var openVPNRejectedDirectives = map[string]string{
@@ -528,7 +528,7 @@ func (b *openVPNBuilder) applyMode(directives map[string][]openVPNDirective) err
 	if key, ok := firstDirective(directives, "key"); ok && key.hasInline {
 		b.tls["client_key"] = []string{key.inline}
 	}
-	// Fact F8: the endpoint refuses to build without a CA or a fingerprint, so
+	// Fact: the endpoint refuses to build without a CA or a fingerprint, so
 	// the profile is validated here instead of failing later in the runtime.
 	fingerprints := openVPNFingerprints(directives)
 	if len(fingerprints) > 0 {

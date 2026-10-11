@@ -49,7 +49,7 @@ func newDeferredItem(t *testing.T, stepError string) store.JobItem {
 }
 
 // TestDeferItemParksTheItemInsteadOfFailingIt pins the part of deferItem that
-// does not depend on #35: a deferrable step error keeps the item in the queue
+// does not depend on: a deferrable step error keeps the item in the queue
 // with a later next_run_at and no lease, rather than settling it. It must hold
 // before and after the store starts persisting error_code.
 func TestDeferItemParksTheItemInsteadOfFailingIt(t *testing.T) {

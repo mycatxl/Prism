@@ -7,7 +7,7 @@ import (
 	"prism/internal/service"
 )
 
-// WP09 §4/§5.4: the settings surface of the intel data sources and the unlock
+// /: the settings surface of the intel data sources and the unlock
 // checks. Both lists page with the shared limit/offset envelope (R7); no
 // response ever carries a credential, only has_key (R6).
 
@@ -36,7 +36,7 @@ func HandleIntelListProviders(cp *service.ControlPlaneService) http.HandlerFunc 
 //
 // Body: {"enabled":bool,"api_key":string|null,"daily_limit":int,"qps":number,
 // "ttl":"24h","config":{...}}. api_key is write-only; "" clears it and null
-// keeps it. The change is applied to the running registry (WP09 §4).
+// keeps it. The change is applied to the running registry.
 func HandleIntelUpdateProvider(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -56,7 +56,7 @@ func HandleIntelUpdateProvider(cp *service.ControlPlaneService) http.HandlerFunc
 
 // HandleIntelResumeProvider implements
 // POST /api/v1/intel/providers/{id}/actions/resume: it clears the paused flag
-// and the 429 cooldown of one data source (WP09 §4).
+// and the 429 cooldown of one data source.
 func HandleIntelResumeProvider(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -72,7 +72,7 @@ func HandleIntelResumeProvider(cp *service.ControlPlaneService) http.HandlerFunc
 // HandleIntelRefreshProvider implements
 // POST /api/v1/intel/providers/{id}/actions/refresh: it downloads the offline
 // databases of one data source now and reports the bounded outcome per file
-// (WP09 §3). A data source without a downloadable database answers 409
+// . A data source without a downloadable database answers 409
 // CONFLICT; an unconfigured database is a recorded skip, not an error.
 func HandleIntelRefreshProvider(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +127,7 @@ func HandleIntelListChecks(cp *service.ControlPlaneService) http.HandlerFunc {
 // HandleIntelUpdateCheck implements PATCH /api/v1/intel/checks/{id}.
 //
 // Body: {"enabled":bool}. The toggle is stored as provider_id "check:<id>" in
-// intel_provider_settings and is effective without a restart (WP09 §5.4).
+// intel_provider_settings and is effective without a restart.
 func HandleIntelUpdateCheck(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

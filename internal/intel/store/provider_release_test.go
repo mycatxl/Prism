@@ -10,8 +10,8 @@ import (
 // success) and FailProviderItem (writes the new code) may touch it.
 //
 // The claim used to clear it, which was harmless while a claim always led to a
-// lookup. Since the provider worker claims before it consumes the daily budget
-// (F6 of AUDIT_REPORT.md), a shut gate hands the row straight back through
+// lookup. Since the provider worker claims before it consumes the daily budget,
+// a shut gate hands the row straight back through
 // ReleaseProviderItems - and a row that never sent a request would have lost the
 // error_code of its previous failed attempt.
 func TestProviderQueue_ReleaseKeepsTheLastFailureDiagnostic(t *testing.T) {

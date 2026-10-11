@@ -10,7 +10,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// IntelJobRequest is the POST /api/v1/intel/jobs body (WP08 §3.1).
+// IntelJobRequest is the POST /api/v1/intel/jobs body.
 type IntelJobRequest = jobs.Request
 
 // IntelJobDetail is the GET /api/v1/intel/jobs/{id} response.
@@ -19,7 +19,7 @@ type IntelJobDetail struct {
 	Progress store.JobProgress `json:"progress"`
 }
 
-// IntelProviderStatus is one entry of GET /api/v1/intel/status. WP09 adds the
+// IntelProviderStatus is one entry of GET /api/v1/intel/status. adds the
 // provider spec and the effective settings (never the API key).
 type IntelProviderStatus struct {
 	Provider        string  `json:"provider"`
@@ -50,7 +50,7 @@ type IntelStatus struct {
 	JobsByStat map[string]int        `json:"jobs_by_status"`
 }
 
-// IntelDatabaseStatus reports the intel.db footprint (WP08 §7).
+// IntelDatabaseStatus reports the intel.db footprint.
 type IntelDatabaseStatus struct {
 	FileBytes   int64 `json:"db_bytes"`
 	Assessments int   `json:"assessments"`
@@ -92,10 +92,10 @@ type IntelIPDetail struct {
 	Nodes      []string              `json:"nodes"`
 }
 
-// maxIntelIPNodes caps the node list of the IP detail view (WP08 §7).
+// maxIntelIPNodes caps the node list of the IP detail view.
 const maxIntelIPNodes = 100
 
-// intelService returns the intel facade, or a CONFLICT error when WP08 is not
+// intelService returns the intel facade, or a CONFLICT error when is not
 // wired into this build.
 func (s *ControlPlaneService) intelService() (*intel.Service, *ServiceError) {
 	if s == nil || s.Intel == nil || s.Intel.Store() == nil {
@@ -404,7 +404,7 @@ func normalizeJobItemStatus(status string) string {
 }
 
 // mapIntelError converts the intel/jobs sentinels into service errors so the API
-// layer can render the documented status codes (WP08 §3.1).
+// layer can render the documented status codes.
 func mapIntelError(err error) error {
 	switch {
 	case err == nil:

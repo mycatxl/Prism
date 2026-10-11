@@ -16,18 +16,18 @@ import (
 // QualityLookupFunc retrieves the legacy quality summary for an egress IP.
 //
 // It is kept for callers that only have the quality inspection summary; the
-// authoritative admission path uses QualitySnapshotReader (WP10 §2).
+// authoritative admission path uses QualitySnapshotReader.
 type QualityLookupFunc func(netip.Addr) quality.Summary
 
 // QualitySnapshotReader is the read-only intel projection the admission path
-// reads (WP10 §2). It never touches the database or the network, which keeps
+// reads. It never touches the database or the network, which keeps
 // R3 intact. *intel.Snapshot satisfies it.
 type QualitySnapshotReader interface {
 	Assessment(ip netip.Addr) (intel.AssessmentLite, bool)
 	CheckOutcome(nodeHash, checkID string) (intel.OutcomeLite, bool)
 }
 
-// Admission reason codes (WP10 §2 rule 2..12).
+// Admission reason codes.
 const (
 	ReasonQualityEgressUnknown = "QUALITY_EGRESS_UNKNOWN"
 	ReasonQualityUnknown       = "QUALITY_UNKNOWN"
@@ -43,7 +43,7 @@ const (
 	ReasonQualityEgressStale   = "QUALITY_EGRESS_STALE"
 )
 
-// QualityDecision is one explainable admission check (§2.1).
+// QualityDecision is one explainable admission check.
 type QualityDecision struct {
 	Rule   string `json:"rule"`
 	Passed bool   `json:"passed"`
@@ -70,7 +70,7 @@ type qualityFacts struct {
 	NodeHash    string
 }
 
-// AdmitQuality applies the WP10 §2 rule list and reports the first failure.
+// AdmitQuality applies the rule list and reports the first failure.
 //
 // An empty policy always passes, which reproduces the upstream Resin behaviour
 // (deviation X5). A non-empty policy is fail-closed: a node whose quality cannot
@@ -101,8 +101,8 @@ func EvaluateQuality(
 	return admitFactsOnly(policy, factsFromSummary(summary, egressObservedAt), now)
 }
 
-// ExplainQuality returns the per-rule result of the §2 admission list for one
-// node, in the order the rules are evaluated (§2.1 explain endpoint).
+// ExplainQuality returns the per-rule result of the admission list for one
+// node, in the order the rules are evaluated (explain endpoint).
 func ExplainQuality(
 	policy model.QualityPolicy,
 	entry *node.NodeEntry,
@@ -150,7 +150,7 @@ func admitFactsOnly(policy model.QualityPolicy, facts qualityFacts, now time.Tim
 	return true
 }
 
-// qualityRules evaluates every §2 rule, in order. Reasons are prefixed with
+// qualityRules evaluates every rule, in order. Reasons are prefixed with
 // "quality." so the explain response and the rejection reason share one name.
 func qualityRules(policy model.QualityPolicy, facts qualityFacts, now time.Time) []rule {
 	rules := make([]rule, 0, 12)
@@ -366,8 +366,8 @@ func factsFromEntry(entry *node.NodeEntry, snap QualitySnapshotReader, now time.
 	if lite.ComputedAt > 0 {
 		facts.ComputedAt = time.Unix(0, lite.ComputedAt).UTC()
 	}
-	// WP08's projection has no state column: a pending verdict is exactly the
-	// "no usable verdict yet" case (state pending/unsupported in §2 rule 2), and
+	// 's projection has no state column: a pending verdict is exactly the
+	// "no usable verdict yet" case (state pending/unsupported in rule 2), and
 	// an expired valid_until is the "stale" case.
 	switch {
 	case !lite.Valid(now.UnixNano()):
@@ -442,7 +442,7 @@ func excludeTor(policy model.QualityPolicy) bool {
 	return policy.ExcludeTor == nil || *policy.ExcludeTor
 }
 
-// confidenceRank orders the §1.2 confidence values.
+// confidenceRank orders the confidence values.
 func confidenceRank(name string) int {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "high":

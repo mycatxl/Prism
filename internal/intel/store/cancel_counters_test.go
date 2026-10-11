@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestAudit_CancelJobSettlesRunningItemsAndCounters pins the counters the API
+// TestCancelJobSettlesRunningItemsAndCounters pins the counters the API
 // reports after a cancel: JobProgressView.Pending is queued+running, so a
 // canceled job that still holds a running item shows a nonzero Pending forever.
-func TestAudit_CancelJobSettlesRunningItemsAndCounters(t *testing.T) {
+func TestCancelJobSettlesRunningItemsAndCounters(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	now := int64(1_000)

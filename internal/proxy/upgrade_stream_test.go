@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-// Regression tests for F3: the wrapper reverse.go:424 installs on a 101
+// Regression tests for the 101 upgrade stream: the wrapper reverse.go:424 installs
+// on a 101
 // upgrade response body must stay transparent for half-close, and its byte
 // counters must be safe under the two-goroutine copy net/http/httputil runs.
 //
@@ -53,7 +54,7 @@ func (d *discardStream) Write(p []byte) (int, error) {
 
 func (d *discardStream) Close() error { return nil }
 
-// TestAudit_UpgradeStreamWrapperKeepsHalfClose pins the contract reverse.go:424
+// TestUpgradeStreamWrapperKeepsHalfClose pins the contract reverse.go:424
 // relies on:
 //
 //	upgradedStreamCounter = newCountingReadWriteCloser(rwc)
@@ -74,7 +75,7 @@ func (d *discardStream) Close() error { return nil }
 // Every other wrapper in this package forwards CloseWrite (counting_conn.go:110,
 // connCloseNotifier:156, tlsLatencyConn:71, prebufferedConn/closeHookConn in
 // cmd/prism/inbound_demux.go). This wrapper must too.
-func TestAudit_UpgradeStreamWrapperKeepsHalfClose(t *testing.T) {
+func TestUpgradeStreamWrapperKeepsHalfClose(t *testing.T) {
 	// A concrete stream that does support half-close, as the transport's
 	// readWriteCloserBody does.
 	server, client := net.Pipe()
@@ -102,7 +103,7 @@ func TestAudit_UpgradeStreamWrapperKeepsHalfClose(t *testing.T) {
 	}
 }
 
-// TestAudit_UpgradeStreamWrapperHalfCloseSemantics pins the two delegation
+// TestUpgradeStreamWrapperHalfCloseSemantics pins the two delegation
 // rules of the wrapper's half-close pair:
 //
 //   - a backend that supports half-close sees the call, so a real shutdown
@@ -111,7 +112,7 @@ func TestAudit_UpgradeStreamWrapperKeepsHalfClose(t *testing.T) {
 //     errHalfCloseUnsupported here would look like a fix while keeping the
 //     defect: httputil reads any non-nil error as "copy finished" and tears the
 //     tunnel down.
-func TestAudit_UpgradeStreamWrapperHalfCloseSemantics(t *testing.T) {
+func TestUpgradeStreamWrapperHalfCloseSemantics(t *testing.T) {
 	t.Run("supported backend is delegated to", func(t *testing.T) {
 		backend := &closeWriterProbe{}
 		wrapped := newCountingReadWriteCloser(backend)
@@ -166,13 +167,13 @@ func TestAudit_UpgradeStreamWrapperHalfCloseSemantics(t *testing.T) {
 	})
 }
 
-// TestAudit_UpgradeCopySurvivesClientHalfClose replays httputil's upgrade copy
+// TestUpgradeCopySurvivesClientHalfClose replays httputil's upgrade copy
 // against the wrapper with a real TCP pair: the client finishes its request and
 // half-closes while the upstream is still streaming its response. Before the
 // fix the failed CloseWrite assertion made the copier report errCopyDone, the
 // emulated handleUpgradeResponse returned on that first value, and its deferred
 // teardown discarded the rest of the upstream stream.
-func TestAudit_UpgradeCopySurvivesClientHalfClose(t *testing.T) {
+func TestUpgradeCopySurvivesClientHalfClose(t *testing.T) {
 	const requestPayload = "upgrade-request"
 	partOne := strings.Repeat("a", 4096)
 	partTwo := strings.Repeat("b", 4096)
@@ -361,12 +362,12 @@ func (h *halfCloseStream) calls() int {
 	return h.writes
 }
 
-// TestAudit_UpgradeStreamWrapperCountsRace drives the counting wrapper the way
+// TestUpgradeStreamWrapperCountsRace drives the counting wrapper the way
 // httputil does - one goroutine copying each direction - while the proxy's own
 // goroutine reads the totals, exactly as reverse.go:481-484 does after
 // ServeHTTP returns. The counters must be atomic: with plain int64 fields this
 // test reports a DATA RACE under -race.
-func TestAudit_UpgradeStreamWrapperCountsRace(t *testing.T) {
+func TestUpgradeStreamWrapperCountsRace(t *testing.T) {
 	stream := &discardStream{}
 	wrapped := newCountingReadWriteCloser(stream)
 

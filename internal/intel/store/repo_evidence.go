@@ -9,7 +9,7 @@ import (
 )
 
 // UpsertEvidence inserts or replaces the evidence of one (ip, provider) pair.
-// The normalised blob is capped at 8 KiB and the raw response at 32 KiB (§2).
+// The normalised blob is capped at 8 KiB and the raw response at 32 KiB.
 func (s *Store) UpsertEvidence(ctx context.Context, e Evidence) error {
 	db, err := s.conn()
 	if err != nil {
@@ -100,7 +100,7 @@ func (s *Store) ListAllEvidence(ctx context.Context) ([]Evidence, error) {
 }
 
 // HasValidEvidence reports whether a usable evidence row already exists, which
-// step 3 of the node pipeline uses to decide whether to enqueue a lookup (§3.2).
+// step 3 of the node pipeline uses to decide whether to enqueue a lookup.
 func (s *Store) HasValidEvidence(ctx context.Context, ip, provider string, nowNs int64) (bool, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -132,7 +132,7 @@ func (s *Store) ListExpiredEvidence(ctx context.Context, expiredBeforeNs int64, 
 
 // ListNodeHashesWithExpiredEvidence returns the hashes of the nodes whose
 // current egress address carries at least one expired evidence row. It answers
-// the "存在已过期证据" condition of the §3.6 scheduled refresh in one statement;
+// the "存在已过期证据" condition of the scheduled refresh in one statement;
 // the alternative is a ListNodesByIP round trip per distinct expired address.
 //
 // The two UNION halves exist so both node_egress address indexes can be used:

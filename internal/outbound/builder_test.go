@@ -26,7 +26,7 @@ func newTestSingboxBuilder(t *testing.T) *SingboxBuilder {
 	t.Helper()
 	b, err := NewSingboxBuilderWithConfig(SingboxBuilderConfig{
 		DNSUpstreams: config.DefaultNodeDNSUpstreams(),
-		// WP06: keep -race green; see SingboxBuilderConfig.QuietInterfaceMonitor.
+		//: keep -race green; see SingboxBuilderConfig.QuietInterfaceMonitor.
 		QuietInterfaceMonitor: true,
 	})
 	if err != nil {
@@ -473,8 +473,8 @@ func TestSingboxBuilder_ParseExtendedProtocols(t *testing.T) {
 				"password":"pass"
 			}`),
 		},
-		// WP06 §3: WireGuard is built as a sing-box 1.14 endpoint. Both the
-		// legacy form A outbound (§1.3 conversion) and the form B envelope
+		// WireGuard is built as a sing-box 1.14 endpoint. Both the
+		// legacy form A outbound (conversion) and the form B envelope
 		// endpoint are exercised.
 		{
 			name: "wireguard-legacy-outbound",
@@ -657,7 +657,7 @@ func TestSingboxBuilder_ParseDomainServerProtocols(t *testing.T) {
 				"tls":{"enabled":true,"insecure":true,"server_name":"edge.example.com"}
 			}`),
 		},
-		// WP06 §3 / §5: a wireguard endpoint whose peer is a domain, resolved
+		// /: a wireguard endpoint whose peer is a domain, resolved
 		// through Prism's node DNS chain.
 		{
 			name: "wireguard-domain",

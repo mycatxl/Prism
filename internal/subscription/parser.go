@@ -41,7 +41,7 @@ var supportedOutboundTypes = map[string]bool{
 type ParsedNode struct {
 	Tag        string          // original tag from the outbound config
 	RawOptions json.RawMessage // full outbound JSON (including tag)
-	// Detail carries per-node parse notes (WP06 §9), for example the .ovpn
+	// Detail carries per-node parse notes, for example the.ovpn
 	// directives that were accepted and ignored. It never contains credentials.
 	Detail string
 }
@@ -73,14 +73,14 @@ func NewGeneralSubscriptionParser() *GeneralSubscriptionParser {
 // wireguard/openvpn/http/https/socks5/socks5h), plus plain HTTP proxy lines
 // (IP:PORT or IP:PORT:USER:PASS), with optional base64-wrapped content support.
 //
-// It is the reporting-free facade over ParseWithReport (WP06 §9).
+// It is the reporting-free facade over ParseWithReport.
 func ParseGeneralSubscription(data []byte) ([]ParsedNode, error) {
 	result, err := ParseWithReport(data)
 	return result.Nodes, err
 }
 
 // ParseWithReport parses subscription content and reports every node that was
-// recognised but not imported, with a reason (WP06 §9).
+// recognised but not imported, with a reason.
 func ParseWithReport(data []byte) (ParseResult, error) {
 	return NewGeneralSubscriptionParser().ParseWithReport(data)
 }
@@ -154,7 +154,7 @@ func parseSubscriptionContent(data []byte, report *parseReport) (parseAttempt, e
 		return parseAttempt{nodes: nodes, recognized: true}, nil
 	}
 
-	// WP06 §4.1: a non-JSON, non-YAML payload built from OpenVPN directives is
+	// a non-JSON, non-YAML payload built from OpenVPN directives is
 	// a client profile, not a proxy list.
 	if nodes, recognized, err := parseOpenVPNSubscription(text, report); err != nil {
 		return parseAttempt{}, err
@@ -200,7 +200,7 @@ func parseJSONSubscription(data []byte, report *parseReport) ([]ParsedNode, bool
 			if err != nil {
 				return nil, true, fmt.Errorf("subscription: unmarshal endpoints: %w", err)
 			}
-			// WP06 §5/§6: endpoints and detour chains are resolved over the
+			// /: endpoints and detour chains are resolved over the
 			// whole document.
 			return parseSingboxDocument(outbounds, endpoints, report), true, nil
 		}
@@ -280,7 +280,7 @@ func parseClashYAMLSubscription(text string, report *parseReport) ([]ParsedNode,
 		return nil, false, nil
 	}
 
-	// WP06 §9 hardening: refuse a body that would make yaml.v3's decoder burn
+	// hardening: refuse a body that would make yaml.v3's decoder burn
 	// unbounded CPU (one mapping with a very large number of keys, which its
 	// duplicate-key check makes quadratic) or recurse very deeply, before the
 	// decode starts. See yaml_guard.go for the limits and the measurements.
@@ -317,7 +317,7 @@ func parseClashProxies(proxies []map[string]any, report *parseReport) []ParsedNo
 			nodes = append(nodes, converted)
 		}
 	}
-	// WP06 §6.4: dialer-proxy references that resolve inside this document
+	// dialer-proxy references that resolve inside this document
 	// become chain nodes; the rest are stripped and reported.
 	return applyClashDialerChains(nodes, report)
 }
@@ -1283,7 +1283,7 @@ func splitCommaRespectQuotes(input string) []string {
 }
 
 // convertClashProxyToNode converts one Clash/Surge style proxy map into a node
-// document and reports the drop when it cannot be represented (WP06 §9).
+// document and reports the drop when it cannot be represented.
 func convertClashProxyToNode(proxy map[string]any, report *parseReport, source string) (ParsedNode, bool) {
 	parsed, ok := convertClashProxyPayload(proxy)
 	if ok {
@@ -1334,7 +1334,7 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		}
 		setSSPluginFromClash(outbound, proxy)
 		applyClashDialFields(outbound, proxy)
-		// WP06 §6.2: a Clash shadow-tls plugin becomes a shadowtls detour chain.
+		// a Clash shadow-tls plugin becomes a shadowtls detour chain.
 		if chainRaw, ok := clashShadowTLSChain(defaultTag(tag, "shadowsocks", server, port), server, port, proxy, outbound); ok {
 			return ParsedNode{Tag: defaultTag(tag, "shadowsocks", server, port), RawOptions: chainRaw}, true
 		}
@@ -1546,12 +1546,12 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		return buildParsedNode(outbound)
 	case "wireguard", "wg":
 		if firstNonNil(proxy["amnezia-wg-option"], proxy["amnezia-wg-options"], proxy["amnezia_wg_option"]) != nil {
-			// sing-box cannot express AmneziaWG; WP07 (mihomo) handles it.
+			// sing-box cannot express AmneziaWG; (mihomo) handles it.
 			return ParsedNode{}, false
 		}
 		// The legacy sing-box WireGuard outbound form is preserved here so that
 		// existing node identities keep their hash; SingboxRuntime converts it
-		// into a wireguard endpoint at build time (WP06 §1.3).
+		// into a wireguard endpoint at build time.
 		privateKey := strings.TrimSpace(getString(proxy, "private-key", "private_key"))
 		publicKey := strings.TrimSpace(getString(proxy, "public-key", "public_key"))
 		localAddress := parseWireGuardLocalAddress(proxy)
@@ -1595,7 +1595,7 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 		applyClashDialFields(outbound, proxy)
 		return buildParsedNode(outbound)
 	case "snell":
-		// WP06 §7: sing-box 1.14 only supports Snell v4 and v6 outbounds;
+		// sing-box 1.14 only supports Snell v4 and v6 outbounds;
 		// Clash/Surge nodes declare v4.
 		psk := strings.TrimSpace(getString(proxy, "psk", "password"))
 		version, hasVersion := getUint(proxy, "version")
@@ -1603,7 +1603,7 @@ func convertClashProxyPayload(proxy map[string]any) (ParsedNode, bool) {
 			return ParsedNode{}, false
 		}
 		if !hasVersion || version != 4 {
-			// v1-v3 (or an unspecified version) is delegated to WP07.
+			// v1-v3 (or an unspecified version) is delegated to.
 			return ParsedNode{}, false
 		}
 		outbound := map[string]any{
@@ -2118,7 +2118,7 @@ func parseURILineSubscription(text string, report *parseReport) ([]ParsedNode, b
 		}
 
 		lower := strings.ToLower(line)
-		// WP06 §8/§11: ssr:// and mierus:// belong to the rejected fallback
+		// /: ssr:// and mierus:// belong to the rejected fallback
 		// kernel; report them instead of dropping the line.
 		if scheme, rest, isURL := strings.Cut(lower, "://"); isURL && rest != "" {
 			if deferred, ok := deferredShareLinkSchemes[scheme]; ok {
@@ -2161,7 +2161,7 @@ func parseURILineSubscription(text string, report *parseReport) ([]ParsedNode, b
 		case strings.HasPrefix(lower, "hy2://"):
 			lineImported = true
 			parsed, ok = parseHysteria2URI(line)
-		// WP06 §8: share links completed for the sing-box path.
+		// share links completed for the sing-box path.
 		case strings.HasPrefix(lower, "tuic://"):
 			lineImported = true
 			parsed, ok = parseTuicURI(line)
@@ -2261,7 +2261,7 @@ func shareLinkSkip(line string) SkippedNode {
 	case "hysteria":
 		return skipNode(name, "hysteria", SourceURI, node.ReasonInvalid, "unparsable hysteria share link")
 	case "ss":
-		// Audit 3.8 (#39): parseSSURI refuses a link whose plugin sing-box has
+		//: parseSSURI refuses a link whose plugin sing-box has
 		// no engine for. Name that plugin in the report - the same ss(<plugin>)
 		// detail clashProxySkip uses - so the operator can see why the node was
 		// dropped instead of a generic "unparsable share link".
@@ -3473,8 +3473,8 @@ func parseVlessURI(uri string) (ParsedNode, bool) {
 	}
 
 	query := u.Query()
-	// WP06 §8: a VLESS node with a non-empty encryption mode is not
-	// representable by sing-box and is delegated to WP07.
+	// a VLESS node with a non-empty encryption mode is not
+	// representable by sing-box and is delegated to.
 	if encryption := strings.TrimSpace(query.Get("encryption")); encryption != "" && !strings.EqualFold(encryption, "none") {
 		return ParsedNode{}, false
 	}
@@ -3784,7 +3784,7 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 
 	if at := strings.LastIndex(beforeQuery, "@"); at > 0 && at < len(beforeQuery)-1 {
 		left := beforeQuery[:at]
-		// WP06 §8 ①: SIP002 writes ss://<userinfo>@host:port/?plugin=..., so the
+		// ①: SIP002 writes ss://<userinfo>@host:port/?plugin=..., so the
 		// trailing slash before the query must not reach the port parser.
 		hostport := strings.TrimSuffix(beforeQuery[at+1:], "/")
 		method, password, ok := parseSSMethodPassword(left)
@@ -3809,7 +3809,7 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 		if pluginOpts != "" {
 			outbound["plugin_opts"] = pluginOpts
 		}
-		// Audit 3.8 (#39): only a plugin sing-box has an engine for may be written
+		//: only a plugin sing-box has an engine for may be written
 		// into the outbound. Anything else (shadow-tls, restls, kcptun,
 		// gost-plugin, an unknown value) would import a node that enters the pool
 		// and every platform view, then fails at dial time with "plugin not
@@ -3855,7 +3855,7 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 	if pluginOpts != "" {
 		outbound["plugin_opts"] = pluginOpts
 	}
-	// Audit 3.8 (#39): same guard as the SIP002 branch above - the legacy
+	//: same guard as the SIP002 branch above - the legacy
 	// base64 form carries the plugin in its query too.
 	if !ssPluginHasEngine(plugin) {
 		return ParsedNode{}, false
@@ -3864,7 +3864,7 @@ func parseSSURI(uri string) (ParsedNode, bool) {
 }
 
 func parseSSMethodPassword(input string) (string, string, bool) {
-	// WP06 §8 ②: userinfo of a SIP002 link is percent-encoded; ss2022 keys
+	// ②: userinfo of a SIP002 link is percent-encoded; ss2022 keys
 	// carry base64 padding that arrives as %3D.
 	if strings.Contains(input, "%") {
 		if decoded, err := url.QueryUnescape(input); err == nil {

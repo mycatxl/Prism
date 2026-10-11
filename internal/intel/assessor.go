@@ -13,7 +13,7 @@ import (
 )
 
 // Assessor recomputes the purity assessment of an IP from the authoritative
-// intel.db evidence and persists it (WP10 §1).
+// intel.db evidence and persists it.
 type Assessor struct {
 	store    *store.Store
 	snapshot *Snapshot
@@ -28,10 +28,10 @@ type AssessorOptions struct {
 	Store    *store.Store
 	Snapshot *Snapshot
 	// Enabled reports which data sources are currently enabled; it feeds the
-	// §1.2 coverage denominator.
+	// coverage denominator.
 	Enabled func() map[string]bool
 	// OnChange runs after an assessment was persisted. The egress-IP dirty
-	// notification of §2 hangs off it.
+	// notification of hangs off it.
 	OnChange func(ips []netip.Addr)
 	Now      func() time.Time
 	Logf     func(format string, args ...any)
@@ -142,7 +142,7 @@ func (a *Assessor) AssessNode(ctx context.Context, nodeHash string) (int, error)
 }
 
 // SweepExpired recalculates the assessments that expired in (expiredAfterNs,
-// nowNs]. WP10 §1.8 runs it every five minutes.
+// nowNs]. runs it every five minutes.
 func (a *Assessor) SweepExpired(ctx context.Context, expiredAfterNs int64) (int, error) {
 	if a == nil || a.store == nil {
 		return 0, nil
@@ -171,7 +171,7 @@ func (a *Assessor) SweepExpired(ctx context.Context, expiredAfterNs int64) (int,
 }
 
 // RecomputeForeignProfiles recalculates rows written by an older profile
-// (§1.8 startup pass). limit <= 0 uses the default batch.
+// (startup pass). limit <= 0 uses the default batch.
 func (a *Assessor) RecomputeForeignProfiles(ctx context.Context, limit int) (int, error) {
 	if a == nil || a.store == nil {
 		return 0, nil
@@ -242,7 +242,7 @@ func (a *Assessor) loadEvidence(ctx context.Context, ip netip.Addr) ([]quality.E
 // quality.Evidence shape.
 //
 // It is exported because the legacy /api/v1/quality/* alias surface maps intel
-// rows back onto quality.Summary (WP08 §9), and re-deriving the same
+// rows back onto quality.Summary, and re-deriving the same
 // normalisation there would be a second implementation of this contract.
 func EvidenceFromRow(row store.Evidence) (quality.Evidence, error) {
 	var ev quality.Evidence
@@ -309,7 +309,7 @@ func AssessmentRow(result assess.Assessment, computedAt time.Time) store.Assessm
 	return row
 }
 
-// componentsBlob is the explainable detail persisted in components_json (§1.7).
+// componentsBlob is the explainable detail persisted in components_json.
 type componentsBlob struct {
 	Components    []assess.Component `json:"components"`
 	Penalties     []assess.Penalty   `json:"penalties"`

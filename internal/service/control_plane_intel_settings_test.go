@@ -19,7 +19,7 @@ import (
 	"prism/internal/state"
 )
 
-// WP09 §4/§5.4 settings surface of internal/service. internal/api covers the
+// /settings surface of internal/service. internal/api covers the
 // HTTP status mapping of handler_intel_settings_test.go; these tests cover the
 // branches that only exist below the handler: the sentinel→ServiceError
 // mapping, the budget synthesis (remaining = -1), the "no store"/"no engine"

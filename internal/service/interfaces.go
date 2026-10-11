@@ -34,14 +34,14 @@ type ProbeManager interface {
 // (POST /api/v1/quality/ip/{ip}/actions/probe and the two node actions).
 //
 // The legacy InspectionManager interface and its projection adapter are gone:
-// WP08 §8 replaced the in-memory inspection manager with intel.db, and
+// replaced the in-memory inspection manager with intel.db, and
 // internal/service/control_plane_quality.go projects the intel rows directly.
 type RequestResult struct {
 	Quality  quality.Summary `json:"quality"`
 	Action   string          `json:"action"`
 	Queued   bool            `json:"queued"`
 	Warnings []string        `json:"warnings,omitempty"`
-	// JobID is the intel job created by the node actions (WP08 §9). It is empty
+	// JobID is the intel job created by the node actions. It is empty
 	// for the per-IP probe, which enqueues provider lookups instead of a job.
 	JobID string `json:"job_id,omitempty"`
 }

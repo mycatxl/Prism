@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// CleanupPolicy bounds every retention rule of §6. A zero duration disables the
+// CleanupPolicy bounds every retention rule of A zero duration disables the
 // corresponding rule so callers can run partial maintenance passes.
 type CleanupPolicy struct {
 	JobItemsAfter            time.Duration // 7d
@@ -18,7 +18,7 @@ type CleanupPolicy struct {
 	ProviderNodeStateAfter   time.Duration // 7d
 }
 
-// DefaultCleanupPolicy returns the retention rules of WP08 §6.
+// DefaultCleanupPolicy returns the retention rules of
 func DefaultCleanupPolicy() CleanupPolicy {
 	return CleanupPolicy{
 		JobItemsAfter:            7 * 24 * time.Hour,
@@ -46,7 +46,7 @@ type CleanupResult struct {
 	Optimized         bool  `json:"optimized"`
 }
 
-// Cleanup applies the retention rules of §6. Orphan deletion uses the node
+// Cleanup applies the retention rules of Orphan deletion uses the node
 // hashes and IPs still referenced by node_egress, so intel.db never keeps data
 // for IPs that no node uses any more (R4: every table stays bounded).
 func (s *Store) Cleanup(ctx context.Context, now time.Time, policy CleanupPolicy) (CleanupResult, error) {

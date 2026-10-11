@@ -1,6 +1,6 @@
 package intel
 
-// This file implements the §3.6 scheduled refresh of the intel subsystem.
+// This file implements the scheduled refresh of the intel subsystem.
 //
 // The plan requires a periodic job driven by intel_refresh_schedule:
 //
@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	// staleEgressWindow is the "出口观测超过 48 小时" condition of §3.6.
+	// staleEgressWindow is the "出口观测超过 48 小时" condition of
 	staleEgressWindow = 48 * time.Hour
 	// maxRefreshScopePerSource bounds each of the three scope queries. Nodes past
 	// it stay stale and are picked up by the next run, so the bound never loses
@@ -43,7 +43,7 @@ const (
 	refreshScheduleRetry = time.Minute
 )
 
-// RefreshScheduleOptions configures the §3.6 scheduled refresh. Every field
+// RefreshScheduleOptions configures the scheduled refresh. Every field
 // except Logf is required for the scheduler to do anything; a missing one makes
 // the pass a no-op with a logged reason instead of a panic.
 type RefreshScheduleOptions struct {
@@ -62,7 +62,7 @@ type RefreshScheduleOptions struct {
 	Logf func(format string, args ...any)
 }
 
-// refreshScheduler creates the §3.6 scheduled refresh job.
+// refreshScheduler creates the scheduled refresh job.
 type refreshScheduler struct {
 	svc  *Service
 	opts RefreshScheduleOptions
@@ -90,7 +90,7 @@ func newRefreshScheduler(svc *Service, opts RefreshScheduleOptions) *refreshSche
 	return &refreshScheduler{svc: svc, opts: opts, stopCh: make(chan struct{})}
 }
 
-// EnableRefreshSchedule installs the §3.6 scheduled refresh. It is a no-op until
+// EnableRefreshSchedule installs the scheduled refresh. It is a no-op until
 // Start launches the loop.
 func (s *Service) EnableRefreshSchedule(opts RefreshScheduleOptions) {
 	if s == nil {
@@ -245,7 +245,7 @@ func (r *refreshScheduler) autoChecks() bool {
 	return r.opts.AutoChecks()
 }
 
-// collectScope resolves the three §3.6 conditions into one de-duplicated, bounded
+// collectScope resolves the three conditions into one de-duplicated, bounded
 // list. The census is applied before the cap so the cap counts nodes that really
 // exist.
 func (r *refreshScheduler) collectScope(ctx context.Context, now time.Time, kind jobs.Kind) ([]string, error) {

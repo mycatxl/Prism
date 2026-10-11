@@ -50,43 +50,43 @@ type prismApp struct {
 	apiHandler      http.Handler
 	adminListener   *adminListener
 	stopAuditPruner func()
-	// G-08: the metrics retention loop and the policy it applies.
+	//: the metrics retention loop and the policy it applies.
 	stopMetricsPruner func()
 	metricsRetention  metrics.RetentionPolicy
-	// WP08: the authoritative intel store, its in-memory projection and the job
+	//: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
 	intelStore  *store.Store
 	intelSvc    *intel.Service
-	// WP09 §3: the background refresher of the offline databases.
+	// the background refresher of the offline databases.
 	geoDBs *providers.GeoManager
 }
 
 // run assembles and runs the Prism service.
 //
-// Assembly order (WP03 §4):
+// Assembly order:
 //
-//  1. Load .env, then call config.LoadEnvConfig() (RESIN_* fallbacks are WP05).
+//  1. Load.env, then call config.LoadEnvConfig (RESIN_* fallbacks are).
 //
 //  2. state.PersistenceBootstrap(stateDir, cacheDir) returns the engine.
 //
-//  3. Open the intel store (WP08; skipped until it exists).
+//  3. Open the intel store.
 //
-//  3. Open intel.db (WP08; the authoritative detection store).
+//  3. Open intel.db.
 //
 //  4. loadRuntimeConfig(engine, envCfg).
 //
-//  5. Create the GeoIP service (upstream implementation; WP09 adds offline DBs).
+//  5. Create the GeoIP service (upstream implementation; adds offline DBs).
 //
 //  6. Create the node builder: outbound.NewSingboxBuilderWithConfig for now,
-//     WP06 replaces it with outbound.NewSingboxRuntime.
+//     replaces it with outbound.NewSingboxRuntime.
 //
 //  7. Create the topology objects: topology.NewGlobalNodePool (GeoLookup wired,
-//     QualityLookup stays nil until WP10), SubscriptionManager,
+//     QualityLookup stays nil until), SubscriptionManager,
 //     SubscriptionScheduler and EphemeralCleaner.
 //
 //  8. Create probe.NewProbeManager and register SetOnProbeEvent (metrics);
-//     WP08 attaches SetOnEgressObserved.
+//     attaches SetOnEgressObserved.
 //
 //  9. Wire pool.SetOnNodeAdded/SetOnNodeRemoved like upstream.
 //
@@ -95,7 +95,7 @@ type prismApp struct {
 //
 //  11. Create metrics, request log and state.NewCacheFlushWorker.
 //
-//  12. Create the intel job executor (WP08; skipped until it exists).
+//  12. Create the intel job executor.
 //
 //  13. Create service.ControlPlaneService, api.NewServer,
 //     api.NewTokenActionHandler, the inbound mux/demux, the endpoint runtime
@@ -120,7 +120,7 @@ func run() error {
 	log.Println("Persistence bootstrap complete")
 
 	// 3. Open the intel store: intel.db is a separate SQLite file with its own
-	// open path, pragmas and 0600 file mode (WP08 §2).
+	// open path, pragmas and 0600 file mode.
 	intelStore, err := store.Open(filepath.Join(envCfg.StateDir, store.FileName))
 	if err != nil {
 		_ = dbCloser.Close()
@@ -194,7 +194,7 @@ func loadDotenvFile(path string) error {
 	return nil
 }
 
-// newPrismApp builds every long-lived runtime object in the WP03 §4 order. The
+// newPrismApp builds every long-lived runtime object in the order. The
 // numbered steps below match the assembly list documented on run().
 func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore *store.Store) (*prismApp, error) {
 	app := &prismApp{
@@ -227,7 +227,7 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 		return nil, err
 	}
 	// 12. Intel job executor: the store, the projection and the batch worker pool
-	// (WP08).
+	//
 	if err := app.initIntelJobs(engine, intelStore); err != nil {
 		return nil, err
 	}
@@ -255,12 +255,12 @@ func (a *prismApp) closeIntel() error {
 }
 
 func (a *prismApp) initTopologyRuntime(engine *state.StateEngine) (*netutil.RetryDownloader, error) {
-	// 5. GeoIP service (upstream implementation; WP09 adds the offline DBs).
+	// 5. GeoIP service (upstream implementation; adds the offline DBs).
 	direct := newDirectDownloader(a.envCfg)
 	retryDL := &netutil.RetryDownloader{Direct: direct}
 	a.geoSvc = newGeoIPService(a.envCfg.CacheDir, a.envCfg.GeoIPUpdateSchedule, retryDL)
 
-	// 6.-9. Node builder (outbound.NewSingboxBuilderWithConfig; WP06 swaps in
+	// 6.-9. Node builder (outbound.NewSingboxBuilderWithConfig; swaps in
 	// outbound.NewSingboxRuntime), node pool, probe manager and the
 	// SetOnNodeAdded/SetOnNodeRemoved wiring.
 	topoRuntime, err := newTopologyRuntime(
@@ -365,7 +365,7 @@ func (a *prismApp) wireRetryDownloader(retryDL *netutil.RetryDownloader) {
 
 // downloadNodePicker selects a node for a download whose direct attempt
 // failed: the RetryDownloader then borrows a healthy node instead of the host
-// network. WP09 §3 reuses it for the offline databases.
+// network. reuses it for the offline databases.
 func (a *prismApp) downloadNodePicker() func(target string) (node.Hash, error) {
 	return func(target string) (node.Hash, error) {
 		if a == nil || a.topoRuntime == nil || a.topoRuntime.router == nil {
@@ -397,10 +397,10 @@ func (a *prismApp) bootstrapFromPersistence(engine *state.StateEngine) error {
 		return err
 	}
 
-	// GeoIP moved to step 8 batch 1 (after lease restore, per DESIGN.md).
+	// GeoIP moved to step 8 batch 1 (after lease restore,).
 
 	// Phase 8.1: Rebuild platform views BEFORE lease restore.
-	// DESIGN.md requires step 6 (rebuild) before step 7 (leases).
+	// the design system requires step 6 (rebuild) before step 7 (leases).
 	a.topoRuntime.pool.RebuildAllPlatforms()
 	log.Println("Platform rebuild complete")
 
@@ -497,7 +497,7 @@ func (a *prismApp) startBackgroundServices() {
 	a.topoRuntime.probeMgr.Start()
 	log.Println("Probe manager started (batch 2)")
 
-	// WP08 step 12: the egress observer must be attached after the probe manager
+	// step 12: the egress observer must be attached after the probe manager
 	// is running, and the job executor starts with the projection loaded.
 	if err := a.startIntel(); err != nil {
 		log.Printf("Warning: intel service start: %v", err)
@@ -553,9 +553,9 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Intel:          a.intelSvc,
 	}
 
-	// WP04 §4.7: audit retention runs once a day (90 days, at most 100000 rows).
+	// audit retention runs once a day (90 days, at most 100000 rows).
 	a.stopAuditPruner = api.StartAuditPruner(engine, 24*time.Hour)
-	// G-08: the same published retention windows bound metrics.db. The pruner
+	//: the same published retention windows bound metrics.db. The pruner
 	// deletes in bounded batches, so it never holds the write lock for long.
 	if a.metricsDB != nil {
 		a.stopMetricsPruner = metrics.StartRetentionPruner(
@@ -600,7 +600,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		a.transportPool = proxy.NewOutboundTransportPool(outboundTransportCfg)
 	}
 
-	// WP04 §4.6: proxy-entry (407/403) failure limiting is opt-in and disabled
+	// proxy-entry (407/403) failure limiting is opt-in and disabled
 	// by default (PRISM_PROXY_AUTH_FAIL_LIMIT=0 keeps Resin behaviour).
 	// The proxy entry points resolve their client key with the same trusted
 	// proxy list the management API uses, so a client behind a listed proxy
@@ -656,7 +656,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
 		DialTimeout:       a.envCfg.ProxyTransportDialTimeout,
 	})
-	// WP04 §4.6: the SOCKS5 username/password check happens on a raw TCP
+	// the SOCKS5 username/password check happens on a raw TCP
 	// session, so the mux cannot meter it with an http.ResponseWriter; the
 	// guard observes the RFC 1929 reply instead (see proxy_auth_guard.go). A nil
 	// guard (the default, PRISM_PROXY_AUTH_FAIL_LIMIT=0) leaves the inbound
@@ -774,20 +774,20 @@ func formatListenAddress(listenAddress string, port int) string {
 }
 
 // shutdownStepTimeout bounds a single shutdown step; the whole sequence has a
-// 30s budget (WP03 §4).
+// 30s budget.
 const shutdownStepTimeout = 10 * time.Second
 
-// shutdown stops everything in the WP03 §4 order:
+// shutdown stops everything in the order:
 //
 //	listeners -> endpoints -> scheduled rotator -> probes -> intel executor
-//	(WP08) -> subscription scheduler -> final dirty flush -> databases
+//	 -> subscription scheduler -> final dirty flush -> databases
 //
 // Every step is capped at 10s and the sequence as a whole at 30s.
 func (a *prismApp) shutdown() {
 	overallCtx, cancelOverall := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelOverall()
 
-	// 0. The audit retention loop (WP04 §4.7) only touches state.db.
+	// 0. The audit retention loop only touches state.db.
 	if a.stopAuditPruner != nil {
 		a.stopAuditPruner()
 	}
@@ -812,13 +812,13 @@ func (a *prismApp) shutdown() {
 	shutdownBlocking("ephemeral cleaner", a.topoRuntime.ephemeralCleaner.Stop)
 	log.Println("Ephemeral cleaner stopped")
 
-	// 3. Probes (the intel job executor joins here in WP08).
+	// 3. Probes (the intel job executor joins here in).
 	shutdownBlocking("probe manager", a.topoRuntime.probeMgr.Stop)
 	log.Println("Probe manager stopped")
 
-	// 3b. The intel job executor goes down with the probes (WP08 §4): the
+	// 3b. The intel job executor goes down with the probes: the
 	// observer is detached first so no new sample is queued while draining.
-	// WP09 §3: the offline database refresher only writes cache files, so it
+	// the offline database refresher only writes cache files, so it
 	// goes down before the GeoIP service without waiting for a download.
 	if a.geoDBs != nil {
 		a.geoDBs.Stop()

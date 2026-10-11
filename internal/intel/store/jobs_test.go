@@ -218,7 +218,7 @@ func TestProviderQueue_BackoffAndFailureState(t *testing.T) {
 	}, EnqueueIfMissing); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	// Exponential backoff of §3.3: 30s * 2^attempts capped at six hours.
+	// Exponential backoff of: 30s * 2^attempts capped at six hours.
 	backoff := computeBackoff(2)
 	if backoff != 120*time.Second {
 		t.Fatalf("backoff(2) = %s, want 2m", backoff)
@@ -312,7 +312,7 @@ func TestProviderQueue_ResetStaleAndCleanup(t *testing.T) {
 }
 
 // TestProviderQueue_ReleaseClaimedItems pins the rollback the worker needs after
-// F6: it claims first (so an idle queue spends no budget) and must be able to
+// : it claims first (so an idle queue spends no budget) and must be able to
 // hand the rows back when the budget gate it then hits is shut. Only rows the
 // same owner still holds may move; another worker's lease is not this worker's
 // to break.

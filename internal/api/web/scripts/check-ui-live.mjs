@@ -3,7 +3,7 @@
  *
  * One script, one run: it boots an isolated backend, drives a real Chromium
  * against the panel it serves, and asserts the design system the rewrite
- * introduced (see DESIGN.md). It replaces the old per-feature browser scripts,
+ * introduced. It replaces the old per-feature browser scripts,
  * which asserted class names that no longer exist.
  *
  * Coverage is intentionally behavioural: the design tokens actually applied, the

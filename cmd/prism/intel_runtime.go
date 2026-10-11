@@ -29,12 +29,12 @@ import (
 )
 
 // maxIntelScopeNodes bounds the in-memory expansion of one job scope before the
-// job manager rejects it (WP08 §3.1). The expansion never truncates silently:
+// job manager rejects it. The expansion never truncates silently:
 // a scope that exceeds the bound fails with jobs.ErrTooManyNodes.
 const maxIntelScopeNodes = jobs.MaxNodesPerJob
 
 // intelGeoDirName is the directory below $PRISM_CACHE_DIR that holds the
-// offline databases (WP09 §3).
+// offline databases.
 const intelGeoDirName = "geo"
 
 // intelHTTPTimeout bounds one online data source request (host side only).
@@ -85,12 +85,12 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 		},
 	}
 
-	// WP09 §1/§3: the provider registry carries the effective settings (spec
+	// /: the provider registry carries the effective settings (spec
 	// defaults merged with state.db and, on the first start, with the legacy
 	// environment variables).
 	registry := a.intelProviderRegistry(engine)
 	checkEngine := a.intelChecksEngine(engine)
-	// WP09 §4: the settings surface wraps the same registry the pipeline steps
+	// the settings surface wraps the same registry the pipeline steps
 	// and the queue workers resolve, so a PATCH applies to the running data
 	// sources without a restart.
 	var settingsStore providers.SettingsStore
@@ -99,7 +99,7 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	}
 	providerSettings := providers.NewSettingsService(registry, settingsStore, os.Getenv, time.Now)
 
-	// WP09 §3: the offline databases are downloaded by a bounded background
+	// the offline databases are downloaded by a bounded background
 	// refresher. Nothing here waits for the network: a database that is missing
 	// or stale keeps its provider at PROVIDER_UNAVAILABLE until the download
 	// lands, and the settings page can still trigger a manual refresh.
@@ -126,13 +126,13 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 		Store: intelStore,
 		Scope: jobs.ScopeResolverFunc(a.resolveIntelScope),
 		// Step 1 stays the built-in egress probe. Every other step is now a real
-		// WP09/WP10 handler, so no step degrades to a no-op skip any more.
+		// /handler, so no step degrades to a no-op skip any more.
 		Prober:        prober,
 		Handlers:      handlers,
 		Config:        a.intelJobConfig,
 		ProviderSpecs: intel.QueueSpecs(registry),
 		Lookup:        intel.NewOnlineLookup(stepOptions),
-		// §4/§5: the settings surfaces of the data sources and the checks.
+		// /: the settings surfaces of the data sources and the checks.
 		ProviderSettings: providerSettings,
 		CheckEngine:      checkEngine,
 		EnabledSources: func() map[string]bool {
@@ -153,14 +153,14 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	if err != nil {
 		return fmt.Errorf("intel service: %w", err)
 	}
-	// §3.6: a subscription with auto_intel=1 auto-enqueues the nodes a refresh
+	//: a subscription with auto_intel=1 auto-enqueues the nodes a refresh
 	// added; auto_intel=0 and intel_enabled=false never do.
 	svc.EnableAutoEnqueue(intel.AutoEnqueueOptions{
 		Lookup:     a.intelSubscriptionAutoIntel,
 		AutoChecks: func() bool { return runtimeConfigSnapshot(a.runtimeCfg).IntelAutoChecks },
 		Logf:       log.Printf,
 	})
-	// §3.6 定时刷新: the scheduled pass. It re-reads intel_refresh_schedule on
+	// 定时刷新: the scheduled pass. It re-reads intel_refresh_schedule on
 	// every wake-up, so a PATCH applies without a restart, and it picks its job
 	// kind from the same switch as the subscription path above so the two never
 	// disagree about unlock checks.
@@ -173,7 +173,7 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	a.intelSvc = svc
 	a.wireIntelSubscriptionAutoEnqueue()
 
-	// WP10 §2: the routing admission path reads the intel projection, so the
+	// the routing admission path reads the intel projection, so the
 	// pool needs it before any platform evaluates a node.
 	if a.topoRuntime != nil && a.topoRuntime.pool != nil {
 		a.topoRuntime.pool.SetQualitySnapshot(svc.Snapshot())
@@ -181,7 +181,7 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	return nil
 }
 
-// intelJobConfig reports the hot-reloadable executor configuration (§3.4).
+// intelJobConfig reports the hot-reloadable executor configuration.
 func (a *prismApp) intelJobConfig() jobs.Config {
 	if a == nil || a.runtimeCfg == nil {
 		return jobs.Config{Enabled: true}.Normalize()
@@ -197,7 +197,7 @@ func (a *prismApp) intelJobConfig() jobs.Config {
 
 // intelProviderRegistry builds the built-in data sources and applies their
 // effective settings. Legacy PRISM_* variables are written into state.db once,
-// so the settings page takes over afterwards (WP09 §1).
+// so the settings page takes over afterwards.
 func (a *prismApp) intelProviderRegistry(engine *state.StateEngine) *providers.Registry {
 	registry := providers.NewRegistry()
 
@@ -238,7 +238,7 @@ func (a *prismApp) intelProviderRegistry(engine *state.StateEngine) *providers.R
 }
 
 // intelChecksEngine loads the unlock check rules and honours the persisted
-// per-check enabled toggle (provider_id "check:<id>", WP09 §5.4).
+// per-check enabled toggle (provider_id "check:<id>",).
 func (a *prismApp) intelChecksEngine(engine *state.StateEngine) *checks.Engine {
 	stateDir := ""
 	if a != nil && a.envCfg != nil {
@@ -295,7 +295,7 @@ func (s intelCheckEnabledSource) CheckEnabled(checkID string) (bool, bool) {
 
 // intelNodeOutbound resolves a node hash to its live node outbound. Requests of
 // the via-node data sources and of the unlock checks leave through it, never
-// through the host network or the platform router (WP09 §1).
+// through the host network or the platform router.
 func (a *prismApp) intelNodeOutbound(nodeHash string) (adapter.Outbound, bool) {
 	if a == nil || a.topoRuntime == nil || a.topoRuntime.pool == nil {
 		return nil, false
@@ -316,7 +316,7 @@ func (a *prismApp) intelNodeOutbound(nodeHash string) (adapter.Outbound, bool) {
 }
 
 // intelSubscriptionAutoIntel resolves the persisted auto_intel flag of one
-// subscription (WP08 §3.6).
+// subscription.
 func (a *prismApp) intelSubscriptionAutoIntel(subscriptionID string) (bool, bool) {
 	if a == nil || a.stateEngine == nil {
 		return false, false
@@ -357,11 +357,11 @@ func (a *prismApp) wireIntelSubscriptionAutoEnqueue() {
 	})
 }
 
-// assessmentSweepInterval is the WP10 §1.8 expiry sweep period.
+// assessmentSweepInterval is the expiry sweep period.
 const assessmentSweepInterval = 5 * time.Minute
 
 // intelEnabledSources reports the enabled data sources for the coverage
-// denominator (§1.2). The effective setting decides: a data source that needs a
+// denominator. The effective setting decides: a data source that needs a
 // missing key, or that the settings page disabled, does not count as coverage.
 //
 // Alias variants are resolved onto their scoring source before the denominator
@@ -370,8 +370,7 @@ const assessmentSweepInterval = 5 * time.Minute
 // the numerator while the host-side source stays disabled. Without this
 // resolution the denominator would omit that weight, coverage would be
 // truncated at 1.0, and the derived confidence / `incomplete` verdict /
-// min_confidence admission would all be overstated - exactly the inconsistency
-// docs/INTEL.md §9 recorded as undecided.
+// min_confidence admission would all be overstated.
 func intelEnabledSources(registry *providers.Registry) map[string]bool {
 	enabled := make(map[string]bool)
 	for _, id := range assess.ScoringSources() {
@@ -414,7 +413,7 @@ func (a *prismApp) startIntel() error {
 		return nil
 	}
 	if a.topoRuntime.probeMgr != nil {
-		// WP08 §4: the callback only enqueues a bounded sample; a separate writer
+		// the callback only enqueues a bounded sample; a separate writer
 		// goroutine batches the database writes.
 		a.topoRuntime.probeMgr.SetOnEgressObserved(func(hash node.Hash, ip netip.Addr, loc string) {
 			a.intelSvc.ObserveEgress(hash.String(), ip, loc)
@@ -458,7 +457,7 @@ func (a *prismApp) KnownNodeHashes() map[string]struct{} {
 }
 
 // resolveIntelScope expands a job scope into node hashes. The selectors (all,
-// subscription ids, platform ids, node hashes) are a union (WP08 §3.1) and an
+// subscription ids, platform ids, node hashes) are a union and an
 // explicit filter is applied on top of the all/subscription/platform selectors —
 // but never to node_hashes, because a node named by hash is taken as given. The
 // filter narrows a selector; it never widens one. The expansion happens
@@ -536,7 +535,7 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 	}
 
 	// The pool walk has exactly two reasons to happen: scope.all was asked for, or
-	// the filter is the only selector given — WP08 §7.1 defines that as
+	// the filter is the only selector given — defines that as
 	// "equivalent to all:true plus the filter".
 	//
 	// A filter that arrives next to subscription_ids or platform_ids narrows those
@@ -547,7 +546,7 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 	// that the common case rather than an edge one: every bulk job it builds
 	// carries filter.healthy, which is enough to satisfy the old condition.
 	//
-	// Explicit node_hashes deliberately do NOT suppress the walk: §7.1 says the
+	// Explicit node_hashes deliberately do NOT suppress the walk: says the
 	// filter never applies to a node named by hash, so a hash is taken as given
 	// and the filtered pool walk beside it is the documented union, not a bug.
 	//
@@ -625,7 +624,7 @@ func scopeHashes(selected map[string]struct{}) []string {
 }
 
 // nodeFilter is the subset of the GET /api/v1/nodes query parameters a job
-// scope understands (§3.1): the WP08 protocol/engine pair plus the WP10 §4
+// scope understands: the protocol/engine pair plus the
 // purity filters and the health switch.
 //
 // matches() runs once per node on the pool.Range hot path, so it only reads
@@ -672,7 +671,7 @@ func (a *prismApp) intelScopeSnapshot() *intel.Snapshot {
 }
 
 // nodeFilterValue lowercases and trims one scope filter value; every key of
-// the scope filter is compared normalized (§3.1).
+// the scope filter is compared normalized.
 func nodeFilterValue(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
 }
@@ -723,7 +722,7 @@ func newNodeFilter(raw map[string]string, geoLookup func(netip.Addr) string, sna
 		geoLookup:  geoLookup,
 		snapshot:   snapshot,
 	}
-	// verdict is the one §4 key that takes a comma-separated list: the node
+	// verdict is the one key that takes a comma-separated list: the node
 	// list reads "favorable,caution" as "either of the two", so the scope does
 	// too.
 	for _, value := range strings.Split(raw["verdict"], ",") {
@@ -824,7 +823,7 @@ func nodeProtocol(entry *node.NodeEntry) string {
 	return (*outbound).Type()
 }
 
-// nodeEngine reports which kernel serves the node. WP07 publishes the real
+// nodeEngine reports which kernel serves the node. publishes the real
 // decision; until then every node is a sing-box node.
 func nodeEngine(entry *node.NodeEntry) string {
 	if entry == nil {
@@ -834,7 +833,6 @@ func nodeEngine(entry *node.NodeEntry) string {
 }
 
 // intelGeoDir is $PRISM_CACHE_DIR/geo, the directory of the offline databases
-// (WP09 §3).
 func (a *prismApp) intelGeoDir() string {
 	if a == nil || a.envCfg == nil || strings.TrimSpace(a.envCfg.CacheDir) == "" {
 		return ""
@@ -843,7 +841,7 @@ func (a *prismApp) intelGeoDir() string {
 }
 
 // intelGeoDatabases builds the bounded background refresher of the offline
-// databases (WP09 §3). It performs no network I/O itself: the downloads run in
+// databases. It performs no network I/O itself: the downloads run in
 // the refresher goroutine, so a missing database only degrades its provider to
 // PROVIDER_UNAVAILABLE until the file lands.
 func (a *prismApp) intelGeoDatabases(registry *providers.Registry) *providers.GeoManager {

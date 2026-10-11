@@ -13,7 +13,7 @@ import (
 	"prism/internal/node"
 )
 
-// WP08 §3: the batch job surface of internal/service. internal/api has no
+// the batch job surface of internal/service. internal/api has no
 // handler test for /api/v1/intel/jobs, so every branch below (the sentinel
 // mapping, the pagination/status normalisation, cancel and the SSE
 // subscription) is real coverage instead of a duplicate of an API test.
@@ -65,7 +65,7 @@ func TestMapIntelError(t *testing.T) {
 		{name: "too many subscribers", err: jobs.ErrTooManySubscribers, want: "RATE_LIMITED"},
 		{name: "unknown job", err: store.ErrJobNotFound, want: "NOT_FOUND", message: "job not found"},
 		// A cancel against a job that already settled is a conflict, not a
-		// missing job: the id is real, the job is just final (AUDIT F4).
+		// missing job: the id is real, the job is just final.
 		{name: "terminal job", err: fmt.Errorf("%w: status is succeeded", store.ErrJobNotActive),
 			want: "CONFLICT", message: "job is not active: status is succeeded"},
 		{name: "anything else", err: errors.New("boom"), want: "INTERNAL", message: "intel job"},

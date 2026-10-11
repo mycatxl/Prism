@@ -8,7 +8,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// Regression tests for F1 of AUDIT_REPORT.md (fixed): a job settled by the
+// A job settled by the
 // timeout sweep must stay settled, and an item the sweep already failed must not
 // be written back to life by the worker that was still inside a step.
 //
@@ -20,16 +20,16 @@ import (
 // ('queued','running') and return store.ErrJobItemSettled otherwise, and
 // finishItem/deferItem return silently (without publishing) on that sentinel.
 //
-// auditRunner runs a callback in the middle of the pipeline: it lets a test act
+// gatedRunner runs a callback in the middle of the pipeline: it lets a test act
 // (let the timeout sweep settle the job) between two steps, which is the window
 // the runItem guard has to cover.
-type auditRunner struct {
+type gatedRunner struct {
 	onStep  Step
 	between func()
 	inner   StepRunner
 }
 
-func (r *auditRunner) RunStep(ctx context.Context, kind Kind, step Step, jobID, nodeHash string) StepResult {
+func (r *gatedRunner) RunStep(ctx context.Context, kind Kind, step Step, jobID, nodeHash string) StepResult {
 	if step == r.onStep && r.between != nil {
 		r.between()
 		r.between = nil
@@ -37,7 +37,7 @@ func (r *auditRunner) RunStep(ctx context.Context, kind Kind, step Step, jobID, 
 	return r.inner.RunStep(ctx, kind, step, jobID, nodeHash)
 }
 
-// TestAudit_SettledJobIsNotRevivedByTheLastStep pins the window between the
+// TestSettledJobIsNotRevivedByTheLastStep pins the window between the
 // per-step jobGate check and the trailing finishItem: the sweep fails the item
 // and publishes (settling the job as partial) while its item is inside the LAST
 // step, then the loop exits and calls finishItem unconditionally. Before the fix
@@ -45,7 +45,7 @@ func (r *auditRunner) RunStep(ctx context.Context, kind Kind, step Step, jobID, 
 // again (done, error_code cleared) and publish -> RefreshJob recomputed the job
 // from its items, moving it from partial to succeeded - a timeout reported as a
 // success. The job must stay partial and the item must keep the sweep's verdict.
-func TestAudit_SettledJobIsNotRevivedByTheLastStep(t *testing.T) {
+func TestSettledJobIsNotRevivedByTheLastStep(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -74,7 +74,7 @@ func TestAudit_SettledJobIsNotRevivedByTheLastStep(t *testing.T) {
 	// The sweep action, exactly what settleAbandonedJobs does: fail every
 	// pending item, then publish (RefreshJob) so the job settles as partial.
 	settled := false
-	runner := &auditRunner{onStep: last, inner: inner, between: func() {
+	runner := &gatedRunner{onStep: last, inner: inner, between: func() {
 		if _, err := st.FailPendingJobItems(ctx, job.ID, CodeJobTimeout, clock.Now().UnixNano()); err != nil {
 			t.Fatalf("FailPendingJobItems: %v", err)
 		}
@@ -120,14 +120,14 @@ func TestAudit_SettledJobIsNotRevivedByTheLastStep(t *testing.T) {
 	}
 }
 
-// TestAudit_SettledJobIsNotReopenedByALateDefer is the worse variant of the same
+// TestSettledJobIsNotReopenedByALateDefer is the worse variant of the same
 // window: the step that was running while the sweep settled the job returns a
 // deferrable result (a provider gate, an item timeout, a transient error), so
 // the trailing deferItem put the item back to queued and publish recomputed the
 // job. Before the fix the item became a queued item of a terminal job - stranded
 // forever, because ListActiveJobs only claims items of queued/running jobs and
 // RetryFailedJobItems only requeues failed items. The item must stay failed.
-func TestAudit_SettledJobIsNotReopenedByALateDefer(t *testing.T) {
+func TestSettledJobIsNotReopenedByALateDefer(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -152,7 +152,7 @@ func TestAudit_SettledJobIsNotReopenedByALateDefer(t *testing.T) {
 	}
 
 	settled := false
-	runner := &auditRunner{onStep: last, inner: inner, between: func() {
+	runner := &gatedRunner{onStep: last, inner: inner, between: func() {
 		if _, err := st.FailPendingJobItems(ctx, job.ID, CodeJobTimeout, clock.Now().UnixNano()); err != nil {
 			t.Fatalf("FailPendingJobItems: %v", err)
 		}
@@ -193,10 +193,10 @@ func TestAudit_SettledJobIsNotReopenedByALateDefer(t *testing.T) {
 	}
 }
 
-// TestAudit_SettledJobDoesNotReturnToTheActiveSet is the consequence check: after
+// TestSettledJobDoesNotReturnToTheActiveSet is the consequence check: after
 // the sweep settles a job, refreshActiveJobs must not list it as active again.
 // The sweep itself is reproduced here with the same two store calls it makes.
-func TestAudit_SettledJobDoesNotReturnToTheActiveSet(t *testing.T) {
+func TestSettledJobDoesNotReturnToTheActiveSet(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -218,7 +218,7 @@ func TestAudit_SettledJobDoesNotReturnToTheActiveSet(t *testing.T) {
 
 	steps := PendingSteps(KindEgress, -1)
 	last := steps[len(steps)-1]
-	runner := &auditRunner{onStep: last, inner: inner, between: func() {
+	runner := &gatedRunner{onStep: last, inner: inner, between: func() {
 		if _, err := st.FailPendingJobItems(ctx, job.ID, CodeJobTimeout, clock.Now().UnixNano()); err != nil {
 			t.Fatalf("FailPendingJobItems: %v", err)
 		}

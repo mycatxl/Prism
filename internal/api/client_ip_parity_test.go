@@ -10,7 +10,7 @@ import (
 )
 
 // TestProxyClientIPMatchesAuthFailureLimiter pins the proxy entry points to the
-// management API's client-key semantics (WP04 §4.6). The two implementations
+// management API's client-key semantics. The two implementations
 // live in different packages, so a divergence would silently split the same
 // client across two buckets — or worse, let a proxy-entry attacker rotate
 // X-Forwarded-For when the API side would refuse to honour it.

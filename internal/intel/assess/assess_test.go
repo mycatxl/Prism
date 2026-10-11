@@ -102,7 +102,7 @@ func evidence(items ...evb) []quality.Evidence {
 }
 
 // ------------------------------------------------------------------
-// Table-driven coverage of every branch of §1.1 – §1.6.
+// Table-driven coverage of every branch of –
 // ------------------------------------------------------------------
 
 func TestAssess_Table(t *testing.T) {
@@ -389,7 +389,7 @@ func TestAssess_Table(t *testing.T) {
 			},
 		},
 		{
-			// abuseipdb keeps feeding the §1.1 abuse deduction even though it
+			// abuseipdb keeps feeding the abuse deduction even though it
 			// carries no weight: with no scoring source enabled the assessment
 			// is unsupported, yet AbuseConfidence is still read by detectFlags
 			// and costs its 10 points. It is never a silent "clean".
@@ -406,7 +406,7 @@ func TestAssess_Table(t *testing.T) {
 			noReasons:  []string{ReasonRecentAbuse},
 		},
 		{
-			// The §1.6 high_risk rule reads AbuseConfidence directly, so it
+			// The high_risk rule reads AbuseConfidence directly, so it
 			// still fires for an unweighted source.
 			name:       "abuse_high_confidence_with_reports_is_high_risk",
 			evidence:   evidence(ev("abuseipdb").abuse(80, 5)),
@@ -480,7 +480,7 @@ func TestAssess_Table(t *testing.T) {
 			components: []string{"proxycheck"},
 		},
 		{
-			// ipqs still votes on the §1.4 network type even though it carries
+			// ipqs still votes on the network type even though it carries
 			// no weight: voteOf reads the row's own payload, not the weight
 			// table. Only the scoring sources decide the score.
 			name: "conflicting_residential_vs_datacenter",
@@ -690,7 +690,7 @@ func TestAssess_Table(t *testing.T) {
 		},
 		{
 			// One weighted source against the whole keyless denominator (11)
-			// covers 3/11 = 0.27, the §1.2 "low" row.
+			// covers 3/11 = 0.27, the "low" row.
 			name:       "one_weighted_source_is_low_without_full_coverage",
 			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0)),
 			score:      ip(100),
@@ -881,7 +881,7 @@ func TestAssess_ValidityWindow(t *testing.T) {
 	})
 }
 
-// TestAssess_Deterministic guards §1: identical input must produce identical
+// TestAssess_Deterministic guards: identical input must produce identical
 // output, including the tie-breaks and the component ordering.
 func TestAssess_Deterministic(t *testing.T) {
 	input := Input{
@@ -963,7 +963,7 @@ func TestAssess_ConfidenceBoundaries(t *testing.T) {
 		},
 		{
 			// One weighted source covers 3/11 = 0.27 of the keyless
-			// denominator: the §1.2 "low" row.
+			// denominator: the "low" row.
 			name:       "one_source_with_low_coverage_is_low",
 			evidence:   evidence(ev("proxycheck").risk(0)),
 			confidence: ConfidenceLow,
@@ -976,7 +976,7 @@ func TestAssess_ConfidenceBoundaries(t *testing.T) {
 		},
 		{
 			// Two weighted sources cover 5/11 = 0.45 without full coverage, so
-			// they take the ">= 0.4" branch of §1.2: medium.
+			// they take the ">= 0.4" branch of: medium.
 			name:       "two_sources_coverage_0_45_is_medium",
 			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business")),
 			confidence: ConfidenceMedium,

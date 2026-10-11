@@ -39,7 +39,7 @@ func doAuthedRequest(handler http.Handler, remoteAddr, xff, token string) *httpt
 	return rec
 }
 
-// --- §4.6 management API login failure limiting ---
+// --- management API login failure limiting ---
 
 // TestAuthRateLimit_BlocksAfterTenFailures covers the acceptance requirement:
 // eleven consecutive failures return 429 with Retry-After, and the block also
@@ -148,7 +148,7 @@ func TestAuthRateLimit_TrustsConfiguredProxyXForwardedFor(t *testing.T) {
 // Part 1 is the supported deployment: the trusted proxy appends the address it
 // observed, so the rightmost untrusted hop is the real client and an attacker
 // cannot rotate the header prefix to escape the limit. Part 2 documents the
-// operational precondition of docs/SECURITY.md §1.2: a proxy that forwards a
+// operational precondition of the trusted-proxy list: a proxy that forwards a
 // client-supplied header verbatim gives every request its own bucket, which is
 // exactly why only an appending proxy may be listed in PRISM_TRUSTED_PROXIES.
 func TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor(t *testing.T) {
@@ -238,7 +238,7 @@ func TestAuthRateLimit_CapsTableSize(t *testing.T) {
 	}
 }
 
-// --- §4.7 audit logging ---
+// --- audit logging ---
 
 type fakeAuditStore struct {
 	mu        sync.Mutex
@@ -401,7 +401,7 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 	}
 }
 
-// TestAuditLog_BodyLimitWrapsAuditPeek covers G-12: production wraps the audit
+// TestAuditLog_BodyLimitWrapsAuditPeek covers: production wraps the audit
 // middleware inside RequestBodyLimitMiddleware (internal/api/server.go), so the
 // payload peek reads a body that is already bounded by the configured limit and
 // can never observe bytes beyond it. The test uses the same order as production;

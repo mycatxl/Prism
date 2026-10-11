@@ -47,7 +47,7 @@ func NewGeoCountryProvider(opts GeoCountryOptions) *GeoCountry {
 	ttl := opts.TTL
 	if ttl <= 0 {
 		// country.mmdb is refreshed daily from the MetaCubeX rules release, so
-		// the evidence stays valid for a month (WP09 §3 lists no explicit TTL).
+		// the evidence stays valid for a month.
 		ttl = 30 * 24 * time.Hour
 	}
 	now := opts.Now

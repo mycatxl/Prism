@@ -812,7 +812,7 @@ func TestMetricsHandlers_HistoryLeaseLifetime_IncludesCurrentUnflushedBucket(t *
 }
 
 // newTestMetricsManagerWithRetention builds a manager with an explicit retention
-// policy, which is what the query-range clamp of G-08 reads.
+// policy, which is what the query-range clamp of reads.
 func newTestMetricsManagerWithRetention(
 	t *testing.T,
 	policy metrics.RetentionPolicy,
@@ -843,7 +843,7 @@ func newTestMetricsManagerWithRetention(
 	})
 }
 
-// TestParseMetricsTimeRange_ClampsFromToRetention covers G-08: 'from' is moved
+// TestParseMetricsTimeRange_ClampsFromToRetention covers: 'from' is moved
 // forward to to-maxWindow, so the scanned range is bounded by the retention of
 // the metric family. The request itself stays valid.
 func TestParseMetricsTimeRange_ClampsFromToRetention(t *testing.T) {
@@ -875,7 +875,7 @@ func TestParseMetricsTimeRange_ClampsFromToRetention(t *testing.T) {
 	}
 }
 
-// TestMetricsHandlers_RealtimeThroughputIsBoundedByRetention covers G-08 end to
+// TestMetricsHandlers_RealtimeThroughputIsBoundedByRetention covers end to
 // end: a sample older than the throughput retention window is not returned even
 // when the request asks for it, while a sample inside the window is.
 func TestMetricsHandlers_RealtimeThroughputIsBoundedByRetention(t *testing.T) {

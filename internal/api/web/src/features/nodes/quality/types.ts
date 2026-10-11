@@ -130,7 +130,7 @@ export type IPPureReview = {
   is_residential: boolean | null;
   score_supported: boolean;
   next_allowed_at: string;
-  // WP08 §9: the review runs as an intel job and waits up to 15 seconds for the
+ // the review runs as an intel job and waits up to 15 seconds for the
   // evidence. When it is not ready yet the response is 202 with queued=true and
   // job_id set, and the caller polls /api/v1/intel/jobs/{job_id}.
   job_id?: string;

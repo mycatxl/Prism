@@ -29,8 +29,11 @@ node_modules/
 /internal/api/web/dist/*
 !/internal/api/web/dist/.gitkeep
 
-# Private notes
-/docs/design/
+# Local notes, plans and references. This repository ships code, the README
+# and the licence/provenance files only: nothing under these paths is tracked.
+/docs/
+/notes/
+/plans/
 /references/
 
 # Editors / OS

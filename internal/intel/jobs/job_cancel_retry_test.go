@@ -10,9 +10,9 @@ import (
 	"prism/internal/intel/store"
 )
 
-// Regression tests for F4/F5/F6 of AUDIT_REPORT.md (all fixed).
+// Regression tests for the cancel and retry contract.
 //
-// F4: CancelJob (repo_jobs.go) ran "UPDATE jobs SET status = 'canceled' WHERE
+// CancelJob (repo_jobs.go) ran "UPDATE jobs SET status = 'canceled' WHERE
 // id = ?" with no status guard, so a cancel rewrote a job that had already
 // reached a terminal status. The API exposes cancel on any job id, so a double
 // click or a retried request turned a succeeded job into canceled and rewrote
@@ -20,23 +20,23 @@ import (
 // reports store.ErrJobNotActive (mapped to CONFLICT / 409) when the row was
 // already terminal - Cancel is no longer a silent no-op there.
 //
-// F5: RetryFailedJobItems reset finished_at_ns for every job in
+// RetryFailedJobItems reset finished_at_ns for every job in
 // ('partial','failed','canceled') whether or not it had a failed item, so
 // "retry failures" on a job with nothing to retry reopened it. The fix only
 // reopens when retried > 0 and narrows the status list to ('partial','failed').
 //
-// F6: runOnce consumed the provider budget before it claimed the queue, so an
+// runOnce consumed the provider budget before it claimed the queue, so an
 // idle poll burned one unit of the daily quota and one QPS interval on no work
 // (used=3 after three empty rounds). The fix claims first, consumes only when
 // rows were claimed, and hands the rows back through
 // store.ReleaseProviderItems when the gate it then hits is shut. The tests below
 // are the regression tests for that fix.
 
-// TestAudit_CanceledJobIsNotOverwrittenByALaterCancel pins the missing status
+// TestCanceledJobIsNotOverwrittenByALaterCancel pins the missing status
 // predicate: cancelling a job that already succeeded must leave it succeeded.
 // With the fix the store refuses the write (ErrJobNotActive), and the job row
 // keeps both its status and its finished_at_ns.
-func TestAudit_CanceledJobIsNotOverwrittenByALaterCancel(t *testing.T) {
+func TestCanceledJobIsNotOverwrittenByALaterCancel(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -101,10 +101,10 @@ func TestAudit_CanceledJobIsNotOverwrittenByALaterCancel(t *testing.T) {
 	}
 }
 
-// TestAudit_RetryFailedKeepsJobFinishedAt pins the finished_at_ns reset of
+// TestRetryFailedKeepsJobFinishedAt pins the finished_at_ns reset of
 // RetryFailedJobItems: a succeeded job has no failed item, so retrying must be a
 // no-op. Before the fix the second UPDATE still ran and reopened the job.
-func TestAudit_RetryFailedKeepsJobFinishedAt(t *testing.T) {
+func TestRetryFailedKeepsJobFinishedAt(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -164,13 +164,13 @@ func TestAudit_RetryFailedKeepsJobFinishedAt(t *testing.T) {
 	}
 }
 
-// TestAudit_ProviderBudgetIsNotConsumedWithoutWork is the regression test for
-// F6 of AUDIT_REPORT.md (fixed): runOnce ordered ConsumeProviderBudget before
+// TestProviderBudgetIsNotConsumedWithoutWork is the regression test for
+// the ordering rule: runOnce ordered ConsumeProviderBudget before
 // ClaimProviderItems, so when the queue was empty the consumed slot was lost and
 // an idle provider kept spending its daily budget with its QPS spacing applied
 // to no work. The worker now claims first and only consumes the budget when the
 // claim returned rows.
-func TestAudit_ProviderBudgetIsNotConsumedWithoutWork(t *testing.T) {
+func TestProviderBudgetIsNotConsumedWithoutWork(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -213,13 +213,13 @@ func TestAudit_ProviderBudgetIsNotConsumedWithoutWork(t *testing.T) {
 	}
 }
 
-// TestAudit_ProviderBudgetGateRollsBackTheClaim covers the rollback path the F6
+// TestProviderBudgetGateRollsBackTheClaim covers the rollback path the
 // fix introduced, which is its real risk: claiming before consuming the budget
 // means the worker can lease rows and only then find the gate shut. Nothing was
 // sent, so nothing may be spent and nothing may be lost - the rows must return
 // to queued with their lease cleared, no lookup may happen, the day counter must
 // not move, and once the gate opens the same rows must be claimed again.
-func TestAudit_ProviderBudgetGateRollsBackTheClaim(t *testing.T) {
+func TestProviderBudgetGateRollsBackTheClaim(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))

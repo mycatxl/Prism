@@ -67,7 +67,7 @@ type Evidence struct {
 	LastReportedAt    *time.Time `json:"last_reported_at,omitempty"`
 	ReportWindowDays  int        `json:"report_window_days,omitempty"`
 
-	// WP09 additions. Every field is optional so the existing decoders and the
+	// additions. Every field is optional so the existing decoders and the
 	// evidence already stored in intel.db keep decoding unchanged.
 	ASNNumber     int      `json:"asn_number,omitempty"`
 	City          string   `json:"city,omitempty"`

@@ -40,7 +40,7 @@ func testNodeHash(t *testing.T, tag string) string {
 	return node.HashFromRawOptions([]byte(`{"type":"direct","server":"` + tag + `"}`)).String()
 }
 
-// TestSubscriptionAutoEnqueueHonoursFlags covers WP08 §3.6: auto_intel=false
+// TestSubscriptionAutoEnqueueHonoursFlags covers auto_intel=false
 // never enqueues, intel_enabled=false never enqueues, auto_intel=true enqueues
 // exactly one job per subscription whose kind follows intel_auto_checks.
 func TestSubscriptionAutoEnqueueHonoursFlags(t *testing.T) {
@@ -134,7 +134,7 @@ func TestAutoEnqueueRefusesOverLimitBatch(t *testing.T) {
 		t.Fatalf("jobs after an over-limit batch = %d, want 0", count)
 	}
 
-	// The job manager enforces the same cap for manual jobs (§3.1).
+	// The job manager enforces the same cap for manual jobs.
 	if _, err := svc.CreateJob(ctx, jobs.Request{
 		Kind:  jobs.KindIntel,
 		Scope: jobs.Scope{NodeHashes: tooMany},

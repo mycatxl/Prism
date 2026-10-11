@@ -14,7 +14,7 @@ import type { QualitySummary } from "./quality/types";
 import { getRegionName } from "./regions";
 import type { NodeIntel } from "./types";
 
-// WP10 §4 node intel surface. The API field `intel` carries the prism-purity-v2
+// node intel surface. The API field `intel` carries the prism-purity-v2
 // assessment of the node's egress IP; an unassessed node reports explicit empty
 // values and state "unassessed", which is rendered as such — never as a score.
 

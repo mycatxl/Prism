@@ -17,7 +17,7 @@ import (
 	"prism/internal/topology"
 )
 
-// WP10 §4: the node list intel field, its filters and the preview excluded_by
+// the node list intel field, its filters and the preview excluded_by
 // counters. Every assessment here comes from the in-memory projection; no test
 // touches the network.
 

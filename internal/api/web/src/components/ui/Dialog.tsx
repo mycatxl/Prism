@@ -21,7 +21,7 @@ import { cn } from "../../lib/cn";
  *
  * No entrance animation is declared. Radix would happily animate the mount, but
  * the console's own motion rule is that motion states change and never decorates
- * an arrival (root `DESIGN.md`), so the surface appears.
+ * an arrival, so the surface appears.
  */
 
 /**

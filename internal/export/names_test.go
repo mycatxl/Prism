@@ -7,7 +7,7 @@ import (
 	"prism/internal/quality"
 )
 
-// TestRenderNamesVariables covers every documented template variable (WP11 §3).
+// TestRenderNamesVariables covers every documented template variable.
 func TestRenderNamesVariables(t *testing.T) {
 	item := fixtureNodes(t)[0]
 	item.Intel = intelFixture()
@@ -52,7 +52,7 @@ func TestRenderNamesWithoutIntel(t *testing.T) {
 	}
 }
 
-// TestRenderNamesCompressesAndTruncates checks the §3 whitespace and length
+// TestRenderNamesCompressesAndTruncates checks the whitespace and length
 // rules.
 func TestRenderNamesCompressesAndTruncates(t *testing.T) {
 	item := fixtureNodes(t)[0]
@@ -100,7 +100,7 @@ func TestRenderNamesIndexFollowsInputOrder(t *testing.T) {
 
 // TestRenderNamesLatencyVariableIsAlwaysEmpty documents that the latency
 // variable has no source in the export package: latency lives on the node
-// entry, not on the WP10 summary, so the variable renders empty rather than
+// entry, not on the summary, so the variable renders empty rather than
 // inventing a number.
 func TestRenderNamesLatencyVariableIsAlwaysEmpty(t *testing.T) {
 	item := fixtureNodes(t)[0]

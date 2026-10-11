@@ -1,4 +1,4 @@
-// WP10 §4 — 节点池页面（节点抽屉与批量情报入口）的英文词条（中文文案即 key）。
+// — 节点池页面（节点抽屉与批量情报入口）的英文词条（中文文案即 key）。
 // 在 i18n/workbench.ts 中展开进 WORKBENCH_TRANSLATIONS。
 export const NODES_TRANSLATIONS: Record<string, string> = {
   "为该节点创建完整检测任务，完成后刷新纯净度评估。":

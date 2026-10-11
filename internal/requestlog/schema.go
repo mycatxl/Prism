@@ -82,7 +82,7 @@ func ensureRequestLogSchema(db *sql.DB) error {
 	if err := ensureRequestLogColumn(db, "request_logs", "first_byte_duration_ns", "first_byte_duration_ns INTEGER NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	// WP10 §3: routing advisories (e.g. rotation_fallback_same_ip).
+	// routing advisories (e.g. rotation_fallback_same_ip).
 	if err := ensureRequestLogColumn(db, "request_logs", "events", "events TEXT NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}

@@ -86,7 +86,7 @@ func TestMigrateStateDB_AddsEnabledToExistingEndpoints(t *testing.T) {
 			id TEXT PRIMARY KEY,
 			regex_filters_json TEXT NOT NULL DEFAULT '[]'
 		);
-		-- Prism WP02: subscriptions exists from migration 000005 in real databases.
+		-- Prism: subscriptions exists from migration 000005 in real databases.
 		CREATE TABLE subscriptions (
 			id TEXT PRIMARY KEY
 		);
@@ -138,7 +138,7 @@ func TestMigrateStateDB_ConvertsLegacyRegexFiltersToMustRules(t *testing.T) {
 			id TEXT PRIMARY KEY,
 			regex_filters_json TEXT NOT NULL DEFAULT '[]'
 		);
-		-- Prism WP02: subscriptions exists from migration 000005 in real databases.
+		-- Prism: subscriptions exists from migration 000005 in real databases.
 		CREATE TABLE subscriptions (
 			id TEXT PRIMARY KEY
 		);

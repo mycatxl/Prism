@@ -6,7 +6,7 @@ import (
 )
 
 // QualityCounts is the aggregate the legacy /api/v1/quality/status surface
-// reports (WP08 §9). Every field is a count of IPs, not of evidence rows: the
+// reports. Every field is a count of IPs, not of evidence rows: the
 // WebUI renders them as "known IPs" and "checked IPs".
 type QualityCounts struct {
 	KnownIPs    int

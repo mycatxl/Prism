@@ -8,7 +8,7 @@ import (
 	"prism/internal/node"
 )
 
-// .ovpn profiles and the Prism OpenVPN bundle format (WP06 §4).
+// .ovpn profiles and the Prism OpenVPN bundle format.
 //
 // Two inputs are recognised here:
 //
@@ -38,7 +38,7 @@ type openVPNBundle struct {
 	Profiles []openVPNBundleProfile `json:"profiles"`
 }
 
-// parseOpenVPNSubscription recognises a raw .ovpn profile (WP06 §4.1).
+// parseOpenVPNSubscription recognises a raw .ovpn profile.
 func parseOpenVPNSubscription(text string, report *parseReport) ([]ParsedNode, bool, error) {
 	if !node.LooksLikeOpenVPN(text) {
 		return nil, false, nil

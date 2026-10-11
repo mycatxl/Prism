@@ -23,7 +23,7 @@ concurrency:
 
 env:
   # One tag set, one artifact per platform. The mihomo fallback kernel was
-  # rejected (docs/ENGINE_DECISIONS.md D-1), so a release artifact must never be
+  # rejected, so a release artifact must never be
   # compiled with with_mihomo: passing that tag would flip
   # node.EngineCapabilities() to report mihomo as built while every mihomo node
   # still fails with ENGINE_NOT_BUILT.
@@ -157,15 +157,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v7
 
-      - name: Find Release Note
-        id: release_note
-        env:
-          RELEASE_NOTE_PATH: docs/release-notes/${{ github.ref_name }}.md
-        run: |
-          if [[ -f "$RELEASE_NOTE_PATH" ]]; then
-            echo "path=$RELEASE_NOTE_PATH" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Download Release Package Artifacts
         uses: actions/download-artifact@v8
         with:
@@ -209,7 +200,6 @@ jobs:
           files: build/*
           fail_on_unmatched_files: true
           overwrite_files: true
-          body_path: ${{ steps.release_note.outputs.path }}
           generate_release_notes: true
           draft: true
           prerelease: ${{ steps.check_prerelease.outputs.is_prerelease == 'true' }}

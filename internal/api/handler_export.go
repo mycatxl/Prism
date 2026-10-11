@@ -11,7 +11,7 @@ import (
 	"prism/internal/service"
 )
 
-// Node export API (WP11 §4.1). Admin-authenticated (rule R7): the admin
+// Node export API. Admin-authenticated (rule R7): the admin
 // downloads a rendered file of the selected nodes; there is no public
 // subscription surface.
 
@@ -19,7 +19,7 @@ import (
 // mirrors the query parameters accepted by GET /api/v1/nodes so one filter
 // vocabulary covers both the node list and every export surface.
 //
-// The WP10 §4 intel filters are part of it, so an export filters a node exactly
+// The intel filters are part of it, so an export filters a node exactly
 // the way the live node list does.
 type exportNodeFilter struct {
 	IPType         string   `json:"ip_type,omitempty"`
@@ -117,7 +117,7 @@ func (f exportNodeFilter) toNodeFilters() (service.NodeFilters, error) {
 		parsed = parsed.UTC()
 		filters.ProbedSince = &parsed
 	}
-	// WP10 §4 intel filters. They share the node list validators, so an export
+	// intel filters. They share the node list validators, so an export
 	// and a live query accept exactly the same values.
 	intelValues := nodeIntelFilterValues{
 		Verdict:       f.Verdict,
@@ -162,7 +162,7 @@ func exportFilterFromQuery(r *http.Request) (exportNodeFilter, error) {
 		Country:        q.Get("country"),
 		Checks:         q["check"],
 	}
-	// The WP10 §4 intel filters are read in their text form and converted by
+	// The intel filters are read in their text form and converted by
 	// the same validators the node list uses.
 	intelValues := nodeIntelFilterValues{
 		PurityMin: q.Get("purity_min"),
@@ -254,7 +254,7 @@ func parseExportOffset(r *http.Request) (int, error) {
 // maxExportNameTemplateBytes bounds the name template.
 const maxExportNameTemplateBytes = 256
 
-// HandleExportNodes returns a handler for GET /api/v1/nodes/export (§4.1).
+// HandleExportNodes returns a handler for GET /api/v1/nodes/export.
 func HandleExportNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		format := strings.TrimSpace(r.URL.Query().Get("format"))

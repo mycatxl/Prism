@@ -15,7 +15,7 @@ import (
 	"prism/internal/proxy"
 )
 
-// Tests for the proxy-entry authentication failure limiter (WP04 §4.6) on the
+// Tests for the proxy-entry authentication failure limiter on the
 // entry points assembled in cmd/prism: the reverse-proxy path token decided by
 // the inbound mux and the SOCKS5 username/password check. They are local-only:
 // loopback sockets and httptest, no outbound traffic.

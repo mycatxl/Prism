@@ -1,5 +1,5 @@
 // Package intel owns the persistent intel.db store, the in-memory projection it
-// feeds, and the batch job system (WP08).
+// feeds, and the batch job system.
 package intel
 
 import (
@@ -13,7 +13,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// Band codes used by AssessmentLite (WP08 §5).
+// Band codes used by AssessmentLite.
 const (
 	BandUnknown uint8 = iota
 	BandExcellent
@@ -31,7 +31,7 @@ const (
 	ConfidenceHigh
 )
 
-// Verdict codes used by AssessmentLite (WP10 §1.6).
+// Verdict codes used by AssessmentLite.
 const (
 	VerdictPending uint8 = iota
 	VerdictFavorable
@@ -42,7 +42,7 @@ const (
 	VerdictHighRisk
 )
 
-// IP type codes used by AssessmentLite (WP10 §1.4).
+// IP type codes used by AssessmentLite.
 const (
 	IPTypeUnknown uint8 = iota
 	IPTypeResidential
@@ -54,16 +54,16 @@ const (
 	IPTypeConflicting
 )
 
-// Assessment state codes used by AssessmentLite (WP10 §1.1). They mirror the
+// Assessment state codes used by AssessmentLite. They mirror the
 // stored ip_assessment.state values, so the node list can report pending vs
-// unsupported without reading the database (WP10 §4).
+// unsupported without reading the database.
 const (
 	StatePending uint8 = iota
 	StateValid
 	StateUnsupported
 )
 
-// Assessment flag bits (WP10 §1.1). The routing admission path only needs a
+// Assessment flag bits. The routing admission path only needs a
 // bitmask, so the projection keeps 16 bits per IP instead of the full reasons.
 // The bits are aliases of the scorer's flags so the projection and prism-purity-v2
 // can never drift apart.
@@ -172,7 +172,7 @@ func VerdictCode(name string) uint8 { return codeOf(verdictCodes, name) }
 // VerdictName decodes a verdict code.
 func VerdictName(code uint8) string { return nameOf(verdictNames, code) }
 
-// VerdictValues returns every §1.6 verdict name, in code order. The API filter
+// VerdictValues returns every verdict name, in code order. The API filter
 // vocabulary is built from it, so validation can never drift from the
 // projection.
 func VerdictValues() []string { return append([]string(nil), verdictNames...) }
@@ -204,12 +204,12 @@ func nameOf(names []string, code uint8) string {
 }
 
 // AssessmentLite is the in-memory projection of one ip_assessment row. Score is
-// -1 when the purity score is NULL and Native is -1 when it is unknown (WP08 §5).
+// -1 when the purity score is NULL and Native is -1 when it is unknown.
 //
 // Score, Band, Verdict, IPType, Confidence, Native, Flags, ValidUntil and
 // ComputedAt are the compact subset the routing admission path reads. State and
 // the row-level display facts (ASN, AS org, country, city) travel with them so
-// WP10 §4 can render a node's assessment without a database read on the request
+// can render a node's assessment without a database read on the request
 // path.
 type AssessmentLite struct {
 	Score      int8
@@ -338,7 +338,7 @@ func OutcomeValues() []string { return append([]string(nil), outcomeNames...) }
 func (o OutcomeLite) Valid(nowNs int64) bool { return o.ValidUntil > nowNs }
 
 // SnapshotReader is the read-only view the routing admission path and the node
-// list use (WP10 §2 and §4). It never touches the database.
+// list use. It never touches the database.
 type SnapshotReader interface {
 	Assessment(ip netip.Addr) (AssessmentLite, bool)
 	CheckOutcome(nodeHash, checkID string) (OutcomeLite, bool)
@@ -351,7 +351,7 @@ type SnapshotSource interface {
 }
 
 // Snapshot is the in-memory projection of ip_assessment and node_checks. It is
-// only a cache: every entry can be rebuilt from intel.db on restart (§5).
+// only a cache: every entry can be rebuilt from intel.db on restart.
 type Snapshot struct {
 	mu          sync.RWMutex
 	assessments map[netip.Addr]AssessmentLite

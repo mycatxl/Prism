@@ -25,7 +25,7 @@ var randomRouteRNGPool = sync.Pool{
 // Post-pick race handling (node removed right after selection) is handled by
 // the caller in RouteRequest.
 //
-// It performs no candidate exclusion; see randomRouteAvoiding for the WP10 §3
+// It performs no candidate exclusion; see randomRouteAvoiding for the
 // rotation-avoidance variant.
 func randomRoute(
 	plat *platform.Platform,
@@ -40,7 +40,7 @@ func randomRoute(
 }
 
 // randomRouteAvoiding selects a routable node using P2C with latency/load
-// scoring while excluding candidates whose egress IP equals avoidIP (WP10 §3
+// scoring while excluding candidates whose egress IP equals avoidIP (
 // rotation avoidance). The second return value reports that every candidate
 // shared avoidIP, so the unfiltered pick had to be used; the caller records
 // rotation_fallback_same_ip for that case.

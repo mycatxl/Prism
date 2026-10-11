@@ -40,7 +40,7 @@ type ManagerConfig struct {
 	LeasesRealtimeCapacity      int
 	LeasesIntervalSec           int
 	RuntimeStats                RuntimeStatsProvider
-	// Retention is the persisted-metrics retention (G-08). The zero value keeps
+	// Retention is the persisted-metrics retention. The zero value keeps
 	// the defaults of internal/config/env.go.
 	Retention RetentionPolicy
 }
@@ -253,7 +253,7 @@ func (m *Manager) Repo() *MetricsRepo { return m.repo }
 // BucketSeconds returns the configured bucket duration in seconds.
 func (m *Manager) BucketSeconds() int { return m.bucketSeconds }
 
-// Retention returns the persisted-metrics retention policy (G-08).
+// Retention returns the persisted-metrics retention policy.
 func (m *Manager) Retention() RetentionPolicy { return m.retention }
 
 // ThroughputRetentionWindow is the window that bounds the throughput/traffic
@@ -402,7 +402,7 @@ func (m *Manager) bucketLoop() {
 	defer m.wg.Done()
 
 	// Align the first tick to the next bucket boundary.
-	// DESIGN.md: bucket_start_unix = (ts_unix / N) * N.
+	// the design system: bucket_start_unix = (ts_unix / N) * N.
 	now := time.Now().Unix()
 	bucketSec := int64(m.bucketSeconds)
 	nextBoundary := ((now / bucketSec) + 1) * bucketSec

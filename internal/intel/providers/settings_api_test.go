@@ -12,7 +12,7 @@ import (
 	"prism/internal/model"
 )
 
-// WP09 §4: the provider settings surface. Everything here is local: no test
+// the provider settings surface. Everything here is local: no test
 // touches the network, and no test may ever print a stored credential.
 
 const testRawKey = "sk-live-5f4c0d-do-not-leak-me"
@@ -134,7 +134,7 @@ func TestSettingsAPIStatusesNeverExposeTheKey(t *testing.T) {
 }
 
 // TestSettingsAPIUpdateAppliesToTheLiveRegistry proves that a settings change
-// reaches the running data sources without a restart (WP09 §4).
+// reaches the running data sources without a restart.
 func TestSettingsAPIUpdateAppliesToTheLiveRegistry(t *testing.T) {
 	store := newMemorySettingsStore()
 	registry, settings := newTestSettingsService(t, store)
@@ -408,7 +408,7 @@ func TestSettingsAPIWithoutStoreIsReadOnly(t *testing.T) {
 	}
 }
 
-// TestSettingsAPIEnvironmentIsTheInitialValue keeps the WP09 §1 precedence: the
+// TestSettingsAPIEnvironmentIsTheInitialValue keeps the precedence: the
 // environment is the first value, the settings page takes over afterwards.
 func TestSettingsAPIEnvironmentIsTheInitialValue(t *testing.T) {
 	registry := NewRegistry()

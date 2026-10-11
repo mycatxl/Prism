@@ -1139,7 +1139,7 @@ func TestReverseParsePath_ProtocolCaseInsensitive(t *testing.T) {
 }
 
 func TestEventEmitterInterface(t *testing.T) {
-	// Verify the RequestLogEntry fields match DESIGN.md schema.
+	// Verify the RequestLogEntry fields match the design system schema.
 	entry := RequestLogEntry{
 		ProxyType:           ProxyTypeForward,
 		ClientIP:            "127.0.0.1:12345",

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Prism backup and restore wrapper (WP04 §4.11).
+# Prism backup and restore wrapper.
 #
 # Delegates to `prism backup` and `prism restore`:
 #   * `prism backup` snapshots state.db, cache.db and intel.db with

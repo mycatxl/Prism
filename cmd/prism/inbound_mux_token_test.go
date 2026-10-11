@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// --- behavior of the path-token gate (#33) ---
+// --- behavior of the path-token gate ---
 
 // TestInboundMux_TokenComparisonSemantics pins the behavior of the two token
 // decisions the mux owns. The comparison itself is replaced by a constant-time
@@ -110,9 +110,9 @@ func TestInboundMux_TokenComparisonSemantics(t *testing.T) {
 	})
 }
 
-// --- structure of the path-token gate (#33) ---
+// --- structure of the path-token gate ---
 
-// TestInboundMuxTokenComparisonIsConstantTime is the recurrence guard for #33.
+// TestInboundMuxTokenComparisonIsConstantTime is the recurrence guard for.
 //
 // The token decision lives in the mux (the proxy only sees what the mux lets
 // through), and it used to compare the path token with `token != proxyToken`.

@@ -83,7 +83,7 @@ func (s *Store) ListAssessments(ctx context.Context, limit, offset int) ([]Asses
 	return collectAssessments(rows)
 }
 
-// ListAllAssessments returns every assessment (snapshot rebuild, §5).
+// ListAllAssessments returns every assessment (snapshot rebuild,).
 func (s *Store) ListAllAssessments(ctx context.Context) ([]Assessment, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -108,7 +108,7 @@ func (s *Store) CountAssessments(ctx context.Context) (int, error) {
 }
 
 // ListExpiredAssessments returns assessments that expired at or before
-// expiredBeforeNs; WP10's five-minute sweep recalculates them.
+// expiredBeforeNs; 's five-minute sweep recalculates them.
 func (s *Store) ListExpiredAssessments(ctx context.Context, expiredAfterNs, expiredBeforeNs int64, limit int) ([]Assessment, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -127,7 +127,7 @@ func (s *Store) ListExpiredAssessments(ctx context.Context, expiredAfterNs, expi
 }
 
 // ListAssessmentsWithForeignProfile returns assessments written by an older
-// purity profile so WP10 can recompute them at startup (§1.8).
+// purity profile so can recompute them at startup.
 func (s *Store) ListAssessmentsWithForeignProfile(ctx context.Context, profile string, limit int) ([]Assessment, error) {
 	db, err := s.conn()
 	if err != nil {

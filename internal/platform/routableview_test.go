@@ -90,7 +90,7 @@ func TestRoutableView_RandomPick_Distribution(t *testing.T) {
 	}
 }
 
-// TestRoutableView_Clear was removed with RoutableView.Clear (audit 3.1 #9):
+// TestRoutableView_Clear was removed with RoutableView.Clear :
 // FullRebuild no longer clears the published view in place — it fills a private
 // view and publishes it with one atomic store, so a reader that does not hold
 // viewMu can never observe the "emptied then refilled" intermediate state.

@@ -32,7 +32,7 @@ type RuntimeConfig struct {
 	CacheFlushInterval       Duration `json:"cache_flush_interval"`
 	CacheFlushDirtyThreshold int      `json:"cache_flush_dirty_threshold"`
 
-	// Intel batch detection (WP08 §3.4)
+	// Intel batch detection
 	IntelEnabled                  bool   `json:"intel_enabled"`
 	IntelNodeWorkers              int    `json:"intel_node_workers"`
 	IntelCheckConcurrencyPerCheck int    `json:"intel_check_concurrency_per_check"`
@@ -47,7 +47,7 @@ type RuntimeConfig struct {
 const DefaultEgressTraceURL = "https://cloudflare.com/cdn-cgi/trace"
 
 // NewDefaultRuntimeConfig returns a RuntimeConfig populated with the default
-// values specified in DESIGN.md §运行时全局设置项.
+// values specified in the design system
 func NewDefaultRuntimeConfig() *RuntimeConfig {
 	return &RuntimeConfig{
 		RequestLogEnabled:                  true,

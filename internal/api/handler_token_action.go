@@ -16,7 +16,7 @@ type inheritLeaseRequest struct {
 // NewTokenActionHandler returns the handler for token-path actions.
 //
 // The route changes lease state, so a successful mutation is recorded in the
-// audit trail exactly like the management writes of WP04 §4.7 (G-07): the actor
+// audit trail exactly like the management writes of: the actor
 // is the sha256 prefix of the proxy token, never the token itself, and the
 // credential path parameter is not copied into the record. The request-body
 // limit wraps the audit middleware so the audit payload peek reads a body that

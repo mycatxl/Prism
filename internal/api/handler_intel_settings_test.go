@@ -18,7 +18,7 @@ import (
 	"prism/internal/state"
 )
 
-// WP09 §4/§5.4 API surface: the data source settings, the unlock check toggles
+// /API surface: the data source settings, the unlock check toggles
 // and the budget visibility. Everything runs through httptest against a
 // throw-away intel.db and state.db; no test touches the network.
 
@@ -350,7 +350,7 @@ func TestIntelProvidersAPIValidation(t *testing.T) {
 	}
 }
 
-// TestIntelChecksAPIListsTogglesAndReportsLoadErrors covers §5.4 end to end.
+// TestIntelChecksAPIListsTogglesAndReportsLoadErrors covers end to end.
 func TestIntelChecksAPIListsTogglesAndReportsLoadErrors(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)
 	_, _, engine := wireIntelSettingsForTest(t, cp)
@@ -463,7 +463,7 @@ func TestIntelChecksAPIToggleValidation(t *testing.T) {
 	}
 }
 
-// TestIntelProvidersAPIResumeClearsThePause covers the WP09 §4 resume action.
+// TestIntelProvidersAPIResumeClearsThePause covers the resume action.
 func TestIntelProvidersAPIResumeClearsThePause(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)
 	svc, _, _ := wireIntelSettingsForTest(t, cp)

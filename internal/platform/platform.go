@@ -55,7 +55,7 @@ type Platform struct {
 	ScheduledRotationIntervalNs      int64
 	ScheduledRotationEnabled         bool
 	// RotationAvoidPreviousIP makes the router avoid the account's previous
-	// egress IP on the next rotation (WP10 §3).
+	// egress IP on the next rotation.
 	RotationAvoidPreviousIP bool
 	// Routable view & its lock.
 	// viewMu serializes both FullRebuild and NotifyDirty.
@@ -64,7 +64,7 @@ type Platform struct {
 	// (View().RandomPick / Range / Contains in the data plane) deliberately do
 	// not take viewMu: a rebuild that mutated the published view in place would
 	// expose an empty or half-filled view to them, and RandomPick reporting
-	// "nothing routable" is a 503 (audit 3.1 #9). FullRebuild therefore fills a
+	// "nothing routable" is a 503 . FullRebuild therefore fills a
 	// private view and publishes it in one atomic store, so a reader sees either
 	// the previous complete generation or the next complete one. NotifyDirty
 	// keeps mutating the published generation in place, which is safe because it
@@ -73,7 +73,7 @@ type Platform struct {
 	viewMu sync.Mutex
 
 	// qualitySnapshot is the read-only intel projection the quality admission
-	// path reads (WP10 §2). It is nil until the intel service is wired.
+	// path reads. It is nil until the intel service is wired.
 	//
 	// It is an atomic pointer rather than a plain interface field because the
 	// writers and the readers do not share a lock: the pool re-installs the
@@ -117,7 +117,7 @@ func NewPlatformWithTagFilter(id, name string, regexFilters node.TagFilter, regi
 //
 // The load is atomic and lock-free on purpose: the data plane calls this on
 // every request, and FullRebuild publishes whole views rather than mutating the
-// published one (audit 3.1 #9).
+// published one .
 func (p *Platform) View() ReadOnlyView {
 	return p.view.Load()
 }
@@ -129,7 +129,7 @@ func (p *Platform) View() ReadOnlyView {
 // completes. The new view is filled privately and only then published, so a
 // reader that does not hold viewMu (View().RandomPick / Range / Contains) sees
 // either the previous complete view or the next complete one — never the empty
-// or half-filled intermediate state (audit 3.1 #9).
+// or half-filled intermediate state .
 func (p *Platform) FullRebuild(
 	poolRange PoolRangeFunc,
 	subLookup node.SubLookupFunc,

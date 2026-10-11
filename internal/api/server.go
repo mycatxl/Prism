@@ -11,7 +11,7 @@ import (
 	"prism/internal/service"
 )
 
-// Connection-level bounds of every Prism HTTP listener (WP04 §4.6).
+// Connection-level bounds of every Prism HTTP listener.
 //
 // ReadHeaderTimeout bounds how long a client may take to send its request
 // headers, which is what stops a slowloris-style hold on a connection.
@@ -187,7 +187,7 @@ func NewServerWithAddress(
 
 		// Account header rules.
 		authed.Handle("GET /api/v1/account-header-rules", HandleListRules(cp))
-		// Canonical route (DESIGN.md): url_prefix comes from path parameter only.
+		// Canonical route: url_prefix comes from path parameter only.
 		authed.Handle("PUT /api/v1/account-header-rules/{prefix...}", HandleUpsertRule(cp))
 		authed.Handle("POST /api/v1/account-header-rules:resolve", HandleResolveRule(cp))
 		authed.Handle("DELETE /api/v1/account-header-rules/{prefix...}", HandleDeleteRule(cp))
@@ -205,7 +205,7 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/quality/ip/{ip}", HandleQualityIP(cp))
 		authed.Handle("POST /api/v1/quality/ip/{ip}/actions/probe", HandleQualityProbeIP(cp))
 
-		// Intel store and batch jobs (WP08 §7). The SSE stream is registered
+		// Intel store and batch jobs. The SSE stream is registered
 		// outside this mux so it can also accept ?access_token=.
 		authed.Handle("POST /api/v1/intel/jobs", HandleIntelCreateJob(cp))
 		authed.Handle("GET /api/v1/intel/jobs", HandleIntelListJobs(cp))
@@ -216,7 +216,7 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/intel/status", HandleIntelStatus(cp))
 		authed.Handle("GET /api/v1/intel/nodes/{hash}", HandleIntelNode(cp))
 		authed.Handle("GET /api/v1/intel/ip/{ip}", HandleIntelIP(cp))
-		// Data source and unlock check settings (WP09 §4/§5.4).
+		// Data source and unlock check settings.
 		authed.Handle("GET /api/v1/intel/providers", HandleIntelListProviders(cp))
 		authed.Handle("PATCH /api/v1/intel/providers/{id}", HandleIntelUpdateProvider(cp))
 		authed.Handle("POST /api/v1/intel/providers/{id}/actions/resume", HandleIntelResumeProvider(cp))
@@ -259,9 +259,9 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/metrics/snapshots/node-latency-distribution", HandleSnapshotNodeLatencyDistribution(metricsManager))
 	}
 
-	// Management write auditing (WP04 §4.7). The request-body limit wraps the
+	// Management write auditing. The request-body limit wraps the
 	// audit middleware, so the raw body its payload peek reads is already bounded
-	// by apiMaxBodyBytes before the peek's own 64 KiB cap applies (G-12).
+	// by apiMaxBodyBytes before the peek's own 64 KiB cap applies.
 	var authedHandler http.Handler = authed
 	if cp != nil && cp.Engine != nil {
 		authed.Handle("GET /api/v1/audit-logs", HandleListAuditLogs(cp.Engine))
@@ -272,7 +272,7 @@ func NewServerWithAddress(
 	// the header block, and ReadTimeout has to stay unset for the SSE stream.
 	authedHandler = RequestBodyDeadlineMiddleware(RequestBodyTimeout, authedHandler)
 
-	// Login failure limiting (WP04 §4.6). Only failed authentications count and
+	// Login failure limiting. Only failed authentications count and
 	// X-Forwarded-For is honoured solely for PRISM_TRUSTED_PROXIES.
 	var trustedProxies []string
 	if envCfg != nil {

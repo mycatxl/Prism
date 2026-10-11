@@ -14,7 +14,7 @@ import (
 	"prism/internal/netutil"
 )
 
-// WP09 §3 API surface: GET /api/v1/intel/providers reports the state of the
+// API surface: GET /api/v1/intel/providers reports the state of the
 // offline databases and POST .../actions/refresh runs a bounded manual
 // download. No test touches the network: the vendor endpoints are served by
 // httptest and the cache directory is a t.TempDir().
@@ -50,7 +50,7 @@ func intelGeoFile(t *testing.T, item map[string]any, name string) map[string]any
 }
 
 // TestIntelOfflineDatabaseStateAndRefresh covers the offline database surface
-// of WP09 §3 end to end: the reported state, the manual refresh action and the
+// of end to end: the reported state, the manual refresh action and the
 // documented error cases.
 func TestIntelOfflineDatabaseStateAndRefresh(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)

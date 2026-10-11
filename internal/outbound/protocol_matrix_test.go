@@ -18,7 +18,7 @@ import (
 	"prism/internal/subscription"
 )
 
-// matrixCase describes one protocol-matrix row (WP06 §11).
+// matrixCase describes one protocol-matrix row.
 type matrixCase struct {
 	name string
 	// input is a subscription payload; fixture names a
@@ -32,13 +32,13 @@ type matrixCase struct {
 	wantKind   string // outbound|endpoint|chain
 	wantProto  string
 	wantNodes  int
-	// notParsed marks inputs the parser must not import (delegated to WP07 or
+	// notParsed marks inputs the parser must not import (delegated to or
 	// reported as invalid).
 	notParsed bool
 	// wantBuild is an error substring; empty means Build must succeed.
 	wantBuild string
 	// wantDial dials 127.0.0.1:1 and asserts the failure is not a detour
-	// resolution failure (§6.5).
+	// resolution failure.
 	wantDial bool
 }
 
@@ -158,8 +158,8 @@ func closeMatrixOutbound(t *testing.T, ob adapter.Outbound, label string) {
 	}
 }
 
-// assertDetourResolves checks §6.5: dialing an unreachable target must fail for
-// a transport reason, never with "outbound detour not found" (fact F7).
+// assertDetourResolves checks: dialing an unreachable target must fail for
+// a transport reason, never with "outbound detour not found".
 func assertDetourResolves(t *testing.T, ob adapter.Outbound) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), dialProbeTimeout)
@@ -260,7 +260,7 @@ func protocolMatrixCases() []matrixCase {
 			wantEngine: node.EngineSingbox, wantKind: "outbound", wantProto: "hysteria2",
 		},
 
-		// --- WP06 §8 share links ----------------------------------------------
+		// --- share links ----------------------------------------------
 		{
 			name:       "tuic-uri",
 			input:      "tuic://11111111-2222-3333-4444-555555555555:password@1.2.3.4:443?congestion_control=bbr&udp_relay_mode=native&sni=example.com&alpn=h3#tuic",
@@ -324,7 +324,7 @@ func protocolMatrixCases() []matrixCase {
 			wantEngine: node.EngineSingbox, wantKind: "outbound", wantProto: "http",
 		},
 
-		// --- WireGuard: the five sources (§3) ---------------------------------
+		// --- WireGuard: the five sources ---------------------------------
 		{
 			name:       "wireguard-legacy-outbound",
 			input:      `{"outbounds":[` + wireGuardLegacyOptions + `]}`,
@@ -351,7 +351,7 @@ func protocolMatrixCases() []matrixCase {
 			wantEngine: node.EngineSingbox, wantKind: "endpoint", wantProto: "wireguard",
 		},
 
-		// --- detour chains (§6) ------------------------------------------------
+		// --- detour chains ------------------------------------------------
 		{
 			name: "chain-singbox-json",
 			input: `{"outbounds":[
@@ -378,7 +378,7 @@ func protocolMatrixCases() []matrixCase {
 			wantNodes: 2, wantDial: true,
 		},
 
-		// --- Snell (§7) --------------------------------------------------------
+		// --- Snell --------------------------------------------------------
 		{
 			name:       "snell-clash-v4",
 			input:      `{"proxies":[{"name":"snell4","type":"snell","server":"1.2.3.4","port":443,"psk":"psk-value","version":4,"obfs-opts":{"mode":"http","host":"example.com"}}]}`,
@@ -395,7 +395,7 @@ func protocolMatrixCases() []matrixCase {
 			notParsed: true,
 		},
 
-		// --- OpenVPN .ovpn profiles (§4) -------------------------------------
+		// --- OpenVPN.ovpn profiles -------------------------------------
 		{
 			name:       "ovpn-tls-crypt",
 			fixture:    "tls-crypt.ovpn",
@@ -453,7 +453,7 @@ func protocolMatrixCases() []matrixCase {
 			notParsed: true,
 		},
 
-		// --- delegated to WP07 / not built into this binary --------------------
+		// --- delegated to / not built into this binary --------------------
 		{
 			name:      "ssr-clash-deferred",
 			input:     `{"proxies":[{"name":"ssr","type":"ssr","server":"1.2.3.4","port":443,"cipher":"aes-256-cfb","password":"pw","obfs":"plain","protocol":"origin"}]}`,
@@ -481,7 +481,7 @@ func protocolMatrixCases() []matrixCase {
 		},
 		{
 			// tor parses; sing-box starts the tor executable at build time, so
-			// the build is only checked to reach the tor outbound (§10.2).
+			// the build is only checked to reach the tor outbound.
 			name:       "tor-singbox",
 			input:      `{"outbounds":[{"type":"tor","tag":"tor"}]}`,
 			wantEngine: node.EngineSingbox, wantKind: "outbound", wantProto: "tor",
@@ -494,7 +494,7 @@ func protocolMatrixCases() []matrixCase {
 		},
 	}
 
-	// A mihomo envelope is rejected by the sing-box runtime. WP07 owns the built
+	// A mihomo envelope is rejected by the sing-box runtime. owns the built
 	// path; until then both builds report ENGINE_NOT_BUILT.
 	cases = append(cases, matrixCase{
 		name:       "mihomo-proxy-envelope",
@@ -524,7 +524,7 @@ func protocolMatrixCases() []matrixCase {
 }
 
 // TestProtocolMatrixCapabilities checks that every declared capability exists in
-// the embedded sing-box registries (WP06 §10).
+// the embedded sing-box registries.
 func TestProtocolMatrixCapabilities(t *testing.T) {
 	b := newTestSingboxBuilder(t)
 	defer b.Close()

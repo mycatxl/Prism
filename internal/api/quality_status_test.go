@@ -9,13 +9,13 @@ import (
 	"prism/internal/service"
 )
 
-// TestQualityStatusJSONContract is the WP04 §4.5 snapshot test: it pins
+// TestQualityStatusJSONContract is the snapshot test: it pins
 // /api/v1/quality/status to the WebUI QualityStatus type
 // (internal/api/web/src/features/quality/types.ts) so fields cannot silently
 // disappear again, and it checks that the disabled shape uses empty arrays and
 // a string storage_error instead of null.
 //
-// WP08 §8 replaced the in-memory inspection manager with intel.db, so the
+// replaced the in-memory inspection manager with intel.db, so the
 // expected body is the shape the intel-backed projection produces when no
 // subsystem is wired: enabled=false and every list empty. The field names are
 // still exactly the WebUI contract; the per-item field list is pinned by

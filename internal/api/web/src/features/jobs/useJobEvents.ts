@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { buildIntelJobEventsURL } from "./api";
 import type { JobProgressFrame } from "./types";
 
-// WP08 §7 SSE client for one job (internal/api/handler_intel.go:145).
+// SSE client for one job (internal/api/handler_intel.go:145).
 //
 // Frame grammar of the endpoint:
 //   event: progress   data: {"done":..,"failed":..,"skipped":..,"total":..,"status":".."}

@@ -8,7 +8,7 @@ import (
 	"prism/internal/node"
 )
 
-// Subscription parse report (WP06 §9).
+// Subscription parse report.
 //
 // The report makes every drop explainable. A node that is recognised but not
 // imported must appear in Skipped with a reason and a detail string; there are
@@ -242,7 +242,7 @@ func skipDeferredOrUnknown(name string, typeName string, source string) (Skipped
 }
 
 // skipSnellVersion classifies a Snell node by version. sing-box 1.14 supports
-// version 4 and 6 only (fact F9).
+// version 4 and 6 only.
 func skipSnellVersion(name string, source string, version uint64, hasVersion bool) SkippedNode {
 	label := "unspecified"
 	if hasVersion {

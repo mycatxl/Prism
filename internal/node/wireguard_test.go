@@ -21,7 +21,7 @@ func wireGuardOptions(t *testing.T, extra string) map[string]any {
 	return options
 }
 
-// TestWireGuardPeerOptions_AllowedIPsCommaJoined is the F2 regression test at
+// TestWireGuardPeerOptions_AllowedIPsCommaJoined is the  regression test at
 // the parser boundary. The wireguard share link writes every allowed-ips entry
 // as ONE comma-joined query value (export/uri.go), so the parser must split it
 // before normalizing; before the fix "0.0.0.0/0,::/0" reached
@@ -102,7 +102,7 @@ func TestWireGuardPeerOptions_AllowedIPsInvalidStillRejected(t *testing.T) {
 }
 
 // TestWireGuardPeerOptions_AllowedIPsKeySpellings checks every spelling the
-// reader accepts carries the comma-joined form, so the F2 fix covers the Clash
+// reader accepts carries the comma-joined form, so the  fix covers the Clash
 // (`allowed-ips`), sing-box (`allowed_ips`) and camelCase keys alike.
 func TestWireGuardPeerOptions_AllowedIPsKeySpellings(t *testing.T) {
 	for _, key := range []string{"allowed_ips", "allowed-ips", "allowedIPs"} {
@@ -168,7 +168,7 @@ func TestParseWireGuardURI_ExportedLinkShape(t *testing.T) {
 }
 
 // TestParseWireGuardURI_OptionalFields covers the other comma-carrying fields of
-// the share link, so the F2 fix cannot regress them.
+// the share link, so the  fix cannot regress them.
 func TestParseWireGuardURI_OptionalFields(t *testing.T) {
 	const link = "wireguard://PRIV@203.0.113.9:51820?publickey=PUB&presharedkey=PSK&" +
 		"address=10.7.0.2%2F32%2Cfd01%3A%3A1%2F128&allowedips=0.0.0.0%2F0&reserved=209%2C98%2C59&" +

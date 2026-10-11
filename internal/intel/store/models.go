@@ -32,16 +32,16 @@ const (
 	JobCanceled  = "canceled"
 )
 
-// MaxNormalizedJSONBytes caps the normalised quality.Evidence blob (§2: 8 KiB).
+// MaxNormalizedJSONBytes caps the normalised quality.Evidence blob ( 8 KiB).
 const MaxNormalizedJSONBytes = 8 * 1024
 
-// MaxRawJSONBytes caps a stored provider response (§2: 32 KiB).
+// MaxRawJSONBytes caps a stored provider response ( 32 KiB).
 const MaxRawJSONBytes = 32 * 1024
 
-// MaxResultJSONBytes caps the per-step job item summary (§2: 4 KiB).
+// MaxResultJSONBytes caps the per-step job item summary ( 4 KiB).
 const MaxResultJSONBytes = 4 * 1024
 
-// MaxDetailJSONBytes caps a node check detail blob (§2: 4 KiB).
+// MaxDetailJSONBytes caps a node check detail blob ( 4 KiB).
 const MaxDetailJSONBytes = 4 * 1024
 
 // EgressFamilies are the two address families tracked by node_egress.

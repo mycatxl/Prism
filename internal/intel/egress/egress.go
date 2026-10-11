@@ -1,6 +1,6 @@
 // Package egress probes a node's own egress addresses (IPv4, IPv6, Cloudflare
-// colo/loc) through outbound.Manager and persists the observation (WP08 §3.2
-// step 1 and §4).
+// colo/loc) through outbound.Manager and persists the observation (
+// step 1 and).
 package egress
 
 import (
@@ -16,7 +16,7 @@ import (
 	"prism/internal/node"
 )
 
-// Cloudflare trace endpoints. 1.1.1.1 is the primary choice of §3.2; the
+// Cloudflare trace endpoints. 1.1.1.1 is the primary choice of; the
 // per-family public hostnames are the documented fallback for environments where
 // the IP-literal URLs are blocked or the certificate does not cover the IP SANs.
 const (
@@ -27,7 +27,7 @@ const (
 	FallbackTraceURLv6 = "https://cloudflare.com/cdn-cgi/trace"
 )
 
-// DefaultTimeout bounds one egress request (§3.2: 15 seconds).
+// DefaultTimeout bounds one egress request ( 15 seconds).
 const DefaultTimeout = 15 * time.Second
 
 // maxTraceBytes bounds the trace response body.
@@ -80,7 +80,7 @@ func ParseTrace(body []byte) (Trace, error) {
 type Probe struct {
 	Fetcher Fetcher
 	Store   *store.Store
-	// ProbeEgressSync keeps Resin's cache.db egress_ip semantics (§3.2 step 1).
+	// ProbeEgressSync keeps Resin's cache.db egress_ip semantics (step 1).
 	// It is optional: when nil the probe only writes intel.db.
 	ProbeEgressSync func(ctx context.Context, hash node.Hash) error
 	// URLs override the default trace endpoints.
@@ -163,7 +163,7 @@ func (p *Probe) Run(ctx context.Context, hash node.Hash) (Result, error) {
 	obs.Colo = trace.Colo
 	obs.Loc = trace.Loc
 
-	// The IPv6 attempt is recorded even when it fails (§3.2).
+	// The IPv6 attempt is recorded even when it fails.
 	v6ctx, v6cancel := context.WithTimeout(ctx, p.timeout())
 	obs.V6Checked = true
 	if v6Body, _, err := p.Fetcher.FetchWithOptions(v6ctx, hash, p.urlv6(), netutil.OutboundHTTPOptions{

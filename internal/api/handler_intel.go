@@ -14,7 +14,7 @@ import (
 )
 
 // sseKeepAlive is the SSE heartbeat interval; the progress rate limit of one
-// frame per second is enforced in the job hub (WP08 §7).
+// frame per second is enforced in the job hub.
 const sseKeepAlive = 15 * time.Second
 
 // HandleIntelCreateJob implements POST /api/v1/intel/jobs.
@@ -145,7 +145,7 @@ func HandleIntelIP(cp *service.ControlPlaneService) http.HandlerFunc {
 // HandleIntelJobEvents implements GET /api/v1/intel/jobs/{id}/events (SSE).
 //
 // Because the browser EventSource API cannot send an Authorization header, this
-// single endpoint also accepts ?access_token=<admin token> (WP08 §7). The token
+// single endpoint also accepts ?access_token=<admin token>. The token
 // is compared in constant time and a failure is counted by the same login
 // failure limiter as the regular auth middleware.
 func HandleIntelJobEvents(adminToken string, limiter *AuthFailureLimiter, cp *service.ControlPlaneService) http.HandlerFunc {

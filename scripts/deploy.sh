@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Prism deployment script (WP04 §4.10).
+# Prism deployment script.
 #
 #   * refuses to run without a compiled binary (<dir>/bin/prism)
 #   * generates <dir>/.env through `prism init` when it is missing and never

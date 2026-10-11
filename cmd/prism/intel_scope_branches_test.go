@@ -262,7 +262,7 @@ func TestResolveIntelScope_SubscriptionBranchDropsMalformedLinks(t *testing.T) {
 }
 
 // TestResolveIntelScope_UnionOfSelectors pins that the selectors are a union, as
-// WP08 §3.1 specifies.
+// specifies.
 func TestResolveIntelScope_UnionOfSelectors(t *testing.T) {
 	app, hashes := scopeFixture(t, map[string][]string{
 		"sub-a": {"a1"},
@@ -358,7 +358,7 @@ func TestResolveIntelScope_SubscriptionWithFilterDoesNotWidenToPool(t *testing.T
 	}
 
 	// The documented counterpart: with no explicit selector, the filter alone is
-	// what makes the pool walk happen (WP08 §7.1: "equivalent to all:true plus
+	// what makes the pool walk happen ("equivalent to all:true plus
 	// the filter"). All three nodes are healthy, so all three must appear.
 	got, err = app.resolveIntelScope(context.Background(), jobs.Scope{
 		Filter: map[string]string{"healthy": "true"},

@@ -31,7 +31,7 @@ type viaNodeResponse struct {
 
 // fetchViaNode performs one request through the tested node's outbound. It never
 // uses an environment proxy, the platform router, a bypass rule or a direct
-// fallback (WP09 §1).
+// fallback.
 func fetchViaNode(ctx context.Context, ob adapter.Outbound, target string, headers map[string]string, timeout time.Duration) (viaNodeResponse, Result) {
 	if ob == nil {
 		return viaNodeResponse{}, Failure(CodeUnavailable, "the node connection is not ready")
@@ -238,7 +238,7 @@ func DecodeIPPure(body []byte, expect netip.Addr, now time.Time, ttl time.Durati
 // ip-api.com (via-node)
 // ---------------------------------------------------------------------------
 
-// ipAPIFields is the field selection of WP09 §3.
+// ipAPIFields is the field selection of
 const ipAPIFields = "status,message,country,countryCode,regionName,city,isp,org,as,asname,mobile,proxy,hosting,query"
 
 // IPAPIURL is the free ip-api.com endpoint (HTTP only).
@@ -460,7 +460,7 @@ type ProxyCheckViaNodeOptions struct {
 // ProxyCheckViaNode reports proxycheck.io's verdict for a node's own egress
 // address, queried through that same node so the vendor's anonymous quota
 // belongs to the node. It never carries a key: a credential must not travel
-// through an untrusted outbound (WP09 §1).
+// through an untrusted outbound.
 type ProxyCheckViaNode struct {
 	spec    Spec
 	url     string
@@ -549,7 +549,7 @@ func (p *ProxyCheckViaNode) Lookup(ctx context.Context, ob adapter.Outbound, exp
 // therefore shared by the whole inventory. Sending the query through the node
 // while naming that same node makes the vendor attribute it to the node, so the
 // anonymous quota is spent per node instead of per Prism host. No credential
-// travels through the untrusted outbound (WP09 §1).
+// travels through the untrusted outbound.
 const IPAPIISViaNodeURL = "https://api.ipapi.is/"
 
 // IPAPIISNodeProfile is the normalised contract of the via-node variant. It is

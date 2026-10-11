@@ -41,7 +41,7 @@ type NodeEntry struct {
 	// Engine is the runtime that builds this node: "singbox" or "mihomo".
 	Engine string
 	// ProtocolDetail is the display form of the node protocol, for example
-	// "shadowsocks+shadowtls", "vless+reality" or "vless+xhttp" (WP06 §1.4).
+	// "shadowsocks+shadowtls", "vless+reality" or "vless+xhttp".
 	ProtocolDetail string
 	// Chain reports whether the node is a detour chain.
 	Chain bool
@@ -111,7 +111,7 @@ func NewNodeEntry(hash Hash, rawOptions json.RawMessage, createdAt time.Time, ma
 }
 
 // normalizeProtocolName maps an engine type name onto the unified protocol
-// name used by filters and the UI (WP06 §1.4).
+// name used by filters and the UI.
 func normalizeProtocolName(engine string, typeName string) string {
 	name := strings.ToLower(strings.TrimSpace(typeName))
 	if len(name) > 32 {

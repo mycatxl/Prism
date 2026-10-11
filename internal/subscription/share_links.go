@@ -8,7 +8,7 @@ import (
 	"prism/internal/node"
 )
 
-// Share-link parsers added by WP06 §8 for the sing-box path.
+// Share-link parsers for the sing-box path.
 
 // parseTuicURI parses tuic:// share links into a sing-box tuic outbound.
 func parseTuicURI(uri string) (ParsedNode, bool) {
@@ -177,7 +177,7 @@ func parseAnyTLSURI(uri string) (ParsedNode, bool) {
 }
 
 // parseSSHURI parses ssh:// share links into a sing-box ssh outbound.
-// URI-embedded private keys are not supported (WP06 §8).
+// URI-embedded private keys are not supported.
 func parseSSHURI(uri string) (ParsedNode, bool) {
 	u, err := url.Parse(strings.TrimSpace(uri))
 	if err != nil {
@@ -226,7 +226,7 @@ func parseSSHURI(uri string) (ParsedNode, bool) {
 	return buildParsedNode(outbound)
 }
 
-// parseWireGuardShareURI parses wireguard:// and wg:// share links (§3).
+// parseWireGuardShareURI parses wireguard:// and wg:// share links.
 // The node is emitted in form B (endpoint envelope).
 func parseWireGuardShareURI(uri string) (ParsedNode, bool) {
 	name, endpoint, ok := node.ParseWireGuardURI(uri)

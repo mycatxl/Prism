@@ -1,4 +1,4 @@
-// WP08 §3/§7 client types for the batch job surface.
+// /client types for the batch job surface.
 //
 // Server DTOs: internal/intel/store/models.go (Job, JobItem, JobProgress),
 // internal/api/handler_intel.go (page envelopes at line 280, SSE frames at
@@ -77,7 +77,7 @@ export type IntelJobItemPage = PageEnvelope<IntelJobItem>;
 // fixed server side (control_plane_intel.go:113 uses PriorityManual = 100).
 //
 // jobs.Scope unions its entries (internal/intel/jobs/jobs.go:132) and `filter`
-// carries the same keys as the GET /api/v1/nodes query (docs/API.md, "Intel jobs").
+// carries the same keys as the GET /api/v1/nodes query.
 // Values are strings by contract — "true"/"false" for the switches.
 export type IntelJobScopeFilter = {
   protocol?: string;

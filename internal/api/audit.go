@@ -17,7 +17,7 @@ import (
 	"prism/internal/model"
 )
 
-// Audit logging (WP04 §4.7).
+// Audit logging.
 //
 // Every successful management write (POST, PUT, PATCH, DELETE, including the
 // /actions/* routes and the token-path task actions) is appended to the

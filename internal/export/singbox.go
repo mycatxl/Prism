@@ -7,7 +7,7 @@ import (
 	"prism/internal/node"
 )
 
-// exportSingbox renders a sing-box configuration (WP11 §2.1).
+// exportSingbox renders a sing-box configuration.
 //
 // Every tag in the document is unique, and the exporter - not the node names -
 // is what makes that true. All tags of the document are claimed from one taken
@@ -123,7 +123,7 @@ func exportSingbox(items []preparedItem, opt Options, report *Report) ([]byte, i
 	return append(encoded, '\n'), len(names)
 }
 
-// singboxNode is one item of the document after the §2.1 representability check:
+// singboxNode is one item of the document after the representability check:
 // the decoded config objects, with the node tag and the dependency tags not yet
 // applied.
 type singboxNode struct {
@@ -225,7 +225,7 @@ func claimTag(tag string, taken map[string]struct{}) string {
 }
 
 // uniqueTag returns tag, or "tag #k" when it collides with a node name. It is
-// the mihomo group-tag rule (§2.2), which deduplicates against the proxy names
+// the mihomo group-tag rule, which deduplicates against the proxy names
 // only; the sing-box document claims every tag from one taken set (claimTag).
 func uniqueTag(tag string, names []string) string {
 	if !containsString(names, tag) {

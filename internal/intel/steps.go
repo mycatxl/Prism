@@ -18,7 +18,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// Bounds of the WP09 pipeline steps (R4: every queue, worker and cache is
+// Bounds of the pipeline steps (R4: every queue, worker and cache is
 // bounded and has a defined over-limit behaviour).
 const (
 	// DefaultMaxEvidencePerStep bounds how many provider lookups one pipeline
@@ -29,7 +29,7 @@ const (
 	// DefaultMaxChecksPerStep bounds how many unlock rules one item may run.
 	DefaultMaxChecksPerStep = 32
 	// DefaultViaNodeDeferral bounds how long the via-node step may park an item
-	// waiting for a data source budget/QPS gate (§3.2 step 4). A gate that opens
+	// waiting for a data source budget/QPS gate (step 4). A gate that opens
 	// later than this is reported as an explicit skip instead of an endless
 	// requeue.
 	DefaultViaNodeDeferral = 30 * time.Minute
@@ -73,7 +73,7 @@ const (
 	CodeNoEgressObservation = "NO_EGRESS_OBSERVATION"
 )
 
-// StepOptions supplies the runtime dependencies of the WP09 pipeline steps
+// StepOptions supplies the runtime dependencies of the pipeline steps
 // (offline data sources, the online provider queue, via-node data sources and
 // the unlock checks). A nil field degrades the matching step to an explicit,
 // explainable skip instead of a nil dereference.
@@ -101,7 +101,7 @@ type StepOptions struct {
 	ViaNodeDeferral    time.Duration
 }
 
-// NewStepHandlers builds the real pipeline handlers of WP09. Steps whose
+// NewStepHandlers builds the real pipeline handlers of. Steps whose
 // dependency is missing keep a nil handler so the pipeline reports
 // {"skipped":"no handler for step N"} exactly as before.
 func NewStepHandlers(opts StepOptions) StepHandlers {
@@ -119,7 +119,7 @@ func NewStepHandlers(opts StepOptions) StepHandlers {
 }
 
 // NewOnlineLookup builds the batch lookup used by the online-ip queue workers
-// (§3.3). It performs the provider call, persists the evidence (including failed
+// . It performs the provider call, persists the evidence (including failed
 // attempts) and reports the outcome to the scheduler. A nil result means the
 // queue workers must not start.
 func NewOnlineLookup(opts StepOptions) jobs.OnlineLookup {
@@ -130,8 +130,8 @@ func NewOnlineLookup(opts StepOptions) jobs.OnlineLookup {
 	return jobs.OnlineLookupFunc(e.onlineLookup)
 }
 
-// QueueSpecs adapts the WP09 provider registry to the queue-worker
-// specification source of WP08 §3.3. The registry resolves enabled, runnable
+// QueueSpecs adapts the provider registry to the queue-worker
+// specification source of The registry resolves enabled, runnable
 // and credentialed providers, so the queue workers always see the current
 // settings without a restart.
 func QueueSpecs(registry *providers.Registry) jobs.ProviderSpecSource {
@@ -317,7 +317,7 @@ func (e *stepExecutor) resolveOutbound(nodeHash string) (adapter.Outbound, bool)
 }
 
 // providerSelection filters a provider selection against an enabled set. An
-// empty selection means "every enabled provider" (WP09 §3).
+// empty selection means "every enabled provider".
 func providerSelection(selection []string, available []providers.Spec) []providers.Spec {
 	if len(selection) == 0 {
 		return available
@@ -361,7 +361,7 @@ func (e *stepExecutor) viaNodeSpecs(selection []string) []providers.Spec {
 
 // persistResult writes one provider conclusion into intel.db. Failures are
 // stored too (status=error/unsupported) so the assessment can tell "the source
-// said nothing" from "the source was never asked" (WP10 §1.3).
+// said nothing" from "the source was never asked".
 //
 // It reports whether the row is really in the database. A caller that records
 // "this source has been asked" has to gate on that answer: step 4 skips the
@@ -555,7 +555,7 @@ func (e *stepExecutor) enqueueOnlineStep(ctx context.Context, jobID, nodeHash st
 					continue
 				}
 			}
-			// §3.2 step 3: a lookup without current evidence re-queues a
+			// step 3: a lookup without current evidence re-queues a
 			// terminal queue row; a queued or running row only has its
 			// priority raised, so two jobs never duplicate one lookup.
 			mode := store.EnqueueRefresh
@@ -693,7 +693,7 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 			continue
 		}
 		if wait > 0 {
-			// §3.2 step 4: never block the worker; park the item instead.
+			// step 4: never block the worker; park the item instead.
 			until := now.Add(wait)
 			if deferUntil.IsZero() || until.Before(deferUntil) {
 				deferUntil = until
@@ -970,7 +970,7 @@ func (e *stepExecutor) checksStep(ctx context.Context, jobID, nodeHash string) j
 }
 
 // ---------------------------------------------------------------------------
-// online-ip queue worker lookup (§3.3)
+// online-ip queue worker lookup
 // ---------------------------------------------------------------------------
 
 // onlineLookup performs one batch lookup and persists the evidence. The queue

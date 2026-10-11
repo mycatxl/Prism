@@ -103,7 +103,7 @@ func NewProxyCheckProvider(opts ProxyCheckOptions) *ProxyCheck {
 func (p *ProxyCheck) Spec() Spec { return p.spec }
 
 // Lookup implements OnlineProvider. v3 is queried one address at a time until
-// the vendor confirms batching, so BatchSize is 1 (WP09 §3).
+// the vendor confirms batching, so BatchSize is 1.
 func (p *ProxyCheck) Lookup(ctx context.Context, ips []netip.Addr) map[netip.Addr]Result {
 	out := make(map[netip.Addr]Result, len(ips))
 	for _, raw := range ips {
@@ -182,7 +182,7 @@ func DecodeProxyCheckAs(body []byte, ip netip.Addr, now time.Time, ttl time.Dura
 		return nil, &ProviderError{
 			Code: code, Message: "proxycheck.io did not accept the query",
 			// Only a rejected key pauses the provider; a spent quota cools the
-			// queue down for RetryAfter instead (§3.3).
+			// queue down for RetryAfter instead.
 			Pause: code == CodeAuth, RetryAfter: 24 * time.Hour,
 		}
 	}
@@ -638,7 +638,7 @@ func DecodeIPQS(body []byte, ip netip.Addr, now time.Time, ttl time.Duration) (*
 		evidence.ASN = "AS" + strconv.Itoa(*payload.ASN)
 	}
 	// recent_abuse is the vendor's short-window reputation flag; it is surfaced
-	// as a signal the WP10 penalty table understands.
+	// as a signal the penalty table understands.
 	if payload.RecentAbuse != nil && *payload.RecentAbuse {
 		yes := true
 		evidence.Signals.Compromised = nil

@@ -36,7 +36,7 @@ import type {
   JobKind,
 } from "./types";
 
-// WP08 §3/§7 检测任务工作区：任务列表 + 新建对话框 + 详情抽屉（SSE 实时进度）。
+// /检测任务工作区：任务列表 + 新建对话框 + 详情抽屉（SSE 实时进度）。
 // 后端见 internal/api/handler_intel.go（CRUD 与 SSE）与 internal/intel/jobs。
 
 type BadgeTone = "neutral" | "signal" | "live" | "warn" | "alert" | "outline";
@@ -247,7 +247,7 @@ function ProgressMeter({
       title={failure}
       className={cn(
         // A 4px bar, so 2px reads as a soft cap without claiming the pill shape
-        // that is reserved for status (DESIGN.md:126-127).
+ // that is reserved for status.
         "overflow-hidden rounded-[2px] bg-paper-sunk",
         inline ? "h-1 min-w-0 flex-1" : cn("h-1 w-full", size === "lg" ? "mt-2" : "mt-1"),
       )}

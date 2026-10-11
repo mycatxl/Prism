@@ -78,7 +78,7 @@ func (s *Store) GetNodeCheck(ctx context.Context, nodeHash, checkID string) (Nod
 }
 
 // ListExpiredChecks returns checks that expired before expiredBeforeNs, which the
-// scheduled refresh job (§3.6) uses to compute its scope.
+// scheduled refresh job uses to compute its scope.
 func (s *Store) ListExpiredChecks(ctx context.Context, expiredBeforeNs int64, limit int) ([]NodeCheck, error) {
 	db, err := s.conn()
 	if err != nil {

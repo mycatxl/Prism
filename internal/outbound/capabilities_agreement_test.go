@@ -10,7 +10,7 @@ import (
 )
 
 // TestEngineCapabilitiesMatchRuntimeBehaviour pins the capabilities API to what
-// the linked runtime can actually do (docs/ENGINE_DECISIONS.md D-1).
+// the linked runtime can actually do.
 //
 // Rules asserted here, for whatever tag set this binary was compiled with:
 //   - an engine may only be reported as built when its runtime layer registered

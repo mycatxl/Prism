@@ -28,7 +28,7 @@ func parseNodeHash(nodeHash string) (node.Hash, error) {
 	return hash, nil
 }
 
-// egressObservationQueue bounds the non-blocking egress observer queue of §4.
+// egressObservationQueue bounds the non-blocking egress observer queue of
 // A full queue drops the sample and increments a counter (R4).
 const egressObservationQueue = 4096
 
@@ -38,9 +38,9 @@ const egressObservationBatch = 256
 // egressObservationFlush bounds how long one observation may wait in the queue.
 const egressObservationFlush = 250 * time.Millisecond
 
-// StepHandlers is the seam WP09 (offline/online providers, via-node sources,
-// unlock checks) and WP10 (assessment) fill in. Every field is optional: a nil
-// handler makes the pipeline step a no-op skip so WP08 stays runnable on its own.
+// StepHandlers is the seam (offline/online providers, via-node sources,
+// unlock checks) and (assessment) fill in. Every field is optional: a nil
+// handler makes the pipeline step a no-op skip so stays runnable on its own.
 type StepHandlers struct {
 	// Egress overrides the built-in egress probe of step 1.
 	Egress func(ctx context.Context, jobID, nodeHash string) jobs.StepResult
@@ -76,14 +76,14 @@ func (h StepHandlers) handler(step jobs.Step) func(ctx context.Context, jobID, n
 	}
 }
 
-// pipelineRunner implements jobs.StepRunner for the WP08 step pipeline.
+// pipelineRunner implements jobs.StepRunner for the step pipeline.
 type pipelineRunner struct {
 	handlers StepHandlers
 	prober   *egress.Probe
 	onChange func(ips []netip.Addr)
 }
 
-// checksEgressReuse is the §3.2 reuse window of the checks pipeline. Only that
+// checksEgressReuse is the reuse window of the checks pipeline. Only that
 // pipeline may reuse an observation: the intel and full pipelines re-probe
 // unconditionally because there the egress address is a product of the run.
 const checksEgressReuse = 15 * time.Minute
@@ -94,7 +94,7 @@ func (r pipelineRunner) RunStep(ctx context.Context, kind jobs.Kind, step jobs.S
 		return handler(ctx, jobID, nodeHash)
 	}
 	if step != jobs.StepEgress {
-		// No WP09/WP10 handler registered yet: the step is a no-op, never a
+		// No /handler registered yet: the step is a no-op, never a
 		// failure, so the item still reaches a terminal state.
 		return jobs.StepResult{Summary: map[string]any{"skipped": "no handler for step " + fmt.Sprint(int(step))}}
 	}
@@ -136,7 +136,7 @@ func (r pipelineRunner) RunStep(ctx context.Context, kind jobs.Kind, step jobs.S
 	return jobs.StepResult{Summary: summary}
 }
 
-// reuseFreshEgress implements the §3.2 rule of the checks pipeline: its step 1
+// reuseFreshEgress implements the rule of the checks pipeline: its step 1
 // is documented as "出口探测（15 分钟内已探测则跳过）" because step 5 only reads
 // the node's egress address, so a recent observation is enough and a fresh probe
 // would spend the node's traffic for nothing. It reports false whenever the row
@@ -183,26 +183,26 @@ type Options struct {
 	// ProviderSpecs and Lookup enable the provider queue workers.
 	ProviderSpecs jobs.ProviderSpecSource
 	Lookup        jobs.OnlineLookup
-	// ProviderSettings is the WP09 §4 settings surface of the data sources. It
+	// ProviderSettings is the settings surface of the data sources. It
 	// owns the live provider registry, so a settings change applies without a
 	// restart.
 	ProviderSettings *providers.SettingsService
-	// CheckEngine is the WP09 §5 rule engine, exposed to the checks settings
+	// CheckEngine is the rule engine, exposed to the checks settings
 	// surface (GET/PATCH /api/v1/intel/checks).
 	CheckEngine *checks.Engine
 	// OnEvidenceWritten runs after a provider batch stored evidence. The
 	// assessment of the affected IPs is refreshed before this callback runs.
 	OnEvidenceWritten func(ips []netip.Addr)
-	// OnEgressChange runs after an egress address changed (§4: enqueue the new IP
+	// OnEgressChange runs after an egress address changed ( enqueue the new IP
 	// on every online provider and re-assess within existing evidence).
 	OnEgressChange func(ips []netip.Addr)
-	// EnabledSources reports which data sources are enabled. It feeds the §1.2
+	// EnabledSources reports which data sources are enabled. It feeds the
 	// coverage denominator.
 	EnabledSources func() map[string]bool
-	// OnAssessmentChanged runs after assessments were recomputed (WP10 §2 wires
+	// OnAssessmentChanged runs after assessments were recomputed (wires
 	// it to GlobalNodePool.NotifyEgressIPDirty).
 	OnAssessmentChanged func(ips []netip.Addr)
-	// AssessmentSweepInterval enables the §1.8 expiry sweep. Zero disables it.
+	// AssessmentSweepInterval enables the expiry sweep. Zero disables it.
 	AssessmentSweepInterval time.Duration
 	Census                  jobs.NodeCensus
 	// Tick is the scheduler period of the job executor. Zero uses one second;
@@ -219,16 +219,16 @@ type Service struct {
 	assessor *Assessor
 	prober   *egress.Probe
 	observer *egressObserver
-	// providerSettings is the WP09 §4 settings surface of the data sources; nil
+	// providerSettings is the settings surface of the data sources; nil
 	// when the caller did not wire it.
 	providerSettings *providers.SettingsService
-	// checkEngine is the WP09 §5 rule engine behind the checks settings
+	// checkEngine is the rule engine behind the checks settings
 	// surface; nil when the caller did not wire it.
 	checkEngine *checks.Engine
-	// auto is the §3.6 subscription auto-enqueue coalescer; nil when the caller
+	// auto is the subscription auto-enqueue coalescer; nil when the caller
 	// did not enable it.
 	auto *autoEnqueueQueue
-	// refresh is the §3.6 scheduled refresh; nil when the caller did not enable
+	// refresh is the scheduled refresh; nil when the caller did not enable
 	// it.
 	refresh  *refreshScheduler
 	handlers StepHandlers
@@ -289,11 +289,11 @@ func NewService(opts Options) (*Service, error) {
 		Logf:     logf,
 	})
 	svc.onEvidenceWrittenHook = opts.OnEvidenceWritten
-	// WP10 §1.8: the assessment pipeline step is on by default.
+	// the assessment pipeline step is on by default.
 	if svc.handlers.Assess == nil {
 		svc.handlers.Assess = svc.assessStep
 	}
-	// WP09 §5: the unlock-check handler writes node_checks; the in-memory
+	// the unlock-check handler writes node_checks; the in-memory
 	// projection must follow immediately so the routing and list surfaces see
 	// the new outcome without waiting for a restart.
 	if svc.handlers.Checks != nil {
@@ -403,7 +403,7 @@ func (s *Service) hasUsableEvidence(ctx context.Context, ip netip.Addr) (bool, e
 }
 
 // withCheckProjection wraps the unlock-check step so the in-memory projection
-// reflects the freshly stored node_checks rows (§5). The refresh is best effort:
+// reflects the freshly stored node_checks rows. The refresh is best effort:
 // a projection miss must never fail a check step that already succeeded.
 func (s *Service) withCheckProjection(inner func(ctx context.Context, jobID, nodeHash string) jobs.StepResult) func(ctx context.Context, jobID, nodeHash string) jobs.StepResult {
 	return func(ctx context.Context, jobID, nodeHash string) jobs.StepResult {
@@ -432,7 +432,7 @@ func (s *Service) syncNodeChecks(ctx context.Context, nodeHash string) {
 }
 
 // onEvidenceWritten refreshes the assessment of freshly written evidence and
-// then runs the caller's callback (WP10 §1.8).
+// then runs the caller's callback.
 func (s *Service) onEvidenceWritten(ips []netip.Addr) {
 	if s.assessor != nil && len(ips) > 0 {
 		for _, ip := range ips {
@@ -449,7 +449,7 @@ func (s *Service) onEvidenceWritten(ips []netip.Addr) {
 // Store returns the intel.db handle.
 func (s *Service) Store() *store.Store { return s.store }
 
-// Assessor returns the purity assessor (WP10 §1).
+// Assessor returns the purity assessor.
 func (s *Service) Assessor() *Assessor { return s.assessor }
 
 // Assess recomputes and persists the assessment of one IP.
@@ -469,7 +469,7 @@ func (s *Service) AssessNode(ctx context.Context, nodeHash string) (int, error) 
 }
 
 // SweepAssessments recalculates the assessments that expired since the previous
-// sweep and returns how many rows were refreshed (WP10 §1.8).
+// sweep and returns how many rows were refreshed.
 func (s *Service) SweepAssessments(ctx context.Context) (int, error) {
 	if s == nil || s.assessor == nil {
 		return 0, nil
@@ -480,7 +480,6 @@ func (s *Service) SweepAssessments(ctx context.Context) (int, error) {
 }
 
 // RecomputeForeignProfiles recalculates assessments written by another profile
-// (WP10 §1.8 startup pass).
 func (s *Service) RecomputeForeignProfiles(ctx context.Context) (int, error) {
 	if s == nil || s.assessor == nil {
 		return 0, nil
@@ -497,7 +496,7 @@ func (s *Service) Manager() *jobs.Manager { return s.manager }
 // Prober returns the egress probe.
 func (s *Service) Prober() *egress.Probe { return s.prober }
 
-// ProviderSettings returns the WP09 §4 data source settings surface (nil when
+// ProviderSettings returns the data source settings surface (nil when
 // the caller did not wire it).
 func (s *Service) ProviderSettings() *providers.SettingsService {
 	if s == nil {
@@ -506,7 +505,7 @@ func (s *Service) ProviderSettings() *providers.SettingsService {
 	return s.providerSettings
 }
 
-// CheckEngine returns the WP09 §5 unlock-check rule engine (nil when the caller
+// CheckEngine returns the unlock-check rule engine (nil when the caller
 // did not wire it).
 func (s *Service) CheckEngine() *checks.Engine {
 	if s == nil {
@@ -522,11 +521,11 @@ func (s *Service) Start() error {
 	}
 	s.observer.Start()
 	s.manager.Start()
-	// §3.6: the subscription auto-enqueue coalescer is part of the executor.
+	//: the subscription auto-enqueue coalescer is part of the executor.
 	if s.auto != nil {
 		s.auto.start()
 	}
-	// §3.6: the scheduled refresh is the second automatic producer, next to the
+	//: the scheduled refresh is the second automatic producer, next to the
 	// subscription coalescer above.
 	if s.refresh != nil {
 		s.refresh.start()
@@ -535,7 +534,7 @@ func (s *Service) Start() error {
 	return nil
 }
 
-// startSweeper launches the §1.8 expiry sweep. It is a no-op unless an interval
+// startSweeper launches the expiry sweep. It is a no-op unless an interval
 // was configured.
 func (s *Service) startSweeper() {
 	if s == nil || s.sweepInterval <= 0 {
@@ -572,7 +571,7 @@ func (s *Service) Stop() {
 		}
 	})
 	s.sweepWG.Wait()
-	// §3.6: the scheduled refresh only creates jobs, so it holds no buffered work
+	//: the scheduled refresh only creates jobs, so it holds no buffered work
 	// and stops before the coalescer.
 	if s.refresh != nil {
 		s.refresh.stop()
@@ -587,7 +586,7 @@ func (s *Service) Stop() {
 	s.observer.Stop()
 }
 
-// ReloadSnapshot rebuilds the projection from intel.db (§5: it is only a cache
+// ReloadSnapshot rebuilds the projection from intel.db ( it is only a cache
 // and must be fully reconstructible after a restart).
 func (s *Service) ReloadSnapshot(ctx context.Context) error {
 	return s.snapshot.LoadFrom(ctx, s.store)
@@ -617,7 +616,7 @@ func (s *Service) RecordCheck(ctx context.Context, row store.NodeCheck) error {
 
 // ObserveEgress records a successful periodic egress probe. The callback path is
 // non-blocking: samples land in a bounded queue and a full queue drops the sample
-// and increments the discarded counter (§4, R4).
+// and increments the discarded counter ( R4).
 func (s *Service) ObserveEgress(hash string, ip netip.Addr, loc string) {
 	if s == nil || s.observer == nil {
 		return

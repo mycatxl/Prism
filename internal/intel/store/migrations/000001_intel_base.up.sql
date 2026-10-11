@@ -1,4 +1,4 @@
--- WP08 §2: intel.db base schema.
+-- intel.db base schema.
 --
 -- intel.db is the authoritative store for egress observations, provider
 -- evidence, via-node checks, purity assessments, provider budgets/queues and

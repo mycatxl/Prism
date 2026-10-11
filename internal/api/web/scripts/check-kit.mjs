@@ -2,7 +2,7 @@
 /*
  * The component-kit gate for the console.
  *
- * `internal/api/web/DESIGN.md:44-45` says `src/components/ui/` "is the only
+ * `internal/api/web/the design system` says `src/components/ui/` "is the only
  * permitted source of components. A page composes these; it does not invent a
  * control." That rule is checkable in the source, and until this file existed
  * nothing checked it: an audit found 43 native controls across 14 feature files,
@@ -11,7 +11,7 @@
  * for status.
  *
  * Why a separate gate rather than a rule in an existing one: the anti-pattern
- * detector does not scan `.tsx` at all (root `DESIGN.md:235-236`), and the
+ * detector does not scan `.tsx` at all (root `the design system`), and the
  * browser regression needs a browser, which CI does not install. So every one of
  * those violations lived in the exact layer no gate could see. This script reads
  * the source directly, which is the only place the rule is decidable.
@@ -131,7 +131,7 @@ const CONTROL_HEIGHT_ALLOW = [
 // ---------------------------------------------------------------------------
 
 /*
- * Root `DESIGN.md:126-127`: Badge is the only fully round shape in the system,
+ * Root `the design system`: Badge is the only fully round shape in the system,
  * so the shape itself carries "this is a state"; a second pill spends that
  * signal. This applies everywhere in `src/`, not just inside the kit: a pill
  * drawn by a page spends exactly the same signal as a pill drawn by the kit.

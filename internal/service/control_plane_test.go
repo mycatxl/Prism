@@ -83,7 +83,7 @@ func TestValidateRuntimeConfig_NegativeByteFields(t *testing.T) {
 	}
 }
 
-// TestValidateRuntimeConfig_RequestLogCaptureLimitIsBounded covers G-06: the
+// TestValidateRuntimeConfig_RequestLogCaptureLimitIsBounded covers: the
 // four capture limits are buffered per in-flight proxied request, so an
 // unbounded value would let an admin token holder make every concurrent request
 // allocate that much heap. `0` still means "capture nothing", negatives stay
@@ -941,7 +941,7 @@ func TestDeletePlatform_DoesNotDecodeCorruptPersistedFiltersJSON(t *testing.T) {
 		"",
 		platformRow.AllocationPolicy,
 		true,
-		// WP10 §3 rotation fields: zero values keep this fixture behaviourally
+		// rotation fields: zero values keep this fixture behaviourally
 		// identical to before (rotation has its own tests).
 		false,
 		0,
@@ -1010,7 +1010,7 @@ func TestResetPlatformToDefault_SupportsBuiltInDefaultPlatform(t *testing.T) {
 		"",
 		defaultRow.AllocationPolicy,
 		true,
-		// WP10 §3 rotation fields: zero values keep this fixture behaviourally
+		// rotation fields: zero values keep this fixture behaviourally
 		// identical to before (rotation has its own tests).
 		false,
 		0,
@@ -1158,7 +1158,7 @@ func TestResetPlatformToDefault_DoesNotDecodeCorruptPersistedFiltersJSON(t *test
 		"",
 		platformRow.AllocationPolicy,
 		true,
-		// WP10 §3 rotation fields: zero values keep this fixture behaviourally
+		// rotation fields: zero values keep this fixture behaviourally
 		// identical to before (rotation has its own tests).
 		false,
 		0,

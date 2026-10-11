@@ -7,7 +7,7 @@ import (
 	"prism/internal/proxy"
 )
 
-// WP10 §3: routing advisories such as rotation_fallback_same_ip must survive the
+// routing advisories such as rotation_fallback_same_ip must survive the
 // request-log round trip so the event is visible on the log API.
 func TestRepo_RoundTripsRoutingEvents(t *testing.T) {
 	repo := NewRepo(t.TempDir(), 1<<20, 2)

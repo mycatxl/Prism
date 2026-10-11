@@ -98,7 +98,7 @@ func TestExportEmptyInputProducesEmptyBody(t *testing.T) {
 }
 
 // TestExportJSONCarriesReportInBody checks the json format reports skips in the
-// response body, as §4.1 requires.
+// response body, as requires.
 func TestExportJSONCarriesReportInBody(t *testing.T) {
 	items := append(fixtureNodes(t), fixtureMihomoNode(t))
 	body, _, report, err := Export(items, FormatJSON, Options{IncludeIntel: true})

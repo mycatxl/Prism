@@ -1,4 +1,4 @@
-// Package assess implements the explainable purity scoring of WP10 §1
+// Package assess implements the explainable purity scoring of
 // (profile "prism-purity-v2"). Every function here is pure: the same input
 // always produces the same output, so the whole algorithm is unit-testable
 // without a database, a network or a clock.
@@ -15,11 +15,11 @@ import (
 	"prism/internal/quality"
 )
 
-// Profile is the assessment profile written to ip_assessment.profile. WP10 §1.8
+// Profile is the assessment profile written to ip_assessment.profile.
 // recomputes every row whose profile differs from this value.
 const Profile = "prism-purity-v2"
 
-// Scoring source ids (§1.1). The order is the stable output order of
+// Scoring source ids. The order is the stable output order of
 // Assessment.Components.
 //
 // SourceIPQS and SourceAbuseIPDB are declared but not scored: both vendors
@@ -81,7 +81,7 @@ func ScoringSources() []string {
 }
 
 // offlineSources carry the registry/registration data used by the offline
-// fallbacks of §1.4 and §1.5.
+// fallbacks of and
 var offlineSources = map[string]bool{
 	SourceGeoCountry:   true,
 	"dbip_lite":        true,
@@ -96,11 +96,11 @@ var componentOrder = []string{
 }
 
 // Flags is the 16-bit summary of an assessment that the routing admission path
-// reads from the in-memory projection (WP08 §5). The bit values are part of the
+// reads from the in-memory projection. The bit values are part of the
 // ip_assessment.flags contract and must not be renumbered.
 type Flags uint16
 
-// Assessment flag bits (§1.1).
+// Assessment flag bits.
 const (
 	FlagCompromised   Flags = 1 << 0
 	FlagTor           Flags = 1 << 1
@@ -114,7 +114,7 @@ const (
 	FlagAttackHistory Flags = 1 << 9
 )
 
-// Emission point costs of §1.1. Each flag is applied at most once, no matter how
+// Emission point costs of Each flag is applied at most once, no matter how
 // many sources report it.
 const (
 	penaltyCompromised = -40
@@ -125,18 +125,18 @@ const (
 	penaltyAbuse       = -10
 )
 
-// abuseDeductionConfidence is the AbuseConfidence threshold of the §1.1
+// abuseDeductionConfidence is the AbuseConfidence threshold of the
 // "abuse" deduction.
 const abuseDeductionConfidence = 25
 
-// abuseHighRiskConfidence is the AbuseConfidence threshold of the §1.6
+// abuseHighRiskConfidence is the AbuseConfidence threshold of the
 // high_risk verdict.
 const abuseHighRiskConfidence = 75
 
-// dnsblPenaltyPerZone is the per-listed-zone penalty of §1.1.
+// dnsblPenaltyPerZone is the per-listed-zone penalty of
 const dnsblPenaltyPerZone = 34
 
-// Verdict values of §1.6.
+// Verdict values of
 const (
 	VerdictHighRisk    = "high_risk"
 	VerdictConflicting = "conflicting"
@@ -147,19 +147,19 @@ const (
 	VerdictFavorable   = "favorable"
 )
 
-// State values of §1.1.
+// State values of
 const (
 	StateValid       = "valid"
 	StatePending     = "pending"
 	StateUnsupported = "unsupported"
 )
 
-// voteOrder is the deterministic iteration order of the §1.4 vote types.
+// voteOrder is the deterministic iteration order of the vote types.
 var voteOrder = []string{
 	IPTypeResidential, IPTypeMobile, IPTypeBusiness, IPTypeWireless, IPTypeDatacenter,
 }
 
-// Confidence values of §1.2.
+// Confidence values of
 const (
 	ConfidenceNone   = "none"
 	ConfidenceLow    = "low"
@@ -167,7 +167,7 @@ const (
 	ConfidenceHigh   = "high"
 )
 
-// IP types of §1.4.
+// IP types of
 const (
 	IPTypeUnknown        = "unknown"
 	IPTypeResidential    = "residential"
@@ -203,12 +203,12 @@ const (
 	ReasonIncompleteCoverage = "INCOMPLETE_COVERAGE"
 )
 
-// dnsblListedReason renders the per-zone listing reason of §1.7.
+// dnsblListedReason renders the per-zone listing reason of
 func dnsblListedReason(zone string) string {
 	return "DNSBL_LISTED:" + zone
 }
 
-// Component is one scored source item of §1.1's components_json.
+// Component is one scored source item of 's components_json.
 type Component struct {
 	Source     string    `json:"source"`
 	Raw        int       `json:"raw"`
@@ -265,7 +265,7 @@ type Input struct {
 	Enabled map[string]bool
 	// Failed maps an enabled source to the error code of its last failed
 	// lookup. An enabled source that failed and produced no valid evidence
-	// moves a score-less assessment from pending to unsupported (§1.1).
+	// moves a score-less assessment from pending to unsupported.
 	Failed map[string]string
 	// Now is the evaluation instant (UTC).
 	Now time.Time
@@ -305,7 +305,7 @@ func AssessInput(in Input) Assessment {
 	out.Flags = flags
 	out.Reasons = append(out.Reasons, reasons...)
 
-	// Identity first: the §1.4 hosting-ASN fallback needs the ASN.
+	// Identity first: the hosting-ASN fallback needs the ASN.
 	attachIdentity(&out, evidence)
 
 	out.IPType = voteIPType(evidence, out.ASN, &out.Reasons)
@@ -337,7 +337,7 @@ func AssessInput(in Input) Assessment {
 	return out
 }
 
-// Assess is the §1 signature. Evidence must already be status=ok rows; expiry is
+// Assess is the signature. Evidence must already be status=ok rows; expiry is
 // evaluated against Now. A caller that knows which sources failed and wants the
 // pending/unsupported distinction uses AssessInput instead.
 func Assess(ip netip.Addr, ev []quality.Evidence, now time.Time, enabled map[string]bool) Assessment {
@@ -377,7 +377,7 @@ func validEvidence(in Input) []quality.Evidence {
 	return out
 }
 
-// earliestValidUntil is the §1.7 validity window: the earliest expiry of all
+// earliestValidUntil is the validity window: the earliest expiry of all
 // valid evidence.
 func earliestValidUntil(evidence []quality.Evidence) time.Time {
 	earliest := time.Time{}
@@ -436,7 +436,7 @@ func lookup(evidence []quality.Evidence, provider string) (quality.Evidence, boo
 }
 
 // ------------------------------------------------------------------
-// Components (§1.1)
+// Components
 // ------------------------------------------------------------------
 
 // components builds the clean sub-scores in the stable component order.
@@ -474,7 +474,7 @@ func componentScore(source string, ev quality.Evidence) (raw, clean int, ok bool
 		raw = clampInt(*ev.RiskScore, 0, 100)
 		return raw, 100 - raw, true
 	case SourceIPPure:
-		// IPPure's fraud score is IPv4-only (§1.1, §3).
+		// IPPure's fraud score is IPv4-only ().
 		if ev.FraudScore == nil || !isIPv4(ev.IP) {
 			return 0, 0, false
 		}
@@ -510,7 +510,7 @@ func componentScore(source string, ev quality.Evidence) (raw, clean int, ok bool
 		}
 		return 100, 100, true
 	case SourceDNSBL:
-		// Only zones that were queried successfully are counted (§1.1).
+		// Only zones that were queried successfully are counted.
 		if len(ev.DNSBLChecked) == 0 {
 			return 0, 0, false
 		}
@@ -561,10 +561,10 @@ func weightedBase(items []Component) int {
 }
 
 // ------------------------------------------------------------------
-// Confidence (§1.2)
+// Confidence
 // ------------------------------------------------------------------
 
-// coverageAndAgreement computes the §1.2 confidence inputs.
+// coverageAndAgreement computes the confidence inputs.
 func coverageAndAgreement(items []Component, enabled map[string]bool) (coverage, agreement float64) {
 	denominator := 0
 	for _, source := range ScoringSources() {
@@ -609,7 +609,7 @@ func sourceEnabled(enabled map[string]bool, source string) bool {
 	return enabled[source]
 }
 
-// confidence maps the §1.2 table.
+// confidence maps the table.
 func confidence(sourceCount int, coverage, agreement float64) string {
 	switch {
 	case sourceCount == 0:
@@ -624,7 +624,7 @@ func confidence(sourceCount int, coverage, agreement float64) string {
 }
 
 // ------------------------------------------------------------------
-// Signals and deductions (§1.1)
+// Signals and deductions
 // ------------------------------------------------------------------
 
 // detectFlags derives the flag bitmask and the reason codes.
@@ -654,7 +654,7 @@ func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 		}
 	}
 
-	// Tor roles come from the torproject registry (§1.6).
+	// Tor roles come from the torproject registry.
 	if tor, ok := lookup(evidence, SourceTorProject); ok {
 		if hasRole(tor.TorRoles, "exit") {
 			torSignal = true
@@ -678,7 +678,7 @@ func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 	report(FlagHosting, ReasonHosting, hosting)
 	report(FlagAttackHistory, ReasonAttackHistory, attackHistory)
 
-	// Abuse confidence (§1.1 and §1.6 use two thresholds).
+	// Abuse confidence (and use two thresholds).
 	if abuse, ok := lookup(evidence, SourceAbuseIPDB); ok && abuse.AbuseConfidence != nil {
 		confidence := clampInt(*abuse.AbuseConfidence, 0, 100)
 		if confidence >= abuseHighRiskConfidence && abuse.TotalReports != nil && *abuse.TotalReports > 0 {
@@ -700,7 +700,7 @@ func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 	return flags, reasons
 }
 
-// penalties turns the flags into the §1.1 deductions. Each flag is applied at
+// penalties turns the flags into the deductions. Each flag is applied at
 // most once.
 func penalties(flags Flags, evidence []quality.Evidence) ([]Penalty, int) {
 	order := []struct {
@@ -760,7 +760,7 @@ func flagSources(flag Flags, evidence []quality.Evidence) []string {
 }
 
 // ------------------------------------------------------------------
-// IP type (§1.4)
+// IP type
 // ------------------------------------------------------------------
 
 // voteIPType votes on the allocation type. asn is only used by the offline
@@ -777,7 +777,7 @@ func voteIPType(evidence []quality.Evidence, asn int, reasons *[]string) string 
 		votes++
 	}
 
-	// non_residential only wins when nothing else voted (§1.4).
+	// non_residential only wins when nothing else voted.
 	if votes > 0 {
 		if _, ok := counts[IPTypeNonResidential]; ok && len(counts) == 1 {
 			return IPTypeNonResidential
@@ -815,7 +815,7 @@ func voteIPType(evidence []quality.Evidence, asn int, reasons *[]string) string 
 			best = kind
 			continue
 		}
-		// Tie-break: prefer the non-datacenter side (§1.4).
+		// Tie-break: prefer the non-datacenter side.
 		if best == IPTypeDatacenter && kind != IPTypeDatacenter {
 			best = kind
 		}
@@ -832,7 +832,7 @@ func voteIPType(evidence []quality.Evidence, asn int, reasons *[]string) string 
 	return best
 }
 
-// voteOf maps one source's evidence to a §1.4 vote, or "" when it does not vote.
+// voteOf maps one source's evidence to a vote, or "" when it does not vote.
 func voteOf(ev quality.Evidence) string {
 	switch ev.Provider {
 	case SourceProxycheck, SourceProxycheckNode:
@@ -870,7 +870,7 @@ func voteOf(ev quality.Evidence) string {
 	}
 }
 
-// ipqsConnectionType maps IPQualityScore's connection_type (§1.4).
+// ipqsConnectionType maps IPQualityScore's connection_type.
 func ipqsConnectionType(connectionType string) string {
 	switch strings.ToLower(strings.TrimSpace(connectionType)) {
 	case "residential":
@@ -907,7 +907,7 @@ func normalizeRawType(raw string) string {
 }
 
 // ------------------------------------------------------------------
-// Native (§1.5)
+// Native
 // ------------------------------------------------------------------
 
 // nativeFlag resolves the native dimension.
@@ -965,10 +965,10 @@ func attachIdentity(out *Assessment, evidence []quality.Evidence) {
 }
 
 // ------------------------------------------------------------------
-// Verdict (§1.6)
+// Verdict
 // ------------------------------------------------------------------
 
-// verdict applies the §1.6 decision list in order; the first match wins.
+// verdict applies the decision list in order; the first match wins.
 func verdict(out *Assessment, evidence []quality.Evidence) string {
 	// 1. high_risk.
 	if out.Flags&FlagCompromised != 0 {
@@ -1007,7 +1007,7 @@ func verdict(out *Assessment, evidence []quality.Evidence) string {
 		return VerdictReview
 	}
 	// A Tor relay/guard that is not an exit is still an anonymity signal, so it
-	// is reviewed instead of passing as favorable. WP10 §1.6 only names the exit
+	// is reviewed instead of passing as favorable. only names the exit
 	// role explicitly; this is the documented reading of rule 3.
 	if tor, ok := lookup(evidence, SourceTorProject); ok && len(tor.TorRoles) > 0 {
 		return VerdictReview
@@ -1034,7 +1034,7 @@ func verdict(out *Assessment, evidence []quality.Evidence) string {
 }
 
 // noEvidenceState distinguishes a genuinely unfinished assessment from one whose
-// enabled sources all failed (§1.1).
+// enabled sources all failed.
 func noEvidenceState(in Input, evidence []quality.Evidence) (state, reason string) {
 	enabledScoring := make([]string, 0, len(scoringWeights))
 	for _, source := range ScoringSources() {

@@ -166,7 +166,7 @@ func TestDecodeProxyCheckRejects(t *testing.T) {
 
 // TestProxyCheckHTTPStatusMapping pins the status split: a 429 is a rate limit
 // that must cool the queue down and leave the key alone, and only 401/403 pause
-// the data source (§3.3). Pausing on a 429 turned a routine limit into a
+// the data source. Pausing on a 429 turned a routine limit into a
 // provider that only a manual resume or a key rotation could lift.
 func TestProxyCheckHTTPStatusMapping(t *testing.T) {
 	cases := []struct {

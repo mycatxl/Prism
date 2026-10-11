@@ -35,7 +35,7 @@ const e2eEgressIP = "8.8.8.8"
 const e2eCheckID = "prism_e2e"
 
 // PRISM-DEVIATION: none. This test replaces the former in-memory inspection
-// path (WP08 §8), it does not adjust an upstream assertion.
+// path, it does not adjust an upstream assertion.
 
 // loopbackOutbound is the in-process "node under test": every dial lands on the
 // local test server, so no test ever touches the network.
@@ -119,7 +119,7 @@ func fakeProviderHandler() http.Handler {
 		case strings.HasPrefix(r.URL.Path, "/trace/v4"):
 			_, _ = io.WriteString(w, "fl=1f2\nh=1.1.1.1\nip="+e2eEgressIP+"\nloc=JP\ncolo=NRT\n")
 		case strings.HasPrefix(r.URL.Path, "/trace/v6"):
-			// No ip= line: the node has no usable IPv6 egress (§3.2).
+			// No ip= line: the node has no usable IPv6 egress.
 			_, _ = io.WriteString(w, "fl=1f2\nh=1.1.1.1\n")
 		case strings.HasPrefix(r.URL.Path, "/proxycheck/"):
 			_, _ = io.WriteString(w, proxyCheck)
@@ -217,7 +217,7 @@ func openIntelStore(t *testing.T) *store.Store {
 	return st
 }
 
-// TestIntelPipelineEndToEnd proves the whole WP09 chain without the network:
+// TestIntelPipelineEndToEnd proves the whole chain without the network:
 // egress probe -> offline sources -> online queue -> via-node sources -> unlock
 // checks -> evidence-gated assessment, all persisted in intel.db and mirrored
 // into the in-memory projection.
@@ -317,7 +317,7 @@ func TestIntelPipelineEndToEnd(t *testing.T) {
 		}
 	}
 
-	// --- step 3/§3.3: the online queue resolved proxycheck ------------------
+	// --- step 3/: the online queue resolved proxycheck ------------------
 	waitFor(t, 15*time.Second, "online provider queue", func() bool {
 		return providerRowResolved(t, st, "proxycheck")
 	})
@@ -354,7 +354,7 @@ func TestIntelPipelineEndToEnd(t *testing.T) {
 		t.Fatalf("assessment must carry a score and a native verdict: %+v", assessment)
 	}
 
-	// The projection mirrors both the assessment and the check outcome (§5).
+	// The projection mirrors both the assessment and the check outcome.
 	lite, ok := svc.Snapshot().Assessment(ip)
 	if !ok {
 		t.Fatalf("the in-memory projection has no assessment for %s", e2eEgressIP)
@@ -380,7 +380,7 @@ func TestIntelPipelineEndToEnd(t *testing.T) {
 		}
 	}
 
-	// Re-running the pipeline refreshes only what is missing (§3.2 step 3):
+	// Re-running the pipeline refreshes only what is missing (step 3):
 	// dropping the proxycheck evidence must re-queue the terminal queue row and
 	// produce fresh evidence, while the still-valid sources are not re-queued.
 	if err := st.DeleteEvidence(ctx, e2eEgressIP, "proxycheck"); err != nil {

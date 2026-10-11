@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Prism smoke test (WP03 §7.3, reused by WP13).
+# Prism smoke test.
 #
 # Boots bin/prism against a throw-away environment (temporary state/cache/log
 # directories plus freshly generated tokens) and exercises the public surface:

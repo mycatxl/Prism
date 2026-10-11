@@ -8,7 +8,6 @@ import (
 )
 
 // systemCapabilitiesResponse is the GET /api/v1/system/capabilities body
-// (WP06 §10).
 type systemCapabilitiesResponse struct {
 	Engines          []node.EngineCapability `json:"engines"`
 	BuildTags        []string                `json:"build_tags"`

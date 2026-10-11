@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Authentication failure limiting (WP04 §4.6).
+// Authentication failure limiting.
 //
 // Only failed authentications are counted: a client IP that accumulates
 // authFailuresPerWindow failures within authFailureWindow is then blocked for
@@ -27,7 +27,7 @@ const (
 
 // AuthFailureBlockDuration is how long a client stays blocked after exceeding
 // the authentication failure threshold. It is exported so the proxy entrypoints
-// reuse the same window as the management API (WP04 §4.6).
+// reuse the same window as the management API.
 const AuthFailureBlockDuration = authFailureBlock
 
 type authFailureEntry struct {
@@ -45,7 +45,7 @@ type authFailureEntry struct {
 // only when RemoteAddr itself belongs to one of the configured trusted proxy
 // CIDRs, in which case the rightmost untrusted address in the header is used.
 //
-// Operational precondition (docs/SECURITY.md §1.2): that rightmost untrusted hop
+// Operational precondition: that rightmost untrusted hop
 // is the observed client only when the trusted proxy *appends* the peer address
 // it saw. A proxy that forwards a client-supplied header verbatim makes the key
 // attacker-chosen, and a client can then rotate the header to get a fresh bucket

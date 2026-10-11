@@ -11,7 +11,7 @@ import (
 
 func TestRotationTombstoneCache_BoundedAtDocumentedLimit(t *testing.T) {
 	if rotationTombstoneMaxEntries != 100_000 {
-		t.Fatalf("rotationTombstoneMaxEntries = %d, want 100000 (WP10 §3)", rotationTombstoneMaxEntries)
+		t.Fatalf("rotationTombstoneMaxEntries = %d, want 100000 ", rotationTombstoneMaxEntries)
 	}
 	router := newTestRouter(newRouterTestPool(), nil)
 	if got := router.rotationTombstones.maxEntries; got != rotationTombstoneMaxEntries {

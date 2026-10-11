@@ -59,7 +59,7 @@ test("Button renders exactly one child on the asChild path", () => {
 
 test("the kit declares the control height it uses", () => {
   /*
-   * `--control-h` is the single decision for chrome height (DESIGN.md:167-168).
+ * `--control-h` is the single decision for chrome height.
    * A kit component that hard-codes a step instead is the per-page decision the
    * rule exists to prevent, and it is invisible to every other gate.
    */
@@ -112,7 +112,7 @@ test("no control is rendered without a way to operate it", () => {
 
 test("the pill shape is reserved for Badge", () => {
   /*
-   * Root DESIGN.md:126-127: the fully round shape carries "this is a state", so a
+ * Root the design system: the fully round shape carries "this is a state", so a
    * second one spends that signal. Checked here as well as in `check-kit.mjs`
    * because this one fails with a message that says *why*, and it runs in the same
    * suite as the rest of the kit's invariants.

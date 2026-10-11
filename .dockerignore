@@ -13,7 +13,7 @@ node_modules
 internal/api/web/node_modules
 internal/api/web/dist
 references
-docs/design
+docs
 *.log
 *.db
 *.db-shm

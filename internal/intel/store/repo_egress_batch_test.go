@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// WP10 §4 reads the egress display facts of a whole page in one batched query.
+// reads the egress display facts of a whole page in one batched query.
 
 func TestNodeEgressByHashes_BatchesAndIgnoresUnknownInput(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "state", FileName))

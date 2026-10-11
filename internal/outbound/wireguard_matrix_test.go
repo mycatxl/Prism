@@ -9,7 +9,7 @@ import (
 	"prism/internal/subscription"
 )
 
-// Shared WireGuard fixtures for the protocol matrix (WP06 §3): every source
+// Shared WireGuard fixtures for the protocol matrix: every source
 // must produce the same sing-box wireguard endpoint payload.
 
 const (
@@ -41,11 +41,11 @@ const (
 	wireGuardShareLink = "wireguard://" + wireGuardPrivateKey + "@1.2.3.4:51820?publickey=" +
 		wireGuardPublicKey + "&reserved=1,2,3&address=10.0.0.2/32&mtu=1280#wg-jp"
 
-	// dialProbeTimeout bounds the loopback dial probe used by §6.5 checks.
+	// dialProbeTimeout bounds the loopback dial probe used by checks.
 	dialProbeTimeout = 2 * time.Second
 )
 
-// TestWireGuardSourcesShareEndpointPayload implements WP06 §3: the five
+// TestWireGuardSourcesShareEndpointPayload implements the five
 // WireGuard sources must all resolve to the same endpoint JSON.
 func TestWireGuardSourcesShareEndpointPayload(t *testing.T) {
 	sources := []struct {

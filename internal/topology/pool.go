@@ -40,11 +40,11 @@ type GlobalNodePool struct {
 	qualityLookup platform.QualityLookupFunc
 
 	// qualitySnapshot is the read-only intel projection injected by the intel
-	// service (WP10 §2). It is what the quality admission path reads.
+	// service. It is what the quality admission path reads.
 	qualitySnapshot platform.QualitySnapshotReader
 
 	// egressIndex maps an observed egress IP to the nodes that used it, so an
-	// assessment change can notify exactly the affected nodes (WP10 §2).
+	// assessment change can notify exactly the affected nodes.
 	egressMu    sync.Mutex
 	egressIndex map[netip.Addr]map[node.Hash]struct{}
 	// Persistence callbacks (optional, nil in tests without persistence).
@@ -52,8 +52,8 @@ type GlobalNodePool struct {
 	onNodeRemoved    func(hash node.Hash, entry *node.NodeEntry) // called after a node is deleted from pool
 	onSubNodeChanged func(subID string, hash node.Hash, added bool)
 	// extraOnNodeAdded holds additional node-added observers registered with
-	// AddOnNodeAdded. They run after onNodeAdded and never replace it (WP09
-	// §3.6 uses the hook for the subscription intel auto-enqueue).
+	// AddOnNodeAdded. They run after onNodeAdded and never replace it (
+	// uses the hook for the subscription intel auto-enqueue).
 	extraOnNodeAdded []func(hash node.Hash)
 	// Health callbacks (optional).
 	onNodeDynamicChanged func(hash node.Hash)                // fired on circuit/failure/egress changes
@@ -290,7 +290,7 @@ func (p *GlobalNodePool) ReplacePlatform(next *platform.Platform) error {
 }
 
 // SetQualitySnapshot injects the intel projection used by quality admission
-// (WP10 §2) and propagates it to every registered platform and to platforms
+// and propagates it to every registered platform and to platforms
 // registered later.
 //
 // The injection point is also the repair point: the projection arrives after the
@@ -613,7 +613,7 @@ func (p *GlobalNodePool) SetOnNodeAdded(fn func(hash node.Hash)) {
 // AddOnNodeAdded registers an additional node-added observer. Unlike
 // SetOnNodeAdded it never replaces the upstream wiring; every registered
 // observer runs after it, in registration order. It must be called before the
-// background workers start (WP09 §3.6 subscription intel auto-enqueue).
+// background workers start.
 func (p *GlobalNodePool) AddOnNodeAdded(fn func(hash node.Hash)) {
 	if fn == nil {
 		return
@@ -922,7 +922,7 @@ func (p *GlobalNodePool) EgressIPOwners(ip netip.Addr) []node.Hash {
 }
 
 // NotifyEgressIPDirty re-evaluates every node that used an egress IP, which is
-// what the intel pipeline calls after a new assessment was stored (WP10 §2).
+// what the intel pipeline calls after a new assessment was stored.
 // It returns the number of nodes that were re-evaluated.
 func (p *GlobalNodePool) NotifyEgressIPDirty(ip netip.Addr) int {
 	hashes := p.EgressIPOwners(ip)

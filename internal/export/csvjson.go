@@ -11,9 +11,9 @@ import (
 	"prism/internal/quality"
 )
 
-// Analysis formats (WP11 §2.4). Both csv and json carry the same columns, and
+// Analysis formats. Both csv and json carry the same columns, and
 // neither ever contains a node credential: no password, uuid, key or psk is
-// emitted, only the node identity, the egress facts and the WP10 assessment.
+// emitted, only the node identity, the egress facts and the assessment.
 var exportColumns = []string{
 	"name",
 	"node_hash",
@@ -98,7 +98,7 @@ func exportCSV(items []preparedItem, opt Options) ([]byte, int) {
 }
 
 // exportJSON writes the analysis rows plus the export report in the body, as
-// §4.1 requires for the json format.
+// requires for the json format.
 func exportJSON(items []preparedItem, opt Options, report *Report) []byte {
 	rows := make([]exportRow, 0, len(items))
 	for _, item := range items {

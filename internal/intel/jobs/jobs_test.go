@@ -68,7 +68,7 @@ func TestPlanAndPendingSteps(t *testing.T) {
 	if steps := PendingSteps(KindFull, 0); len(steps) != 6 {
 		t.Fatalf("PendingSteps(0) = %v", steps)
 	}
-	// A restart after step 3 continues at step 4 (§3.5 / §10).
+	// A restart after step 3 continues at step 4 (/).
 	steps := PendingSteps(KindFull, 3)
 	if len(steps) != 3 || steps[0] != StepViaNode {
 		t.Fatalf("PendingSteps(3) = %v, want [4 5 6]", steps)
@@ -332,7 +332,7 @@ func TestManager_PipelineBreakpointResumesAfterRestart(t *testing.T) {
 
 	// A budget/QPS gate can only defer the step it belongs to, so the deferral is
 	// raised at step 4 after steps 1..3 completed. The item then stops with
-	// step_index=3 and must resume at step 4 on the next run (§3.2, §3.5, §10).
+	// step_index=3 and must resume at step 4 on the next run (,).
 	firstRunner := &scriptedRunner{handlers: map[Step]StepResult{
 		StepViaNode: {DeferUntilNs: start.Add(time.Hour).UnixNano()},
 	}}
@@ -679,7 +679,7 @@ func TestHub_BoundsSubscribersAndCountsDrops(t *testing.T) {
 		t.Fatalf("subscribers = %d", h.Subscribers())
 	}
 
-	// The rate limit of §7 pushes at most one frame per second per job.
+	// The rate limit of pushes at most one frame per second per job.
 	frame := Progress{Done: 1, Total: 2, Status: store.JobRunning}
 	h.push("job", frame, 1000, false)
 	h.push("job", Progress{Done: 2, Total: 2, Status: store.JobSucceeded}, 1500, false)
@@ -790,7 +790,7 @@ func TestProviderPool_ResolvesFailuresAndBacksOff(t *testing.T) {
 	}
 	failed, _, _ := st.GetEvidence(ctx, "198.51.100.2", "proxycheck")
 	if _, ok, _ := st.GetEvidence(ctx, "198.51.100.2", "proxycheck"); ok {
-		t.Fatalf("evidence must be written by WP09, not by the queue worker: %+v", failed)
+		t.Fatalf("evidence must be written by, not by the queue worker: %+v", failed)
 	}
 
 	// Second round consumes the last daily unit and resolves the third IP.

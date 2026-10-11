@@ -73,7 +73,7 @@ func (r *Repo) Open() error {
 		if err := r.openDB(latest); err != nil {
 			return err
 		}
-		// DESIGN.md §576: prune old files on startup.
+		// the design system: prune old files on startup.
 		if err := r.cleanup(); err != nil {
 			return err
 		}
@@ -228,7 +228,7 @@ type LogSummary struct {
 	UpstreamErrKind     string `json:"upstream_err_kind"`
 	UpstreamErrno       string `json:"upstream_errno"`
 	UpstreamErrMsg      string `json:"upstream_err_msg"`
-	// Events lists routing advisories such as rotation_fallback_same_ip (WP10 §3).
+	// Events lists routing advisories such as rotation_fallback_same_ip.
 	Events       []string `json:"events"`
 	IngressBytes int64    `json:"ingress_bytes"`
 	EgressBytes  int64    `json:"egress_bytes"`
@@ -314,7 +314,7 @@ func (r *Repo) List(f ListFilter) ([]LogSummary, bool, *ListCursor, error) {
 		results = append(results, rows...)
 	}
 
-	// Global merge sort: DESIGN.md §577 requires ts_ns DESC, same ts_ns by id ASC.
+	// Global merge sort: the design system requires ts_ns DESC, same ts_ns by id ASC.
 	sort.Slice(results, func(i, j int) bool {
 		if results[i].TSNs != results[j].TSNs {
 			return results[i].TSNs > results[j].TSNs

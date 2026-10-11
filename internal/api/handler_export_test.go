@@ -18,7 +18,7 @@ import (
 	"prism/internal/topology"
 )
 
-// Export API tests (WP11 §4). They drive the handlers through a real HTTP
+// Export API tests. They drive the handlers through a real HTTP
 // server backed by a real state engine, and they never touch the network: the
 // node documents come from the subscription parser fixtures Prism already
 // ships.
@@ -120,7 +120,7 @@ func exportContentType(format string) string {
 	return "text/plain; charset=utf-8"
 }
 
-// TestExportNodesEndpointServesEveryFormat checks §4.1 end to end.
+// TestExportNodesEndpointServesEveryFormat checks end to end.
 func TestExportNodesEndpointServesEveryFormat(t *testing.T) {
 	_, server := newExportTestServer(t)
 

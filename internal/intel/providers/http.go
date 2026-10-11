@@ -13,7 +13,7 @@ import (
 const maxResponseBytes = 64 * 1024
 
 // NewStrictClient builds the HTTP client used by the online-ip data sources
-// (WP09 §1): it dials directly, never inherits HTTP_PROXY, never follows a
+// : it dials directly, never inherits HTTP_PROXY, never follows a
 // redirect and bounds every phase with a timeout.
 func NewStrictClient(timeout time.Duration) *http.Client {
 	if timeout <= 0 {
@@ -91,7 +91,7 @@ func statusFailure(resp response, vendor string) Result {
 	switch resp.Status {
 	case http.StatusTooManyRequests:
 		// A 429 is a rate limit, not a credential failure: it cools the queue
-		// down for RetryAfter and leaves the key alone (§3.3). Pausing here
+		// down for RetryAfter and leaves the key alone. Pausing here
 		// turned a routine limit into a provider that only a resume or a key
 		// rotation could lift.
 		return Result{Err: &ProviderError{

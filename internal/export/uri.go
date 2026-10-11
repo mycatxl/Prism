@@ -12,7 +12,7 @@ import (
 	"prism/internal/node"
 )
 
-// Share-link export (WP11 §2.3). The v2rayn format is the very same URI lines
+// Share-link export. The v2rayn format is the very same URI lines
 // with the whole list base64-encoded, which is what v2rayN subscriptions use.
 //
 // The exported links are the inverse of internal/subscription's share-link

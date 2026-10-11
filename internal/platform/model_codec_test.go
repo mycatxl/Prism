@@ -248,7 +248,7 @@ func TestValidateRegionFilters_Invalid(t *testing.T) {
 	}
 }
 
-// WP10 §3 regression guard: the startup loader builds runtime platforms through
+// regression guard: the startup loader builds runtime platforms through
 // BuildFromModel and the scheduled rotator reads the rotation fields from those
 // runtime objects, so the round trip must not drop them.
 func TestBuildFromModel_PreservesScheduledRotationFields(t *testing.T) {

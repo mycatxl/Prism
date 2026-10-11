@@ -98,7 +98,7 @@ function nameOf(node: NodeSummary) {
 const sizes = [20, 50, 100, 200] as const;
 const protocolLabels: Record<string, string> = { shadowsocks: "Shadowsocks", vmess: "VMess", vless: "VLESS", trojan: "Trojan", hysteria: "Hysteria", hysteria2: "Hysteria 2", tuic: "TUIC", wireguard: "WireGuard", shadowtls: "ShadowTLS", socks: "SOCKS", http: "HTTP", ssh: "SSH", anytls: "AnyTLS", direct: "Direct" };
 // Sort keys offered by the sort select. purity_score, latency and assessed_at
-// are the WP10 §4 keys; the backend rejects anything else.
+// are the keys; the backend rejects anything else.
 const sorts = ["tag", "created_at", "failure_count", "region", "purity_score", "latency", "assessed_at"] as const;
 function integer(value: string | null, fallback: number) {
   const n = Number(value);

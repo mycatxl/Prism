@@ -8,13 +8,13 @@ import (
 	"prism/internal/node"
 )
 
-// Detour chains (WP06 §6).
+// Detour chains.
 //
-// A chain node resolves the "outbound detour not found" failure (fact F7) by
+// A chain node resolves the "outbound detour not found" failure by
 // materialising every referenced hop as its own sing-box instance: SingboxRuntime
 // creates deps[i] as <node tag>/d<i> and rewrites the detour references.
 
-// maxDetourDepth bounds dependency recursion (§6, "最大深度 3").
+// maxDetourDepth bounds dependency recursion.
 const maxDetourDepth = node.MaxChainDeps
 
 // nonProxyDetourTypes are sing-box types that are usable as a detour target but
@@ -98,7 +98,7 @@ func decodeObject(raw json.RawMessage) (map[string]any, bool) {
 	return object, true
 }
 
-// stripDetour removes the top-level detour reference of an object. §6: a
+// stripDetour removes the top-level detour reference of an object: a
 // dangling `detour` is stripped from a standalone object so the object stays
 // dialable — sing-box would otherwise refuse every dial with "outbound detour
 // not found". ok is false when raw is not a JSON mapping.
@@ -132,7 +132,7 @@ func resolveDetourChainOrdered(start map[string]any, lookup func(tag string) (ma
 			return deps, "", true
 		}
 		if seen[tag] {
-			// §6: a detour cycle refuses the node.
+			// a detour cycle refuses the node.
 			return nil, "", false
 		}
 		seen[tag] = true
@@ -141,7 +141,7 @@ func resolveDetourChainOrdered(start map[string]any, lookup func(tag string) (ma
 		if !found {
 			// A dangling reference: the node is kept but has no extra hop, so
 			// the caller strips the detour - or, when the walk already resolved
-			// hops, cuts the chain here - and reports the reference (§6). An
+			// hops, cuts the chain here - and reports the reference. An
 			// empty deps slice means nothing resolved at all; a non-empty one
 			// means the chain lost its tail.
 			return deps, tag, true
@@ -182,12 +182,12 @@ func clampChainDepth(deps []map[string]any) []map[string]any {
 }
 
 // parseSingboxDocument converts a whole sing-box document (outbounds plus the
-// optional top-level endpoints array, §5) into node documents.
+// optional top-level endpoints array) into node documents.
 //
 // An object whose detour resolves inside the same document becomes a chain
-// node (§6.1); a dangling reference is reported and stripped from the object so
+// node; a dangling reference is reported and stripped from the object so
 // that the node stays dialable. Objects that are recognised but not importable
-// are reported (WP06 §9).
+// are reported.
 func parseSingboxDocument(outbounds []json.RawMessage, endpoints []json.RawMessage, report *parseReport) []ParsedNode {
 	type documentItem struct {
 		raw        json.RawMessage
@@ -237,7 +237,7 @@ func parseSingboxDocument(outbounds []json.RawMessage, endpoints []json.RawMessa
 			continue
 		}
 		if referenced[tag] && nonProxyDetourTypes[typeName] {
-			// Referenced hops are materialised inside their chain node (§6.1).
+			// Referenced hops are materialised inside their chain node.
 			continue
 		}
 
@@ -249,12 +249,12 @@ func parseSingboxDocument(outbounds []json.RawMessage, endpoints []json.RawMessa
 		if detour := objectDetour(item.raw); detour != "" {
 			deps, dangling, resolved := resolveDetourChainOrdered(object, lookup)
 			if !resolved {
-				// A detour cycle: refuse the node (§6.1).
+				// A detour cycle: refuse the node.
 				report.addSkip(skipNode(tag, typeName, SourceSingbox, node.ReasonInvalid, "detour cycle"))
 				continue
 			}
 			if len(deps) == 0 {
-				// §6: the reference does not resolve inside this document, so
+				// the reference does not resolve inside this document, so
 				// it is reported instead of being guessed and the detour is
 				// stripped: the object stays dialable on its own. len(deps) is
 				// only zero here — a blank detour never reaches this branch
@@ -291,14 +291,14 @@ func parseSingboxDocument(outbounds []json.RawMessage, endpoints []json.RawMessa
 		}
 
 		// Form A is preserved, including a legacy WireGuard outbound that the
-		// runtime converts into an endpoint (§1.3) so the hash stays stable.
+		// runtime converts into an endpoint so the hash stays stable.
 		nodes = append(nodes, ParsedNode{Tag: tag, RawOptions: json.RawMessage(append([]byte(nil), item.raw...))})
 	}
 	return nodes
 }
 
 // parseSingboxEndpointItem converts one entry of the top-level endpoints array
-// (§5). ok is false for entry types that are not node candidates.
+// ok is false for entry types that are not node candidates.
 func parseSingboxEndpointItem(tag string, typeName string, raw json.RawMessage, report *parseReport) (ParsedNode, bool) {
 	switch typeName {
 	case "wireguard":
@@ -335,7 +335,7 @@ func parseSingboxEndpointItem(tag string, typeName string, raw json.RawMessage, 
 }
 
 // applyClashDialerChains turns Clash dialer-proxy references that point at
-// another proxy of the same document into chain nodes (§6.4). A reference that
+// another proxy of the same document into chain nodes. A reference that
 // cannot be resolved is stripped from the standalone node, which stays
 // dialable, and reported through the caller's report so the drop is explainable
 // rather than silent.
@@ -375,7 +375,7 @@ func applyClashDialerChains(nodes []ParsedNode, report *parseReport) []ParsedNod
 			continue
 		}
 		if len(deps) == 0 {
-			// §6: the reference names no proxy of this document. Strip it so
+			// the reference names no proxy of this document. Strip it so
 			// the node keeps dialing directly instead of failing every dial
 			// with "outbound detour not found", and report it so the operator
 			// can see the hop was dropped.
@@ -413,7 +413,7 @@ func applyClashDialerChains(nodes []ParsedNode, report *parseReport) []ParsedNod
 }
 
 // shadowTLSVersion maps the version a Clash shadow-tls plugin declares onto the
-// sing-box shadowtls version (§6.2). ok is false for a version sing-box cannot
+// sing-box shadowtls version. ok is false for a version sing-box cannot
 // express, which must be refused instead of being guessed at.
 //
 // An empty value maps to 3, which is what a plugin without a version means in
@@ -486,7 +486,7 @@ func shadowTLSRefusal(proxy map[string]any) string {
 }
 
 // clashShadowTLSChain rewrites a Clash shadowsocks proxy that carries the
-// shadow-tls plugin into a chain node (§6.2). ok is false when the proxy does
+// shadow-tls plugin into a chain node. ok is false when the proxy does
 // not use the plugin or misses the required options; shadowTLSRefusal names
 // the latter.
 func clashShadowTLSChain(tag string, server string, port uint64, proxy map[string]any, outbound map[string]any) (json.RawMessage, bool) {
@@ -494,7 +494,7 @@ func clashShadowTLSChain(tag string, server string, port uint64, proxy map[strin
 		return nil, false
 	}
 	password, host, version := shadowTLSPluginOptions(proxy)
-	// §6.2: a version sing-box cannot express (it supports 1, 2 and 3) is
+	//: a version sing-box cannot express (it supports 1, 2 and 3) is
 	// refused instead of being guessed at.
 	shadowTLS, ok := shadowTLSVersion(version)
 	if !ok {
@@ -524,7 +524,7 @@ func clashShadowTLSChain(tag string, server string, port uint64, proxy map[strin
 		},
 	}
 	if shadowTLS != 1 {
-		// §6.2: version 1 does not carry a version or a password field.
+		//: version 1 does not carry a version or a password field.
 		dep["version"] = shadowTLS
 		dep["password"] = password
 	}

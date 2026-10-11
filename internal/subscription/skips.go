@@ -6,7 +6,7 @@ import (
 	"prism/internal/node"
 )
 
-// Clash/Surge node-type classification for the parse report (WP06 §9).
+// Clash/Surge node-type classification for the parse report.
 //
 // convertClashProxyToNode returns a bare bool, so the reason a proxy was not
 // imported is recomputed here from the same input map. The classifier is

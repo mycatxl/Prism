@@ -1,4 +1,4 @@
-// Package providers implements the pluggable intel data sources of WP09 §1–§3:
+// Package providers implements the pluggable intel data sources of –:
 // offline databases, server-side online lookups and via-node lookups. Every
 // provider returns a normalised quality.Evidence plus an optional bounded raw
 // response; nothing in this package talks to the network during a unit test
@@ -20,7 +20,7 @@ import (
 	"prism/internal/quality"
 )
 
-// Kind classifies a data source (WP09 §1).
+// Kind classifies a data source.
 type Kind int
 
 const (
@@ -49,7 +49,7 @@ func (k Kind) String() string {
 // MarshalJSON renders the stable textual kind.
 func (k Kind) MarshalJSON() ([]byte, error) { return []byte(`"` + k.String() + `"`), nil }
 
-// Error codes of ProviderError (WP09 §1).
+// Error codes of ProviderError.
 const (
 	CodeLimit        = "PROVIDER_LIMIT"
 	CodeAuth         = "PROVIDER_AUTH"
@@ -60,10 +60,10 @@ const (
 	CodeRequest      = "PROVIDER_REQUEST"
 )
 
-// MaxRawBytes bounds the stored raw provider response (WP09 §1: ≤ 32 KiB).
+// MaxRawBytes bounds the stored raw provider response.
 const MaxRawBytes = 32 * 1024
 
-// Spec is the static description of one data source (WP09 §1).
+// Spec is the static description of one data source.
 type Spec struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -172,7 +172,7 @@ type ViaNodeProvider interface {
 // rotation takes effect without a restart.
 type Factory func(Setting) any
 
-// Registry holds the built-in data sources of §3 and resolves their effective
+// Registry holds the built-in data sources of and resolves their effective
 // settings against the persisted per-provider configuration.
 type Registry struct {
 	mu        sync.RWMutex
@@ -319,7 +319,7 @@ func (r *Registry) ViaNode(id string) (ViaNodeProvider, bool) {
 }
 
 // EnabledOffline returns every runnable offline provider of a selection. An
-// empty selection means "every enabled provider" (WP09 §3).
+// empty selection means "every enabled provider".
 func (r *Registry) EnabledOffline(selection []string) []OfflineProvider {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -423,7 +423,7 @@ func PublicIP(ip netip.Addr) (netip.Addr, Result, bool) {
 	return public, Result{}, true
 }
 
-// Supports reports whether a provider accepts an address family (WP09 §3).
+// Supports reports whether a provider accepts an address family.
 func Supports(spec Spec, ip netip.Addr) bool {
 	if !spec.SupportsIPv6 && ip.Is6() {
 		return false

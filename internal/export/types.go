@@ -18,7 +18,7 @@ import (
 	"prism/internal/quality"
 )
 
-// Supported export formats (WP11 §2).
+// Supported export formats.
 const (
 	FormatSingbox = "singbox"
 	FormatMihomo  = "mihomo"
@@ -28,7 +28,7 @@ const (
 	FormatJSON    = "json"
 )
 
-// DefaultNameTemplate is the identity template (WP11 §3).
+// DefaultNameTemplate is the identity template.
 const DefaultNameTemplate = "{name}"
 
 // MaxItems bounds one export request. The API layer enforces it by truncating
@@ -85,7 +85,7 @@ func FileName(format string) string {
 // Item is one node candidate for export.
 //
 // Name is the already rendered node name (see RenderNames). RawOptions is the
-// node document in form A or form B (WP06 §1). Intel is the optional WP10
+// node document in form A or form B. Intel is the optional
 // quality/assessment summary of the node's egress IP; a nil Intel, or
 // Options.IncludeIntel == false, leaves the intel-derived name-template
 // variables and the intel CSV columns empty.
@@ -101,9 +101,9 @@ type Item struct {
 	// the analysis columns only.
 	Region    string
 	LatencyMs float64
-	// RawOptions is the node document in form A or form B (WP06 §1).
+	// RawOptions is the node document in form A or form B.
 	RawOptions json.RawMessage
-	// Intel is the optional WP10 quality/assessment summary of the egress IP.
+	// Intel is the optional quality/assessment summary of the egress IP.
 	Intel *quality.Summary
 }
 
@@ -111,7 +111,7 @@ type Item struct {
 type Options struct {
 	// Format is one of Formats().
 	Format string
-	// NameTemplate renders each node name (§3). Empty means DefaultNameTemplate.
+	// NameTemplate renders each node name. Empty means DefaultNameTemplate.
 	NameTemplate string
 	// SelectorTag and AutoTag are the sing-box / mihomo group tags.
 	// Empty values mean "PROXY" and "AUTO".
@@ -160,7 +160,7 @@ const (
 	// ReasonNotRepresentablePrefix is prefixed with the target format, for
 	// example "NOT_REPRESENTABLE:singbox".
 	ReasonNotRepresentablePrefix = "NOT_REPRESENTABLE:"
-	// ReasonNotRepresentableMihomoChain is the dedicated chain reason of §2.2.
+	// ReasonNotRepresentableMihomoChain is the dedicated chain reason of
 	ReasonNotRepresentableMihomoChain = "NOT_REPRESENTABLE:mihomo(chain)"
 	// ReasonInvalidNode marks a node document that cannot be parsed at all.
 	ReasonInvalidNode = "INVALID:node document"

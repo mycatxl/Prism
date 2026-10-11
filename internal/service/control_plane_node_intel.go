@@ -11,7 +11,7 @@ import (
 )
 
 // ------------------------------------------------------------------
-// WP10 §4: the assessment view of a node
+// the assessment view of a node
 // ------------------------------------------------------------------
 //
 // Everything below reads the in-memory intel projection. The only database read
@@ -35,10 +35,10 @@ const (
 
 // maxNodeIntelChecks bounds the per-node check map of the node list: the first
 // maxNodeIntelChecks check ids in lexicographic order are reported and the rest
-// are omitted (over-limit behaviour of WP10 §4).
+// are omitted (over-limit behaviour of).
 const maxNodeIntelChecks = 32
 
-// NodeIntel is the WP10 §4 per-node intel object.
+// NodeIntel is the per-node intel object.
 type NodeIntel struct {
 	State       string            `json:"state"`
 	EgressIPv4  string            `json:"egress_ipv4"`
@@ -62,7 +62,7 @@ type NodeIntel struct {
 	AssessedAtNs int64 `json:"-"`
 }
 
-// NodeCheckFilter is one `check=<id>:<outcome>` node list filter (WP10 §4).
+// NodeCheckFilter is one `check=<id>:<outcome>` node list filter.
 type NodeCheckFilter struct {
 	ID      string
 	Outcome string
@@ -78,7 +78,7 @@ func (s *ControlPlaneService) intelProjection() *intel.Snapshot {
 }
 
 // nodeIntel resolves the intel view of one node from the projection, plus the
-// legacy quality summary for the two filters that predate WP10 (see
+// legacy quality summary for the two filters that predate (see
 // nodeIntelMatchesFilters).
 //
 // egress_ipv4, egress_ipv6 and colo come from node_egress and stay empty here:
@@ -178,7 +178,7 @@ func (s *ControlPlaneService) nodeIntelChecks(hash node.Hash, now time.Time) map
 // FillNodeIntelEgress adds the node_egress display facts (egress IPv4/IPv6 and
 // the Cloudflare colo) to a page of summaries.
 //
-// It is one batched read for the whole page, never one query per node (§4), and
+// It is one batched read for the whole page, never one query per node, and
 // it is best effort: without an intel store, or on a store error, the three
 // egress fields simply stay empty. The assessment itself is never read from the
 // database here.
@@ -214,10 +214,10 @@ func (s *ControlPlaneService) FillNodeIntelEgress(ctx context.Context, nodes []N
 }
 
 // ------------------------------------------------------------------
-// WP10 §4 node list filters
+// node list filters
 // ------------------------------------------------------------------
 
-// hasIntelFilters reports whether any §4 intel filter is set.
+// hasIntelFilters reports whether any intel filter is set.
 func hasIntelFilters(filters NodeFilters) bool {
 	return filters.PurityMin != nil ||
 		filters.PurityMax != nil ||
@@ -231,13 +231,13 @@ func hasIntelFilters(filters NodeFilters) bool {
 		filters.PurityBand != nil
 }
 
-// nodeIntelMatchesFilters applies the §4 intel filters to one node's resolved
+// nodeIntelMatchesFilters applies the intel filters to one node's resolved
 // intel view.
 //
 // Every one of them requires an assessment: a node that has none (state
 // "unassessed") never matches, because an unknown value cannot satisfy a filter.
 // That is the same fail-closed rule the platform admission uses. ip_type and
-// purity_band match the projected names; purity_band=review keeps its pre-WP10
+// purity_band match the projected names; purity_band=review keeps its pre-
 // meaning and selects the review/conflicting verdicts.
 func (s *ControlPlaneService) nodeIntelMatchesFilters(intelView NodeIntel, filters NodeFilters) bool {
 	if intelView.State == IntelStateUnassessed {
@@ -288,7 +288,7 @@ func (s *ControlPlaneService) nodeIntelMatchesFilters(intelView NodeIntel, filte
 	return true
 }
 
-// intelConfidenceRank orders the §1.2 confidence values; it mirrors the ranking
+// intelConfidenceRank orders the confidence values; it mirrors the ranking
 // the platform admission uses.
 func intelConfidenceRank(name string) int {
 	switch strings.ToLower(strings.TrimSpace(name)) {

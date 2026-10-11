@@ -13,14 +13,14 @@ import (
 	"prism/internal/model"
 )
 
-// WP09 §4/§5.4: the settings surface of the intel data sources and the unlock
+// /: the settings surface of the intel data sources and the unlock
 // checks. Every write is persisted in intel_provider_settings and applied to the
 // running registry/engine, so nothing needs a restart; every secret stays in the
 // store and the API only reports has_key (R6).
 
 // IntelUpdateCheckRequest is the PATCH /api/v1/intel/checks/{id} body: the only
 // accepted field is the enabled toggle. The persisted row is keyed by
-// "check:<id>" in intel_provider_settings (WP09 §5.4).
+// "check:<id>" in intel_provider_settings.
 type IntelUpdateCheckRequest struct {
 	Enabled *bool `json:"enabled"`
 }
@@ -60,7 +60,7 @@ type IntelChecks struct {
 }
 
 // IntelProviderList returns every registered data source with its effective,
-// non-secret settings and its live budget/queue state (WP09 §4).
+// non-secret settings and its live budget/queue state.
 func (s *ControlPlaneService) IntelProviderList(ctx context.Context) ([]providers.ProviderStatus, error) {
 	svc, settings, serr := s.intelProviderSettings()
 	if serr != nil {
@@ -97,7 +97,7 @@ func (s *ControlPlaneService) IntelUpdateProvider(ctx context.Context, id string
 }
 
 // IntelResumeProvider clears the paused flag and the 429 cooldown of one
-// provider (WP09 §4).
+// provider.
 func (s *ControlPlaneService) IntelResumeProvider(ctx context.Context, id string) (providers.ProviderStatus, error) {
 	svc, settings, serr := s.intelProviderSettings()
 	if serr != nil {
@@ -118,7 +118,7 @@ func (s *ControlPlaneService) IntelResumeProvider(ctx context.Context, id string
 }
 
 // IntelRefreshProvider downloads the offline databases of one data source now
-// (WP09 §3). The call is bounded by the refresher's manual timeout and reports
+// . The call is bounded by the refresher's manual timeout and reports
 // what happened file by file: a data source that is not configured is a
 // recorded skip, a download failure is a recorded failure, and neither is an
 // error of the request. Only an unknown provider fails here.
@@ -135,7 +135,7 @@ func (s *ControlPlaneService) IntelRefreshProvider(ctx context.Context, id strin
 }
 
 // IntelChecks returns every unlock check rule plus the user rule files that
-// failed to load (WP09 §5.4).
+// failed to load.
 func (s *ControlPlaneService) IntelChecks() (IntelChecks, error) {
 	svc, serr := s.intelService()
 	if serr != nil {
@@ -303,7 +303,7 @@ func intelProviderUsage(ctx context.Context, st *store.Store) (providers.UsageFu
 }
 
 // mapIntelSettingsError maps the provider settings sentinels onto the documented
-// status codes (WP09 §4).
+// status codes.
 func mapIntelSettingsError(err error) error {
 	switch {
 	case err == nil:

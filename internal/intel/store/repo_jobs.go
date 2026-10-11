@@ -21,7 +21,7 @@ var ErrJobNotActive = errors.New("job is not active")
 // SaveJobItemStep when the item is no longer queued or running. The job timeout
 // sweep (FailPendingJobItems) already settled it, so the caller must not write
 // the item back to life: a late finish or defer would revive the item and, via
-// RefreshJob, move a settled job out of its terminal status (see §3.4).
+// RefreshJob, move a settled job out of its terminal status (see).
 var ErrJobItemSettled = errors.New("job item already settled")
 
 // CreateJob inserts a job and its node items in one transaction.
@@ -137,7 +137,7 @@ func (s *Store) CountJobs(ctx context.Context, status string) (int, error) {
 }
 
 // ListActiveJobs returns queued and running jobs ordered by priority, which the
-// job manager uses to respect intel_max_running_jobs (§3.4).
+// job manager uses to respect intel_max_running_jobs.
 func (s *Store) ListActiveJobs(ctx context.Context, limit int) ([]Job, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -178,7 +178,7 @@ func (s *Store) MarkJobRunning(ctx context.Context, id string, nowNs int64) erro
 }
 
 // CancelJob marks a job canceled and settles every item it still has unsettled;
-// the workers stop after the current step (§3.5).
+// the workers stop after the current step.
 //
 // Settling the running items here - not only the queued ones - is what keeps the
 // cancellation final. A worker that is inside a step keeps a stale copy of its
@@ -236,7 +236,7 @@ func (s *Store) CancelJob(ctx context.Context, id string, nowNs int64) error {
 	return tx.Commit()
 }
 
-// RetryFailedJobItems requeues failed items and reopens the job (§3.5).
+// RetryFailedJobItems requeues failed items and reopens the job.
 //
 // The job is only reopened when at least one item was actually requeued, and
 // only from a status that means "this job produced failures": partial or failed.
@@ -396,7 +396,7 @@ func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem
 	defer func() { _ = tx.Rollback() }()
 
 	// Items whose lease expired are reclaimable: an item lease is five minutes
-	// while one item runs at most three minutes of pipeline work (§3.4), so an
+	// while one item runs at most three minutes of pipeline work, so an
 	// expired lease always means the owning worker died. The invariant is
 	// itemLease > itemTimeout - at an equal or shorter lease a live worker's item
 	// would be claimable by a second worker, and both would run the same node.
@@ -465,7 +465,7 @@ func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem
 }
 
 // SaveJobItemStep stores the pipeline breakpoint after a successful step so a
-// restarted process continues at the next step (§3.2, §3.5).
+// restarted process continues at the next step ().
 //
 // The status predicate is the authority that keeps a worker from writing to an
 // item the timeout sweep already settled: it returns ErrJobItemSettled instead.
@@ -487,7 +487,7 @@ func (s *Store) SaveJobItemStep(ctx context.Context, jobID, nodeHash string, ste
 }
 
 // DeferJobItem returns an item to the queue with a later next_run_at without
-// recording a failure (budget or QPS gate closed, §3.2 step 4).
+// recording a failure (budget or QPS gate closed, step 4).
 //
 // errorCode records why the item was parked, so a parked item still explains
 // itself to the operator (the item list renders it): the item timeout and a
@@ -543,7 +543,7 @@ func jobItemSettledIfUnchanged(res sql.Result) error {
 // FailPendingJobItems moves every queued or running item of a job to failed and
 // clears its lease, returning the number of items that changed.
 //
-// The timeout sweep of §3.4 uses it to settle a job that ran past its budget:
+// The timeout sweep of uses it to settle a job that ran past its budget:
 // with no pending item left, RefreshJob settles the job as partial and it stops
 // holding one of the max_running_jobs slots. Running items are included on
 // purpose - a worker still inside one of them notices the settled job and stops
@@ -566,7 +566,7 @@ func (s *Store) FailPendingJobItems(ctx context.Context, jobID, errorCode string
 
 // ResetRunningJobItems clears leases left behind by a crash and returns the
 // number of items that went back to queued. Running jobs stay running so the
-// worker pool continues them after a restart (§3.5).
+// worker pool continues them after a restart.
 func (s *Store) ResetRunningJobItems(ctx context.Context) (int64, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -631,7 +631,7 @@ func (s *Store) JobItemCounters(ctx context.Context, jobID string) (JobCounters,
 	return counters, rows.Err()
 }
 
-// refreshJobPublishAttempts bounds the optimistic publish of refreshJob (§3.6).
+// refreshJobPublishAttempts bounds the optimistic publish of refreshJob.
 //
 // The guarded UPDATE fails only when another writer changed the job row between
 // the reads and the write. That is the window two publishers of the same job
@@ -644,10 +644,10 @@ func (s *Store) JobItemCounters(ctx context.Context, jobID string) (JobCounters,
 const refreshJobPublishAttempts = 3
 
 // RefreshJob recomputes the job counters from its items and settles the job
-// status once every item is terminal (§3.5). It returns the updated job.
+// status once every item is terminal. It returns the updated job.
 //
 // The counters are read from job_items and written back to jobs, which is not
-// one atomic step (§3.6): the UPDATE is therefore conditional on the counters
+// one atomic step: the UPDATE is therefore conditional on the counters
 // the job row had when it was read, and a lost race is retried against a fresh
 // read instead of overwriting the newer state. Without the guard a slower
 // publisher wrote total/done/failed/skipped from before another item finished,
@@ -767,7 +767,7 @@ func (s *Store) JobProgressView(ctx context.Context, jobID string) (JobProgress,
 }
 
 // DeleteJobItemsFinishedBefore deletes the items of jobs that finished before
-// beforeNs (§6: keep seven days).
+// beforeNs ( keep seven days).
 func (s *Store) DeleteJobItemsFinishedBefore(ctx context.Context, beforeNs int64) (int64, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -784,7 +784,7 @@ func (s *Store) DeleteJobItemsFinishedBefore(ctx context.Context, beforeNs int64
 }
 
 // DeleteJobsFinishedBefore deletes finished jobs older than beforeNs along with
-// their items and queue rows (§6: jobs are kept 30 days).
+// their items and queue rows ( jobs are kept 30 days).
 func (s *Store) DeleteJobsFinishedBefore(ctx context.Context, beforeNs int64) (int64, error) {
 	db, err := s.conn()
 	if err != nil {

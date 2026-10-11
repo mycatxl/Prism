@@ -9,7 +9,7 @@ import (
 	"prism/internal/intel/store"
 )
 
-// Provider queue timing of §3.3.
+// Provider queue timing of
 const (
 	providerSleepMax     = 30 * time.Second
 	providerIdleSleep    = time.Second
@@ -17,7 +17,6 @@ const (
 )
 
 // ProviderQueueSpec is the effective configuration of one online-ip data source
-// (WP09 owns the Spec, this package owns the scheduling).
 type ProviderQueueSpec struct {
 	ProviderID string
 	Enabled    bool
@@ -26,14 +25,14 @@ type ProviderQueueSpec struct {
 	// BatchSize is how many IPs one Lookup call may resolve (1 = no batching).
 	BatchSize int
 	// CredentialID is sha256(provider + key) or "" when the provider needs no
-	// key. A changed value automatically lifts a pause (§3.3, WP09 §1).
+	// key. A changed value automatically lifts a pause ().
 	CredentialID string
 }
 
 // ProviderSpecSource returns the currently enabled provider queue specs.
 type ProviderSpecSource func() []ProviderQueueSpec
 
-// ProviderOutcome is the result of one online-ip batch lookup. WP09 persists the
+// ProviderOutcome is the result of one online-ip batch lookup. persists the
 // evidence itself; the queue worker only handles budget, retries and scheduling.
 type ProviderOutcome struct {
 	// Errors maps each IP to a provider error code. An IP that is absent was
@@ -69,7 +68,7 @@ type providerPool struct {
 	specs   ProviderSpecSource
 	lookup  OnlineLookup
 	// onEvidence is called after evidence was written for the given IPs so the
-	// caller can re-assess them (§3.2 step 3, WP10 §1.8).
+	// caller can re-assess them (step 3,).
 	onEvidence func(ips []netip.Addr)
 
 	mu      sync.Mutex
@@ -167,7 +166,7 @@ func (p *providerPool) runOnce(provider string, spec ProviderQueueSpec) time.Dur
 	// to make. Consuming first burned one unit of the day and one request
 	// interval on every idle poll: an empty queue claimed nothing but still
 	// advanced provider_state, and the idle sleep is one second while the
-	// built-in sources default to QPS 1 (§3.3).
+	// built-in sources default to QPS 1.
 	items, err := m.store.ClaimProviderItems(ctx, provider, now, now+int64(providerLease), batchSize, m.owner)
 	if err != nil {
 		m.schedulingFailures.Add(1)
@@ -259,7 +258,7 @@ func (p *providerPool) releaseItems(ctx context.Context, provider string, items 
 	released, err := p.manager.store.ReleaseProviderItems(ctx, provider, ips, p.manager.owner, nowNs)
 	if err != nil {
 		// The rows stay leased by this worker; their lease expires and the next
-		// claim picks them up again (§3.5), so this is not a lost item.
+		// claim picks them up again, so this is not a lost item.
 		p.manager.logf("[intel] release provider items for %s: %v", provider, err)
 		return
 	}
@@ -299,7 +298,7 @@ func (p *providerPool) applyOutcome(ctx context.Context, provider string, items 
 
 // budgetWait converts a closed budget gate into a sleep duration, capped at
 // providerSleepMax by the caller. The queue rows are untouched: a closed gate is
-// not a failure (§3.3).
+// not a failure.
 func budgetWait(state store.ProviderState, nowNs int64) time.Duration {
 	// Every branch below either returns or assigns wait, so it starts unset.
 	var wait time.Duration

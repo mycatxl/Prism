@@ -1,6 +1,6 @@
 package node
 
-// Node document formats (WP06 §1).
+// Node document formats.
 //
 // A node document has two shapes:
 //
@@ -45,7 +45,7 @@ var endpointTypeSet = map[string]bool{
 	"tailscale":      true,
 }
 
-// EndpointTypes returns the endpoint types this build can create (WP06 §10).
+// EndpointTypes returns the endpoint types this build can create.
 // tailscale is deliberately absent: the binary has no with_tailscale tag, so
 // such nodes are reported as ENGINE_NOT_BUILT.
 func EndpointTypes() []string {
@@ -67,7 +67,7 @@ const (
 	DocEndpoint
 	// DocChain is a detour chain (deps + main).
 	DocChain
-	// DocProxy is a mihomo proxy envelope (WP07).
+	// DocProxy is a mihomo proxy envelope.
 	DocProxy
 )
 
@@ -188,7 +188,7 @@ func ParseNodeDoc(raw []byte) (NodeDoc, error) {
 		if header.Type == "" {
 			return NodeDoc{}, errors.New("INVALID:missing outbound type")
 		}
-		// §1.3: a form A wireguard object is a legacy WireGuard outbound and is
+		//: a form A wireguard object is a legacy WireGuard outbound and is
 		// converted to an endpoint at build time; the hash stays untouched.
 		if header.Type == "wireguard" {
 			converted, err := WireGuardEndpointFromLegacyOutbound(trimmed)
@@ -275,7 +275,7 @@ func ParseNodeDoc(raw []byte) (NodeDoc, error) {
 	return doc, nil
 }
 
-// MaxChainDeps bounds the number of dependencies in a detour chain (§6, depth 3).
+// MaxChainDeps bounds the number of dependencies in a detour chain ( depth 3).
 const MaxChainDeps = 3
 
 // DepTag returns the fixed dependency tag for index i.

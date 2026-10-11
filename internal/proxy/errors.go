@@ -17,7 +17,7 @@ type ProxyError struct {
 	Message    string // plain-text body
 }
 
-// Predefined proxy errors aligned with DESIGN.md error specification.
+// Predefined proxy errors aligned with the design system error specification.
 var (
 	ErrAuthRequired = &ProxyError{
 		HTTPCode:   http.StatusProxyAuthRequired,
@@ -56,7 +56,7 @@ var (
 	}
 	// Returned only while PRISM_DIRECT_DENY_PRIVATE is enabled, on every local
 	// dial path: the reverse-proxy bypass branch, the forward HTTP proxy, the
-	// CONNECT tunnel and the SOCKS5 inbound (WP04 §4.1, DirectDialGuard).
+	// CONNECT tunnel and the SOCKS5 inbound.
 	ErrDirectTargetDenied = &ProxyError{
 		HTTPCode:   http.StatusForbidden,
 		PrismError: "DIRECT_TARGET_DENIED",

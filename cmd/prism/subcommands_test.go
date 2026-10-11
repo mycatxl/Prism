@@ -206,7 +206,7 @@ func TestBackupProducesConsistentDatabasesAndManifest(t *testing.T) {
 	if err := closer.Close(); err != nil {
 		t.Fatalf("close persistence: %v", err)
 	}
-	// intel.db only exists from WP08 on; a backup must pick it up when present.
+	// intel.db only exists from on; a backup must pick it up when present.
 	createSQLiteDatabase(t, filepath.Join(stateDir, "intel.db"))
 
 	// Secrets must never be copied into a backup.
@@ -499,7 +499,7 @@ func TestStartAdminListenerDisabledWhenAddressEmpty(t *testing.T) {
 	}
 }
 
-// TestPersistenceBootstrapHardensEnvConfiguredDirs covers G-04 for the paths an
+// TestPersistenceBootstrapHardensEnvConfiguredDirs covers for the paths an
 // operator configures through PRISM_STATE_DIR / PRISM_CACHE_DIR: both the
 // directories and the database files end up private, even when the directories
 // already existed with 0755.
@@ -543,7 +543,7 @@ func TestPersistenceBootstrapHardensEnvConfiguredDirs(t *testing.T) {
 	assertMode0600(t, filepath.Join(cacheDir, "cache.db"))
 }
 
-// TestRestoreHardensTargetDirectories covers G-04 for `prism restore`: the
+// TestRestoreHardensTargetDirectories covers for `prism restore`: the
 // directories it recreates must be 0700, not the process umask default.
 func TestRestoreHardensTargetDirectories(t *testing.T) {
 	backupDir := makeTestBackup(t)

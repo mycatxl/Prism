@@ -90,7 +90,7 @@ func TestRuntimeConfig_JSONFieldNames(t *testing.T) {
 		t.Fatalf("unmarshal to map error: %v", err)
 	}
 
-	// Check that JSON keys match the DESIGN.md GET /system/config response
+	// Check that JSON keys match the the design system GET /system/config response
 	expectedKeys := []string{
 		"request_log_enabled",
 		"reverse_proxy_log_detail_enabled",

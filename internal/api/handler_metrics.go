@@ -14,7 +14,7 @@ import (
 // Defaults: to=now, from=to-1h. Returns 400 on parse error or from>=to.
 //
 // maxWindow > 0 clamps 'from' to reference-maxWindow, so a request can never ask
-// for a range wider than the retention of the metric family it reads (G-08). The
+// for a range wider than the retention of the metric family it reads. The
 // clamp is silent on purpose: the realtime rings have always returned only their
 // configured window, and metrics.db now prunes to the same window, so a 24-hour
 // request against a 1-hour retention returns the retained hour instead of an

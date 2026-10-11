@@ -87,7 +87,7 @@ function normalizeNode(raw: ApiNodeSummary): NodeSummary {
     normalized.reference_latency_ms = reference_latency_ms;
   }
 
-  // The assessment may be missing entirely (pre-WP10 payloads). Normalising it
+ // The assessment may be missing entirely (older payloads). Normalising it
   // here keeps every consumer free of undefined checks; `intel.state` carries
   // the "unassessed" case.
   const intel = raw.intel;
@@ -129,7 +129,7 @@ function appendNodeFilters(query: URLSearchParams, filters: NodeListQuery): void
   appendIfNotEmpty("egress_ip", filters.egress_ip);
   appendIfNotEmpty("probed_since", filters.probed_since);
 
-  // WP10 §4 intel filters.
+ // intel filters.
   if (filters.purity_min !== undefined) {
     query.set("purity_min", String(filters.purity_min));
   }

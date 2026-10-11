@@ -9,7 +9,7 @@ import (
 	"prism/internal/platform"
 )
 
-// NodeRuleResult is one explainable admission rule of WP10 §2.1.
+// NodeRuleResult is one explainable admission rule of
 type NodeRuleResult struct {
 	Rule   string `json:"rule"`
 	Passed bool   `json:"passed"`

@@ -414,7 +414,7 @@ func TestParseGeneralSubscription_ClashJSON_NewProtocolsAndDialFields(t *testing
 	if got := socks["network"]; got != "tcp" {
 		t.Fatalf("socks network: got %v", got)
 	}
-	// §6: "detour-a" names no proxy of this document, so the reference is
+	// "detour-a" names no proxy of this document, so the reference is
 	// reported and stripped instead of being kept as an unresolvable detour.
 	if got, present := socks["detour"]; present {
 		t.Fatalf("socks detour: got %v, want the dangling reference stripped", got)
@@ -2218,7 +2218,7 @@ func TestParseGeneralSubscription_ClashJSON_DialFieldsAppliedToVMessAndHY2(t *te
 	}
 	byTag := parseNodesByTag(t, nodes)
 
-	// §6: neither dialer-proxy resolves inside this document, so both
+	// neither dialer-proxy resolves inside this document, so both
 	// references are stripped; the rest of the dial fields stay.
 	vmess := byTag["vmess-dial"]
 	if got, present := vmess["detour"]; present {

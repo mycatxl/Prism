@@ -8,8 +8,8 @@ import (
 	"prism/internal/intel/store"
 )
 
-// TestAudit_CanceledJobDoesNotStrandAnInFlightItem probes the gap the F1 and F4
-// guards leave together.
+// TestCanceledJobDoesNotStrandAnInFlightItem probes the gap the settlement
+// and cancel guards leave together.
 //
 // CancelJob only moves the QUEUED items to canceled (repo_jobs.go:213-215); the
 // running ones are left for the worker, which is supposed to notice through the
@@ -17,11 +17,11 @@ import (
 // step that returns a deferrable result never reaches that check again: the loop
 // body calls deferItem and returns. DeferJobItem's guard (status IN
 // ('queued','running')) therefore still accepts the write, and the item goes back
-// to queued inside a job that is already terminal - the stranded state F1 exists
-// to prevent. RetryFailedJobItems used to be an escape hatch (it reopened a
-// canceled job), but F5 now returns early for canceled jobs, so nothing can ever
+// to queued inside a job that is already terminal - the stranded state the guards
+// exist to prevent. RetryFailedJobItems used to be an escape hatch (it reopened a
+// canceled job), but retry now returns early for canceled jobs, so nothing can ever
 // claim or retry this item again.
-func TestAudit_CanceledJobDoesNotStrandAnInFlightItem(t *testing.T) {
+func TestCanceledJobDoesNotStrandAnInFlightItem(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -48,7 +48,7 @@ func TestAudit_CanceledJobDoesNotStrandAnInFlightItem(t *testing.T) {
 
 	// The operator cancels while the item is inside its last step.
 	canceled := false
-	runner := &auditRunner{onStep: last, inner: inner, between: func() {
+	runner := &gatedRunner{onStep: last, inner: inner, between: func() {
 		if err := m.Cancel(ctx, job.ID); err != nil {
 			t.Fatalf("Cancel: %v", err)
 		}

@@ -19,7 +19,7 @@ import (
 	"prism/internal/model"
 )
 
-// TestListenerHTTPServerAppliesConnectionBounds pins the F8 fix: the two
+// TestListenerHTTPServerAppliesConnectionBounds pins the  fix: the two
 // http.Server values cmd/prism actually serves (the endpoint demux server and
 // the optional admin listener) must carry the listener-level hygiene bounds
 // exported by internal/api.
@@ -61,7 +61,7 @@ func TestListenerHTTPServerAppliesConnectionBounds(t *testing.T) {
 	assertServerConnectionBounds(t, "demux nil fallback", newInboundDemuxServer(nil, nil).httpServer)
 }
 
-// TestAdminListenerServesAndShutsDownGracefully guards the other half of the F8
+// TestAdminListenerServesAndShutsDownGracefully guards the other half of the
 // change: building the admin listener's http.Server through api.NewListenerServer
 // must not disturb its Serve/Shutdown path. A real request is served, then
 // Shutdown must return promptly rather than waiting out the idle timeout.
@@ -160,7 +160,7 @@ func startDemuxForTest(t *testing.T, httpServer *http.Server, socks inboundConnH
 }
 
 // TestInboundDemuxStalledHeaderConnectionIsClosed is the end-to-end proof for
-// the F8 slowloris fix.
+// the  slowloris fix.
 //
 // inbound_demux.go clears the sniff read deadline (SetReadDeadline(time.Time{}))
 // before handing the connection to http.Server.Serve, so the 15s sniff timeout
@@ -302,7 +302,7 @@ func TestInboundDemuxStreamingResponseOutlivesHeaderTimeout(t *testing.T) {
 	}
 }
 
-// TestNoBareHTTPServerInProductionSources is the recurrence guard for F8.
+// TestNoBareHTTPServerInProductionSources is the recurrence guard for.
 //
 // The bug was not the missing value, it was that the value lived on a server
 // nobody served while the two served ones were built as bare

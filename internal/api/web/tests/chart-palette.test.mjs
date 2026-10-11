@@ -4,7 +4,7 @@
  *
  * `src/features/dashboard/chartPalette.ts` restates colours because an ECharts canvas
  * cannot read CSS variables. The rule that the two must be changed together was written
- * in prose in the root `DESIGN.md` and in the file's own header, and it was still broken:
+ * in prose in the the design system and in the file's own header, and it was still broken:
  * a redesign re-solved every colour in `design.css` and the charts kept painting the
  * previous palette — a drift that no gate could see, because the contrast gate reads CSS
  * and the type checker reads types.

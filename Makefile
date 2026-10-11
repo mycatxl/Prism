@@ -3,7 +3,7 @@ NPM ?= npm
 WEB_DIR := internal/api/web
 # One tag set for every build path (this file, the root Dockerfile and
 # .github/workflows/release.yml). The mihomo fallback kernel was evaluated and
-# rejected; see docs/ENGINE_DECISIONS.md. The with_mihomo build tag and its code
+# rejected. The with_mihomo build tag and its code
 # seam remain in the tree so the decision can be revisited, but the tag is
 # deliberately not part of any build. sing-box is the only engine.
 TAGS := with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
@@ -63,7 +63,7 @@ lint-go:
 capacity:
 	# In-process capacity figures for the platform view, the routing table and the
 	# node pool. Honours testing.Short(), so `go test -short` skips these cases and
-	# the normal verify target stays fast. Recorded results: docs/PERFORMANCE.md.
+	# the normal verify target stays fast.
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
 verify: lint test test-race protocol-matrix test-web
@@ -83,7 +83,7 @@ smoke:
 # invariants, the design system's contrast gate (which reads the tokens in
 # src/styles/design.css and fails on any pair below WCAG AA), and the
 # component-kit gate (which reads the .tsx sources directly, because the
-# anti-pattern detector does not scan them — DESIGN.md:235-236). Part of
+# anti-pattern detector does not scan them). Part of
 # `verify`, so a regression in the panel, in the kit or in the palette fails CI
 # like any Go test would.
 test-web:

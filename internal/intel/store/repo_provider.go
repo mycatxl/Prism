@@ -10,7 +10,7 @@ import (
 )
 
 // Provider budget/queue sentinel errors. Callers translate them into a
-// next_run_at for the queued item instead of blocking a worker (§3.3, R4).
+// next_run_at for the queued item instead of blocking a worker ( R4).
 var (
 	ErrProviderPaused   = errors.New("provider is paused")
 	ErrProviderBlocked  = errors.New("provider is blocked")
@@ -25,7 +25,7 @@ type BudgetRequest struct {
 	DailyLimit   int     // 0 = unlimited
 	QPS          float64 // 0 = unlimited
 	NowNs        int64
-	CredentialID string // changing it clears a pause (§3.3, WP09 §1)
+	CredentialID string // changing it clears a pause (,)
 }
 
 // DayString renders a UTC day key (YYYY-MM-DD) for provider_state.day.
@@ -100,7 +100,7 @@ func (s *Store) UpsertProviderState(ctx context.Context, st ProviderState) error
 
 // ConsumeProviderBudget atomically rolls the day counter, verifies the pause,
 // block and budget state, then reserves one request. provider_state.used and
-// provider_state.next_request_at_ns are updated in the same transaction (§3.3).
+// provider_state.next_request_at_ns are updated in the same transaction.
 //
 // The returned ProviderState is always populated when the call fails with one of
 // the sentinel errors, so the caller can schedule the next attempt.
@@ -244,7 +244,7 @@ type ViaNodeBudgetRequest struct {
 //
 // The returned ProviderState carries an effective NextRequestAtNs whenever a
 // gate is closed, so the caller can park the item instead of blocking a worker
-// (§3.2 step 4, R4).
+// (step 4, R4).
 func (s *Store) ConsumeViaNodeBudget(ctx context.Context, req ViaNodeBudgetRequest) (ProviderState, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -272,7 +272,7 @@ func (s *Store) ConsumeViaNodeBudget(ctx context.Context, req ViaNodeBudgetReque
 	} else if err != nil {
 		return ProviderState{}, err
 	}
-	// A rotated credential automatically lifts a pause (§3.3, WP09 §1).
+	// A rotated credential automatically lifts a pause ().
 	if req.CredentialID != "" && req.CredentialID != global.CredentialID {
 		global.Paused = false
 		global.ErrorCode = ""
@@ -359,7 +359,7 @@ func nextUTCDayNs(nowNs int64) int64 {
 }
 
 // MarkProviderNodeBlocked records a 429 cooldown against the single node that
-// hit it (WP09 §3.2 step 4).
+// hit it.
 //
 // A via-node lookup leaves through the node under test, so the vendor's rate
 // limit is about that node's address alone. Recording it in provider_state would
@@ -468,7 +468,7 @@ const (
 )
 
 // EnqueueProviderItem de-duplicates online lookups by (provider, ip) and returns
-// whether a new row was inserted (§3.2 step 3).
+// whether a new row was inserted (step 3).
 func (s *Store) EnqueueProviderItem(ctx context.Context, item QueueItem, mode EnqueueMode) (bool, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -545,7 +545,7 @@ func (s *Store) EnqueueProviderItem(ctx context.Context, item QueueItem, mode En
 }
 
 // ClaimProviderItems leases up to limit due items of one provider. Items whose
-// lease expired are reclaimable, so a crashed worker cannot strand work (§3.5).
+// lease expired are reclaimable, so a crashed worker cannot strand work.
 func (s *Store) ClaimProviderItems(ctx context.Context, provider string, nowNs, leaseUntilNs int64, limit int, owner string) ([]QueueItem, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -689,7 +689,7 @@ const providerReleaseChunk = 400
 //
 // attempts is deliberately untouched. ClaimProviderItems does not count an
 // attempt - the outcome does, in applyOutcome - so there is nothing to roll back
-// and a closed gate must not spend a retry (§3.3).
+// and a closed gate must not spend a retry.
 func (s *Store) ReleaseProviderItems(ctx context.Context, provider string, ips []string, owner string, nowNs int64) (int64, error) {
 	if strings.TrimSpace(provider) == "" {
 		return 0, fmt.Errorf("release provider items: provider is required")
@@ -760,7 +760,7 @@ func (s *Store) ResolveProviderItem(ctx context.Context, provider, ip string) er
 
 // FailProviderItem records a failed attempt. terminal marks the row failed,
 // otherwise it is retried at nextRunAtNs with the exponential backoff the worker
-// computed (§3.3).
+// computed.
 func (s *Store) FailProviderItem(ctx context.Context, provider, ip string, attempts int, nextRunAtNs int64, errorCode string, terminal bool) error {
 	db, err := s.conn()
 	if err != nil {
@@ -779,7 +779,7 @@ func (s *Store) FailProviderItem(ctx context.Context, provider, ip string, attem
 }
 
 // RequeueProviderItem returns a leased item to the queue without counting an
-// attempt. It is used when the budget or QPS gate is closed (§3.2 step 4).
+// attempt. It is used when the budget or QPS gate is closed (step 4).
 func (s *Store) RequeueProviderItem(ctx context.Context, provider, ip string, nextRunAtNs int64, errorCode string) error {
 	db, err := s.conn()
 	if err != nil {
@@ -836,7 +836,7 @@ func (s *Store) ProviderQueueCounts(ctx context.Context, provider string) (Provi
 	return out, rows.Err()
 }
 
-// CountPendingOnlineLookups counts queue rows still owned by one job (§3.5).
+// CountPendingOnlineLookups counts queue rows still owned by one job.
 func (s *Store) CountPendingOnlineLookups(ctx context.Context, jobID string) (int, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -849,7 +849,7 @@ func (s *Store) CountPendingOnlineLookups(ctx context.Context, jobID string) (in
 }
 
 // ResetStaleProviderItems clears leases left behind by a crash and returns the
-// number of rows that went back to queued (§3.5).
+// number of rows that went back to queued.
 func (s *Store) ResetStaleProviderItems(ctx context.Context) (int64, error) {
 	db, err := s.conn()
 	if err != nil {
@@ -865,7 +865,7 @@ func (s *Store) ResetStaleProviderItems(ctx context.Context) (int64, error) {
 }
 
 // CleanupProviderQueue deletes done rows older than doneBeforeNs and failed rows
-// older than failedBeforeNs (§6).
+// older than failedBeforeNs.
 func (s *Store) CleanupProviderQueue(ctx context.Context, doneBeforeNs, failedBeforeNs int64) (int64, error) {
 	db, err := s.conn()
 	if err != nil {

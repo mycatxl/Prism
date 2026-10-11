@@ -31,7 +31,7 @@ type NodeFilters struct {
 	ProbedSince    *time.Time
 	TagKeyword     *string
 
-	// WP10 §4 intel filters. They are evaluated against the in-memory
+	// intel filters. They are evaluated against the in-memory
 	// assessment projection (see nodeIntelMatchesFilters): ip_type and
 	// purity_band read the projected names, and a node without an assessment
 	// never satisfies a purity/verdict/confidence/native/asn/country/check
@@ -163,7 +163,7 @@ func (s *ControlPlaneService) nodeEntryMatchesFilters(
 			return false
 		}
 	}
-	// WP10 §4 intel filters, served from the in-memory assessment projection.
+	// intel filters, served from the in-memory assessment projection.
 	if hasIntelFilters(filters) {
 		if !s.nodeIntelMatchesFilters(s.nodeIntel(entry, time.Now().UTC()), filters) {
 			return false

@@ -14,7 +14,6 @@ import (
 // puts its weight into the numerator. If the denominator kept ignoring the
 // variant, coverage would be truncated at 1.0 and confidence, the `incomplete`
 // verdict and min_confidence admission would all be overstated.
-// docs/INTEL.md §9 recorded that inconsistency as undecided.
 func TestIntelEnabledSourcesResolvesAliasVariant(t *testing.T) {
 	now := func() time.Time { return time.Unix(0, 0).UTC() }
 

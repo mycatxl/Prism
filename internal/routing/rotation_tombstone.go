@@ -10,7 +10,7 @@ import (
 )
 
 // rotationTombstoneMaxEntries bounds the in-memory rotation tombstone cache
-// (WP10 §3). Tombstones are intentionally not persisted: losing one on restart
+// . Tombstones are intentionally not persisted: losing one on restart
 // only means an account may draw the same egress IP once again.
 const rotationTombstoneMaxEntries = 100_000
 
@@ -121,7 +121,7 @@ func (c *rotationTombstoneCache) evictLocked() {
 }
 
 // rotationTombstoneTTL returns how long a rotation tombstone stays valid:
-// max(scheduled rotation interval, sticky TTL) (WP10 §3).
+// max(scheduled rotation interval, sticky TTL).
 func rotationTombstoneTTL(interval time.Duration, stickyTTLNs int64) time.Duration {
 	if stickyTTL := time.Duration(stickyTTLNs); stickyTTL > interval {
 		return stickyTTL

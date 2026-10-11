@@ -2,7 +2,7 @@ package assess
 
 import "strings"
 
-// hostingASNs is the built-in cloud/ hosting provider ASN list of §1.4. It is
+// hostingASNs is the built-in cloud/ hosting provider ASN list of It is
 // only consulted when no online source voted on the IP type, so it can never
 // override real evidence; a match is always reported as ASN_HOSTING_HEURISTIC.
 var hostingASNs = map[int]string{
@@ -78,7 +78,7 @@ func HostingASNs() map[int]string {
 }
 
 // IsOfflineSource reports whether a source id is one of the offline registries
-// whose country/registration data feeds the §1.5 native heuristic.
+// whose country/registration data feeds the native heuristic.
 func IsOfflineSource(source string) bool {
 	return offlineSources[strings.ToLower(strings.TrimSpace(source))]
 }

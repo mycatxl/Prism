@@ -10,7 +10,7 @@ import type {
   RetryFailedJobResponse,
 } from "./types";
 
-// WP08 §3/§7 client. Endpoints are registered in internal/api/server.go:144-149
+// /client. Endpoints are registered in internal/api/server.go:144-149
 // and the SSE stream in server.go:232.
 //
 // The UI is served from the same origin as the API (vite.config.ts proxies

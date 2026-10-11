@@ -33,10 +33,10 @@ type SubscriptionResponse struct {
 	Ephemeral               bool   `json:"ephemeral"`
 	IncrementalAliveNodes   bool   `json:"incremental_alive_nodes"`
 	EphemeralNodeEvictDelay string `json:"ephemeral_node_evict_delay"`
-	// AutoIntel is the per-subscription automatic-intel switch (§3.6). Always
+	// AutoIntel is the per-subscription automatic-intel switch. Always
 	// present, so a client can read back what it set.
 	AutoIntel bool `json:"auto_intel"`
-	// ParseReport is the grouped summary of the last parse (Workplan WP06 §9):
+	// ParseReport is the grouped summary of the last parse (Workplan):
 	// one entry per skip reason with a count and a bounded, redacted sample of
 	// names. Nil until the subscription has been parsed once.
 	ParseReport *subscription.SkipSummary `json:"parse_report,omitempty"`
@@ -213,7 +213,7 @@ type CreateSubscriptionRequest struct {
 	Ephemeral               *bool   `json:"ephemeral"`
 	IncrementalAliveNodes   *bool   `json:"incremental_alive_nodes"`
 	EphemeralNodeEvictDelay *string `json:"ephemeral_node_evict_delay"`
-	// AutoIntel is the per-subscription automatic-intel switch (§3.6).
+	// AutoIntel is the per-subscription automatic-intel switch.
 	// Defaults to true, matching the subscription column's default.
 	AutoIntel *bool `json:"auto_intel"`
 }

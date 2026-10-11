@@ -9,7 +9,7 @@ import (
 	"prism/internal/node"
 )
 
-// TestAPIContract_RotateLease covers the WP10 §3 manual rotation endpoint
+// TestAPIContract_RotateLease covers the manual rotation endpoint
 // POST /api/v1/platforms/{id}/leases/{account}/actions/rotate: it removes the
 // lease, records a rotation tombstone for the previous egress IP and returns
 // 204 with an empty body.

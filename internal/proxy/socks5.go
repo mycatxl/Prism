@@ -174,7 +174,7 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 
 // socks5ReplyForProxyError maps a proxy error onto the closest SOCKS5 reply
 // code. A refused local direct target is "connection not allowed by ruleset"
-// (RFC 1928 §6), not a generic failure.
+// (RFC 1928), not a generic failure.
 func socks5ReplyForProxyError(proxyErr *ProxyError) byte {
 	if proxyErr == ErrDirectTargetDenied {
 		return socks5ReplyConnectionNotAllowed

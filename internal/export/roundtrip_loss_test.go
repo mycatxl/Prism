@@ -15,7 +15,7 @@ import (
 )
 
 // Regression tests for the "exported field silently dropped or rewritten"
-// family of defects (AUDIT_REPORT §20). Every case here is a field the
+// family of defects. Every case here is a field the
 // subscription parser reads back, so a link or proxy that omits it makes the
 // round trip lossy.
 //
@@ -33,12 +33,12 @@ import (
 //     parser reads them, the exporter never wrote them, so an exported node
 //     lost its "do not verify" flag or its certificate material.
 
-// --- B1: wireguard reserved ------------------------------------------------
+// --- wireguard reserved ------------------------------------------------
 
-// TestAudit_WireGuardReservedSurvivesTheShareLink pins #20a. Both spellings of
+// TestWireGuardReservedSurvivesTheShareLink covers both spellings of
 // the peer's reserved field must reach the link, and the link must be one the
 // wireguard parser turns back into the same three bytes.
-func TestAudit_WireGuardReservedSurvivesTheShareLink(t *testing.T) {
+func TestWireGuardReservedSurvivesTheShareLink(t *testing.T) {
 	const document = `{"prism_node":1,"engine":"singbox","kind":"endpoint","name":"wg-reserved",` +
 		`"main":{"type":"wireguard","address":["10.7.0.2/32"],"private_key":"WG-PRIVATE-KEY-FIXTURE",` +
 		`"peers":[{"address":"203.0.113.9","port":51820,"public_key":"WG-PUBLIC-KEY-FIXTURE",` +
@@ -89,11 +89,11 @@ func TestAudit_WireGuardReservedSurvivesTheShareLink(t *testing.T) {
 	}
 }
 
-// TestAudit_WireGuardReservedReadsTheNumberArrayDirectly covers the peer map as
+// TestWireGuardReservedReadsTheNumberArrayDirectly covers the peer map as
 // decoded from JSON rather than as normalised by node.ParseNodeDoc: the
 // number-array spelling has to keep working, so the fix may not simply replace
 // one spelling with the other.
-func TestAudit_WireGuardReservedReadsTheNumberArrayDirectly(t *testing.T) {
+func TestWireGuardReservedReadsTheNumberArrayDirectly(t *testing.T) {
 	main := json.RawMessage(`{"type":"wireguard","address":["10.7.0.2/32"],"private_key":"WG-PRIVATE-KEY-FIXTURE",` +
 		`"peers":[{"address":"203.0.113.9","port":51820,"public_key":"WG-PUBLIC-KEY-FIXTURE","reserved":[7,8,9]}]}`)
 	item := preparedItem{
@@ -113,12 +113,12 @@ func TestAudit_WireGuardReservedReadsTheNumberArrayDirectly(t *testing.T) {
 	}
 }
 
-// --- B2: hysteria v1 rates -------------------------------------------------
+// --- hysteria v1 rates -------------------------------------------------
 
-// TestAudit_HysteriaV1RatesSurviveTheShareLink pins #20b for the shape a URI
+// TestHysteriaV1RatesSurviveTheShareLink covers the shape a URI
 // import produces: sing-box's up_mbps/down_mbps are whole Mbps, which is
 // exactly what the share-link up/down parameters mean.
-func TestAudit_HysteriaV1RatesSurviveTheShareLink(t *testing.T) {
+func TestHysteriaV1RatesSurviveTheShareLink(t *testing.T) {
 	raw := json.RawMessage(`{"type":"hysteria","tag":"hy1-rates","server":"hy1.example.net","server_port":443,` +
 		`"auth_str":"hy1-pw","up_mbps":20,"down_mbps":200,"tls":{"enabled":true,"server_name":"hy1.example.net"}}`)
 	if _, err := node.ParseNodeDoc(raw); err != nil {
@@ -157,7 +157,7 @@ func TestAudit_HysteriaV1RatesSurviveTheShareLink(t *testing.T) {
 	}
 }
 
-// TestAudit_HysteriaV1ByteRateIsConvertedToMbps pins the other half of #20b:
+// TestHysteriaV1ByteRateIsConvertedToMbps covers the other half of the rule:
 // the shape a Clash import produces carries `up: "20 Mbps"`, which is a *byte*
 // rate, and sing-box prefers it over up_mbps when both are set. Whole Mbps is
 // an exact unit for a byte rate (125000 bytes per Mbps, see bytesPerMbps), so
@@ -165,7 +165,7 @@ func TestAudit_HysteriaV1RatesSurviveTheShareLink(t *testing.T) {
 // the rate being rewritten by a factor of 125000.
 //
 // The numeric spelling is the same rate written as a bare byte count.
-func TestAudit_HysteriaV1ByteRateIsConvertedToMbps(t *testing.T) {
+func TestHysteriaV1ByteRateIsConvertedToMbps(t *testing.T) {
 	rates := []struct {
 		name     string
 		body     string
@@ -251,11 +251,11 @@ func shareLinkBody(t *testing.T, format string, body []byte) []byte {
 	return decoded
 }
 
-// TestAudit_HysteriaV1ByteRateThatIsNotWholeMbpsIsSkipped pins the limit of the
+// TestHysteriaV1ByteRateThatIsNotWholeMbpsIsSkipped covers the limit of the
 // conversion: a byte rate that is not a whole number of Mbps has no exact
 // share-link value, so the node is skipped with a reason instead of being
 // exported with a rate that is off by up to a megabit.
-func TestAudit_HysteriaV1ByteRateThatIsNotWholeMbpsIsSkipped(t *testing.T) {
+func TestHysteriaV1ByteRateThatIsNotWholeMbpsIsSkipped(t *testing.T) {
 	rates := []struct {
 		name string
 		body string
@@ -286,7 +286,7 @@ func TestAudit_HysteriaV1ByteRateThatIsNotWholeMbpsIsSkipped(t *testing.T) {
 	}
 }
 
-// TestAudit_HysteriaByteRateUnitsMatchSingBox pins the unit tables against
+// TestHysteriaByteRateUnitsMatchSingBox pins the unit tables against
 // sing-box itself: byteformats.NetworkBytesCompat is the decoder sing-box runs
 // on the `up`/`down` fields, so every unit Prism converts has to resolve to the
 // same byte count sing-box would compute. A table that drifts from the upstream
@@ -295,7 +295,7 @@ func TestAudit_HysteriaV1ByteRateThatIsNotWholeMbpsIsSkipped(t *testing.T) {
 // The count is 1 so that no unit overflows uint64: sing-box multiplies without
 // a range check, so "20 EBps" wraps around there, and Prism refuses a rate it
 // cannot represent instead of copying a wrapped number.
-func TestAudit_HysteriaByteRateUnitsMatchSingBox(t *testing.T) {
+func TestHysteriaByteRateUnitsMatchSingBox(t *testing.T) {
 	units := []string{
 		"Bps", "Kbps", "KBps", "Mbps", "MBps", "Gbps", "GBps",
 		"Tbps", "TBps", "Pbps", "PBps", "Ebps", "EBps",
@@ -351,10 +351,10 @@ func TestAudit_HysteriaByteRateUnitsMatchSingBox(t *testing.T) {
 
 // --- B3: SOCKS version -----------------------------------------------------
 
-// TestAudit_SOCKSVersionSurvivesTheShareLink pins #20c on the share-link side:
+// TestSOCKSVersionSurvivesTheShareLink covers the share-link side:
 // the scheme has to follow the node's version field instead of always saying
 // socks5. An absent version means SOCKS5, which is what the parser assumes too.
-func TestAudit_SOCKSVersionSurvivesTheShareLink(t *testing.T) {
+func TestSOCKSVersionSurvivesTheShareLink(t *testing.T) {
 	cases := []struct {
 		name    string
 		version string
@@ -408,7 +408,7 @@ func TestAudit_SOCKSVersionSurvivesTheShareLink(t *testing.T) {
 	}
 }
 
-// TestAudit_SOCKS4IsRefusedByTheClashExport pins #20c on the Clash side.
+// TestSOCKS4IsRefusedByTheClashExport covers the Clash side.
 //
 // mihomo v1.19.31 has no SOCKS4 outbound: adapter/parser.go maps exactly one
 // SOCKS spelling, "socks5", and every other type fails with "unsupport proxy
@@ -416,7 +416,7 @@ func TestAudit_SOCKSVersionSurvivesTheShareLink(t *testing.T) {
 // would therefore trade a silent semantic change for an unloadable config, so
 // a SOCKS4/4a node is refused with a reason — the same rule openconnect already
 // follows in clashmap.go.
-func TestAudit_SOCKS4IsRefusedByTheClashExport(t *testing.T) {
+func TestSOCKS4IsRefusedByTheClashExport(t *testing.T) {
 	for _, version := range []string{"4", "4a"} {
 		raw := fmt.Sprintf(`{"type":"socks","server":"socks.example.com","server_port":1080,"version":%q}`, version)
 		if proxy, ok := clashProxyFromSingbox(clashObject(t, raw)); ok {
@@ -446,11 +446,11 @@ func TestAudit_SOCKS4IsRefusedByTheClashExport(t *testing.T) {
 
 // --- B4: vmess allowInsecure, hysteria2 certificate material ---------------
 
-// TestAudit_VmessAllowInsecureSurvivesTheShareLink pins #20d on the vmess side.
+// TestVmessAllowInsecureSurvivesTheShareLink covers the vmess side.
 // parseVmessFromMap reads allowInsecure out of the base64 share JSON, so the
 // payload has to carry it; the exporter never wrote it and an exported node
 // silently started verifying certificates again.
-func TestAudit_VmessAllowInsecureSurvivesTheShareLink(t *testing.T) {
+func TestVmessAllowInsecureSurvivesTheShareLink(t *testing.T) {
 	raw := json.RawMessage(`{"type":"vmess","tag":"vmess-insecure","server":"vmess.example.com","server_port":443,` +
 		`"uuid":"11111111-2222-3333-4444-555555555555","alter_id":0,"security":"auto",` +
 		`"tls":{"enabled":true,"server_name":"vmess.example.com","insecure":true}}`)
@@ -506,11 +506,11 @@ func decodeVmessSharePayload(link string) (map[string]any, error) {
 	return payload, nil
 }
 
-// TestAudit_Hysteria2CertificatePinningSurvivesTheShareLink pins #20d on the
+// TestHysteria2CertificatePinningSurvivesTheShareLink covers the
 // hysteria2 side: parseHysteria2URI reads pinSHA256, ca and ca-str, so a node
 // with certificate material must export it. Dropping it is a security
 // downgrade — the imported node stops checking the certificate at all.
-func TestAudit_Hysteria2CertificatePinningSurvivesTheShareLink(t *testing.T) {
+func TestHysteria2CertificatePinningSurvivesTheShareLink(t *testing.T) {
 	const pinOne = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 	const pinTwo = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
 	const pem = "-----BEGIN CERTIFICATE-----\nMIIBFIXTURE\n-----END CERTIFICATE-----"
@@ -557,11 +557,11 @@ func TestAudit_Hysteria2CertificatePinningSurvivesTheShareLink(t *testing.T) {
 	}
 }
 
-// TestAudit_Hysteria2CAResolvesToTheCertificatePath covers the `ca` spelling,
+// TestHysteria2CAResolvesToTheCertificatePath covers the `ca` spelling,
 // which maps onto tls.certificate_path. That option is refused by
 // node.ParseNodeDoc (it names a local file), so the writer is exercised
 // directly instead of through Export.
-func TestAudit_Hysteria2CAResolvesToTheCertificatePath(t *testing.T) {
+func TestHysteria2CAResolvesToTheCertificatePath(t *testing.T) {
 	object := map[string]any{
 		"type":        "hysteria2",
 		"server":      "hy2.example.net",
@@ -582,7 +582,7 @@ func TestAudit_Hysteria2CAResolvesToTheCertificatePath(t *testing.T) {
 	}
 }
 
-// TestAudit_FractionalMbpsRateIsRefused pins the Mbps half of the rate rule.
+// TestFractionalMbpsRateIsRefused covers the Mbps half of the rate rule.
 //
 // A share link carries the rate as decimal digits that the parser reads back
 // with strconv.ParseUint, so a fraction would be silently truncated to its
@@ -590,7 +590,7 @@ func TestAudit_Hysteria2CAResolvesToTheCertificatePath(t *testing.T) {
 // up_mbps is an int and it refuses both "20" (a string) and 20.5 (a fraction)
 // outright, which is why such a node is skipped with a reason instead of being
 // exported with a rounded rate.
-func TestAudit_FractionalMbpsRateIsRefused(t *testing.T) {
+func TestFractionalMbpsRateIsRefused(t *testing.T) {
 	rates := []struct {
 		name     string
 		protocol string

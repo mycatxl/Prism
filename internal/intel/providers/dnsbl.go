@@ -13,7 +13,7 @@ import (
 	"prism/internal/quality"
 )
 
-// DefaultDNSBLZones is the WP09 §3 zone list. dnsbl.sorbs.net is deliberately
+// DefaultDNSBLZones is the zone list. dnsbl.sorbs.net is deliberately
 // absent: the project stopped publishing answers.
 var DefaultDNSBLZones = []string{"zen.spamhaus.org", "bl.spamcop.net", "psbl.surriel.com"}
 
@@ -47,7 +47,7 @@ type DNSBLOptions struct {
 	// Resolver is injectable; tests point it at a local DNS server.
 	Resolver *net.Resolver
 	TTL      time.Duration
-	// ZoneQPS is the per-zone query rate (default 5/s per WP09 §3).
+	// ZoneQPS is the per-zone query rate (default 5/s per).
 	ZoneQPS float64
 	Now     func() time.Time
 }
@@ -120,7 +120,7 @@ func (p *DNSBL) Zones() []string {
 	return out
 }
 
-// Lookup implements OnlineProvider. IPv6 is reported as unsupported (§3).
+// Lookup implements OnlineProvider. IPv6 is reported as unsupported.
 func (p *DNSBL) Lookup(ctx context.Context, ips []netip.Addr) map[netip.Addr]Result {
 	out := make(map[netip.Addr]Result, len(ips))
 	for _, raw := range ips {

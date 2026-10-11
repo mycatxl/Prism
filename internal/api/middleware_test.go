@@ -125,7 +125,7 @@ func assertBodyContains(t *testing.T, rec *httptest.ResponseRecorder, substr str
 }
 
 // prismAuthLimiter builds a failure limiter for middleware cases. The limiter
-// was added by the WP04 security work; the upstream cases only exercise the
+// was added by the security work; the upstream cases only exercise the
 // token check, so an effectively unbounded limiter keeps their intent.
 func prismAuthLimiter() *AuthFailureLimiter {
 	return NewAuthFailureLimiter(1000, time.Minute, time.Minute, nil)
@@ -136,7 +136,7 @@ func prismAuthLimiter() *AuthFailureLimiter {
 //
 // It used to assert the fields of a *Server.httpServer that nothing ever
 // served: cmd/prism only took Handler(), so the assertion guaranteed nothing
-// about the process (audit F8). The served listeners are built in cmd/prism
+// about the process (audit). The served listeners are built in cmd/prism
 // through NewListenerServer, and cmd/prism/connection_bounds_test.go asserts
 // both real serve sites use it; this case pins the values NewListenerServer
 // applies, including that the SSE stream is not cut.
@@ -178,7 +178,7 @@ func TestListenerServerConnectionBounds(t *testing.T) {
 	}
 }
 
-// TestRequestBodyDeadlineBoundsOnlyRequestsWithABody pins the second half of F8:
+// TestRequestBodyDeadlineBoundsOnlyRequestsWithABody pins the second half of:
 // ReadHeaderTimeout stops at the end of the header block, and ReadTimeout has to
 // stay unset for the SSE stream, so the body phase would otherwise be unbounded.
 //
@@ -337,7 +337,7 @@ func TestRequestBodyDeadlineDoesNotCutALongHandler(t *testing.T) {
 	}
 }
 
-// TestServerWiresTheBodyDeadline is the wiring half of the F8 body bound: the
+// TestServerWiresTheBodyDeadline is the wiring half of the  body bound: the
 // middleware above is only worth anything if the served mux actually installs it.
 //
 // The check is structural rather than behavioural on purpose. Proving it over a

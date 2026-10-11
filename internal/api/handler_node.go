@@ -14,7 +14,7 @@ import (
 // validProtocolFilter validates the syntax of the `protocol` query parameter.
 // The value is matched verbatim against node.NodeEntry.Protocol, whose values
 // are lowercase identifiers such as "vless", "wireguard", "openvpn-client"
-// or "ssr" (WP06 §1.4).
+// or "ssr".
 func validProtocolFilter(value string) bool {
 	if value == "" || len(value) > 32 {
 		return false
@@ -75,7 +75,7 @@ func compareNodeSummaries(sortBy string, a, b service.NodeSummary) int {
 	return strings.Compare(a.NodeHash, b.NodeHash)
 }
 
-// nodePurityScore and nodeReferenceLatency read the sort keys of the WP10 §4
+// nodePurityScore and nodeReferenceLatency read the sort keys of the
 // intel fields. They are only compared between nodes that both have the value;
 // compareNodeSortKeyPresence keeps the missing ones last.
 func nodePurityScore(n service.NodeSummary) int {
@@ -204,7 +204,7 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 			filters.Protocol = &value
 		}
 
-		// WP10 §4 intel filters (purity, verdict, confidence, native, asn,
+		// intel filters (purity, verdict, confidence, native, asn,
 		// country and the repeatable check filter).
 		intelFilters := nodeIntelFilterValues{
 			PurityMin:     q.Get("purity_min"),
@@ -293,12 +293,12 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		// WP10 §4: the node_egress display facts of the page are read in one
+		// the node_egress display facts of the page are read in one
 		// batch (never one query per node); the assessment itself already came
 		// from the in-memory projection.
 		page := PaginateSlice(nodes, pg)
 		cp.FillNodeIntelEgress(r.Context(), page)
-		// WP08 §9: the per-provider quality evidence of the page, in one batched
+		// the per-provider quality evidence of the page, in one batched
 		// query. The assessment itself already came from the projection.
 		cp.FillNodeQualityEvidence(r.Context(), page)
 		WriteJSON(w, http.StatusOK, nodeListPageResponse{

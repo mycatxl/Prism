@@ -1,7 +1,7 @@
 // Package store owns the persistent intel.db SQLite database: the open path,
 // the embedded migrations and the repositories for egress observations,
 // provider evidence, via-node checks, purity assessments, provider budgets and
-// batch jobs (WP08 §2).
+// batch jobs.
 //
 // intel.db is deliberately a separate file from state.db/cache.db. It is set up
 // as a single-writer WAL database (SetMaxOpenConns(1), synchronous=NORMAL,
@@ -35,7 +35,7 @@ type Store struct {
 	// refreshHook is a test seam, mirroring ScheduledRotator.sweepHook and
 	// AutoEnqueuer.flushHook: it runs inside RefreshJob between the reads the
 	// status is computed from and the guarded UPDATE that publishes it - the
-	// window §3.6 is about. A test holds one publisher there while another one
+	// window is about. A test holds one publisher there while another one
 	// finishes an item and commits, which turns a 0.05% race into a
 	// deterministic interleaving. It is nil in production.
 	refreshHook func()
@@ -52,7 +52,7 @@ type Store struct {
 	closed bool
 }
 
-// Open creates (or opens) path and applies the WP08 pragmas and migrations.
+// Open creates (or opens) path and applies the pragmas and migrations.
 //
 // The directory is created with 0700 when missing and the database file is
 // forced to 0600 so an unrelated process cannot read provider evidence.

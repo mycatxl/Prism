@@ -1,6 +1,6 @@
 // Package outbound builds and owns sing-box outbounds: it turns a node
 // document into a running outbound, keeps one runtime per build, and
-// publishes the capability matrix the control plane reports (WP06).
+// publishes the capability matrix the control plane reports.
 package outbound
 
 import (
@@ -34,11 +34,11 @@ type SingboxBuilderConfig struct {
 }
 
 // ---------------------------------------------------------------------------
-// SingboxBuilder — WP06 compatibility wrapper around SingboxRuntime.
+// SingboxBuilder — compatibility wrapper around SingboxRuntime.
 // ---------------------------------------------------------------------------
 
 // SingboxBuilder builds real sing-box outbound instances from raw JSON options.
-// Since WP06 it delegates to the embedded sing-box runtime (§2); the type is
+// Since it delegates to the embedded sing-box runtime; the type is
 // kept so that existing callers and tests keep working unchanged.
 type SingboxBuilder struct {
 	runtime             *SingboxRuntime

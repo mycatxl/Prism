@@ -66,7 +66,7 @@ func makeEgressIndexProbeNode(t *testing.T, pool *GlobalNodePool, sub *subscript
 }
 
 // TestSeedEgressIndex_MakesRestoredNodeVisibleToNotifyEgressIPDirty pins the
-// audit finding 3.3 [#10]: the bootstrap path restores an egress IP with a
+// audit finding 3.3: the bootstrap path restores an egress IP with a
 // direct entry.SetEgressIP, so without a seed call the node stays invisible to
 // NotifyEgressIPDirty for the whole process lifetime.
 func TestSeedEgressIndex_MakesRestoredNodeVisibleToNotifyEgressIPDirty(t *testing.T) {

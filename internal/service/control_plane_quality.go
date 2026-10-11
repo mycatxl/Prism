@@ -17,7 +17,7 @@ import (
 )
 
 // The legacy /api/v1/quality/* surface, reimplemented over the intel subsystem
-// (WP08 §8/§9).
+//
 //
 // The old internal/inspection in-memory manager was replaced by intel.db, so
 // these handlers are now aliases: they read the authoritative intel rows and map
@@ -66,7 +66,7 @@ type qualityStatusResponse struct {
 }
 
 // qualitySourceStatus is one entry of the status source list: the providers
-// queried from this host (WP09 kind "online-ip").
+// queried from this host.
 type qualitySourceStatus struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -88,7 +88,7 @@ type qualitySourceStatus struct {
 }
 
 // qualityManualSourceStatus is one entry of the manual (via-node) source list:
-// the providers queried through the node under test (WP09 kind "via-node").
+// the providers queried through the node under test.
 //
 // The field order matches the legacy inspection.ManualSourceStatus the WebUI
 // contract test pinned, so the rendered key order is unchanged.
@@ -104,7 +104,7 @@ type qualityManualSourceStatus struct {
 
 // qualityRegistrySourceStatus is one entry of the registry (offline database)
 // source list: bundled or downloaded data that never touches the network per
-// lookup (WP09 kind "offline").
+// lookup.
 type qualityRegistrySourceStatus struct {
 	ID        string `json:"id"`
 	Ready     bool   `json:"ready"`
@@ -518,7 +518,7 @@ func qualityScorePtr(score *int64) *int {
 // qualityAssessmentFromRow maps an intel assessment row onto the legacy shape.
 //
 // The mapping is field-for-field because both sides describe the same computed
-// result; the intel row is the source of truth since WP08 §8 replaced the old
+// result; the intel row is the source of truth since replaced the old
 // in-memory assessment.
 func qualityAssessmentFromRow(row store.Assessment) quality.Assessment {
 	assessment := quality.Assessment{
@@ -680,7 +680,6 @@ func (s *ControlPlaneService) FillNodeQualityEvidence(ctx context.Context, nodes
 }
 
 // RequestIPQuality force-enqueues one IP on every runnable online source
-// (WP08 §9: the legacy POST /quality/ip/{ip}/actions/probe).
 //
 // It returns the refreshed summary and whether anything was queued; the handler
 // answers 202 when it was.
@@ -717,7 +716,7 @@ func (s *ControlPlaneService) RequestIPQuality(ctx context.Context, rawIP string
 // enqueueQualityIP force-enqueues one IP on every runnable online provider and
 // reports whether any queue row was touched.
 //
-// Priority 100 is what WP08 §9 specifies for a manual request, so it outranks
+// Priority 100 is what specifies for a manual request, so it outranks
 // the automatic pipeline work. When no online source can run at all the caller
 // gets the legacy "quality inspection is disabled" conflict instead of a 202
 // that promises work nobody will do.
@@ -753,7 +752,7 @@ func (s *ControlPlaneService) enqueueQualityIP(ctx context.Context, svc *intel.S
 // manualQualityPriority is the queue priority of a user-requested lookup.
 const manualQualityPriority = 100
 
-// ProbeQuality creates an intel job for one node (WP08 §9: the legacy
+// ProbeQuality creates an intel job for one node (the legacy
 // POST /nodes/{hash}/actions/probe-quality) and returns its id.
 func (s *ControlPlaneService) ProbeQuality(ctx context.Context, hash string) (RequestResult, error) {
 	h, err := node.ParseHex(hash)
@@ -778,7 +777,7 @@ func (s *ControlPlaneService) ProbeQuality(ctx context.Context, hash string) (Re
 }
 
 // ReviewIPPure creates an intel job that reviews one node through IPPure and
-// waits briefly for its evidence (WP08 §9: the legacy
+// waits briefly for its evidence (the legacy
 // POST /nodes/{hash}/actions/review-ippure).
 //
 // The wait is bounded by ippureReviewWait. A caller that wants to wait longer

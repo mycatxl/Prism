@@ -17,7 +17,7 @@ import (
 	"prism/internal/topology"
 )
 
-// WP10 §3 regression guard: the scheduled rotator reads
+// regression guard: the scheduled rotator reads
 // scheduled_rotation_enabled / scheduled_rotation_interval / from the runtime
 // pool objects only, so toRuntime must carry all three (plus
 // rotation_avoid_previous_ip) instead of dropping them.

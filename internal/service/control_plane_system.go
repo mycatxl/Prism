@@ -74,11 +74,11 @@ type ControlPlaneService struct {
 	RuntimeCfg      *atomic.Pointer[config.RuntimeConfig]
 	EnvCfg          *config.EnvConfig
 	EndpointRuntime EndpointRuntime
-	// Intel is the WP08 facade: the authoritative intel.db store, the in-memory
+	// Intel is the facade: the authoritative intel.db store, the in-memory
 	// projection and the batch job executor. The legacy Inspection, IPPure and
-	// TorRegistry fields were removed in WP08 §8: the /quality/* surface is now
+	// TorRegistry fields were removed in the /quality/* surface is now
 	// projected from this facade (internal/service/control_plane_quality.go).
-	// It is nil until WP08 is wired.
+	// It is nil until is wired.
 	Intel *intel.Service
 
 	configMu      sync.Mutex
@@ -146,7 +146,7 @@ var subscriptionPatchAllowedFields = map[string]bool{
 	"ephemeral":                  true,
 	"incremental_alive_nodes":    true,
 	"ephemeral_node_evict_delay": true,
-	// WP08 §3.6: the per-subscription automatic-intel switch.
+	// the per-subscription automatic-intel switch.
 	"auto_intel": true,
 }
 
@@ -277,7 +277,7 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 		}
 	}
 	minProbeInterval := 30 * time.Second
-	// Probe intervals must be at least 30s (DESIGN.md).
+	// Probe intervals must be at least 30s.
 	if time.Duration(cfg.MaxLatencyTestInterval) < minProbeInterval {
 		return invalidArg("max_latency_test_interval: must be >= 30s")
 	}
@@ -318,7 +318,7 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	return nil
 }
 
-// validateIntelConfig bounds the intel batch settings of WP08 §3.4.
+// validateIntelConfig bounds the intel batch settings of
 func validateIntelConfig(cfg *config.RuntimeConfig) *ServiceError {
 	if cfg.IntelNodeWorkers < 1 || cfg.IntelNodeWorkers > jobs.MaxNodeWorkers {
 		return invalidArg(fmt.Sprintf("intel_node_workers: must be between 1 and %d", jobs.MaxNodeWorkers))

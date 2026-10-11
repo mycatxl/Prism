@@ -739,7 +739,7 @@ func assertContains(t *testing.T, s, substr string) {
 	}
 }
 
-// --- Prism-specific cases restored from 3633100 (WP05) ---
+// --- Prism-specific cases restored from 3633100 ---
 
 const (
 	testAdminToken = "0123456789abcdef0123456789abcdef"

@@ -45,7 +45,7 @@ func rebuildWith(
 }
 
 // TestPlatform_FullRebuild_NeverExposesEmptyView pins the publication contract
-// of the routable view (audit 3.1 #9).
+// of the routable view .
 //
 // The read path (View().RandomPick / Range / Contains, see
 // internal/routing/random.go) does not take viewMu, so a rebuild that mutated
@@ -84,7 +84,7 @@ func TestPlatform_FullRebuild_NeverExposesEmptyView(t *testing.T) {
 	}
 	for i, got := range seen {
 		if got != oldSize && got != newSize {
-			t.Fatalf("observation %d during FullRebuild: View().Size() = %d, want %d (previous generation) or %d (next generation); an intermediate value means a reader without viewMu sees an incomplete view (audit 3.1 #9)", i, got, oldSize, newSize)
+			t.Fatalf("observation %d during FullRebuild: View.Size = %d, want %d (previous generation) or %d (next generation); an intermediate value means a reader without viewMu sees an incomplete view", i, got, oldSize, newSize)
 		}
 	}
 	if got := plat.View().Size(); got != newSize {

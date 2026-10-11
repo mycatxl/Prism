@@ -11,7 +11,7 @@ import (
 // NodeDoc is one parsed node document in the form the exporters need.
 //
 // Form A (a plain sing-box outbound) keeps Raw == Main. Form B (an envelope,
-// WP06 §1) splits into the main object plus its chain deps or the mihomo proxy
+// splits into the main object plus its chain deps or the mihomo proxy
 // object.
 type NodeDoc struct {
 	Kind   node.DocKind

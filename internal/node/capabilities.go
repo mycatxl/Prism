@@ -2,14 +2,14 @@ package node
 
 import "sync"
 
-// Engine capability declarations (WP06 §10). These lists are the single source
+// Engine capability declarations. These lists are the single source
 // of truth for the capabilities API and for the protocol matrix test; they must
 // stay in sync with what the parsers actually emit.
 
 const (
 	// SingboxVersion is the locked sing-box version (decision R9).
 	SingboxVersion = "1.14.2"
-	// MihomoVersion is the locked mihomo version used by WP07.
+	// MihomoVersion is the locked mihomo version used by.
 	MihomoVersion = "1.19.31"
 )
 
@@ -33,7 +33,7 @@ func SingboxOutboundTypes() []string {
 }
 
 // MihomoFallbackTypes lists the node types that only the mihomo fallback kernel
-// can represent (WP07). Without the with_mihomo tag they are reported as
+// can represent. Without the with_mihomo tag they are reported as
 // ENGINE_NOT_BUILT.
 func MihomoFallbackTypes() []string {
 	return []string{
@@ -111,7 +111,7 @@ type EngineCapability struct {
 //
 // This exists so a build tag alone can never make the API claim a capability the
 // binary does not have: `Built` is the AND of the tag seam and a runtime
-// registration (docs/ENGINE_DECISIONS.md D-1).
+// registration.
 var engineRuntimes = struct {
 	mu        sync.RWMutex
 	available map[string]bool

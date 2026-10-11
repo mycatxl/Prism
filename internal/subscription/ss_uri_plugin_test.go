@@ -8,7 +8,7 @@ import (
 	"prism/internal/node"
 )
 
-// Audit 3.8 (#39): parseSSURI used to write the plugin name of a SIP002 link
+//: parseSSURI used to write the plugin name of a SIP002 link
 // into the outbound without checking whether the bundled sing-box has an engine
 // for it. A link carrying plugin=shadow-tls / restls / kcptun / gost-plugin (or
 // any unknown name) therefore imported a node that entered the pool and every
@@ -87,7 +87,7 @@ func TestParseSSURI_PluginWithoutEngineIsRefused(t *testing.T) {
 }
 
 // TestSSPluginHasEngine pins the whitelist itself: only the empty name and the
-// two SIP002 plugins of docs/PROTOCOLS.md:134 have an engine in this build.
+// two SIP002 plugins have an engine in this build.
 func TestSSPluginHasEngine(t *testing.T) {
 	allowed := []string{"", "   ", "obfs-local", "obfs", "simple-obfs", "OBFS", "Simple-Obfs", "v2ray-plugin", "V2Ray-Plugin"}
 	for _, plugin := range allowed {

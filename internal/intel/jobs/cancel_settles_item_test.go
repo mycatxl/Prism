@@ -8,8 +8,8 @@ import (
 	"prism/internal/intel/store"
 )
 
-// TestAudit_CanceledJobSettlesTheInFlightItem probes the asymmetry the F1 fix
-// left behind between deferItem and finishItem.
+// TestCanceledJobSettlesTheInFlightItem probes the asymmetry the settlement
+// guard left behind between deferItem and finishItem.
 //
 // CancelJob only moves the QUEUED items to canceled (repo_jobs.go:213-215), so
 // an item that is inside a step when the operator cancels stays running. The
@@ -21,10 +21,10 @@ import (
 // The item therefore stays running inside a terminal job. Nothing can reach it:
 // the scheduler lists JOBS (ListActiveJobs filters status IN ('queued','running')),
 // claimOne only claims inside the active set, RetryFailedJobItems refuses
-// canceled jobs (F5) and the timeout sweep only walks active jobs. It keeps
+// canceled jobs and the timeout sweep only walks active jobs. It keeps
 // inflating the job's pending counter until the seven-day item retention pass
 // deletes it.
-func TestAudit_CanceledJobSettlesTheInFlightItem(t *testing.T) {
+func TestCanceledJobSettlesTheInFlightItem(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
@@ -48,7 +48,7 @@ func TestAudit_CanceledJobSettlesTheInFlightItem(t *testing.T) {
 	}
 
 	canceled := false
-	runner := &auditRunner{onStep: last, inner: inner, between: func() {
+	runner := &gatedRunner{onStep: last, inner: inner, between: func() {
 		if err := m.Cancel(ctx, job.ID); err != nil {
 			t.Fatalf("Cancel: %v", err)
 		}

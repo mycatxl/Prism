@@ -250,7 +250,7 @@ func TestSummarizeParseResult_EmptyListsSerialiseAsArrays(t *testing.T) {
 	}
 }
 
-// TestParseWithReport_NaiveIsEngineNotBuilt pins PROTOCOLS.md §10.1: this
+// TestParseWithReport_NaiveIsEngineNotBuilt pins the contract: this
 // build has no with_naive_outbound tag, so a naive node is refused at parse
 // time with ENGINE_NOT_BUILT instead of entering the pool and failing to build.
 func TestParseWithReport_NaiveIsEngineNotBuilt(t *testing.T) {

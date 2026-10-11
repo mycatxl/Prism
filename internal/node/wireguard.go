@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// WireGuardPeer is a wireguard endpoint peer (WP06 §3.1).
+// WireGuardPeer is a wireguard endpoint peer.
 type WireGuardPeer struct {
 	Address                     string   `json:"address,omitempty"`
 	Port                        uint16   `json:"port,omitempty"`
@@ -29,7 +29,7 @@ type WireGuardEndpoint struct {
 	Peers      []WireGuardPeer `json:"peers"`
 }
 
-// DefaultWireGuardAllowedIPs is the peer allowed-IP default of §3.1.
+// DefaultWireGuardAllowedIPs is the peer allowed-IP default of
 func DefaultWireGuardAllowedIPs() []string {
 	return []string{"0.0.0.0/0", "::/0"}
 }
@@ -100,7 +100,7 @@ func WireGuardEndpointFromLegacyOutbound(raw []byte) (WireGuardEndpoint, error) 
 
 // WireGuardEndpointFromOptions converts any normalized WireGuard option map
 // (legacy sing-box outbound, Clash proxy, Surge proxy or URI query) into
-// wireguard endpoint options. See WP06 §3.1 for the field mapping.
+// wireguard endpoint options. See for the field mapping.
 func WireGuardEndpointFromOptions(options map[string]any) (WireGuardEndpoint, error) {
 	endpoint := WireGuardEndpoint{
 		Address:    wireGuardAddressOptions(options),

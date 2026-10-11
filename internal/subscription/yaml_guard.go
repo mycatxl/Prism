@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// YAML resource guard (WP06 §9 hardening).
+// YAML resource guard.
 //
 // gopkg.in/yaml.v3 (v3.0.1, see go.mod) bounds *syntax* recursion on its own —
 // its scanner refuses more than 10000 nested flow collections and more than

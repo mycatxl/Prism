@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// Geo database file names inside $PRISM_CACHE_DIR/geo (WP09 §3).
+// Geo database file names inside $PRISM_CACHE_DIR/geo.
 const (
 	DBIPCityFile      = "dbip-city-lite.mmdb"
 	DBIPASNFile       = "dbip-asn-lite.mmdb"
@@ -59,7 +59,7 @@ func mmdbPath(dir, name string) string {
 	return filepath.Join(dir, name)
 }
 
-// RegisterBuiltins defines every data source of WP09 §3 on a registry.
+// RegisterBuiltins defines every data source of on a registry.
 func RegisterBuiltins(reg *Registry, cfg BuiltinConfig) {
 	now := cfg.Now
 	if now == nil {

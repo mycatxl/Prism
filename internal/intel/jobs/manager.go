@@ -19,7 +19,7 @@ import (
 )
 
 // NodeCensus enumerates the node hashes the pool still knows about. The
-// manager uses it to drop intel.db rows of deleted nodes (§6).
+// manager uses it to drop intel.db rows of deleted nodes.
 type NodeCensus interface {
 	KnownNodeHashes() map[string]struct{}
 }
@@ -27,10 +27,10 @@ type NodeCensus interface {
 // maxNodeDeletionsPerPass bounds one orphan-node cleanup pass (R4).
 const maxNodeDeletionsPerPass = 10_000
 
-// cleanupInterval is the daily maintenance period of §6.
+// cleanupInterval is the daily maintenance period of
 const cleanupInterval = 24 * time.Hour
 
-// vacuumInterval is the weekly PRAGMA optimize / VACUUM period of §6.
+// vacuumInterval is the weekly PRAGMA optimize / VACUUM period of
 const vacuumInterval = 7 * 24 * time.Hour
 
 // Options configures a Manager. Store, Runner and Scope are required.
@@ -41,11 +41,11 @@ type Options struct {
 	Config ConfigProvider
 	Clock  Clock
 	Census NodeCensus
-	// ProviderSpecs and Lookup enable the per-provider queue workers (§3.3).
+	// ProviderSpecs and Lookup enable the per-provider queue workers.
 	ProviderSpecs ProviderSpecSource
 	Lookup        OnlineLookup
 	// OnEvidenceWritten is called after a batch lookup stored evidence so the
-	// caller can re-assess the affected IPs (WP10 §1.8).
+	// caller can re-assess the affected IPs.
 	OnEvidenceWritten func(ips []netip.Addr)
 	// IDGen returns a new job id. Nil uses a random UUID v4 string.
 	IDGen func() string
@@ -55,7 +55,7 @@ type Options struct {
 	Tick time.Duration
 }
 
-// RecoverStats reports what the startup recovery did (§3.5).
+// RecoverStats reports what the startup recovery did.
 type RecoverStats struct {
 	RequeuedJobItems  int64 `json:"requeued_job_items"`
 	RequeuedQueueRows int64 `json:"requeued_queue_rows"`
@@ -186,7 +186,7 @@ func (m *Manager) Config() Config { return m.config().Normalize() }
 func (m *Manager) Enabled() bool { return m.Config().Enabled }
 
 // Recover clears the leases left behind by a crash. Running jobs stay running so
-// the worker pool continues them after the restart (§3.5).
+// the worker pool continues them after the restart.
 func (m *Manager) Recover(ctx context.Context) (RecoverStats, error) {
 	var stats RecoverStats
 	items, err := m.store.ResetRunningJobItems(ctx)
@@ -232,7 +232,7 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-// Create validates the request, expands the scope and persists the job (§3.1).
+// Create validates the request, expands the scope and persists the job.
 func (m *Manager) Create(ctx context.Context, req Request, createdBy string, priority int) (store.Job, error) {
 	cfg := m.Config()
 	if !cfg.Enabled {
@@ -293,7 +293,7 @@ func (m *Manager) Create(ctx context.Context, req Request, createdBy string, pri
 	return created, nil
 }
 
-// Cancel marks a job canceled and settles its counters (§3.5).
+// Cancel marks a job canceled and settles its counters.
 func (m *Manager) Cancel(ctx context.Context, jobID string) error {
 	if err := m.store.CancelJob(ctx, jobID, m.nowNs()); err != nil {
 		return err
@@ -302,7 +302,7 @@ func (m *Manager) Cancel(ctx context.Context, jobID string) error {
 	return nil
 }
 
-// RetryFailed requeues the failed items of a job (§3.5).
+// RetryFailed requeues the failed items of a job.
 //
 // publish only runs when an item was actually requeued. RefreshJob recomputes
 // the job from its item set, so publishing after a no-op retry rewrites the job
@@ -343,7 +343,7 @@ func (m *Manager) Stats() Stats {
 	}
 }
 
-// Cleanup runs the retention pass of §6 immediately.
+// Cleanup runs the retention pass of immediately.
 func (m *Manager) Cleanup(ctx context.Context) (store.CleanupResult, error) {
 	result, err := m.store.Cleanup(ctx, m.clock.Now(), store.DefaultCleanupPolicy())
 	if err != nil {
@@ -388,7 +388,7 @@ func (m *Manager) scheduleLoop() {
 
 // refreshActiveJobs picks the jobs allowed to run. Running jobs keep their slot
 // so newly created high-priority jobs queue behind them instead of preempting
-// in-flight work (§3.4). Two cases override that order:
+// in-flight work. Two cases override that order:
 //
 //   - a running job that has settled no item for jobStallYield is sorted behind
 //     the queued jobs, so a job whose items are all parked behind a closed gate
@@ -635,7 +635,7 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 	lastCompleted := item.StepIndex
 	summary := map[string]any{}
 	for _, step := range PendingSteps(kind, lastCompleted) {
-		// A canceled job stops the item before the next step starts (§3.5); a
+		// A canceled job stops the item before the next step starts; a
 		// job settled by the timeout sweep stops it too, because the sweep
 		// already failed this item and writing it back would revive both the
 		// item and the job holding a max_running_jobs slot.
@@ -701,7 +701,7 @@ const (
 )
 
 // jobGate reports whether an in-flight item may keep going. A canceled job stops
-// its item (§3.5). A job that reached any other terminal status was settled by
+// its item. A job that reached any other terminal status was settled by
 // the timeout sweep while this item was executing: the sweep already failed it,
 // so the worker drops it without writing anything back - a late defer or finish
 // would reopen the job and take a max_running_jobs slot again.

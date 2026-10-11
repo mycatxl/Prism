@@ -81,7 +81,7 @@ type EnvConfig struct {
 	//
 	// Only list a proxy that appends the peer address it observed to
 	// X-Forwarded-For: a proxy that forwards a client-supplied header verbatim
-	// would let a client choose its own limit bucket (docs/SECURITY.md §1.2).
+	// would let a client choose its own limit bucket.
 	TrustedProxies []string
 	// DirectDenyPrivate refuses loopback, private and link-local targets on the
 	// local direct reverse-proxy path (PRISM_DIRECT_DENY_PRIVATE).

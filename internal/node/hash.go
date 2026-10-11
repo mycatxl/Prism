@@ -20,12 +20,12 @@ var Zero Hash
 
 // HashFromRawOptions computes a node Hash from raw JSON options.
 //
-// Form A (a plain sing-box outbound, §1.1): the "tag" key is removed and the
+// Form A (a plain sing-box outbound,): the "tag" key is removed and the
 // result is re-marshalled. Go's encoding/json sorts map keys at all nesting
 // levels, so the output is deterministic without any manual sorting. This path
 // is byte-compatible with the upstream Resin implementation.
 //
-// Form B (an envelope, §1.2): the display name, main.tag and proxy.name are
+// Form B (an envelope,): the display name, main.tag and proxy.name are
 // removed. deps[i].tag is fixed to d<i> and therefore kept.
 //
 // If JSON parsing fails, it falls back to hashing the raw bytes directly.

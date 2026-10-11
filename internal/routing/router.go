@@ -39,7 +39,7 @@ type Router struct {
 	nodeTagResolver func(node.Hash) string
 
 	// rotationTombstones remembers each account's previous egress IP after a
-	// scheduled or manual rotation so the next lease can avoid it (WP10 §3).
+	// scheduled or manual rotation so the next lease can avoid it.
 	rotationTombstones *rotationTombstoneCache
 }
 
@@ -71,7 +71,7 @@ type RouteResult struct {
 	PlatformName string
 	NodeHash     node.Hash
 	EgressIP     netip.Addr
-	NodeTag      string // display tag: "<Subscription>/<Tag>" (DESIGN.md §601)
+	NodeTag      string // display tag: "<Subscription>/<Tag>"
 	LeaseCreated bool
 	// Events carries routing advisories that belong in the request log.
 	Events []string
@@ -79,7 +79,7 @@ type RouteResult struct {
 
 // RouteEventRotationFallbackSameIP is recorded when rotation avoidance could not
 // be honoured because every routable candidate shared the account's previous
-// egress IP (WP10 §3).
+// egress IP.
 const RouteEventRotationFallbackSameIP = "rotation_fallback_same_ip"
 
 const livePickAttempts = 2 // first pick + one retry
@@ -345,7 +345,7 @@ func (r *Router) createLease(
 	now time.Time,
 	nowNs int64,
 ) (Lease, RouteResult, error) {
-	// WP10 §3: when rotation avoidance is on and the account carries a live
+	// when rotation avoidance is on and the account carries a live
 	// tombstone, the previous egress IP is excluded from the P2C candidate set.
 	avoidIP := r.rotationAvoidIP(plat, account, nowNs)
 	h, entry, fallbackSameIP, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain, avoidIP)
@@ -421,7 +421,7 @@ func (r *Router) emitLeaseEvent(event LeaseEvent) {
 
 // selectLiveRandomRoute picks a live node for the platform. When avoidIP is
 // valid, candidates whose egress IP equals it are excluded from the P2C pick
-// (WP10 §3); the returned bool reports that the exclusion had to be dropped
+// ; the returned bool reports that the exclusion had to be dropped
 // because no other candidate existed.
 func (r *Router) selectLiveRandomRoute(
 	plat *platform.Platform,
@@ -651,7 +651,7 @@ func (r *Router) DeleteLease(platformID, account string) bool {
 // (CreatedAtNs <= createdBeforeOrAtNs). The staleness check is atomic with the
 // deletion, so a lease recreated after the rotator collected it is preserved.
 // Returns the removed lease and true when a lease was deleted, so callers can
-// record a rotation tombstone for its egress IP (WP10 §3).
+// record a rotation tombstone for its egress IP.
 // Emits a LeaseRemove event.
 func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
 	state, ok := r.states.Load(platformID)
@@ -675,7 +675,7 @@ func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBefor
 
 // RotateLease removes the account's lease and records a rotation tombstone for
 // the egress IP it was using, so the next lease for that account avoids it
-// (WP10 §3). Returns false when the account had no lease.
+// . Returns false when the account had no lease.
 // The tombstone lifetime is max(scheduled_rotation_interval, sticky_ttl).
 //
 // The tombstone is written inside the delete's critical section (not after it

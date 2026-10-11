@@ -62,7 +62,7 @@ type NodeCriteria struct {
 	SubscriptionIDs []string
 	// Protocols holds node.NodeEntry.Protocol values (shadowsocks, vless, ...).
 	Protocols []string
-	// QualityPolicy is the WP10 §2 admission policy.
+	// QualityPolicy is the admission policy.
 	QualityPolicy model.QualityPolicy
 }
 
@@ -141,7 +141,7 @@ func MatchNodeCriteria(
 // MatchNodeCriteriaForPreview evaluates the operator-set criteria of c without
 // the runtime health gates, and reports the criterion that rejected the node.
 //
-// It exists for the WP10 §2.1 preview-filter endpoint, which explains which
+// It exists for the preview-filter endpoint, which explains which
 // *criteria* exclude a node; a node that is merely unhealthy right now must
 // still be counted under its criteria counter there. The interactive form
 // preview uses MatchNodeCriteria instead, because its count claims to be what
@@ -228,7 +228,7 @@ func matchSelection(
 			}
 		default:
 			// Fail closed: a non-empty policy that cannot be verified never
-			// admits a node (WP10 §2, deviation X5 covers the empty policy).
+			// admits a node.
 			return false, ReasonQualityRejected
 		}
 	}

@@ -9,12 +9,12 @@ import (
 	"prism/internal/subscription"
 )
 
-// TestExportURIRoundTripsThroughTheParser is the §2.3 acceptance test: for
+// TestExportURIRoundTripsThroughTheParser is the acceptance test: for
 // every type the exporter supports, "export -> parse" must reproduce the node
 // hash exactly. The hash ignores the tag, so the share-link text is the only
 // thing under test. The wireguard endpoint is included on purpose: its peer
 // carries the two-entry default allowed-ips, which the link joins into one
-// comma-separated query value (F2).
+// comma-separated query value.
 func TestExportURIRoundTripsThroughTheParser(t *testing.T) {
 	items := append(fixtureNodes(t), fixtureEndpointNode(t))
 	body, _, report, err := Export(items, FormatURI, Options{})
@@ -56,7 +56,7 @@ func TestExportURIRoundTripsThroughTheParser(t *testing.T) {
 	}
 }
 
-// TestExportV2rayNIsBase64OfTheURILines pins the §2.3 v2rayn encoding.
+// TestExportV2rayNIsBase64OfTheURILines pins the v2rayn encoding.
 func TestExportV2rayNIsBase64OfTheURILines(t *testing.T) {
 	items := fixtureNodes(t)
 	uriBody, _, _, err := Export(items, FormatURI, Options{})
@@ -83,7 +83,7 @@ func TestExportV2rayNIsBase64OfTheURILines(t *testing.T) {
 	}
 }
 
-// TestExportURIShape pins the exact link shapes of §2.3 for each protocol.
+// TestExportURIShape pins the exact link shapes of for each protocol.
 func TestExportURIShape(t *testing.T) {
 	items := fixtureNodes(t)
 	body, _, _, err := Export(items, FormatURI, Options{})
@@ -169,7 +169,7 @@ func TestExportURIShape(t *testing.T) {
 	}
 }
 
-// TestExportURISkipsShapesWithoutAShareLink covers §2.3's skip list: node
+// TestExportURISkipsShapesWithoutAShareLink covers 's skip list: node
 // shapes that have no share-link spelling are reported, never dropped silently.
 func TestExportURISkipsShapesWithoutAShareLink(t *testing.T) {
 	items := []Item{
@@ -195,7 +195,7 @@ func TestExportURISkipsShapesWithoutAShareLink(t *testing.T) {
 	}
 }
 
-// TestExportURIWireGuardRoundTrip checks the wireguard:// row of §2.3.
+// TestExportURIWireGuardRoundTrip checks the wireguard:// row of
 func TestExportURIWireGuardRoundTrip(t *testing.T) {
 	item := fixtureEndpointNode(t)
 	body, _, report, err := Export([]Item{item}, FormatURI, Options{})

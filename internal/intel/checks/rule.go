@@ -1,4 +1,4 @@
-// Package checks implements the rule-driven unlock detection engine of WP09 §5:
+// Package checks implements the rule-driven unlock detection engine of
 // YAML rules (built in and user supplied), the matcher set, and the executor
 // that runs a rule's steps through the node under test.
 package checks
@@ -19,7 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Outcomes of one unlock check (WP08 §2 node_checks.outcome).
+// Outcomes of one unlock check.
 const (
 	OutcomeAvailable     = "available"
 	OutcomeBlocked       = "blocked"
@@ -29,7 +29,7 @@ const (
 	OutcomeUnknown       = "unknown"
 )
 
-// Limits of one rule (WP09 §5.3).
+// Limits of one rule.
 const (
 	// DefaultTimeout bounds one whole check.
 	DefaultTimeout = 10 * time.Second

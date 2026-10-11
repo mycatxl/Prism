@@ -9,7 +9,7 @@ import (
 	"prism/internal/state"
 )
 
-// TestSubscriptionAutoIntelReachesBootstrapAndPipeline covers WP08 §3.6 from the
+// TestSubscriptionAutoIntelReachesBootstrapAndPipeline covers from the
 // application side: the persisted auto_intel flag is restored onto the runtime
 // subscription by bootstrapTopology and is the value the intel pipeline reads
 // through prismApp.intelSubscriptionAutoIntel.

@@ -31,7 +31,7 @@ func mustMkdirLoose(t *testing.T, dir string) {
 	}
 }
 
-// TestHardenDBFiles_ForcesPrivateModes covers G-04: the directory becomes 0700
+// TestHardenDBFiles_ForcesPrivateModes covers: the directory becomes 0700
 // and the database file plus its WAL side files become 0600, even when every
 // one of them already exists with a world-readable mode.
 func TestHardenDBFiles_ForcesPrivateModes(t *testing.T) {

@@ -25,7 +25,7 @@ const projectionPlatformID = "projection-start"
 const projectionEgressIP = "203.0.113.77"
 
 // TestStartIntelRebuildsPlatformsOnceTheProjectionIsLoaded pins the last link of
-// the F7 chain, the one that lives in this package.
+// the  chain, the one that lives in this package.
 //
 // The startup order is: bootstrapFromPersistence rebuilds every platform
 // (cmd/prism/app_runtime.go:221 -> :404 RebuildAllPlatforms), initIntelJobs
