@@ -58,7 +58,7 @@ func TestAudit_CanceledJobIsNotOverwrittenByALaterCancel(t *testing.T) {
 	finishedAt := settled.FinishedAtNs
 
 	// The store boundary is the authority: it must refuse the write.
-	if err := st.CancelJob(ctx, job.ID); !errors.Is(err, store.ErrJobNotActive) {
+	if err := st.CancelJob(ctx, job.ID, clock.Now().UnixNano()); !errors.Is(err, store.ErrJobNotActive) {
 		t.Fatalf("CancelJob on a succeeded job = %v, want ErrJobNotActive", err)
 	}
 	// The manager path must surface the same refusal instead of swallowing it.
@@ -89,14 +89,14 @@ func TestAudit_CanceledJobIsNotOverwrittenByALaterCancel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if err := st.CancelJob(ctx, active.ID); err != nil {
+	if err := st.CancelJob(ctx, active.ID, clock.Now().UnixNano()); err != nil {
 		t.Fatalf("CancelJob on an active job: %v", err)
 	}
 	canceled, _ := st.GetJob(ctx, active.ID)
 	if canceled.Status != store.JobCanceled {
 		t.Errorf("active job = %s, want %s", canceled.Status, store.JobCanceled)
 	}
-	if err := st.CancelJob(ctx, "missing"); !errors.Is(err, store.ErrJobNotFound) {
+	if err := st.CancelJob(ctx, "missing", clock.Now().UnixNano()); !errors.Is(err, store.ErrJobNotFound) {
 		t.Errorf("CancelJob(missing) = %v, want ErrJobNotFound", err)
 	}
 }

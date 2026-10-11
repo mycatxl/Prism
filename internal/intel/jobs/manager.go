@@ -295,7 +295,7 @@ func (m *Manager) Create(ctx context.Context, req Request, createdBy string, pri
 
 // Cancel marks a job canceled and settles its counters (§3.5).
 func (m *Manager) Cancel(ctx context.Context, jobID string) error {
-	if err := m.store.CancelJob(ctx, jobID); err != nil {
+	if err := m.store.CancelJob(ctx, jobID, m.nowNs()); err != nil {
 		return err
 	}
 	m.publish(ctx, jobID, true)
@@ -726,8 +726,9 @@ func (m *Manager) jobGate(ctx context.Context, jobID string) jobGate {
 // no longer describes it, so the call returns without touching the hub.
 //
 // A canceled job is left alone unless this call is the one that records the
-// cancellation: CancelJob settles the queued items itself, so a later write of a
-// different terminal status would overwrite what the operator asked for.
+// cancellation: CancelJob settles every unsettled item itself - the running ones
+// included - so a later write of a different terminal status would overwrite
+// what the operator asked for.
 func (m *Manager) finishItem(ctx context.Context, item store.JobItem, status, errorCode string, summary map[string]any) {
 	if status != store.ItemCanceled && m.jobGate(ctx, item.JobID) == gateCanceled {
 		return
@@ -748,14 +749,15 @@ func (m *Manager) finishItem(ctx context.Context, item store.JobItem, status, er
 // so requeueing it would strand it inside a terminal job (a queued item of a
 // settled job is never claimed again) and the publish would revive the job.
 //
-// A canceled job is refused for the same reason. CancelJob only settles the
-// items that are still queued, so an item inside a step at that moment stays
-// running and reaches this function with the job already terminal. The store's
-// guard accepts the write (the item is still running), and the item would go
-// back to queued inside a canceled job - where neither ListActiveJobs (it lists
-// jobs) nor RetryFailedJobItems (it refuses canceled jobs) can ever reach it.
-// The item is settled as canceled instead, which is the status the loop-top
-// gate would have given it one step later.
+// A canceled job is refused for the same reason, and the store guard now backs
+// this check up: CancelJob settles every unsettled item itself - the running ones
+// included - so an item that was inside a step when the operator canceled reaches
+// DeferJobItem already canceled and the write is rejected with
+// ErrJobItemSettled. Without that guard the item would go back to queued inside a
+// canceled job, where neither ListActiveJobs (it lists jobs) nor
+// RetryFailedJobItems (it refuses canceled jobs) can ever reach it. The gate check
+// here is what turns the common case into an explicit canceled item instead of a
+// silent no-op, matching what the loop-top gate does one step later.
 func (m *Manager) deferItem(ctx context.Context, item store.JobItem, stepIndex int, nextRunAtNs int64, errorCode string, summary map[string]any) {
 	if m.jobGate(ctx, item.JobID) == gateCanceled {
 		m.finishItem(ctx, item, store.ItemCanceled, "", summary)

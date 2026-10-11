@@ -588,8 +588,14 @@ func (s *Store) ClaimProviderItems(ctx context.Context, provider string, nowNs, 
 		claimed[i].Status = QueueRunning
 		claimed[i].LeaseOwner = owner
 		claimed[i].LeaseUntilNs = leaseUntilNs
+		// error_code is deliberately left as it is. It records the last failed
+		// attempt, and a claim does not change that: the row may still be handed
+		// back by ReleaseProviderItems when the budget gate is shut, and clearing
+		// the diagnostic here would make a row that never sent a request look
+		// like it never failed either. ResolveProviderItem and FailProviderItem
+		// are the two places that own this column.
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE provider_queue SET status = ?, lease_owner = ?, lease_until_ns = ?, error_code = ''
+			UPDATE provider_queue SET status = ?, lease_owner = ?, lease_until_ns = ?
 			WHERE provider = ? AND ip = ?`,
 			QueueRunning, owner, leaseUntilNs, claimed[i].Provider, claimed[i].IP); err != nil {
 			return nil, err

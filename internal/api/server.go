@@ -34,6 +34,11 @@ const (
 	ReadHeaderTimeout = 10 * time.Second
 	IdleTimeout       = 120 * time.Second
 	MaxHeaderBytes    = 1 << 20
+	// RequestBodyTimeout bounds the body phase of a request that carries one.
+	// ReadHeaderTimeout only covers the headers, and ReadTimeout cannot be used
+	// here because it also bounds a streaming response (the SSE endpoint); this
+	// deadline is armed per request and only when a body is present.
+	RequestBodyTimeout = 60 * time.Second
 )
 
 // NewListenerServer builds the http.Server every Prism listener serves.
@@ -263,6 +268,9 @@ func NewServerWithAddress(
 		authedHandler = AuditMiddleware(cp.Engine, adminToken, apiMaxBodyBytes, authed)
 	}
 	authedHandler = RequestBodyLimitMiddleware(apiMaxBodyBytes, authedHandler)
+	// The body phase gets its own bound: ReadHeaderTimeout stops at the end of
+	// the header block, and ReadTimeout has to stay unset for the SSE stream.
+	authedHandler = RequestBodyDeadlineMiddleware(RequestBodyTimeout, authedHandler)
 
 	// Login failure limiting (WP04 §4.6). Only failed authentications count and
 	// X-Forwarded-For is honoured solely for PRISM_TRUSTED_PROXIES.

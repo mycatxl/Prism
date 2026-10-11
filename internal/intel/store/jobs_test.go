@@ -601,7 +601,7 @@ func TestJobs_CompletionPartialCancelAndRetry(t *testing.T) {
 		t.Fatalf("job after retry = %+v", job)
 	}
 
-	if err := st.CancelJob(ctx, "j"); err != nil {
+	if err := st.CancelJob(ctx, "j", 150); err != nil {
 		t.Fatalf("CancelJob: %v", err)
 	}
 	job, _ = st.RefreshJob(ctx, "j", 200)
@@ -612,7 +612,7 @@ func TestJobs_CompletionPartialCancelAndRetry(t *testing.T) {
 	if err != nil || counters.Canceled != 1 {
 		t.Fatalf("counters = %+v (err %v), want one canceled item", counters, err)
 	}
-	if err := st.CancelJob(ctx, "nope"); !errors.Is(err, ErrJobNotFound) {
+	if err := st.CancelJob(ctx, "nope", 200); !errors.Is(err, ErrJobNotFound) {
 		t.Fatalf("err = %v, want ErrJobNotFound", err)
 	}
 }
@@ -741,7 +741,7 @@ func TestJobs_ClaimRespectsJobScope(t *testing.T) {
 		[]JobItem{{NodeHash: "c", NextRunAtNs: 1, UpdatedAtNs: 1}}); err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := st.CancelJob(ctx, "j3"); err != nil {
+	if err := st.CancelJob(ctx, "j3", 1); err != nil {
 		t.Fatalf("CancelJob: %v", err)
 	}
 	claimed, err = st.ClaimJobItems(ctx, ClaimOptions{NowNs: 1, LeaseUntilNs: 10, Limit: 5, Owner: "w"})

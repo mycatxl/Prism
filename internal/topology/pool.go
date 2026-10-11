@@ -212,7 +212,12 @@ func (p *GlobalNodePool) LoadNodeFromBootstrap(entry *node.NodeEntry) {
 
 // RegisterPlatform adds a platform to receive dirty notifications.
 func (p *GlobalNodePool) RegisterPlatform(plat *platform.Platform) {
-	plat.SetQualitySnapshot(p.qualitySnapshot)
+	// The projection is read under the same lock that guards the field, so a
+	// registration that races a SetQualitySnapshot cannot observe a stale one.
+	p.platMu.RLock()
+	snap := p.qualitySnapshot
+	p.platMu.RUnlock()
+	plat.SetQualitySnapshot(snap)
 	p.platMu.Lock()
 	defer p.platMu.Unlock()
 	// Check for existing ID to avoid duplicates.

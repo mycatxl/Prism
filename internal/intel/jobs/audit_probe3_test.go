@@ -172,11 +172,11 @@ func TestAudit_RetryFailedDoesNotReviveACanceledJobWithFailedItems(t *testing.T)
 		}); err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	if err := st.CancelJob(ctx, "canceled-with-failures"); err != nil {
+	if err := st.CancelJob(ctx, "canceled-with-failures", now); err != nil {
 		t.Fatalf("CancelJob: %v", err)
 	}
-	// CancelJob only cancels queued items, so the failed one survives: this job
-	// has something to retry and is still canceled.
+	// CancelJob settles every unsettled item - queued and running alike - so the
+	// failed one survives: this job has something to retry and is still canceled.
 	if counters, err := st.JobItemCounters(ctx, "canceled-with-failures"); err != nil ||
 		counters.Failed != 1 || counters.Canceled != 1 {
 		t.Fatalf("counters = %+v (err %v), want one failed and one canceled item", counters, err)

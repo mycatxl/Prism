@@ -177,8 +177,17 @@ func (s *Store) MarkJobRunning(ctx context.Context, id string, nowNs int64) erro
 	return err
 }
 
-// CancelJob marks a job canceled; the workers stop after the current step (§3.5).
-func (s *Store) CancelJob(ctx context.Context, id string) error {
+// CancelJob marks a job canceled and settles every item it still has unsettled;
+// the workers stop after the current step (§3.5).
+//
+// Settling the running items here - not only the queued ones - is what keeps the
+// cancellation final. A worker that is inside a step keeps a stale copy of its
+// item and only writes through the guarded statements below, so leaving the row
+// running for it to settle would leave the write to whichever side won the race:
+// the item's own guard (status IN ('queued','running')) accepts a late defer
+// when the row is still running, and the item would go back to queued inside a
+// job no worker can ever claim from again.
+func (s *Store) CancelJob(ctx context.Context, id string, nowNs int64) error {
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -210,9 +219,18 @@ func (s *Store) CancelJob(ctx context.Context, id string) error {
 			return fmt.Errorf("%w: status is %s", ErrJobNotActive, status)
 		}
 	}
+	// Every unsettled item is settled here, the RUNNING ones included. A worker
+	// inside a step is left to notice through the job gate, but the row must not
+	// be left for it to write back: the scheduler lists jobs, not items, so a
+	// queued or running item of a terminal job can never be claimed again -
+	// neither by claimOne (it only claims inside the active set) nor by
+	// RetryFailedJobItems (it refuses canceled jobs). Settling it here is what
+	// makes the item's own guard (status IN ('queued','running')) reject the late
+	// defer/finish, so the operator's decision is the one that sticks.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE job_items SET status = ? WHERE job_id = ? AND status = ?`,
-		ItemCanceled, id, ItemQueued); err != nil {
+		`UPDATE job_items SET status = ?, lease_owner = '', lease_until_ns = 0, updated_at_ns = ?
+		 WHERE job_id = ? AND status IN (?, ?)`,
+		ItemCanceled, nowNs, id, ItemQueued, ItemRunning); err != nil {
 		return err
 	}
 	return tx.Commit()

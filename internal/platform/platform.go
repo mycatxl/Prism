@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"prism/internal/model"
@@ -63,7 +64,24 @@ type Platform struct {
 
 	// qualitySnapshot is the read-only intel projection the quality admission
 	// path reads (WP10 §2). It is nil until the intel service is wired.
-	qualitySnapshot QualitySnapshotReader
+	//
+	// It is an atomic pointer rather than a plain interface field because the
+	// writers and the readers do not share a lock: the pool re-installs the
+	// projection (GlobalNodePool.instrumentQuality / SetQualitySnapshot /
+	// RegisterPlatform) while a concurrent dirty event reads it under viewMu.
+	// A plain interface value is two words, so that pair is a data race, and a
+	// torn read would hand the admission path a mismatched type and data word.
+	// A nil pointer is stored as a typed-nil-free zero: the reader treats it as
+	// "no projection yet", exactly like the nil interface before.
+	qualitySnapshot atomic.Pointer[qualitySnapshotBox]
+}
+
+// qualitySnapshotBox carries the reader behind the atomic pointer. A plain
+// atomic.Pointer[QualitySnapshotReader] cannot be used: storing a nil interface
+// through an interface-typed pointer would make the load non-nil, and the
+// admission path must see "no projection" as a nil reader.
+type qualitySnapshotBox struct {
+	reader QualitySnapshotReader
 }
 
 // NewPlatform creates a Platform with an empty routable view.
@@ -151,10 +169,18 @@ func (p *Platform) evaluateNode(
 		subLookup,
 		geoLookup,
 		qualityLookup,
-		p.qualitySnapshot,
+		p.qualityReader(),
 		time.Now(),
 	)
 	return ok
+}
+
+// qualityReader returns the injected projection, or nil when none is installed.
+func (p *Platform) qualityReader() QualitySnapshotReader {
+	if box := p.qualitySnapshot.Load(); box != nil {
+		return box.reader
+	}
+	return nil
 }
 
 // MatchRegionFilter applies include/exclude region filters.
@@ -209,6 +235,9 @@ func (p *Platform) GetScheduledRotationInterval() time.Duration {
 // SetQualitySnapshot injects the intel projection used by quality admission.
 // It must be called before the first FullRebuild/NotifyDirty that uses a
 // non-empty quality policy.
+//
+// The store is atomic so it is safe to call while another goroutine is inside a
+// rebuild or a dirty event; see the field comment for why that pair is real.
 func (p *Platform) SetQualitySnapshot(snap QualitySnapshotReader) {
-	p.qualitySnapshot = snap
+	p.qualitySnapshot.Store(&qualitySnapshotBox{reader: snap})
 }

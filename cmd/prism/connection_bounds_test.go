@@ -4,10 +4,13 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -306,23 +309,93 @@ func TestInboundDemuxStreamingResponseOutlivesHeaderTimeout(t *testing.T) {
 // &http.Server{Handler: ...}. Reading the tree is the only way to catch the next
 // listener added that way, because a zero ReadHeaderTimeout looks exactly like a
 // deliberately unbounded one at runtime.
+//
+// The walk starts at the module root and covers every package: a listener added
+// under a new directory, or in an existing one outside cmd/prism, is exactly the
+// case a package-local scan would miss. Test files and the vendored frontend
+// sources are skipped - they may construct a server for their own fixtures.
 func TestNoBareHTTPServerInProductionSources(t *testing.T) {
-	entries, err := os.ReadDir(".")
+	root, err := moduleRoot()
 	if err != nil {
-		t.Fatalf("read package dir: %v", err)
+		t.Fatalf("locate module root: %v", err)
 	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		source, err := os.ReadFile(name)
+	scanned := 0
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			return err
 		}
-		if !strings.Contains(string(source), "http.Server{") {
-			continue
+		name := entry.Name()
+		if entry.IsDir() {
+			switch name {
+			case ".git", "node_modules", "vendor", "dist", "testdata":
+				return fs.SkipDir
+			}
+			return nil
 		}
-		t.Errorf("%s constructs an http.Server directly; build it with api.NewListenerServer so the connection bounds cannot be omitted", name)
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		scanned++
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			rel = path
+		}
+		// The file that defines the constructor is the one place allowed to name
+		// the type; every other package has to go through it.
+		if strings.Contains(string(source), "func NewListenerServer(") {
+			return nil
+		}
+		// A bare composite literal and new(http.Server) are the two ways to get
+		// an unbounded server. Comments are stripped first: the doc comment of
+		// the fix itself quotes the bad pattern, and a URL like http:// must not
+		// turn into a false positive either.
+		if strings.Contains(stripLineComments(string(source)), "http.Server{") ||
+			strings.Contains(stripLineComments(string(source)), "new(http.Server)") {
+			t.Errorf("%s constructs an http.Server directly; build it with api.NewListenerServer so the connection bounds cannot be omitted", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk sources: %v", err)
+	}
+	if scanned < 100 {
+		t.Fatalf("scanned only %d Go files: the walk did not cover the module", scanned)
+	}
+}
+
+// stripLineComments removes // comments so a source scan does not match the
+// pattern it is looking for inside its own documentation.
+func stripLineComments(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+	for _, line := range strings.Split(src, "\n") {
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = line[:idx]
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// moduleRoot walks up from the test's working directory until it finds go.mod.
+func moduleRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", fmt.Errorf("go.mod not found above %s", dir)
+		}
+		dir = parent
 	}
 }
