@@ -35,7 +35,8 @@ const (
 	stateVersionAuditLog                         = 14
 	stateVersionPlatformNodeCriteria             = 15
 	stateVersionDropExportProfiles               = 16
-	stateLatestVersion                           = stateVersionDropExportProfiles
+	stateVersionTenant                           = 17
+	stateLatestVersion                           = stateVersionTenant
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	stateBaseSchemaMigration = stateMigrationsPath + "/000001_state_base.up.sql"
@@ -45,6 +46,13 @@ const (
 var migrationsFS embed.FS
 
 type preMigrateHook func(db *sql.DB, driver migratedb.Driver) error
+
+// LatestVersion reports the newest state.db migration version this build
+// embeds. Tests and the upgrade path read it instead of hard-coding a number,
+// so adding a migration cannot leave a stale expectation behind.
+func LatestVersion() int {
+	return stateLatestVersion
+}
 
 // MigrateStateDB applies state.db migrations.
 func MigrateStateDB(db *sql.DB) error {
