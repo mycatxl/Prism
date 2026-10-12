@@ -22,7 +22,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix verify smoke init start clean
+.PHONY: build web backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix coverage coverage-gate verify smoke init start clean
 
 build: web backend
 
@@ -39,6 +39,22 @@ test:
 
 test-race:
 	$(GO) test -race -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
+
+# Coverage is measured once for the whole tree and then checked against a
+# floor, both in total and for the packages the multi-tenant data layer lives
+# in. The numbers in COVERAGE_MIN* are the measured baseline minus a few
+# points, not a guess: run `make coverage` to print the current figures.
+COVERAGE_MIN_TOTAL ?= 70
+COVERAGE_MIN_PACKAGE ?= 70
+COVERAGE_PROFILE ?= $(CURDIR)/bin/coverage.out
+
+coverage:
+	mkdir -p bin
+	$(GO) test -tags '$(BUILD_TAGS)' -covermode=atomic -coverprofile='$(COVERAGE_PROFILE)' ./cmd/... ./internal/...
+	go tool cover -func='$(COVERAGE_PROFILE)' | tail -1
+
+coverage-gate: coverage
+	bash scripts/coverage-gate.sh '$(COVERAGE_PROFILE)' $(COVERAGE_MIN_TOTAL) $(COVERAGE_MIN_PACKAGE)
 
 protocol-matrix:
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'TestProtocolMatrix' -count=1 -v ./internal/outbound/...
@@ -66,7 +82,7 @@ capacity:
 	# the normal verify target stays fast.
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
-verify: lint test test-race protocol-matrix test-web
+verify: lint test test-race protocol-matrix coverage-gate test-web
 
 # End-to-end smoke test: boots the built binary against a throw-away
 # environment (temporary state/cache/log directories, freshly generated tokens,
