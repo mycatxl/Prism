@@ -526,7 +526,9 @@ func runBackupCommand(args []string, stdout, stderr io.Writer) error {
 
 // performBackup copies each existing database into outDir with `VACUUM INTO`,
 // using independent read-only connections so a running service is not disturbed.
-// `.env` and any other file are deliberately not part of a backup.
+// The key pepper is copied as a plain file: it is not a database, and losing it
+// would invalidate every access key stored in state.db, so it belongs in the
+// same backup. `.env` and every other file are still deliberately excluded.
 func performBackup(stateDir, cacheDir, outDir string, logw io.Writer) (*backupManifest, error) {
 	if strings.TrimSpace(stateDir) == "" || strings.TrimSpace(cacheDir) == "" {
 		return nil, errors.New("backup: state and cache directories must be configured")
@@ -544,10 +546,14 @@ func performBackup(stateDir, cacheDir, outDir string, logw io.Writer) (*backupMa
 	sources := []struct {
 		name string
 		path string
+		// plain marks a file that is not a SQLite database and is therefore
+		// copied directly instead of through VACUUM INTO.
+		plain bool
 	}{
-		{"state.db", filepath.Join(stateDir, "state.db")},
-		{"cache.db", filepath.Join(cacheDir, "cache.db")},
-		{"intel.db", filepath.Join(stateDir, "intel.db")},
+		{"state.db", filepath.Join(stateDir, "state.db"), false},
+		{"cache.db", filepath.Join(cacheDir, "cache.db"), false},
+		{"intel.db", filepath.Join(stateDir, "intel.db"), false},
+		{auth.PepperFileName, filepath.Join(stateDir, auth.PepperFileName), true},
 	}
 
 	manifest := &backupManifest{
@@ -578,7 +584,11 @@ func performBackup(stateDir, cacheDir, outDir string, logw io.Writer) (*backupMa
 			return nil, fmt.Errorf("backup: inspect %s: %w", dest, err)
 		}
 
-		if err := vacuumInto(src.path, dest); err != nil {
+		if src.plain {
+			if err := copyFile0600(src.path, dest); err != nil {
+				return nil, fmt.Errorf("backup: copy %s: %w", src.name, err)
+			}
+		} else if err := vacuumInto(src.path, dest); err != nil {
 			return nil, fmt.Errorf("backup: copy %s: %w", src.name, err)
 		}
 		if err := os.Chmod(dest, 0o600); err != nil {
@@ -810,7 +820,7 @@ func manifestTargets(opts restoreOptions, manifest *backupManifest) (map[string]
 	targets := make(map[string]string, len(manifest.Files))
 	for _, file := range manifest.Files {
 		switch file.Name {
-		case "state.db", "intel.db":
+		case "state.db", "intel.db", auth.PepperFileName:
 			if strings.TrimSpace(opts.StateDir) == "" {
 				return nil, errors.New("restore: state directory must be configured")
 			}

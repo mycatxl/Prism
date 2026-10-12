@@ -437,6 +437,11 @@ func TestBackupProducesConsistentDatabasesAndManifest(t *testing.T) {
 			t.Fatalf("%s size = %d, manifest = %d", file.Name, size, file.Size)
 		}
 
+		// Only the databases are SQLite files; the pepper is copied verbatim.
+		if !strings.HasSuffix(file.Name, ".db") {
+			continue
+		}
+
 		db, err := sql.Open("sqlite", path)
 		if err != nil {
 			t.Fatalf("open %s: %v", file.Name, err)
@@ -463,6 +468,87 @@ func TestBackupProducesConsistentDatabasesAndManifest(t *testing.T) {
 		t.Fatalf("stored manifest has %d files, want %d", len(stored.Files), len(manifest.Files))
 	}
 	assertMode0600(t, filepath.Join(outDir, backupManifestName))
+}
+
+// The key pepper must ride along with the databases: losing it invalidates
+// every access key stored in state.db, so a backup without it is incomplete.
+func TestBackupIncludesPepper(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		t.Fatalf("persistence bootstrap: %v", err)
+	}
+	_ = engine
+	if err := closer.Close(); err != nil {
+		t.Fatalf("close persistence: %v", err)
+	}
+
+	raw, err := auth.GeneratePepper()
+	if err != nil {
+		t.Fatalf("GeneratePepper: %v", err)
+	}
+	if _, err := auth.WritePepperFile(stateDir, raw); err != nil {
+		t.Fatalf("WritePepperFile: %v", err)
+	}
+
+	outDir := filepath.Join(t.TempDir(), "backup")
+	var log bytes.Buffer
+	manifest, err := performBackup(stateDir, cacheDir, outDir, &log)
+	if err != nil {
+		t.Fatalf("performBackup: %v (%s)", err, log.String())
+	}
+
+	wantNames := []string{"state.db", "cache.db", auth.PepperFileName}
+	gotNames := backupManifestNames(manifest)
+	if strings.Join(gotNames, ",") != strings.Join(wantNames, ",") {
+		t.Fatalf("manifest files = %v, want %v", gotNames, wantNames)
+	}
+
+	// The copy is byte-identical, private, and hashes as the manifest says.
+	pepperPath := filepath.Join(outDir, auth.PepperFileName)
+	assertMode0600(t, pepperPath)
+	original := readFileString(t, filepath.Join(stateDir, auth.PepperFileName))
+	if got := readFileString(t, pepperPath); got != original {
+		t.Error("the backed-up pepper differs from the original")
+	}
+	for _, file := range manifest.Files {
+		if file.Name != auth.PepperFileName {
+			continue
+		}
+		sum, size, err := fileSHA256(pepperPath)
+		if err != nil {
+			t.Fatalf("hash pepper: %v", err)
+		}
+		if sum != file.SHA256 || size != file.Size {
+			t.Errorf("pepper manifest entry does not match the copy: %+v", file)
+		}
+	}
+
+	// A restore puts it back where the service expects it.
+	targetState := t.TempDir()
+	targetCache := t.TempDir()
+	if err := restoreBackup(
+		restoreOptions{StateDir: targetState, CacheDir: targetCache, Port: 0},
+		outDir, true, io.Discard,
+	); err != nil {
+		t.Fatalf("restoreBackup: %v", err)
+	}
+	restored := filepath.Join(targetState, auth.PepperFileName)
+	assertMode0600(t, restored)
+	if got := readFileString(t, restored); got != original {
+		t.Error("the restored pepper differs from the original")
+	}
+
+	// And the restored pepper must load back to the same value.
+	loaded, err := auth.LoadPepper(targetState)
+	if err != nil {
+		t.Fatalf("LoadPepper after restore: %v", err)
+	}
+	if string(loaded.Raw()) != string(raw) {
+		t.Error("the restored pepper does not match the generated one")
+	}
 }
 
 // --- restore ---
