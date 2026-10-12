@@ -733,8 +733,11 @@ const (
 )
 
 const (
-	maxInt64        = int64(^uint64(0) >> 1)
-	auditLogColumns = `id, at_ns, actor, remote_addr, action, target, detail_json`
+	maxInt64 = int64(^uint64(0) >> 1)
+	// auditLogColumns lists the audit columns in the order ListAudit scans
+	// them. user_id is appended after actor: it is the column 000017 adds, so a
+	// row written before that migration reads back with the empty default.
+	auditLogColumns = `id, at_ns, actor, user_id, remote_addr, action, target, detail_json`
 )
 
 // decodeQualityPolicyJSON accepts both the current and the legacy key set.
@@ -858,8 +861,8 @@ func (r *StateRepo) AppendAudit(e model.AuditEntry) error {
 	defer r.mu.Unlock()
 
 	_, err := r.db.Exec(
-		`INSERT INTO audit_log (at_ns, actor, remote_addr, action, target, detail_json) VALUES (?, ?, ?, ?, ?, ?)`,
-		e.AtNs, e.Actor, e.RemoteAddr, e.Action, e.Target, detail,
+		`INSERT INTO audit_log (at_ns, actor, user_id, remote_addr, action, target, detail_json) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		e.AtNs, e.Actor, e.UserID, e.RemoteAddr, e.Action, e.Target, detail,
 	)
 	return err
 }
@@ -886,7 +889,7 @@ func (r *StateRepo) ListAudit(beforeID int64, limit int) ([]model.AuditEntry, er
 	var result []model.AuditEntry
 	for rows.Next() {
 		var e model.AuditEntry
-		if err := rows.Scan(&e.ID, &e.AtNs, &e.Actor, &e.RemoteAddr, &e.Action, &e.Target, &e.Detail); err != nil {
+		if err := rows.Scan(&e.ID, &e.AtNs, &e.Actor, &e.UserID, &e.RemoteAddr, &e.Action, &e.Target, &e.Detail); err != nil {
 			return nil, err
 		}
 		result = append(result, e)

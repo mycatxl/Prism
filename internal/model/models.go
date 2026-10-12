@@ -273,10 +273,16 @@ type IntelProviderSetting struct {
 }
 
 // AuditEntry is one recorded administrative mutation. Detail holds JSON text.
+//
+// UserID names the account that performed the action once requests are
+// authenticated as a user. It is empty for rows written before multi-tenant
+// accounts existed; Actor keeps the identity string those rows carry, so both
+// generations of the table stay readable.
 type AuditEntry struct {
 	ID         int64  `json:"id"`
 	AtNs       int64  `json:"at_ns"`
 	Actor      string `json:"actor"`
+	UserID     string `json:"user_id"`
 	RemoteAddr string `json:"remote_addr"`
 	Action     string `json:"action"`
 	Target     string `json:"target"`

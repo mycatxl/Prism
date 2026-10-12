@@ -262,6 +262,66 @@ func TestStateRepo_PrismAuditAppendListAndPrune(t *testing.T) {
 	}
 }
 
+// Audit rows carry the account that performed the action once requests are
+// authenticated as a user, while the actor string stays populated for rows that
+// predate multi-tenant accounts.
+func TestStateRepo_PrismAuditUserIDRoundTrip(t *testing.T) {
+	repo := newTestStateRepo(t)
+	const base = int64(1_700_000_000_000_000_000)
+
+	// A row written the pre-tenant way: actor only, no user id.
+	if err := repo.AppendAudit(model.AuditEntry{
+		AtNs:       base,
+		Actor:      "deadbeef",
+		RemoteAddr: "10.0.0.7:54321",
+		Action:     "POST /api/v1/platforms",
+		Target:     "plat-legacy",
+		Detail:     "{}",
+	}); err != nil {
+		t.Fatalf("AppendAudit legacy row: %v", err)
+	}
+
+	// A row written by a signed-in user.
+	if err := repo.AppendAudit(model.AuditEntry{
+		AtNs:       base + int64(time.Minute),
+		Actor:      "alice",
+		UserID:     "u-1",
+		RemoteAddr: "10.0.0.8:54321",
+		Action:     "POST /api/v1/admin/plans",
+		Target:     "plan-1",
+		Detail:     `{"field":"name"}`,
+	}); err != nil {
+		t.Fatalf("AppendAudit user row: %v", err)
+	}
+
+	entries, err := repo.ListAudit(0, 10)
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 audit entries, got %d", len(entries))
+	}
+
+	// Newest first.
+	if entries[0].UserID != "u-1" {
+		t.Errorf("user_id did not round-trip: got %q, want %q", entries[0].UserID, "u-1")
+	}
+	if entries[0].Actor != "alice" {
+		t.Errorf("actor: got %q, want %q", entries[0].Actor, "alice")
+	}
+	if entries[0].Detail != `{"field":"name"}` {
+		t.Errorf("detail: got %q", entries[0].Detail)
+	}
+
+	// The legacy row keeps its actor and reads back with an empty user id.
+	if entries[1].UserID != "" {
+		t.Errorf("legacy row user_id: got %q, want empty", entries[1].UserID)
+	}
+	if entries[1].Actor != "deadbeef" {
+		t.Errorf("legacy row actor: got %q, want %q", entries[1].Actor, "deadbeef")
+	}
+}
+
 // --- subscription parse report ---
 
 func TestStateRepo_PrismSetSubscriptionParseReport(t *testing.T) {
