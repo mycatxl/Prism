@@ -32,6 +32,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/service"
 	"prism/internal/state"
+	"prism/internal/usage"
 )
 
 type prismApp struct {
@@ -53,6 +54,8 @@ type prismApp struct {
 	//: the metrics retention loop and the policy it applies.
 	stopMetricsPruner func()
 	metricsRetention  metrics.RetentionPolicy
+	//: the usage summary and prune loop over state.db.
+	stopUsageRetention func()
 	//: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
@@ -562,6 +565,15 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 			a.metricsDB, a.metricsRetention, metrics.RetentionPruneInterval)
 	}
 
+	// The usage summary runs hourly: state.db has one write connection shared
+	// with the flush worker, and a summary pass is heavier than a bounded
+	// delete, so it stays well clear of the metric pruner's five-minute cadence.
+	a.stopUsageRetention = (&usage.Retention{
+		Store: engine,
+		Logf:  usage.DefaultLogf,
+	}).Start()
+	log.Println("Usage retention started")
+
 	apiSrv := api.NewServerWithAddress(
 		a.envCfg.ListenAddress,
 		a.envCfg.ProxyPort,
@@ -846,6 +858,9 @@ func (a *prismApp) shutdown() {
 
 	if a.stopMetricsPruner != nil {
 		a.stopMetricsPruner()
+	}
+	if a.stopUsageRetention != nil {
+		a.stopUsageRetention()
 	}
 	shutdownBlocking("metrics manager", a.metricsManager.Stop)
 	log.Println("Metrics manager stopped")
