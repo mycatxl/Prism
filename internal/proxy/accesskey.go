@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"strings"
 	"time"
 
 	"prism/internal/auth"
@@ -77,6 +78,36 @@ func (v *keyVerifier) VerifyCredential(credential string) *keys.KeyState {
 		return nil
 	}
 	return state
+}
+
+// splitAccessKeyCredential finds the access key in a presented credential and
+// returns the identity part that is left once the key is taken out.
+//
+// Two shapes carry a key, and both occur in practice:
+//
+//   - "<identity>:pk_<id>_<secret>" — the key sits in the token position, which
+//     is what every existing client already fills in
+//   - "pk_<id>_<secret>" — the whole credential is the key, which is what a
+//     client sends when it has no identity to declare
+//
+// isKey separates "no key here, carry on with the global token" from "a key was
+// named and did not verify", which the caller must refuse. Collapsing the two
+// would let a revoked key be retried as a token.
+func splitAccessKeyCredential(verifier AccessKeyVerifier, credential string) (identity string, state *keys.KeyState, isKey bool) {
+	if verifier == nil {
+		return credential, nil, false
+	}
+	if idx := strings.LastIndexByte(credential, ':'); idx >= 0 {
+		token := credential[idx+1:]
+		if !keys.IsCredentialShape(token) {
+			return credential, nil, false
+		}
+		return credential[:idx], verifier.VerifyCredential(token), true
+	}
+	if !keys.IsCredentialShape(credential) {
+		return credential, nil, false
+	}
+	return "", verifier.VerifyCredential(credential), true
 }
 
 // proxyIdentity is what an inbound request authenticated as.

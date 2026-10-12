@@ -49,6 +49,15 @@ var (
 		PrismError: "PLATFORM_NOT_FOUND",
 		Message:    "Platform not found",
 	}
+	// Returned when an access key authenticates but may not reach the platform
+	// the request names. It is distinct from ErrAuthFailed on purpose: the
+	// credential is valid, so the client is told what is actually wrong, and
+	// the 403 keeps the key from being retried against other platforms.
+	ErrPlatformForbidden = &ProxyError{
+		HTTPCode:   http.StatusForbidden,
+		PrismError: "PLATFORM_FORBIDDEN",
+		Message:    "Access key is not allowed to use this platform",
+	}
 	ErrAccountRejected = &ProxyError{
 		HTTPCode:   http.StatusForbidden,
 		PrismError: "ACCOUNT_REJECTED",

@@ -18,7 +18,11 @@ import (
 
 // ForwardProxyConfig holds dependencies for the forward proxy.
 type ForwardProxyConfig struct {
-	ProxyToken        string
+	ProxyToken string
+	// AccessKeys resolves an access key credential presented in the token
+	// position. It may be nil or unconfigured: the credential then falls back
+	// to the global proxy token, which is the transitional behaviour.
+	AccessKeys        AccessKeyVerifier
 	Router            *routing.Router
 	Pool              outbound.PoolAccessor
 	Health            HealthRecorder
@@ -40,6 +44,7 @@ type ForwardProxyConfig struct {
 // authentication, HTTP request forwarding, and CONNECT tunneling.
 type ForwardProxy struct {
 	token             string
+	accessKeys        AccessKeyVerifier
 	router            *routing.Router
 	pool              outbound.PoolAccessor
 	health            HealthRecorder
@@ -68,6 +73,7 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 	}
 	return &ForwardProxy{
 		token:           cfg.ProxyToken,
+		accessKeys:      cfg.AccessKeys,
 		router:          cfg.Router,
 		pool:            cfg.Pool,
 		health:          cfg.Health,
@@ -105,37 +111,50 @@ func (p *ForwardProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// authenticate parses Proxy-Authorization and returns (platformName, account, error).
-func (p *ForwardProxy) authenticate(r *http.Request) (string, string, *ProxyError) {
+// authenticate parses Proxy-Authorization and returns the identity it names.
+func (p *ForwardProxy) authenticate(r *http.Request) (proxyIdentity, *ProxyError) {
 	return p.authenticateV1(r)
 }
 
-func (p *ForwardProxy) authenticateV1(r *http.Request) (string, string, *ProxyError) {
+// authenticateV1 accepts either an access key or the transitional global proxy
+// token in the credential's token position.
+//
+// The order matters: the credential is inspected for a key first, and anything
+// that is not a key is compared with the global token. A key-shaped credential
+// never falls back to that comparison, so a revoked key cannot authenticate by
+// accident on a deployment whose token happens to resemble one.
+func (p *ForwardProxy) authenticateV1(r *http.Request) (proxyIdentity, *ProxyError) {
 	auth := r.Header.Get("Proxy-Authorization")
-	if p.token == "" {
-		credential, ok := parseProxyAuthorizationCredentialV1(auth)
-		if !ok {
-			if requireProxyAuthInfo(r) {
-				return "", "", ErrAuthRequired
-			}
-			return "", "", nil
-		}
-		if requireProxyAuthInfo(r) && !hasBasicUserInfo(credential) {
-			return "", "", ErrAuthRequired
-		}
-		platName, account := parseForwardCredentialV1WhenAuthDisabled(credential)
-		return platName, account, nil
-	}
-
 	credential, ok := parseProxyAuthorizationCredentialV1(auth)
 	if !ok {
-		return "", "", ErrAuthRequired
+		if p.token == "" && !requireProxyAuthInfo(r) {
+			return proxyIdentity{}, nil
+		}
+		return proxyIdentity{}, ErrAuthRequired
 	}
+	if p.token == "" && requireProxyAuthInfo(r) && !hasBasicUserInfo(credential) {
+		return proxyIdentity{}, ErrAuthRequired
+	}
+
+	identity, state, isKey := splitAccessKeyCredential(p.accessKeys, credential)
+	if isKey {
+		if state == nil {
+			return proxyIdentity{}, ErrAuthFailed
+		}
+		platName, account := parseV1PlatformAccountIdentity(identity)
+		return proxyIdentity{PlatformName: platName, Account: account, Key: state}, nil
+	}
+
+	if p.token == "" {
+		platName, account := parseForwardCredentialV1WhenAuthDisabled(credential)
+		return proxyIdentity{PlatformName: platName, Account: account}, nil
+	}
+
 	token, platName, account := parseForwardCredentialV1(credential)
 	if subtle.ConstantTimeCompare([]byte(token), []byte(p.token)) != 1 {
-		return "", "", ErrAuthFailed
+		return proxyIdentity{}, ErrAuthFailed
 	}
-	return platName, account, nil
+	return proxyIdentity{PlatformName: platName, Account: account}, nil
 }
 
 func requireProxyAuthInfo(r *http.Request) bool {
@@ -230,12 +249,13 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if guardProxyAuthFailure(w, r, p.authGuard) {
 		return
 	}
-	platName, account, authErr := p.authenticate(r)
+	identity, authErr := p.authenticate(r)
 	if authErr != nil {
 		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, authErr)
 		return
 	}
+	platName, account := identity.PlatformName, identity.Account
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, false)
 	lifecycle.setTarget(r.Host, r.URL.String())
@@ -256,7 +276,7 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		transport = p.directHTTPTransport()
 	} else {
-		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, platName, account, r.Host)
+		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, platName, account, r.Host, identity.Key)
 		if routeErr != nil {
 			lifecycle.setProxyError(routeErr)
 			lifecycle.setHTTPStatus(routeErr.HTTPCode)
@@ -340,12 +360,13 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	if guardProxyAuthFailure(w, r, p.authGuard) {
 		return
 	}
-	platName, account, authErr := p.authenticate(r)
+	identity, authErr := p.authenticate(r)
 	if authErr != nil {
 		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, authErr)
 		return
 	}
+	platName, account := identity.PlatformName, identity.Account
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, true)
 	lifecycle.setTarget(target, "")
@@ -366,6 +387,7 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		platName,
 		account,
 		target,
+		identity.Key,
 	)
 	if prepare.route.PlatformID != "" {
 		lifecycle.setRouteResult(prepare.route)

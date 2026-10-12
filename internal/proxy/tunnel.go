@@ -10,6 +10,7 @@ import (
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
+	"prism/internal/keys"
 	"prism/internal/netutil"
 	"prism/internal/outbound"
 	"prism/internal/routing"
@@ -74,6 +75,7 @@ func prepareConnectTunnel(
 	platformName string,
 	account string,
 	target string,
+	key *keys.KeyState,
 ) tunnelPrepareResult {
 	if deps.bypass != nil && deps.bypass.ShouldBypass(target) {
 		// PRISM_DIRECT_DENY_PRIVATE governs this local dial path too: the
@@ -84,7 +86,7 @@ func prepareConnectTunnel(
 		return prepareDirectConnectTunnel(ctx, deps, target)
 	}
 
-	routed, routeErr := resolveRoutedOutbound(deps.router, deps.pool, platformName, account, target)
+	routed, routeErr := resolveRoutedOutbound(deps.router, deps.pool, platformName, account, target, key)
 	if routeErr != nil {
 		return tunnelPrepareResult{proxyErr: routeErr}
 	}

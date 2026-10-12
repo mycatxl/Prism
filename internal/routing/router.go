@@ -122,6 +122,23 @@ func withPlatformContext(plat *platform.Platform, res RouteResult) RouteResult {
 	return res
 }
 
+// ResolvePlatformID resolves a platform name to its ID without routing.
+//
+// An empty name resolves to the default platform, exactly like RouteRequest.
+// The data plane needs this because an access key stores platform IDs while a
+// request names a platform, so the restriction cannot be checked until the name
+// has been resolved.
+func (r *Router) ResolvePlatformID(platName string) (string, error) {
+	if r == nil {
+		return "", ErrPlatformNotFound
+	}
+	plat, err := r.resolvePlatform(platName)
+	if err != nil {
+		return "", err
+	}
+	return plat.ID, nil
+}
+
 func (r *Router) resolvePlatform(platName string) (*platform.Platform, error) {
 	if platName == "" {
 		if p, ok := r.pool.GetPlatform(platform.DefaultPlatformID); ok {

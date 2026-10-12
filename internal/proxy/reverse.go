@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"prism/internal/keys"
 	"prism/internal/netutil"
 	"prism/internal/outbound"
 	"prism/internal/platform"
@@ -24,7 +25,11 @@ type PlatformLookup interface {
 
 // ReverseProxyConfig holds dependencies for the reverse proxy.
 type ReverseProxyConfig struct {
-	ProxyToken        string
+	ProxyToken string
+	// AccessKeys resolves an access key presented as the first path segment.
+	// It may be nil or unconfigured: the segment then falls back to the global
+	// proxy token, which is the transitional behaviour.
+	AccessKeys        AccessKeyVerifier
 	Router            *routing.Router
 	Pool              outbound.PoolAccessor
 	PlatformLookup    PlatformLookup
@@ -50,6 +55,7 @@ type ReverseProxyConfig struct {
 // ReverseProxy implements an HTTP reverse proxy.
 type ReverseProxy struct {
 	token             string
+	accessKeys        AccessKeyVerifier
 	router            *routing.Router
 	pool              outbound.PoolAccessor
 	platLook          PlatformLookup
@@ -80,6 +86,7 @@ func NewReverseProxy(cfg ReverseProxyConfig) *ReverseProxy {
 	}
 	return &ReverseProxy{
 		token:           cfg.ProxyToken,
+		accessKeys:      cfg.AccessKeys,
 		router:          cfg.Router,
 		pool:            cfg.Pool,
 		platLook:        cfg.PlatformLookup,
@@ -120,6 +127,9 @@ type parsedPath struct {
 	// Path preserves the original escaped remaining path after host (may be
 	// empty), e.g. "v1/users/team%2Fa/profile".
 	Path string
+	// Key is the access key the first path segment resolved to, or nil when the
+	// request authenticated with the transitional global proxy token.
+	Key *keys.KeyState
 }
 
 // forwardingIdentityHeaders are commonly used to disclose proxy chain identity.
@@ -180,7 +190,19 @@ func (p *ReverseProxy) parsePathV1(rawPath string) (*parsedPath, *ProxyError) {
 	if perr != nil {
 		return nil, perr
 	}
-	if p.token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(p.token)) != 1 {
+	// The first segment carries either an access key or the transitional global
+	// proxy token. A key-shaped segment never falls back to the token
+	// comparison: a revoked key must be refused outright rather than retried as
+	// a token.
+	var keyState *keys.KeyState
+	if keys.IsCredentialShape(token) {
+		if p.accessKeys != nil {
+			keyState = p.accessKeys.VerifyCredential(token)
+		}
+		if keyState == nil {
+			return nil, ErrAuthFailed
+		}
+	} else if p.token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(p.token)) != 1 {
 		return nil, ErrAuthFailed
 	}
 	if len(segments) < 4 {
@@ -228,6 +250,7 @@ func (p *ReverseProxy) parsePathV1(rawPath string) (*parsedPath, *ProxyError) {
 		Protocol:     protocol,
 		Host:         host,
 		Path:         remainingPath,
+		Key:          keyState,
 	}, nil
 }
 
@@ -347,7 +370,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		transport = p.directHTTPTransport()
 	} else {
-		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host)
+		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, parsed.PlatformName, account, parsed.Host, parsed.Key)
 		if routeErr != nil {
 			lifecycle.setProxyError(routeErr)
 			lifecycle.setHTTPStatus(routeErr.HTTPCode)

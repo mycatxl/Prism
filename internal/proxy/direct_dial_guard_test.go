@@ -544,7 +544,7 @@ func TestReverseProxy_DirectDenyPrivateRebindingRefusedAtDialTime(t *testing.T) 
 func TestDirectDialGuard_TunnelDepsSharePolicy(t *testing.T) {
 	guard := NewDirectDialGuard(true).withLookup(pinnedDirectLookup("192.168.5.5"))
 	deps := tunnelDeps{directGuard: guard, bypass: NewTargetBypassMatcher([]string{"192.168.*"})}
-	result := prepareConnectTunnel(context.Background(), deps, "plat", "acct", "192.168.5.5:80")
+	result := prepareConnectTunnel(context.Background(), deps, "plat", "acct", "192.168.5.5:80", nil)
 	if result.proxyErr != ErrDirectTargetDenied {
 		t.Fatalf("proxyErr = %v, want ErrDirectTargetDenied", result.proxyErr)
 	}
@@ -572,7 +572,7 @@ func TestDirectDialGuard_DisabledTunnelStillDials(t *testing.T) {
 	}()
 
 	deps := tunnelDeps{bypass: NewTargetBypassMatcher([]string{"127.*"})}
-	result := prepareConnectTunnel(context.Background(), deps, "plat", "acct", targetLn.Addr().String())
+	result := prepareConnectTunnel(context.Background(), deps, "plat", "acct", targetLn.Addr().String(), nil)
 	if result.session == nil {
 		t.Fatalf("expected a dialled session, got proxyErr=%v", result.proxyErr)
 	}

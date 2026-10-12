@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"prism/internal/keys"
 	"prism/internal/outbound"
 	"prism/internal/routing"
 )
@@ -38,7 +39,11 @@ var socks5HandshakeTimeout = 15 * time.Second
 
 // Socks5InboundConfig holds dependencies for the SOCKS5 inbound handler.
 type Socks5InboundConfig struct {
-	ProxyToken       string
+	ProxyToken string
+	// AccessKeys resolves an access key sent in the RFC 1929 password field.
+	// It may be nil or unconfigured: the password then falls back to the
+	// global proxy token, which is the transitional behaviour.
+	AccessKeys       AccessKeyVerifier
 	Router           *routing.Router
 	Pool             outbound.PoolAccessor
 	Health           HealthRecorder
@@ -55,15 +60,17 @@ type Socks5InboundConfig struct {
 
 // Socks5Inbound implements SOCKS5 CONNECT over a raw TCP connection.
 type Socks5Inbound struct {
-	token  string
-	tunnel tunnelDeps
-	events EventEmitter
+	token      string
+	accessKeys AccessKeyVerifier
+	tunnel     tunnelDeps
+	events     EventEmitter
 }
 
 type socks5HandshakeResult struct {
 	platformName string
 	account      string
 	target       string
+	key          *keys.KeyState
 	ok           bool
 }
 
@@ -74,7 +81,8 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 		ev = NoOpEventEmitter{}
 	}
 	return &Socks5Inbound{
-		token: cfg.ProxyToken,
+		token:      cfg.ProxyToken,
+		accessKeys: cfg.AccessKeys,
 		tunnel: tunnelDeps{
 			router:      cfg.Router,
 			pool:        cfg.Pool,
@@ -133,6 +141,7 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 		handshake.platformName,
 		handshake.account,
 		handshake.target,
+		handshake.key,
 	)
 	if prepare.route.PlatformID != "" {
 		lifecycle.setRouteResult(prepare.route)
@@ -190,7 +199,7 @@ func (s *Socks5Inbound) performHandshake(conn net.Conn, reader *bufio.Reader, re
 	result := socks5HandshakeResult{ok: true}
 	if method == socks5MethodUserPass {
 		var authOK bool
-		result.platformName, result.account, authOK = s.authenticateUserPass(conn, reader, requireAuthInfo)
+		result.platformName, result.account, result.key, authOK = s.authenticateUserPass(conn, reader, requireAuthInfo)
 		if !authOK {
 			return socks5HandshakeResult{}
 		}
@@ -299,45 +308,75 @@ func (s *Socks5Inbound) negotiateMethod(conn net.Conn, reader *bufio.Reader, req
 	return selected, true
 }
 
-func (s *Socks5Inbound) authenticateUserPass(conn net.Conn, reader *bufio.Reader, requireAuthInfo bool) (string, string, bool) {
+// authenticateUserPass performs the RFC 1929 sub-negotiation.
+//
+// The password field carries either an access key or the transitional global
+// proxy token; the username field carries the identity, exactly as it does on
+// the token path. A key-shaped password is resolved against the key store and
+// never falls back to the token comparison, so a revoked key cannot
+// authenticate by accident.
+func (s *Socks5Inbound) authenticateUserPass(conn net.Conn, reader *bufio.Reader, requireAuthInfo bool) (string, string, *keys.KeyState, bool) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(reader, header); err != nil {
-		return "", "", false
+		return "", "", nil, false
 	}
 	if header[0] != socks5UserPassVersion {
 		_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
-		return "", "", false
+		return "", "", nil, false
 	}
 
 	username := make([]byte, int(header[1]))
 	if _, err := io.ReadFull(reader, username); err != nil {
-		return "", "", false
+		return "", "", nil, false
 	}
 
 	plen := []byte{0}
 	if _, err := io.ReadFull(reader, plen); err != nil {
-		return "", "", false
+		return "", "", nil, false
 	}
 	password := make([]byte, int(plen[0]))
 	if _, err := io.ReadFull(reader, password); err != nil {
-		return "", "", false
+		return "", "", nil, false
 	}
 
-	if s.token != "" && subtle.ConstantTimeCompare(password, []byte(s.token)) != 1 {
+	// The key, when present, lives in the password field; the identity stays in
+	// the username field, so the client configuration shape is unchanged.
+	//
+	// A key-shaped password is resolved against the key store and never falls
+	// back to the token comparison: a revoked key must be refused outright
+	// rather than retried as a token.
+	var keyState *keys.KeyState
+	if keys.IsCredentialShape(string(password)) {
+		keyState = s.verifyAccessKeyPassword(string(password))
+		if keyState == nil {
+			_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
+			return "", "", nil, false
+		}
+	} else if s.token != "" && subtle.ConstantTimeCompare(password, []byte(s.token)) != 1 {
 		_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
-		return "", "", false
+		return "", "", nil, false
 	}
 	if requireAuthInfo && (len(username) == 0 || len(password) == 0) {
 		_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
-		return "", "", false
+		return "", "", nil, false
 	}
 
 	if _, err := conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusSuccess}); err != nil {
-		return "", "", false
+		return "", "", nil, false
 	}
 
 	platformName, account := parseV1PlatformAccountIdentity(string(username))
-	return platformName, account, true
+	return platformName, account, keyState, true
+}
+
+// verifyAccessKeyPassword resolves the password field as an access key. It
+// answers nil when there is no verifier, when the value is not key-shaped, and
+// when the key does not verify; the caller has already established the shape.
+func (s *Socks5Inbound) verifyAccessKeyPassword(password string) *keys.KeyState {
+	if s.accessKeys == nil {
+		return nil
+	}
+	return s.accessKeys.VerifyCredential(password)
 }
 
 func containsSocks5Method(methods []byte, candidate byte) bool {

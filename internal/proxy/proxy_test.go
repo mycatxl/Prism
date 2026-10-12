@@ -279,7 +279,8 @@ func TestForwardProxy_Authentication_DisabledWhenProxyTokenEmpty(t *testing.T) {
 			if tt.auth != "" {
 				req.Header.Set("Proxy-Authorization", tt.auth)
 			}
-			plat, acct, err := fp.authenticate(req)
+			identity, err := fp.authenticate(req)
+			plat, acct := identity.PlatformName, identity.Account
 			if err != nil {
 				t.Fatalf("unexpected auth error: %v", err)
 			}
@@ -313,7 +314,7 @@ func TestForwardProxy_Authentication_RequiredInfoWithEmptyToken(t *testing.T) {
 			if tt.auth != "" {
 				req.Header.Set("Proxy-Authorization", tt.auth)
 			}
-			_, _, err := fp.authenticate(req)
+			_, err := fp.authenticate(req)
 			if err != tt.wantErr {
 				t.Fatalf("authenticate error = %v, want %v", err, tt.wantErr)
 			}
@@ -326,7 +327,8 @@ func TestForwardProxy_Authentication_Disabled_AllowsTwoFieldIdentity(t *testing.
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("plat", "acct"))
 
-	plat, acct, err := fp.authenticate(req)
+	identity, err := fp.authenticate(req)
+	plat, acct := identity.PlatformName, identity.Account
 	if err != nil {
 		t.Fatalf("unexpected auth error: %v", err)
 	}
@@ -349,7 +351,8 @@ func TestForwardProxy_Authentication_BasicSchemeCaseInsensitive(t *testing.T) {
 	for _, auth := range tests {
 		req := httptest.NewRequest("GET", "http://example.com/", nil)
 		req.Header.Set("Proxy-Authorization", auth)
-		plat, acct, err := fp.authenticate(req)
+		identity, err := fp.authenticate(req)
+		plat, acct := identity.PlatformName, identity.Account
 		if err != nil {
 			t.Fatalf("auth=%q: unexpected auth error: %v", auth, err)
 		}
@@ -368,7 +371,8 @@ func TestForwardProxy_Authentication_V1(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", rawCredential("plat.user:tok"))
 
-	plat, acct, err := fp.authenticate(req)
+	identity, err := fp.authenticate(req)
+	plat, acct := identity.PlatformName, identity.Account
 	if err != nil {
 		t.Fatalf("unexpected auth error: %v", err)
 	}
@@ -382,7 +386,7 @@ func TestForwardProxy_Authentication_V1RejectsTokenFirstCredentialShape(t *testi
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("tok", "plat:acct"))
 
-	_, _, err := fp.authenticate(req)
+	_, err := fp.authenticate(req)
 	if err != ErrAuthFailed {
 		t.Fatalf("expected ErrAuthFailed, got %v", err)
 	}
@@ -397,7 +401,8 @@ func TestForwardProxy_Authentication_V1_NoProxyTokenStillAllowsOptionalIdentity(
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", rawCredential("my-platform.account-a:any-token"))
 
-	plat, acct, err := fp.authenticate(req)
+	identity, err := fp.authenticate(req)
+	plat, acct := identity.PlatformName, identity.Account
 	if err != nil {
 		t.Fatalf("unexpected auth error: %v", err)
 	}
@@ -513,7 +518,8 @@ func TestForwardProxy_AuthAndSetup(t *testing.T) {
 
 	req := httptest.NewRequest("GET", upstream.URL, nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("plat.acct", "tok"))
-	plat, acct, authErr := fp.authenticate(req)
+	identity, authErr := fp.authenticate(req)
+	plat, acct := identity.PlatformName, identity.Account
 	if authErr != nil {
 		t.Fatalf("auth failed: %v", authErr)
 	}
