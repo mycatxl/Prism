@@ -115,7 +115,25 @@ func run() error {
 		return err
 	}
 
-	// 2. Open state.db and cache.db and return the shared engine.
+	// 2. Take the data directory lock before opening anything in it. Two
+	// instances sharing a state directory do not share their in-memory routing
+	// state, leases or quota counters, so they would silently hand out
+	// different exit IPs and account for traffic separately. Refusing the
+	// second instance is the only honest answer.
+	dirLock, err := state.AcquireDirLock(envCfg.StateDir)
+	if err != nil {
+		return fmt.Errorf("data directory lock: %w", err)
+	}
+	// Released on the way out of run(), after the shutdown sequence has stopped
+	// everything that touches the directory.
+	defer func() {
+		if err := dirLock.Release(); err != nil {
+			log.Printf("Data directory unlock error: %v", err)
+		}
+	}()
+	log.Printf("Data directory locked: %s", dirLock.Path())
+
+	// 3. Open state.db and cache.db and return the shared engine.
 	engine, dbCloser, err := state.PersistenceBootstrap(envCfg.StateDir, envCfg.CacheDir)
 	if err != nil {
 		return fmt.Errorf("persistence bootstrap: %w", err)
