@@ -18,8 +18,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
+	"prism/internal/auth"
 	"prism/internal/buildinfo"
 	"prism/internal/config"
+	"prism/internal/model"
+	"prism/internal/state"
 )
 
 const (
@@ -74,8 +78,9 @@ func printUsage(w io.Writer) {
 
 Usage:
   prism [run]                     Start the service (loads ./.env first)
-  prism init [--dir DIR] [--force]
-                                  Write DIR/.env (mode 0600) with fresh tokens
+  prism init [--dir DIR] [--force] [--admin-username NAME] [--admin-password PW]
+                                  Create the databases, the key pepper and the
+                                  built-in administrator; writes DIR/.env (0600)
   prism version                   Print version, commit, build time and build tags
   prism check-config              Validate and print the effective configuration
   prism backup --out DIR          Online backup of state.db, cache.db and intel.db
@@ -98,6 +103,8 @@ func runInitCommand(args []string, stdout, stderr io.Writer) error {
 	fs.SetOutput(stderr)
 	dir := fs.String("dir", ".", "directory that receives the generated .env")
 	force := fs.Bool("force", false, "overwrite an existing .env (it is first moved to .env.bak.<timestamp>)")
+	adminUsername := fs.String("admin-username", defaultAdminUsername, "username of the built-in administrator")
+	adminPassword := fs.String("admin-password", "", "administrator password (generated and printed once when empty)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -127,6 +134,16 @@ func runInitCommand(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("init: inspect %s: %w", target, err)
 	}
 
+	// The data directories come from the environment when it is already
+	// configured, so `prism init` in an existing deployment initializes the
+	// same store the service will open.
+	stateDir := cleanInitDir(os.Getenv("PRISM_STATE_DIR"), filepath.Join(targetDir, ".local", "state"))
+	cacheDir := cleanInitDir(os.Getenv("PRISM_CACHE_DIR"), filepath.Join(targetDir, ".local", "cache"))
+
+	// The two tokens are still generated here: the data plane and the management
+	// API still authenticate against them, so an installation that cannot start
+	// would be worse than one carrying a credential that is about to be removed.
+	// They go away together with that authentication.
 	adminToken, err := generateToken()
 	if err != nil {
 		return fmt.Errorf("init: generate admin token: %w", err)
@@ -136,21 +153,136 @@ func runInitCommand(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("init: generate proxy token: %w", err)
 	}
 
-	content := renderInitEnv(adminToken, proxyToken, time.Now())
+	// Initialize the databases first: a failure here must leave no pepper
+	// behind, because a pepper without a store would look like a completed
+	// initialization on the next run.
+	engine, closer, err := state.PersistenceBootstrap(stateDir, cacheDir)
+	if err != nil {
+		return fmt.Errorf("init: initialize databases: %w", err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	// An already-populated store is refused: re-initializing would mint a
+	// second administrator and a second pepper.
+	count, err := engine.CountUsers()
+	if err != nil {
+		return fmt.Errorf("init: count users: %w", err)
+	}
+	if count > 0 {
+		return fmt.Errorf(
+			"init: %s already holds %d user(s); this installation is already initialized. "+
+				"Back up and remove the data directory to start over", stateDir, count)
+	}
+
+	// The pepper is written before the admin so the password hash and the key
+	// material are created under the same initialization.
+	pepperRaw, err := auth.GeneratePepper()
+	if err != nil {
+		return fmt.Errorf("init: generate pepper: %w", err)
+	}
+	pepperPath, err := auth.WritePepperFile(stateDir, pepperRaw)
+	if err != nil {
+		return fmt.Errorf("init: write pepper: %w", err)
+	}
+
+	password := strings.TrimSpace(*adminPassword)
+	generatedPassword := false
+	if password == "" {
+		password, err = generatePassword()
+		if err != nil {
+			return fmt.Errorf("init: generate admin password: %w", err)
+		}
+		generatedPassword = true
+	}
+	passwordHash, err := auth.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("init: hash admin password: %w", err)
+	}
+
+	now := time.Now().UnixNano()
+	adminUUID, err := uuid.NewV7()
+	if err != nil {
+		return fmt.Errorf("init: generate administrator id: %w", err)
+	}
+	adminID := adminUUID.String()
+	if err := engine.InsertUser(model.User{
+		ID:           adminID,
+		Username:     strings.TrimSpace(*adminUsername),
+		PasswordHash: passwordHash,
+		Role:         model.UserRoleAdmin,
+		Status:       model.UserStatusActive,
+		CreatedAtNs:  now,
+		UpdatedAtNs:  now,
+	}); err != nil {
+		return fmt.Errorf("init: create administrator: %w", err)
+	}
+
+	content := renderInitEnv(stateDir, cacheDir, targetDir, adminToken, proxyToken, time.Now())
 	if err := writeFile0600(target, content, true); err != nil {
 		return fmt.Errorf("init: write %s: %w", target, err)
 	}
 
-	fmt.Fprintf(stdout, "Wrote %s (mode 0600)\n\n", target)
-	fmt.Fprintln(stdout, "Admin token (displayed once, store it somewhere safe):")
-	fmt.Fprintln(stdout, adminToken)
-	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "The proxy token and all other settings are stored in %s.\n", target)
+	fmt.Fprintf(stdout, "Wrote %s (mode 0600)\n", target)
+	fmt.Fprintf(stdout, "Wrote %s (mode 0600)\n\n", pepperPath)
+
+	fmt.Fprintf(stdout, "Administrator %q created.\n", *adminUsername)
+	if generatedPassword {
+		fmt.Fprintln(stdout, "Password (displayed once, store it somewhere safe):")
+		fmt.Fprintln(stdout, password)
+		fmt.Fprintln(stdout)
+	} else {
+		fmt.Fprintln(stdout, "The password you passed on the command line is in effect.")
+		fmt.Fprintln(stdout)
+	}
+
+	fmt.Fprintf(stdout, "Back up %s together with the databases: losing it invalidates every access key.\n", pepperPath)
 	fmt.Fprintln(stdout, "Start the service with `prism run` and open the UI at /ui/ on the configured listen address.")
 	return nil
 }
 
+// defaultAdminUsername is the built-in administrator `prism init` creates.
+const defaultAdminUsername = "admin"
+
+// cleanInitDir resolves a data directory: an environment value wins, otherwise
+// the fallback under the configuration directory is used. The result is made
+// absolute so the databases are not created relative to a later working
+// directory change.
+func cleanInitDir(envValue, fallback string) string {
+	dir := strings.TrimSpace(envValue)
+	if dir == "" {
+		dir = fallback
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
+}
+
+// generatePassword returns a random password for the built-in administrator.
+//
+// It is longer than a token would need to be because it is typed by a person
+// rather than pasted, and it avoids characters that are easy to confuse when
+// read off a terminal.
+func generatePassword() (string, error) {
+	const alphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	const length = 24
+
+	buf := make([]byte, length)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	out := make([]byte, length)
+	for i, b := range buf {
+		out[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return string(out), nil
+}
+
 // generateToken returns a 32-byte cryptographically random token in hex form.
+//
+// It is transitional: the data plane and the management API still authenticate
+// against these tokens. The function and its two call sites are removed by the
+// step that switches both planes over to accounts and access keys.
 func generateToken() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
@@ -159,10 +291,25 @@ func generateToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
-func renderInitEnv(adminToken, proxyToken string, now time.Time) string {
+// renderInitEnv writes the environment file `prism init` produces.
+//
+// The admin and proxy tokens are still written here because the data plane and
+// the management API still authenticate against them: removing them is the
+// step that switches both over to accounts and access keys, and until that
+// lands a freshly initialized installation has to be able to start. They are
+// grouped at the top, under a comment saying so, to make the removal a single
+// deletion.
+//
+// The key pepper is not written here. It lives in the state directory so it is
+// backed up together with the databases.
+func renderInitEnv(stateDir, cacheDir, logDir, adminToken, proxyToken string, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Prism environment file generated by `prism init` on %s.\n", now.UTC().Format(time.RFC3339))
 	b.WriteString("# Keep this file private (mode 0600): it holds the admin and proxy tokens.\n")
+	b.WriteString("\n# Transitional credentials. The console is reached with the administrator\n")
+	b.WriteString("# account created by `prism init`, and the proxy with the access keys issued\n")
+	b.WriteString("# from it; these two tokens are what authenticates those planes until they\n")
+	b.WriteString("# are switched over, and they disappear at that point.\n")
 	fmt.Fprintf(&b, "PRISM_ADMIN_TOKEN=%s\n", adminToken)
 	fmt.Fprintf(&b, "PRISM_PROXY_TOKEN=%s\n", proxyToken)
 	b.WriteString("\n# Primary listener: UI, API, HTTP/SOCKS5 proxy, reverse proxy, token-action.\n")
@@ -171,10 +318,13 @@ func renderInitEnv(adminToken, proxyToken string, now time.Time) string {
 	b.WriteString("\n# Optional independent management listener (host:port, empty = disabled).\n")
 	b.WriteString("# It serves only /ui, /api and /healthz.\n")
 	b.WriteString("# PRISM_ADMIN_LISTEN=127.0.0.1:2261\n")
-	b.WriteString("\n# Data directories (relative to the working directory of the process).\n")
-	b.WriteString("PRISM_STATE_DIR=./.local/state\n")
-	b.WriteString("PRISM_CACHE_DIR=./.local/cache\n")
-	b.WriteString("PRISM_LOG_DIR=./.local/logs\n")
+	b.WriteString("\n# Data directories (absolute, so the service opens the same store from any cwd).\n")
+	fmt.Fprintf(&b, "PRISM_STATE_DIR=%s\n", stateDir)
+	fmt.Fprintf(&b, "PRISM_CACHE_DIR=%s\n", cacheDir)
+	fmt.Fprintf(&b, "PRISM_LOG_DIR=%s\n", logDir)
+	b.WriteString("\n# The key pepper lives in the state directory (file \"pepper\", mode 0600).\n")
+	b.WriteString("# Back it up with the databases: losing it invalidates every access key.\n")
+	b.WriteString("# PRISM_KEY_PEPPER=            # set to override the file, e.g. from a secret manager\n")
 	return b.String()
 }
 

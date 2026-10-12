@@ -14,7 +14,9 @@ import (
 	"strings"
 	"testing"
 
+	"prism/internal/auth"
 	"prism/internal/config"
+	"prism/internal/model"
 	"prism/internal/state"
 )
 
@@ -95,50 +97,226 @@ func backupManifestNames(manifest *backupManifest) []string {
 
 // --- init ---
 
-func TestInitCommandWritesEnvWith0600(t *testing.T) {
+// initEnv returns the environment overrides that keep an `prism init` test
+// inside its own temporary directory.
+func initEnv(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("PRISM_STATE_DIR", filepath.Join(dir, "state"))
+	t.Setenv("PRISM_CACHE_DIR", filepath.Join(dir, "cache"))
+	t.Setenv("PRISM_KEY_PEPPER", "")
+}
+
+func TestInitCommandCreatesAdminPepperAndEnv(t *testing.T) {
 	dir := t.TempDir()
+	initEnv(t, dir)
 	var stdout, stderr bytes.Buffer
 
 	if err := runInitCommand([]string{"--dir", dir}, &stdout, &stderr); err != nil {
 		t.Fatalf("init: %v (stderr=%s)", err, stderr.String())
 	}
 
+	// The environment file is private. The admin and proxy tokens are still
+	// written: the data plane and the management API still authenticate against
+	// them, so an installation whose config cannot start would be a regression.
+	// Removing them is the step that switches both planes over.
 	envPath := filepath.Join(dir, ".env")
 	assertMode0600(t, envPath)
-
 	content := readFileString(t, envPath)
-	adminToken := envValue(t, content, "PRISM_ADMIN_TOKEN")
-	proxyToken := envValue(t, content, "PRISM_PROXY_TOKEN")
-	if len(adminToken) != 64 || len(proxyToken) != 64 {
-		t.Fatalf("tokens must be 32 random bytes in hex (got %d/%d chars)", len(adminToken), len(proxyToken))
-	}
-	if adminToken == proxyToken {
-		t.Fatal("admin and proxy tokens must differ")
+	for _, key := range []string{"PRISM_ADMIN_TOKEN", "PRISM_PROXY_TOKEN"} {
+		if got := envValue(t, content, key); len(got) != 64 {
+			t.Errorf("%s must be written as a 32-byte hex token, got %q", key, got)
+		}
 	}
 	if got := envValue(t, content, "PRISM_LISTEN_ADDRESS"); got != "127.0.0.1" {
-		t.Fatalf("PRISM_LISTEN_ADDRESS = %q, want 127.0.0.1", got)
+		t.Errorf("PRISM_LISTEN_ADDRESS = %q, want 127.0.0.1", got)
 	}
 	if got := envValue(t, content, "PRISM_PORT"); got != "2260" {
-		t.Fatalf("PRISM_PORT = %q, want 2260", got)
+		t.Errorf("PRISM_PORT = %q, want 2260", got)
 	}
 	for _, key := range []string{"PRISM_STATE_DIR", "PRISM_CACHE_DIR", "PRISM_LOG_DIR"} {
 		if got := envValue(t, content, key); got == "" {
-			t.Fatalf("%s must be set in the generated file", key)
+			t.Errorf("%s must be set in the generated file", key)
 		}
 	}
 
-	// The admin token is printed exactly once; the proxy token never is.
-	out := stdout.String()
-	if count := strings.Count(out, adminToken); count != 1 {
-		t.Fatalf("admin token printed %d times, want exactly 1", count)
+	// The pepper file exists, is private, and loads back.
+	pepperPath := filepath.Join(dir, "state", auth.PepperFileName)
+	assertMode0600(t, pepperPath)
+	pepper, err := auth.LoadPepper(filepath.Join(dir, "state"))
+	if err != nil {
+		t.Fatalf("LoadPepper: %v", err)
 	}
-	if strings.Contains(out, proxyToken) {
-		t.Fatal("proxy token must not be printed by init")
+	if len(pepper.Raw()) == 0 {
+		t.Fatal("the pepper must not be empty")
+	}
+
+	// The administrator exists and its password verifies.
+	engine, closer, err := state.PersistenceBootstrap(filepath.Join(dir, "state"), filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	admin, err := engine.GetUserByName(defaultAdminUsername)
+	if err != nil {
+		t.Fatalf("the administrator was not created: %v", err)
+	}
+	if admin.Role != model.UserRoleAdmin {
+		t.Errorf("role: got %q, want %q", admin.Role, model.UserRoleAdmin)
+	}
+	if admin.Status != model.UserStatusActive {
+		t.Errorf("status: got %q, want %q", admin.Status, model.UserStatusActive)
+	}
+
+	// The generated password is printed exactly once.
+	out := stdout.String()
+	if !strings.Contains(out, "Password (displayed once") {
+		t.Error("init must say the password is displayed once")
+	}
+	if !strings.Contains(out, auth.PepperFileName) {
+		t.Error("init must name the pepper file and its backup requirement")
+	}
+
+	// The printed password is the one that verifies. It is the only long
+	// alphanumeric line in the output.
+	password := firstPasswordLine(t, out)
+	if err := auth.VerifyPassword(admin.PasswordHash, password); err != nil {
+		t.Errorf("the printed password must verify against the stored hash: %v", err)
+	}
+}
+
+// firstPasswordLine extracts the generated password from init's output: it is
+// the line after the "displayed once" notice.
+func firstPasswordLine(t *testing.T, out string) string {
+	t.Helper()
+	lines := strings.Split(out, "\n")
+	for i, line := range lines {
+		if strings.Contains(line, "displayed once") && i+1 < len(lines) {
+			return strings.TrimSpace(lines[i+1])
+		}
+	}
+	t.Fatalf("no password line found in init output:\n%s", out)
+	return ""
+}
+
+// The generated configuration must be loadable by the service. This is the
+// regression the end-to-end run caught: `prism init` wrote a config with no
+// tokens while the data plane and the management API still required them, so a
+// freshly initialized installation could not start at all.
+func TestInitCommandEnvIsAcceptedByConfig(t *testing.T) {
+	dir := t.TempDir()
+	initEnv(t, dir)
+	var stdout, stderr bytes.Buffer
+
+	if err := runInitCommand([]string{"--dir", dir}, &stdout, &stderr); err != nil {
+		t.Fatalf("init: %v (stderr=%s)", err, stderr.String())
+	}
+
+	// Load the generated file the way `prism run` does: into the process
+	// environment, without letting it override anything already set.
+	content := readFileString(t, filepath.Join(dir, ".env"))
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		name, value, found := strings.Cut(trimmed, "=")
+		if !found {
+			continue
+		}
+		if _, present := os.LookupEnv(name); !present {
+			t.Setenv(name, value)
+		}
+	}
+
+	cfg, err := config.LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("the generated configuration must be accepted by the service: %v", err)
+	}
+	if cfg.AdminToken == "" || cfg.ProxyToken == "" {
+		t.Error("the generated configuration must still carry both tokens until the planes are switched over")
+	}
+	if cfg.StateDir != filepath.Join(dir, "state") {
+		t.Errorf("PRISM_STATE_DIR = %q, want %q", cfg.StateDir, filepath.Join(dir, "state"))
+	}
+}
+
+func TestInitCommandUsesProvidedPassword(t *testing.T) {
+	dir := t.TempDir()
+	initEnv(t, dir)
+	var stdout, stderr bytes.Buffer
+
+	const password = "a-password-the-operator-chose"
+	if err := runInitCommand([]string{
+		"--dir", dir, "--admin-password", password, "--admin-username", "root",
+	}, &stdout, &stderr); err != nil {
+		t.Fatalf("init: %v (stderr=%s)", err, stderr.String())
+	}
+
+	// A supplied password is never echoed.
+	if strings.Contains(stdout.String(), password) {
+		t.Error("a supplied password must not be printed")
+	}
+
+	engine, closer, err := state.PersistenceBootstrap(filepath.Join(dir, "state"), filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	defer func() { _ = closer.Close() }()
+
+	admin, err := engine.GetUserByName("root")
+	if err != nil {
+		t.Fatalf("the administrator was not created with the given name: %v", err)
+	}
+	if err := auth.VerifyPassword(admin.PasswordHash, password); err != nil {
+		t.Errorf("the supplied password must verify: %v", err)
+	}
+}
+
+// Re-running init against a populated store must be refused: it would mint a
+// second administrator and a second pepper.
+func TestInitCommandRefusesAlreadyInitializedStore(t *testing.T) {
+	dir := t.TempDir()
+	initEnv(t, dir)
+	var stdout, stderr bytes.Buffer
+
+	if err := runInitCommand([]string{"--dir", dir}, &stdout, &stderr); err != nil {
+		t.Fatalf("first init: %v", err)
+	}
+	pepperBefore := readFileString(t, filepath.Join(dir, "state", auth.PepperFileName))
+
+	stdout.Reset()
+	stderr.Reset()
+	err := runInitCommand([]string{"--dir", dir, "--force"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("init must refuse a store that already holds a user")
+	}
+	if !strings.Contains(err.Error(), "already initialized") {
+		t.Errorf("the error should say the store is initialized, got %v", err)
+	}
+
+	// The pepper must be untouched.
+	if got := readFileString(t, filepath.Join(dir, "state", auth.PepperFileName)); got != pepperBefore {
+		t.Error("a refused init must not replace the pepper")
+	}
+
+	engine, closer, err := state.PersistenceBootstrap(filepath.Join(dir, "state"), filepath.Join(dir, "cache"))
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	defer func() { _ = closer.Close() }()
+	count, err := engine.CountUsers()
+	if err != nil {
+		t.Fatalf("CountUsers: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("a refused init must not add a user: got %d", count)
 	}
 }
 
 func TestInitCommandRefusesOverwriteWithoutForce(t *testing.T) {
 	dir := t.TempDir()
+	initEnv(t, dir)
 	var stdout, stderr bytes.Buffer
 	if err := runInitCommand([]string{"--dir", dir}, &stdout, &stderr); err != nil {
 		t.Fatalf("first init: %v", err)
@@ -161,11 +339,18 @@ func TestInitCommandRefusesOverwriteWithoutForce(t *testing.T) {
 
 func TestInitCommandWithForceCreatesTimestampedBackup(t *testing.T) {
 	dir := t.TempDir()
+	initEnv(t, dir)
 	var stdout, stderr bytes.Buffer
 	if err := runInitCommand([]string{"--dir", dir}, &stdout, &stderr); err != nil {
 		t.Fatalf("first init: %v", err)
 	}
 	original := readFileString(t, filepath.Join(dir, ".env"))
+
+	// The store is populated now, so the second run has to start from a clean
+	// one: the point of this test is the .env backup, not the store guard.
+	if err := os.RemoveAll(filepath.Join(dir, "state")); err != nil {
+		t.Fatalf("remove state dir: %v", err)
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -184,11 +369,6 @@ func TestInitCommandWithForceCreatesTimestampedBackup(t *testing.T) {
 		t.Fatal("backup must hold the previous .env content")
 	}
 	assertMode0600(t, backups[0])
-
-	updated := readFileString(t, filepath.Join(dir, ".env"))
-	if updated == original {
-		t.Fatal("--force must write a new .env with fresh tokens")
-	}
 	assertMode0600(t, filepath.Join(dir, ".env"))
 }
 
