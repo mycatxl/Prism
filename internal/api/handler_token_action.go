@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 
+	"prism/internal/keys"
+	"prism/internal/model"
 	"prism/internal/service"
 )
 
@@ -13,15 +15,30 @@ type inheritLeaseRequest struct {
 	NewAccount    string `json:"new_account"`
 }
 
+// TokenActionKeyResolver resolves the credential in the token position of a
+// token-path route.
+//
+// It is the same contract the data plane uses: an unknown, disabled or expired
+// key answers nil, and so does a credential that is not key-shaped at all. The
+// caller keeps the global-token comparison for the second case, which is what
+// lets both credentials coexist while access keys are rolled out.
+type TokenActionKeyResolver interface {
+	// VerifyCredential returns the key the credential names, or nil.
+	VerifyCredential(credential string) *keys.KeyState
+}
+
 // NewTokenActionHandler returns the handler for token-path actions.
 //
 // The route changes lease state, so a successful mutation is recorded in the
-// audit trail exactly like the management writes of: the actor
-// is the sha256 prefix of the proxy token, never the token itself, and the
-// credential path parameter is not copied into the record. The request-body
-// limit wraps the audit middleware so the audit payload peek reads a body that
-// is already bounded by apiMaxBodyBytes.
-func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, apiMaxBodyBytes int64) http.Handler {
+// audit trail exactly like the management writes of: the actor is the sha256
+// prefix of the credential, never the credential itself, and the credential
+// path parameter is not copied into the record. The request-body limit wraps
+// the audit middleware so the audit payload peek reads a body that is already
+// bounded by apiMaxBodyBytes.
+//
+// The token position accepts either an access key or the transitional global
+// proxy token. keys may be nil, in which case only the token is accepted.
+func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver, cp *service.ControlPlaneService, apiMaxBodyBytes int64) http.Handler {
 	if cp == nil {
 		return http.NotFoundHandler()
 	}
@@ -29,7 +46,8 @@ func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, a
 	mux := http.NewServeMux()
 	mux.Handle("POST /{token}/api/v1/{platform}/actions/inherit-lease", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := PathParam(r, "token")
-		if proxyToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(proxyToken)) != 1 {
+		identity, ok := resolveTokenActionIdentity(r, token, proxyToken, keyResolver)
+		if !ok {
 			http.NotFound(w, r)
 			return
 		}
@@ -38,6 +56,25 @@ func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, a
 		if platformName == "" {
 			writeInvalidArgument(w, "platform: must be non-empty")
 			return
+		}
+
+		// An access key is scoped to platforms, and this route changes routing
+		// state for one, so the same restriction the data plane enforces
+		// applies here. Without it a key restricted to one platform could
+		// rewrite another platform's leases.
+		if identity.Key != nil {
+			platformID, found := platformIDByName(cp, platformName)
+			if !found {
+				writeServiceError(w, &service.ServiceError{Code: "NOT_FOUND", Message: "platform not found"})
+				return
+			}
+			if !identity.Key.AllowsPlatform(platformID) {
+				writeServiceError(w, &service.ServiceError{
+					Code:    "FORBIDDEN",
+					Message: "access key is not allowed to use this platform",
+				})
+				return
+			}
 		}
 
 		var req inheritLeaseRequest
@@ -49,6 +86,13 @@ func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, a
 		if err := cp.InheritLeaseByPlatformName(platformName, req.ParentAccount, req.NewAccount); err != nil {
 			writeServiceError(w, err)
 			return
+		}
+
+		// The audit row names the credential that actually acted. It is set
+		// before the response is written, so the middleware reads it after the
+		// handler returns and records the key rather than the admin token.
+		if identity.Key != nil {
+			setAuditActor(r, AuditActor(identity.Credential), identity.Key.UserID)
 		}
 
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -65,4 +109,63 @@ func NewTokenActionHandler(proxyToken string, cp *service.ControlPlaneService, a
 	// unset for the SSE stream. It wraps the body-limit layer because the
 	// controller has to reach the connection.
 	return RequestBodyDeadlineMiddleware(RequestBodyTimeout, handler)
+}
+
+// tokenActionIdentity is who a token-path request authenticated as.
+//
+// Credential is kept only so the audit actor can be derived from it; it is
+// never written to a log or a database row.
+type tokenActionIdentity struct {
+	Credential string
+	// Key is nil for the transitional global-token path, which carries no
+	// per-key restriction.
+	Key *keys.KeyState
+}
+
+// resolveTokenActionIdentity resolves the token position of a token-path route.
+//
+// A key-shaped credential is resolved against the key store and never falls
+// back to the token comparison, so a revoked key cannot act by presenting
+// itself where a token is expected. Anything else is compared with the global
+// token, and an empty configured token accepts everything, which is the
+// upstream behaviour.
+func resolveTokenActionIdentity(
+	r *http.Request,
+	token string,
+	proxyToken string,
+	keyResolver TokenActionKeyResolver,
+) (tokenActionIdentity, bool) {
+	if keys.IsCredentialShape(token) {
+		if keyResolver == nil {
+			return tokenActionIdentity{}, false
+		}
+		state := keyResolver.VerifyCredential(token)
+		if state == nil {
+			return tokenActionIdentity{}, false
+		}
+		// This route is a data-plane action, so an admin-scoped key must not
+		// reach it. The data-plane verifier already refuses that scope, but the
+		// check is repeated here so the rule holds for any resolver.
+		if state.Scope != model.KeyScopeProxy {
+			return tokenActionIdentity{}, false
+		}
+		return tokenActionIdentity{Credential: token, Key: state}, true
+	}
+
+	if proxyToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(proxyToken)) != 1 {
+		return tokenActionIdentity{}, false
+	}
+	return tokenActionIdentity{Credential: token}, true
+}
+
+// platformIDByName resolves a platform name to its ID through the pool.
+func platformIDByName(cp *service.ControlPlaneService, name string) (string, bool) {
+	if cp == nil || cp.Pool == nil {
+		return "", false
+	}
+	plat, ok := cp.Pool.GetPlatformByName(strings.TrimSpace(name))
+	if !ok || plat == nil {
+		return "", false
+	}
+	return plat.ID, true
 }

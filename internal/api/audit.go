@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -51,13 +52,41 @@ var auditWriteMethods = map[string]bool{
 	http.MethodDelete: true,
 }
 
+// auditScope is the per-request audit identity.
+//
+// The middleware creates it before dispatching and reads it afterwards, which
+// is what lets a handler that resolves a credential name the actor it actually
+// authenticated as. The management routes never touch it and keep the actor
+// derived from the admin token.
+type auditScope struct {
+	actor  string
+	userID string
+}
+
+// auditScopeKey is the context key holding the *auditScope of one request.
+type auditScopeKey struct{}
+
+// setAuditActor records the actor and the account behind it for this request.
+//
+// actor must be a non-reversible rendering of the credential, never the
+// credential itself: the audit trail is read back through the console, so
+// writing the credential there would hand it to anyone who can list the log.
+func setAuditActor(r *http.Request, actor, userID string) {
+	scope, ok := r.Context().Value(auditScopeKey{}).(*auditScope)
+	if !ok || scope == nil {
+		return
+	}
+	scope.actor = actor
+	scope.userID = userID
+}
+
 // AuditMiddleware records successful management write operations. A nil store
 // disables auditing entirely.
 func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64, next http.Handler) http.Handler {
 	if store == nil {
 		return next
 	}
-	actor := AuditActor(adminToken)
+	defaultActor := AuditActor(adminToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r == nil || !auditWriteMethods[r.Method] {
 			next.ServeHTTP(w, r)
@@ -67,6 +96,9 @@ func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64,
 		// Peek at the body before the handler consumes it; only key names are
 		// kept and the full body is replayed to the handler afterwards.
 		detail := auditDetail(r, maxBodyBytes)
+
+		scope := &auditScope{actor: defaultActor}
+		r = r.WithContext(context.WithValue(r.Context(), auditScopeKey{}, scope))
 
 		recorder := &auditStatusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
@@ -81,7 +113,8 @@ func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64,
 		}
 		entry := model.AuditEntry{
 			AtNs:       time.Now().UnixNano(),
-			Actor:      actor,
+			Actor:      scope.actor,
+			UserID:     scope.userID,
 			RemoteAddr: r.RemoteAddr,
 			Action:     action,
 			Target:     auditTarget(r),

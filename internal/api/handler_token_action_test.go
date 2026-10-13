@@ -55,7 +55,7 @@ func TestTokenActionInheritLease_Success(t *testing.T) {
 		t.Fatalf("seed parent lease: %v", err)
 	}
 
-	handler := NewTokenActionHandler("tok", cp, 1<<20)
+	handler := NewTokenActionHandler("tok", nil, cp, 1<<20)
 	rec := doTokenJSONRequest(
 		t,
 		handler,
@@ -95,7 +95,7 @@ func TestTokenActionInheritLease_RejectsUnknownFields(t *testing.T) {
 	platformName := "token-lease-unknown-field"
 	_ = mustCreatePlatform(t, srv, platformName)
 
-	handler := NewTokenActionHandler("tok", cp, 1<<20)
+	handler := NewTokenActionHandler("tok", nil, cp, 1<<20)
 	rec := doTokenJSONRequest(
 		t,
 		handler,
@@ -117,7 +117,7 @@ func TestTokenActionInheritLease_ParentMissingOrExpiredReturnsNotFound(t *testin
 	srv, cp, _ := newControlPlaneTestServer(t)
 	platformName := "token-lease-parent-notfound"
 	platformID := mustCreatePlatform(t, srv, platformName)
-	handler := NewTokenActionHandler("tok", cp, 1<<20)
+	handler := NewTokenActionHandler("tok", nil, cp, 1<<20)
 
 	rec := doTokenJSONRequest(
 		t,
@@ -168,7 +168,7 @@ func TestTokenActionInheritLease_InvalidArguments(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)
 	platformName := "token-lease-invalid-args"
 	_ = mustCreatePlatform(t, srv, platformName)
-	handler := NewTokenActionHandler("tok", cp, 1<<20)
+	handler := NewTokenActionHandler("tok", nil, cp, 1<<20)
 
 	rec := doTokenJSONRequest(
 		t,
@@ -210,7 +210,7 @@ func TestTokenActionHandler_TokenComparison(t *testing.T) {
 		t.Fatalf("seed parent lease: %v", err)
 	}
 
-	handler := NewTokenActionHandler(proxyToken, cp, 1<<20)
+	handler := NewTokenActionHandler(proxyToken, nil, cp, 1<<20)
 	actionPath := "/api/v1/" + platformName + "/actions/inherit-lease"
 
 	// 1. The configured token is accepted and a lease is created.
@@ -250,7 +250,7 @@ func TestTokenActionHandler_TokenComparison(t *testing.T) {
 	}
 
 	// 4. PRISM_PROXY_TOKEN="" keeps the token compare disabled.
-	openHandler := NewTokenActionHandler("", cp, 1<<20)
+	openHandler := NewTokenActionHandler("", nil, cp, 1<<20)
 	rec = doTokenJSONRequest(t, openHandler, http.MethodPost, "/anything"+actionPath,
 		map[string]any{"parent_account": "token-compare-parent", "new_account": "open-token-child"})
 	if rec.Code != http.StatusOK {
@@ -282,7 +282,7 @@ func TestTokenActionInheritLease_IsAudited(t *testing.T) {
 		t.Fatalf("seed parent lease: %v", err)
 	}
 
-	handler := NewTokenActionHandler(proxyToken, cp, 1<<20)
+	handler := NewTokenActionHandler(proxyToken, nil, cp, 1<<20)
 	path := "/" + proxyToken + "/api/v1/" + platformName + "/actions/inherit-lease"
 
 	// mustCreatePlatform goes through the audited management API, so record the

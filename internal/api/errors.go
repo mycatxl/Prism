@@ -53,6 +53,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 			status = http.StatusNotFound
 		case "CONFLICT":
 			status = http.StatusConflict
+		case "FORBIDDEN":
+			// A valid credential that may not perform this action: the caller
+			// authenticated, so the response says what is actually wrong
+			// instead of claiming the credential is bad.
+			status = http.StatusForbidden
 		case "RATE_LIMITED":
 			// The SSE subscriber cap is the one path that reaches this: the
 			// service documents it as 429 and the client should retry rather
