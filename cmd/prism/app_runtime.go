@@ -18,12 +18,14 @@ import (
 
 	"github.com/joho/godotenv"
 	"prism/internal/api"
+	"prism/internal/auth"
 	"prism/internal/buildinfo"
 	"prism/internal/config"
 	"prism/internal/geoip"
 	"prism/internal/intel"
 	"prism/internal/intel/providers"
 	"prism/internal/intel/store"
+	"prism/internal/keys"
 	"prism/internal/metrics"
 	"prism/internal/netutil"
 	"prism/internal/node"
@@ -63,6 +65,12 @@ type prismApp struct {
 	intelSvc    *intel.Service
 	// the background refresher of the offline databases.
 	geoDBs *providers.GeoManager
+	// keyPepper is the key pepper every access-key secret is verified against.
+	// It is nil when no pepper is configured, which disables access-key
+	// authentication and leaves the transitional global proxy token as the
+	// only credential - the behaviour of a deployment that has not been
+	// migrated yet.
+	keyPepper *auth.Pepper
 }
 
 // run assembles and runs the Prism service.
@@ -230,6 +238,14 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 		return nil, err
 	}
 	app.accountMatcher = buildAccountMatcher(engine)
+
+	// The key pepper is loaded before anything that verifies a credential is
+	// built. Doing it later would hand the data plane a nil pepper, which fails
+	// every key check - and the symptom would be "valid keys are refused", not
+	// "the pepper was missing". A missing pepper is not fatal: access-key
+	// authentication stays off and the transitional global proxy token keeps
+	// working, which is what a deployment that has not been migrated yet needs.
+	app.loadKeyPepper(envCfg.StateDir)
 
 	// 5.-10. GeoIP, node builder, topology, probes and routing incl. the
 	// scheduled rotator.
@@ -544,6 +560,46 @@ func (a *prismApp) startBackgroundServices() {
 	log.Println("Subscription scheduler started; forced full refresh running in background (batch 3)")
 }
 
+// loadKeyPepper loads the key pepper, or reports why access-key authentication
+// stays off.
+//
+// A missing pepper is not fatal: the transitional global proxy token keeps
+// working exactly as before, which is what a deployment that has not been
+// migrated yet needs. It is reported at startup rather than at first use so the
+// degradation is visible in the log instead of showing up as every key failing.
+func (a *prismApp) loadKeyPepper(stateDir string) {
+	pepper, err := auth.LoadPepper(stateDir)
+	if err != nil {
+		if errors.Is(err, auth.ErrPepperMissing) {
+			log.Println("Access key authentication is unavailable: no key pepper configured; " +
+				"the global proxy token remains the only credential")
+			return
+		}
+		// A pepper that exists but cannot be read is a different problem, and
+		// one an operator has to fix: every key would fail for a reason the
+		// data plane cannot report.
+		log.Printf("Access key authentication is unavailable: %v", err)
+		return
+	}
+	a.keyPepper = pepper
+	log.Println("Key pepper loaded")
+}
+
+// loadAccessKeys builds the in-memory key view the data plane reads.
+//
+// A failure here is not fatal for the same reason a missing pepper is not: the
+// global proxy token still authenticates. It is logged loudly because it means
+// the keys an operator created are not live.
+func (a *prismApp) loadAccessKeys(engine *state.StateEngine) *keys.Store {
+	store, err := keys.LoadFromState(engine, log.Printf)
+	if err != nil {
+		log.Printf("Access keys are unavailable: %v", err)
+		return keys.NewStore()
+	}
+	keys.LogSummary(store, log.Printf)
+	return store
+}
+
 func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	startedAt := time.Now().UTC()
 	systemInfo := service.SystemInfo{
@@ -583,6 +639,12 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 			a.metricsDB, a.metricsRetention, metrics.RetentionPruneInterval)
 	}
 
+	// The access-key view is built once here and refreshed by the management
+	// API when a key changes. It is the data plane's only source of key state,
+	// which is what keeps the hot path free of database reads.
+	accessKeys := a.loadAccessKeys(engine)
+	keyVerifier := proxy.NewAccessKeyVerifier(accessKeys, a.keyPepper)
+
 	// The usage summary runs hourly: state.db has one write connection shared
 	// with the flush worker, and a summary pass is heavier than a bounded
 	// delete, so it stays well clear of the metric pruner's five-minute cadence.
@@ -610,6 +672,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.apiHandler = apiSrv.Handler()
 	tokenActionHandler := api.NewTokenActionHandler(
 		a.envCfg.ProxyToken,
+		keyVerifier,
 		cpService,
 		int64(a.envCfg.APIMaxBodyBytes),
 	)
@@ -648,6 +711,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 
 	forwardProxy := proxy.NewForwardProxy(proxy.ForwardProxyConfig{
 		ProxyToken:        a.envCfg.ProxyToken,
+		AccessKeys:        keyVerifier,
 		Router:            a.topoRuntime.router,
 		Pool:              a.topoRuntime.pool,
 		Health:            a.topoRuntime.pool,
@@ -662,6 +726,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 
 	reverseProxy := proxy.NewReverseProxy(proxy.ReverseProxyConfig{
 		ProxyToken:        a.envCfg.ProxyToken,
+		AccessKeys:        keyVerifier,
 		Router:            a.topoRuntime.router,
 		Pool:              a.topoRuntime.pool,
 		PlatformLookup:    a.topoRuntime.pool,
@@ -677,6 +742,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	})
 	socks5Inbound := proxy.NewSocks5Inbound(proxy.Socks5InboundConfig{
 		ProxyToken:        a.envCfg.ProxyToken,
+		AccessKeys:        keyVerifier,
 		Router:            a.topoRuntime.router,
 		Pool:              a.topoRuntime.pool,
 		Health:            a.topoRuntime.pool,
