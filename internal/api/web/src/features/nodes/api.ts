@@ -203,7 +203,7 @@ export async function probeLatency(hash: string): Promise<LatencyProbeResult> {
   });
 }
 
-export const NODE_EXPORT_FORMATS = ["singbox", "mihomo", "v2rayn", "uri", "csv", "json"] as const;
+export const NODE_EXPORT_FORMATS = ["singbox", "mihomo", "v2rayn", "uri", "proxy", "csv", "json"] as const;
 export type NodeExportFormat = (typeof NODE_EXPORT_FORMATS)[number];
 
 // Fallback names, mirroring export.FileName() in internal/export/types.go. The
@@ -213,6 +213,7 @@ const EXPORT_FILE_NAMES: Record<NodeExportFormat, string> = {
   mihomo: "prism.yaml",
   v2rayn: "prism.txt",
   uri: "prism-uri.txt",
+  proxy: "prism-proxy.txt",
   csv: "prism.csv",
   json: "prism-export.json",
 };

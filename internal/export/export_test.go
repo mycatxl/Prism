@@ -85,10 +85,10 @@ func TestExportEmptyInputProducesEmptyBody(t *testing.T) {
 		if report.Exported != 0 || len(report.Skipped) != 0 {
 			t.Fatalf("%s: unexpected report %+v", format, report)
 		}
-		// An empty pool legitimately renders an empty subscription document for
-		// the two line-oriented formats, so a client polling a filter that
-		// currently matches nothing gets an empty list instead of an error.
-		if format == FormatV2rayN || format == FormatURI {
+		// An empty pool legitimately renders an empty document for the
+		// line-oriented formats, so a client polling a filter that currently
+		// matches nothing gets an empty list instead of an error.
+		if format == FormatV2rayN || format == FormatURI || format == FormatProxy {
 			continue
 		}
 		if len(body) == 0 {

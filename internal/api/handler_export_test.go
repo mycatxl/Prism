@@ -124,7 +124,7 @@ func exportContentType(format string) string {
 func TestExportNodesEndpointServesEveryFormat(t *testing.T) {
 	_, server := newExportTestServer(t)
 
-	for _, format := range []string{"singbox", "mihomo", "v2rayn", "uri", "csv", "json"} {
+	for _, format := range []string{"singbox", "mihomo", "v2rayn", "uri", "proxy", "csv", "json"} {
 		resp := doExportAuthedRequest(t, http.MethodGet, server.URL+"/api/v1/nodes/export?format="+format, nil)
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -208,5 +208,52 @@ func TestExportNodesOverLimitIsBoundedAndReported(t *testing.T) {
 	}
 	if resp.Header.Get("X-Prism-Export-Truncated") != "1" {
 		t.Fatalf("truncated = %q (body %s)", resp.Header.Get("X-Prism-Export-Truncated"), body)
+	}
+}
+
+// TestExportNodesProxyFormatServesDialableAddresses drives the direct
+// proxy-address export end to end: the response is the file the operator
+// pastes into a browser, so a node the format cannot address must show up in
+// the skipped count rather than as a line that fails later.
+func TestExportNodesProxyFormatServesDialableAddresses(t *testing.T) {
+	cp, server := newExportTestServer(t)
+	sub, ok := cp.SubMgr.Get("sub-export")
+	if !ok {
+		t.Fatal("the fixture subscription is missing")
+	}
+	addExportTestNode(t, cp.Pool, sub, "socks-direct",
+		`{"type":"socks","tag":"socks-direct","server":"socks.example.com","server_port":1080,"username":"u","password":"p"}`)
+
+	resp := doExportAuthedRequest(t, http.MethodGet, server.URL+"/api/v1/nodes/export?format=proxy", nil)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d (%s)", resp.StatusCode, body)
+	}
+	if got := resp.Header.Get("Content-Disposition"); !strings.Contains(got, "prism-proxy.txt") {
+		t.Fatalf("content-disposition = %q", got)
+	}
+	if !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/plain") {
+		t.Fatalf("content type = %q", resp.Header.Get("Content-Type"))
+	}
+
+	// The fixture pool holds two nodes, neither of them addressable, plus the
+	// SOCKS node just added: exactly one line, and the rest reported as
+	// skipped.
+	if got := resp.Header.Get("X-Prism-Export-Exported"); got != "1" {
+		t.Fatalf("exported = %q (body %s)", got, body)
+	}
+	if got := resp.Header.Get("X-Prism-Export-Skipped"); got != "2" {
+		t.Fatalf("skipped = %q (body %s)", got, body)
+	}
+
+	line := strings.TrimSpace(string(body))
+	if !strings.HasPrefix(line, "socks5://u:p@socks.example.com:1080") {
+		t.Fatalf("body = %q", body)
+	}
+	// One address, one line: the file ends with a newline and carries nothing
+	// else, so a client reading it line by line sees exactly one entry.
+	if lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n"); len(lines) != 1 {
+		t.Fatalf("body has %d lines: %q", len(lines), body)
 	}
 }

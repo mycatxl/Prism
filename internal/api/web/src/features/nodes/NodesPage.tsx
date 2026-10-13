@@ -111,6 +111,7 @@ const EXPORT_FORMAT_LABELS: Record<NodeExportFormat, { label: string; hint: stri
   mihomo: { label: "mihomo / Clash Meta", hint: "YAML" },
   v2rayn: { label: "v2rayN", hint: "Base64" },
   uri: { label: "分享链接", hint: "URI" },
+  proxy: { label: "代理地址", hint: "HTTP / SOCKS5" },
   csv: { label: "表格", hint: "CSV" },
   json: { label: "分析数据", hint: "JSON" },
 };
@@ -603,9 +604,12 @@ export function NodesPage() {
                 </MenuTrigger>
                 <MenuContent>
                   <MenuLabel>{t("按当前筛选导出")}</MenuLabel>
-                  {NODE_EXPORT_FORMATS.map((format, index) => (
+                  {NODE_EXPORT_FORMATS.map((format) => (
                     <Fragment key={format}>
-                      {index === 4 ? <MenuSeparator /> : null}
+                      {/* Client configs first, then the analysis files. Keyed
+                          on the format, not the position, so inserting a
+                          format cannot move the separator by accident. */}
+                      {format === "csv" ? <MenuSeparator /> : null}
                       <MenuItem onSelect={() => exportMutation.mutate(format)}>
                         <span>{t(EXPORT_FORMAT_LABELS[format].label)}</span>
                         <span className="text-xs text-ink-faint">{EXPORT_FORMAT_LABELS[format].hint}</span>

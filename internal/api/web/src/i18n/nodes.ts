@@ -21,6 +21,7 @@ export const NODES_TRANSLATIONS: Record<string, string> = {
   导出: "Export",
   按当前筛选导出: "Export current filter",
   分享链接: "Share links",
+  代理地址: "Proxy addresses",
   表格: "Spreadsheet",
   分析数据: "Analysis data",
   "已导出 {{count}} 个节点": "Exported {{count}} nodes",

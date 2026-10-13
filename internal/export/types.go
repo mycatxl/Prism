@@ -1,6 +1,6 @@
 // Package export renders the node pool into the formats a user actually
 // consumes: a sing-box config, a mihomo (Clash Meta) config, v2rayN / plain
-// share-link lists and analysis CSV/JSON.
+// share-link lists, a direct proxy-address list, and analysis CSV/JSON.
 //
 // The package is pure serialisation. It never dials, never touches the network
 // and never imports a runtime kernel. Decision D-1 rejects mihomo as a runtime
@@ -24,8 +24,11 @@ const (
 	FormatMihomo  = "mihomo"
 	FormatV2rayN  = "v2rayn"
 	FormatURI     = "uri"
-	FormatCSV     = "csv"
-	FormatJSON    = "json"
+	// FormatProxy is the direct proxy-address list: one http, https or socks5
+	// URL per node, pointing at the node itself rather than at Prism.
+	FormatProxy = "proxy"
+	FormatCSV   = "csv"
+	FormatJSON  = "json"
 )
 
 // DefaultNameTemplate is the identity template.
@@ -40,7 +43,7 @@ var ErrUnsupportedFormat = errors.New("unsupported export format")
 
 // Formats returns the supported format names in a stable order.
 func Formats() []string {
-	return []string{FormatSingbox, FormatMihomo, FormatV2rayN, FormatURI, FormatCSV, FormatJSON}
+	return []string{FormatSingbox, FormatMihomo, FormatV2rayN, FormatURI, FormatProxy, FormatCSV, FormatJSON}
 }
 
 // ValidFormat reports whether format is one of the supported names.
@@ -57,7 +60,7 @@ func ContentType(format string) string {
 		return "text/yaml; charset=utf-8"
 	case FormatCSV:
 		return "text/csv; charset=utf-8"
-	case FormatV2rayN, FormatURI:
+	case FormatV2rayN, FormatURI, FormatProxy:
 		return "text/plain; charset=utf-8"
 	}
 	return "application/octet-stream"
@@ -74,6 +77,8 @@ func FileName(format string) string {
 		return "prism.txt"
 	case FormatURI:
 		return "prism-uri.txt"
+	case FormatProxy:
+		return "prism-proxy.txt"
 	case FormatCSV:
 		return "prism.csv"
 	case FormatJSON:
@@ -200,6 +205,8 @@ func Export(nodes []Item, format string, opt Options) (body []byte, contentType 
 		body, report.Exported = exportV2rayN(items, &report)
 	case FormatURI:
 		body, report.Exported = exportURI(items, &report)
+	case FormatProxy:
+		body, report.Exported = exportProxy(items, &report)
 	case FormatCSV:
 		body, report.Exported = exportCSV(items, opt)
 	case FormatJSON:
