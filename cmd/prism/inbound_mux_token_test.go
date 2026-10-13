@@ -141,16 +141,26 @@ func TestInboundMuxTokenComparisonIsConstantTime(t *testing.T) {
 	if got := strings.Count(code, "func tokenMatches("); got != 1 {
 		t.Errorf("inbound_mux.go defines tokenMatches %d time(s), want exactly 1", got)
 	}
+	// The comparison has two call sites: the shared helper that decides whether
+	// a path segment may carry a credential at all, and the reverse gate's own
+	// refusal. Keeping the count pinned is what stops a future rewrite from
+	// reopening a gate with a direct comparison of its own.
 	if got := strings.Count(code, "tokenMatches("); got != 3 {
-		t.Errorf("inbound_mux.go mentions tokenMatches %d time(s), want 3 (one definition, two decision sites)", got)
+		t.Errorf("inbound_mux.go mentions tokenMatches %d time(s), want 3 (one definition, two call sites)", got)
 	}
 
-	// Both decision functions must go through the helper: a rewrite that
-	// reopens only one of the two gates would otherwise pass the counts above.
+	// Both decision functions must reach the constant-time comparison. They do
+	// it through isTokenPositionCandidate, which is why that helper is checked
+	// too: a rewrite that reopened only one of the two gates, or that made the
+	// helper compare directly, would otherwise pass the counts above.
+	helper := functionBody(t, code, "isTokenPositionCandidate")
+	if !strings.Contains(helper, "tokenMatches(") {
+		t.Error("isTokenPositionCandidate does not use tokenMatches; its token comparison is not constant time")
+	}
 	for _, name := range []string{"shouldRouteTokenAPI", "shouldRejectReverseProxyByToken"} {
 		body := functionBody(t, code, name)
-		if !strings.Contains(body, "tokenMatches(") {
-			t.Errorf("%s does not use tokenMatches; its token comparison is not constant time", name)
+		if !strings.Contains(body, "isTokenPositionCandidate(") && !strings.Contains(body, "tokenMatches(") {
+			t.Errorf("%s neither uses tokenMatches nor delegates to isTokenPositionCandidate; its token comparison is not constant time", name)
 		}
 	}
 }

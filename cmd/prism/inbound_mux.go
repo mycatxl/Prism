@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"prism/internal/keys"
 	"prism/internal/model"
 	"prism/internal/proxy"
 )
@@ -123,7 +124,7 @@ func shouldRouteTokenAPI(r *http.Request, proxyToken string) bool {
 	if !ok {
 		return false
 	}
-	if proxyToken != "" && !tokenMatches(token, proxyToken) {
+	if !isTokenPositionCandidate(token, proxyToken) {
 		return false
 	}
 	apiSeg, ok := decodePathSegment(segments[1])
@@ -143,7 +144,34 @@ func shouldRejectReverseProxyByToken(r *http.Request, proxyToken string) bool {
 		// Keep malformed percent-encoding behavior in reverse parser.
 		return false
 	}
+	// An access key is a candidate even though it is not the configured token:
+	// the reverse parser resolves it. Only a segment that is neither the token
+	// nor key-shaped is refused here.
+	if keys.IsCredentialShape(token) {
+		return false
+	}
 	return !tokenMatches(token, proxyToken)
+}
+
+// isTokenPositionCandidate reports whether a path segment may carry a
+// credential.
+//
+// The mux only recognizes the shape; the real check happens in the handler,
+// which owns the key store. That keeps this layer free of the pepper and the
+// key store while still letting a key-shaped segment through to the handler
+// that can verify it.
+//
+// A segment is a candidate when it is key-shaped or equals the configured
+// token. With no token configured, any segment is a candidate, which is the
+// behaviour before access keys existed.
+func isTokenPositionCandidate(segment string, proxyToken string) bool {
+	if keys.IsCredentialShape(segment) {
+		return true
+	}
+	if proxyToken == "" {
+		return true
+	}
+	return tokenMatches(segment, proxyToken)
 }
 
 // tokenMatches reports whether the path token equals the configured proxy
