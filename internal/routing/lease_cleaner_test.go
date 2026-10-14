@@ -90,14 +90,14 @@ func TestLeaseCleaner_SweepPlatformsInParallel(t *testing.T) {
 		return NewPlatformRoutingState(), false
 	})
 
-	stateA.Leases.CreateLease("acct-a", Lease{
+	stateA.Leases.CreateLease("", "acct-a", Lease{
 		NodeHash:       node.HashFromRawOptions([]byte(`{"id":"lease-a"}`)),
 		EgressIP:       netip.MustParseAddr("203.0.113.10"),
 		CreatedAtNs:    now.Add(-2 * time.Minute).UnixNano(),
 		ExpiryNs:       now.Add(-1 * time.Minute).UnixNano(),
 		LastAccessedNs: now.Add(-2 * time.Minute).UnixNano(),
 	})
-	stateB.Leases.CreateLease("acct-b", Lease{
+	stateB.Leases.CreateLease("", "acct-b", Lease{
 		NodeHash:       node.HashFromRawOptions([]byte(`{"id":"lease-b"}`)),
 		EgressIP:       netip.MustParseAddr("203.0.113.11"),
 		CreatedAtNs:    now.Add(-2 * time.Minute).UnixNano(),

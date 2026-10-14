@@ -17,8 +17,13 @@ const (
 )
 
 type LeaseEvent struct {
-	Type        LeaseEventType
-	PlatformID  string
+	Type       LeaseEventType
+	PlatformID string
+	// UserID is the lease owner. It is empty for the single-tenant path, which
+	// is what every event carried before leases had an owner. The persistence
+	// callback keys on it, so an event that dropped it would write the lease
+	// under the wrong owner.
+	UserID      string
 	Account     string
 	NodeHash    node.Hash
 	EgressIP    netip.Addr

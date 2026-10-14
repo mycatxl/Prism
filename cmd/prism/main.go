@@ -686,7 +686,7 @@ func (a *runtimeStatsAdapter) LeaseCountsByPlatform() map[string]int {
 	result := make(map[string]int)
 	a.pool.RangePlatforms(func(plat *platform.Platform) bool {
 		count := 0
-		a.router.RangeLeases(plat.ID, func(_ string, _ routing.Lease) bool {
+		a.router.RangeLeases(plat.ID, func(_, _ string, _ routing.Lease) bool {
 			count++
 			return true
 		})

@@ -45,7 +45,15 @@ func resolveRoutedOutbound(
 		}
 	}
 
-	result, err := router.RouteRequest(platformName, account, target)
+	// The key's owner, when there is one, is part of the lease identity: two
+	// tenants that both call their account "default" must not share an egress
+	// IP. The transitional global-token path carries no user and keeps the
+	// single-tenant behaviour.
+	userID := ""
+	if key != nil {
+		userID = key.UserID
+	}
+	result, err := router.RouteRequest(platformName, userID, account, target)
 	if err != nil {
 		return routedOutbound{}, mapRouteError(err)
 	}

@@ -132,7 +132,7 @@ func TestBootstrapRestart_RecoversTopologyAndStickyLease(t *testing.T) {
 		NodeTagResolver: pool1.ResolveNodeDisplayTag,
 	})
 
-	firstRoute, err := router1.RouteRequest(platformName, account, "https://example.com/restart")
+	firstRoute, err := router1.RouteRequest(platformName, "", account, "https://example.com/restart")
 	if err != nil {
 		t.Fatalf("first RouteRequest: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestBootstrapRestart_RecoversTopologyAndStickyLease(t *testing.T) {
 	engine1.MarkSubscriptionNode(subID, hash.Hex())
 	engine1.MarkNodeDynamic(hash.Hex())
 	engine1.MarkNodeLatency(hash.Hex(), latencyHost)
-	engine1.MarkLease(platformID, account)
+	engine1.MarkLease(platformID, "", account)
 	if err := engine1.FlushDirtySets(newFlushReaders(pool1, subManager1, router1)); err != nil {
 		t.Fatalf("first FlushDirtySets: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestBootstrapRestart_RecoversTopologyAndStickyLease(t *testing.T) {
 		t.Fatal("node should be routable after restart rebuild")
 	}
 
-	secondRoute, err := router2.RouteRequest(platformName, account, "https://example.com/restart")
+	secondRoute, err := router2.RouteRequest(platformName, "", account, "https://example.com/restart")
 	if err != nil {
 		t.Fatalf("second RouteRequest: %v", err)
 	}

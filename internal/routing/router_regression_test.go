@@ -223,9 +223,9 @@ func TestRouteRequest_SameIPRotationPrefersTargetLatencySample(t *testing.T) {
 		ExpiryNs:       time.Now().Add(time.Hour).UnixNano(),
 		LastAccessedNs: time.Now().UnixNano(),
 	}
-	state.Leases.CreateLease("acct-rotation", originalLease)
+	state.Leases.CreateLease("", "acct-rotation", originalLease)
 
-	res, err := router.RouteRequest(plat.Name, "acct-rotation", "https://example.com/path")
+	res, err := router.RouteRequest(plat.Name, "", "acct-rotation", "https://example.com/path")
 	if err != nil {
 		t.Fatalf("route failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestRouteRequest_SameIPRotationPrefersTargetLatencySample(t *testing.T) {
 		t.Fatal("same-ip rotation should update existing lease, not create a new one")
 	}
 
-	updatedLease, ok := state.Leases.GetLease("acct-rotation")
+	updatedLease, ok := state.Leases.GetLease("", "acct-rotation")
 	if !ok {
 		t.Fatal("lease should still exist after rotation")
 	}
@@ -279,7 +279,7 @@ func TestRouteRequest_SelectedNodeRemovedAfterPick_EmitsLeaseRemove(t *testing.T
 
 	oldIP := netip.MustParseAddr("203.0.113.9")
 	oldHash := node.HashFromRawOptions(json.RawMessage(`{"id":"old-lease-node"}`))
-	state.Leases.CreateLease("acct-race", Lease{
+	state.Leases.CreateLease("", "acct-race", Lease{
 		NodeHash:       oldHash,
 		EgressIP:       oldIP,
 		ExpiryNs:       time.Now().Add(time.Hour).UnixNano(),
@@ -290,7 +290,7 @@ func TestRouteRequest_SelectedNodeRemovedAfterPick_EmitsLeaseRemove(t *testing.T
 		t.Fatalf("setup ip load: got %d, want 1", got)
 	}
 
-	_, err := router.RouteRequest(plat.Name, "acct-race", "https://example.com")
+	_, err := router.RouteRequest(plat.Name, "", "acct-race", "https://example.com")
 	if err == nil {
 		t.Fatal("expected route error when selected node disappears")
 	}
@@ -298,7 +298,7 @@ func TestRouteRequest_SelectedNodeRemovedAfterPick_EmitsLeaseRemove(t *testing.T
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, ok := state.Leases.GetLease("acct-race"); ok {
+	if _, ok := state.Leases.GetLease("", "acct-race"); ok {
 		t.Fatal("lease should be removed when re-route fails after invalidation")
 	}
 	if got := state.IPLoadStats.Get(oldIP); got != 0 {

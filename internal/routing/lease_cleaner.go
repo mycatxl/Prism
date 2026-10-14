@@ -107,7 +107,7 @@ func (c *LeaseCleaner) sweep() {
 
 func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingState, nowNs int64) {
 	// Iterate over all leases for this platform
-	state.Leases.Range(func(account string, lease Lease) bool {
+	state.Leases.Range(func(o leaseOwner, lease Lease) bool {
 		// Check against stop signal
 		select {
 		case <-c.stopCh:
@@ -117,7 +117,7 @@ func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingS
 
 		if lease.ExpiryNs < nowNs {
 			// Expired. Use Compute to verify and delete atomically.
-			state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+			state.Leases.leases.Compute(o, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 				if !loaded {
 					return current, xsync.CancelOp
 				}
@@ -129,7 +129,8 @@ func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingS
 						c.router.onLeaseEvent(LeaseEvent{
 							Type:        LeaseExpire,
 							PlatformID:  platID,
-							Account:     account,
+							UserID:      o.UserID,
+							Account:     o.Account,
 							NodeHash:    current.NodeHash,
 							EgressIP:    current.EgressIP,
 							CreatedAtNs: current.CreatedAtNs,

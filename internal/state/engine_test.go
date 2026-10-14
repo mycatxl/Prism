@@ -150,7 +150,7 @@ func TestEngine_WeakPersist_CacheDataSurvivesRestart(t *testing.T) {
 	engine1.MarkSubscriptionNode("s1", "n1")
 	engine1.MarkNodeDynamic("n1")
 	engine1.MarkNodeLatency("n1", "google.com")
-	engine1.MarkLease("p1", "user1")
+	engine1.MarkLease("p1", "", "user1")
 	mustWrite(t, engine1.FlushDirtySets(readers))
 	closer1.Close()
 

@@ -102,7 +102,7 @@ func TestDeletePlatform_PurgesRouterState(t *testing.T) {
 	if snap := router.SnapshotIPLoad(platformRow.ID); len(snap) != len(accounts) {
 		t.Fatalf("precondition: ip load snapshot = %v, want %d entries", snap, len(accounts))
 	}
-	if !router.RangeLeases(platformRow.ID, func(string, routing.Lease) bool { return false }) {
+	if !router.RangeLeases(platformRow.ID, func(_, _ string, _ routing.Lease) bool { return false }) {
 		t.Fatal("precondition: Router has no state for the platform")
 	}
 
@@ -114,7 +114,7 @@ func TestDeletePlatform_PurgesRouterState(t *testing.T) {
 	if _, ok := pool.GetPlatform(platformRow.ID); ok {
 		t.Fatalf("platform %s should be removed from pool", platformRow.ID)
 	}
-	if router.RangeLeases(platformRow.ID, func(string, routing.Lease) bool { return true }) {
+	if router.RangeLeases(platformRow.ID, func(_, _ string, _ routing.Lease) bool { return true }) {
 		t.Fatal("Router.states kept the deleted platform's leases (leak)")
 	}
 	if snap := router.SnapshotIPLoad(platformRow.ID); len(snap) != 0 {

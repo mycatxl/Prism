@@ -17,12 +17,30 @@ func validateAccountPath(r *http.Request) (string, error) {
 	return account, nil
 }
 
+// leaseUserQuery reads the optional user_id selector.
+//
+// A lease belongs to one (user, account) pair, and the account alone is only
+// unique within one user. The selector is optional so every existing console
+// call keeps working: without it the single-tenant lease is addressed, and the
+// service refuses the request when the account is ambiguous rather than acting
+// on the wrong tenant.
+func leaseUserQuery(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("user_id"))
+}
+
 func leaseSortKey(sortBy string, l service.LeaseResponse) string {
 	switch sortBy {
 	case "expiry":
 		return l.Expiry
 	case "last_accessed":
 		return l.LastAccessed
+	case "user_id":
+		// Sorting by owner groups a tenant's leases together; the account
+		// breaks ties so the order stays stable inside one tenant.
+		if l.UserID != l.Account {
+			return l.UserID
+		}
+		return l.Account
 	default:
 		return l.Account
 	}
@@ -67,6 +85,17 @@ func HandleListLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 		}
 		useFuzzyAccountMatch := fuzzy != nil && *fuzzy
 
+		// Optional owner filter.
+		if userID := leaseUserQuery(r); userID != "" {
+			filtered := make([]service.LeaseResponse, 0, len(leases))
+			for _, l := range leases {
+				if l.UserID == userID {
+					filtered = append(filtered, l)
+				}
+			}
+			leases = filtered
+		}
+
 		// Optional account filter.
 		if raw := r.URL.Query().Get("account"); raw != "" {
 			account := strings.TrimSpace(raw)
@@ -92,7 +121,7 @@ func HandleListLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 			leases = filtered
 		}
 
-		sorting, ok := parseSortingOrWriteInvalid(w, r, []string{"account", "expiry", "last_accessed"}, "expiry", "asc")
+		sorting, ok := parseSortingOrWriteInvalid(w, r, []string{"account", "user_id", "expiry", "last_accessed"}, "expiry", "asc")
 		if !ok {
 			return
 		}
@@ -120,7 +149,7 @@ func HandleGetLease(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeServiceError(w, err)
 			return
 		}
-		lease, err := cp.GetLease(platformID, account)
+		lease, err := cp.GetLease(platformID, leaseUserQuery(r), account)
 		if err != nil {
 			writeServiceError(w, err)
 			return
@@ -141,7 +170,7 @@ func HandleDeleteLease(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeServiceError(w, err)
 			return
 		}
-		if err := cp.DeleteLease(platformID, account); err != nil {
+		if err := cp.DeleteLease(platformID, leaseUserQuery(r), account); err != nil {
 			writeServiceError(w, err)
 			return
 		}
@@ -164,7 +193,7 @@ func HandleRotateLease(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeServiceError(w, err)
 			return
 		}
-		if err := cp.RotateLease(platformID, account); err != nil {
+		if err := cp.RotateLease(platformID, leaseUserQuery(r), account); err != nil {
 			writeServiceError(w, err)
 			return
 		}

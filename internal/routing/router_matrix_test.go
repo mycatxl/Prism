@@ -70,7 +70,7 @@ func TestRouteRequest_DefaultPlatformRequiresWellKnownID(t *testing.T) {
 	pool.rebuildPlatformView(plat)
 
 	router := newTestRouter(pool, nil)
-	_, err := router.RouteRequest("", "", "https://example.com")
+	_, err := router.RouteRequest("", "", "", "https://example.com")
 	if !errors.Is(err, ErrPlatformNotFound) {
 		t.Fatalf("expected ErrPlatformNotFound without default ID, got %v", err)
 	}
@@ -92,7 +92,7 @@ func TestRouteRequest_EmptyAccountStaleViewReturnsError(t *testing.T) {
 	pool.removeEntry(h)
 
 	router := newTestRouter(pool, nil)
-	_, err := router.RouteRequest(plat.Name, "", "https://example.com")
+	_, err := router.RouteRequest(plat.Name, "", "", "https://example.com")
 	if !errors.Is(err, ErrNoAvailableNodes) {
 		t.Fatalf("expected ErrNoAvailableNodes for stale view, got %v", err)
 	}
@@ -116,7 +116,7 @@ func TestRouteRequest_EmptyAccount_TransientMissingEntryRetriesOnce(t *testing.T
 	}
 	router := newTestRouter(pool, nil)
 
-	res, err := router.RouteRequest(plat.Name, "", "https://example.com")
+	res, err := router.RouteRequest(plat.Name, "", "", "https://example.com")
 	if err != nil {
 		t.Fatalf("expected retry to recover from transient miss, got %v", err)
 	}
@@ -282,9 +282,9 @@ func TestRouteRequest_SameIPRotationMissRecreatesLease(t *testing.T) {
 		ExpiryNs:       oldExpiry,
 		LastAccessedNs: time.Now().UnixNano(),
 	}
-	state.Leases.CreateLease("acct-miss", oldLease)
+	state.Leases.CreateLease("", "acct-miss", oldLease)
 
-	res, err := router.RouteRequest(plat.Name, "acct-miss", "https://example.com")
+	res, err := router.RouteRequest(plat.Name, "", "acct-miss", "https://example.com")
 	if err != nil {
 		t.Fatalf("route failed: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestRouteRequest_SameIPRotationMissRecreatesLease(t *testing.T) {
 		t.Fatalf("expected replacement node %s, got %s", replacementHash.Hex(), res.NodeHash.Hex())
 	}
 
-	newLease, ok := state.Leases.GetLease("acct-miss")
+	newLease, ok := state.Leases.GetLease("", "acct-miss")
 	if !ok {
 		t.Fatal("expected recreated lease")
 	}
@@ -345,7 +345,7 @@ func TestLeaseCleaner_SweepExpiresLeaseDeterministically(t *testing.T) {
 
 	h := node.HashFromRawOptions(json.RawMessage(`{"id":"expired-lease-node"}`))
 	ip := netip.MustParseAddr("203.0.113.88")
-	state.Leases.CreateLease("acct-expire", Lease{
+	state.Leases.CreateLease("", "acct-expire", Lease{
 		NodeHash:       h,
 		EgressIP:       ip,
 		ExpiryNs:       time.Now().Add(-1 * time.Minute).UnixNano(),
@@ -358,7 +358,7 @@ func TestLeaseCleaner_SweepExpiresLeaseDeterministically(t *testing.T) {
 	cleaner := NewLeaseCleaner(router)
 	cleaner.sweep()
 
-	if _, ok := state.Leases.GetLease("acct-expire"); ok {
+	if _, ok := state.Leases.GetLease("", "acct-expire"); ok {
 		t.Fatal("expected expired lease to be removed by sweep")
 	}
 	if got := state.IPLoadStats.Get(ip); got != 0 {

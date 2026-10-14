@@ -105,14 +105,14 @@ func rotationFixture(t *testing.T, egressIPs ...string) (*routerTestPool, *Route
 func ageLease(t *testing.T, state *PlatformRoutingState, account string, age time.Duration) {
 	t.Helper()
 
-	lease, ok := state.Leases.GetLease(account)
+	lease, ok := state.Leases.GetLease("", account)
 	if !ok {
 		t.Fatalf("account %q has no lease to age", account)
 	}
 	now := time.Now()
 	lease.CreatedAtNs = now.Add(-age).UnixNano()
 	lease.LastAccessedNs = lease.CreatedAtNs
-	state.Leases.CreateLease(account, lease)
+	state.Leases.CreateLease("", account, lease)
 }
 
 func TestScheduledRotation_ConsecutiveRotationsChangeEgressIP(t *testing.T) {
@@ -123,7 +123,7 @@ func TestScheduledRotation_ConsecutiveRotationsChangeEgressIP(t *testing.T) {
 
 	previousIP := netip.Addr{}
 	for round := 0; round < 10; round++ {
-		res, err := router.RouteRequest(plat.Name, account, "https://example.com/rotate")
+		res, err := router.RouteRequest(plat.Name, "", account, "https://example.com/rotate")
 		if err != nil {
 			t.Fatalf("round %d: RouteRequest: %v", round, err)
 		}
@@ -137,10 +137,10 @@ func TestScheduledRotation_ConsecutiveRotationsChangeEgressIP(t *testing.T) {
 		ageLease(t, state, account, time.Minute)
 		rotator.sweep()
 
-		if _, ok := state.Leases.GetLease(account); ok {
+		if _, ok := state.Leases.GetLease("", account); ok {
 			t.Fatalf("round %d: lease should have been rotated away", round)
 		}
-		tombstone, ok := router.RotationTombstone(plat.ID, account)
+		tombstone, ok := router.RotationTombstone(plat.ID, "", account)
 		if !ok {
 			t.Fatalf("round %d: rotation must record a tombstone", round)
 		}
@@ -156,7 +156,7 @@ func TestScheduledRotation_SingleEgressIPFallsBackAndRecordsEvent(t *testing.T) 
 	rotator := newScheduledRotatorWithIntervals(router, pool, 30*time.Millisecond, 0)
 	account := "acct-single"
 
-	first, err := router.RouteRequest(plat.Name, account, "https://example.com/single")
+	first, err := router.RouteRequest(plat.Name, "", account, "https://example.com/single")
 	if err != nil {
 		t.Fatalf("first RouteRequest: %v", err)
 	}
@@ -168,12 +168,12 @@ func TestScheduledRotation_SingleEgressIPFallsBackAndRecordsEvent(t *testing.T) 
 	ageLease(t, state, account, time.Minute)
 	rotator.sweep()
 
-	tombstone, ok := router.RotationTombstone(plat.ID, account)
+	tombstone, ok := router.RotationTombstone(plat.ID, "", account)
 	if !ok || tombstone != singleIP {
 		t.Fatalf("tombstone = (%v, %v), want (%v, true)", tombstone, ok, singleIP)
 	}
 
-	second, err := router.RouteRequest(plat.Name, account, "https://example.com/single")
+	second, err := router.RouteRequest(plat.Name, "", account, "https://example.com/single")
 	if err != nil {
 		t.Fatalf("second RouteRequest: %v", err)
 	}
@@ -194,9 +194,9 @@ func TestRouteRequest_RotationAvoidanceDisabledIgnoresTombstone(t *testing.T) {
 
 	// Seed a tombstone for the only egress IP: with avoidance disabled it must
 	// not influence the pick and must not produce a fallback event.
-	router.recordRotationTombstone(plat.ID, "acct-avoid-off", netip.MustParseAddr("203.0.113.9"), time.Now().UnixNano(), time.Hour)
+	router.recordRotationTombstone(plat.ID, "", "acct-avoid-off", netip.MustParseAddr("203.0.113.9"), time.Now().UnixNano(), time.Hour)
 
-	res, err := router.RouteRequest(plat.Name, "acct-avoid-off", "https://example.com/off")
+	res, err := router.RouteRequest(plat.Name, "", "acct-avoid-off", "https://example.com/off")
 	if err != nil {
 		t.Fatalf("RouteRequest: %v", err)
 	}
@@ -211,30 +211,30 @@ func TestRouteRequest_RotationAvoidanceDisabledIgnoresTombstone(t *testing.T) {
 func TestRouterRotateLease_RemovesLeaseAndRecordsTombstone(t *testing.T) {
 	_, router, plat, state := rotationFixture(t, "203.0.113.11")
 
-	first, err := router.RouteRequest(plat.Name, "acct-manual", "https://example.com/manual")
+	first, err := router.RouteRequest(plat.Name, "", "acct-manual", "https://example.com/manual")
 	if err != nil {
 		t.Fatalf("RouteRequest: %v", err)
 	}
-	lease, ok := state.Leases.GetLease("acct-manual")
+	lease, ok := state.Leases.GetLease("", "acct-manual")
 	if !ok {
 		t.Fatal("expected lease before manual rotation")
 	}
 
-	if !router.RotateLease(plat, "acct-manual") {
+	if !router.RotateLease(plat, "", "acct-manual") {
 		t.Fatal("RotateLease = false, want true")
 	}
-	if _, ok := state.Leases.GetLease("acct-manual"); ok {
+	if _, ok := state.Leases.GetLease("", "acct-manual"); ok {
 		t.Fatal("manual rotation must delete the lease")
 	}
-	tombstone, ok := router.RotationTombstone(plat.ID, "acct-manual")
+	tombstone, ok := router.RotationTombstone(plat.ID, "", "acct-manual")
 	if !ok || tombstone != lease.EgressIP {
 		t.Fatalf("tombstone = (%v, %v), want (%v, true)", tombstone, ok, lease.EgressIP)
 	}
-	if router.RotateLease(plat, "acct-manual") {
+	if router.RotateLease(plat, "", "acct-manual") {
 		t.Fatal("second RotateLease for the same account must report no lease")
 	}
 
-	next, err := router.RouteRequest(plat.Name, "acct-manual", "https://example.com/manual")
+	next, err := router.RouteRequest(plat.Name, "", "acct-manual", "https://example.com/manual")
 	if err != nil {
 		t.Fatalf("RouteRequest after rotation: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestRouterRotateLease_RemovesLeaseAndRecordsTombstone(t *testing.T) {
 func TestDeleteLease_OnDeleteRunsInsideTheCriticalSection(t *testing.T) {
 	table := NewLeaseTable(NewIPLoadStats())
 	ip := netip.MustParseAddr("203.0.113.44")
-	table.CreateLease("acct", Lease{
+	table.CreateLease("", "acct", Lease{
 		NodeHash:    node.HashFromRawOptions([]byte(`{"type":"ss","server":"203.0.113.44","port":443}`)),
 		EgressIP:    ip,
 		CreatedAtNs: 1,
@@ -269,7 +269,7 @@ func TestDeleteLease_OnDeleteRunsInsideTheCriticalSection(t *testing.T) {
 
 	// The callback observes the lease that is being removed.
 	var seen []Lease
-	lease, deleted := table.DeleteLease("acct", func(removed Lease) {
+	lease, deleted := table.DeleteLease("", "acct", func(removed Lease) {
 		seen = append(seen, removed)
 	})
 	if !deleted {
@@ -288,7 +288,7 @@ func TestDeleteLease_OnDeleteRunsInsideTheCriticalSection(t *testing.T) {
 
 	// A missing lease never runs the callback.
 	calls := 0
-	if _, deleted := table.DeleteLease("acct", func(Lease) { calls++ }); deleted {
+	if _, deleted := table.DeleteLease("", "acct", func(Lease) { calls++ }); deleted {
 		t.Fatal("DeleteLease on a missing account reported a deletion")
 	}
 	if calls != 0 {
@@ -296,15 +296,15 @@ func TestDeleteLease_OnDeleteRunsInsideTheCriticalSection(t *testing.T) {
 	}
 
 	// DeleteLeaseIfOlderThan honours the age gate before running the callback.
-	table.CreateLease("acct2", Lease{EgressIP: ip, CreatedAtNs: 100})
+	table.CreateLease("", "acct2", Lease{EgressIP: ip, CreatedAtNs: 100})
 	ageCalls := 0
-	if _, deleted := table.DeleteLeaseIfOlderThan("acct2", 50, func(Lease) { ageCalls++ }); deleted {
+	if _, deleted := table.DeleteLeaseIfOlderThan("", "acct2", 50, func(Lease) { ageCalls++ }); deleted {
 		t.Fatal("a lease newer than the cutoff must not be deleted")
 	}
 	if ageCalls != 0 {
 		t.Fatalf("onDelete ran %d times for a lease that was kept, want 0", ageCalls)
 	}
-	if _, deleted := table.DeleteLeaseIfOlderThan("acct2", 100, func(Lease) { ageCalls++ }); !deleted {
+	if _, deleted := table.DeleteLeaseIfOlderThan("", "acct2", 100, func(Lease) { ageCalls++ }); !deleted {
 		t.Fatal("a lease at the cutoff must be deleted")
 	}
 	if ageCalls != 1 {

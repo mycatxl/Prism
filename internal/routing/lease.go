@@ -19,10 +19,27 @@ type Lease struct {
 	LastAccessedNs int64
 }
 
-// LeaseTable manages per-account sticky leases for a single platform.
+// leaseOwner identifies one sticky lease.
+//
+// The account alone is not unique once several users share a platform: two
+// tenants that both call their account "default" must not share an egress IP,
+// because sharing one is exactly what the tenant boundary is supposed to
+// prevent. An empty UserID is the single-tenant caller - the transitional
+// global proxy token and every path that has no account behind it - and it
+// behaves as it always did.
+type leaseOwner struct {
+	UserID  string
+	Account string
+}
+
+// owner returns the lease owner for a (user, account) pair.
+func owner(userID, account string) leaseOwner {
+	return leaseOwner{UserID: userID, Account: account}
+}
+
+// LeaseTable manages sticky leases for a single platform.
 type LeaseTable struct {
-	// key: account
-	leases *xsync.Map[string, Lease]
+	leases *xsync.Map[leaseOwner, Lease]
 	stats  *IPLoadStats
 }
 
@@ -34,7 +51,7 @@ type IPLoadStats struct {
 // NewLeaseTable creates a new lease table linked to the given stats.
 func NewLeaseTable(stats *IPLoadStats) *LeaseTable {
 	return &LeaseTable{
-		leases: xsync.NewMap[string, Lease](),
+		leases: xsync.NewMap[leaseOwner, Lease](),
 		stats:  stats,
 	}
 }
@@ -46,20 +63,21 @@ func NewIPLoadStats() *IPLoadStats {
 	}
 }
 
-// GetLease returns the lease for the given account.
-func (t *LeaseTable) GetLease(account string) (Lease, bool) {
-	return t.leases.Load(account)
+// GetLease returns the lease for the given owner.
+func (t *LeaseTable) GetLease(userID, account string) (Lease, bool) {
+	return t.leases.Load(owner(userID, account))
 }
 
-// Range iterates over all leases.
-func (t *LeaseTable) Range(fn func(account string, lease Lease) bool) {
+// Range iterates over all leases. The callback receives the owner, so a caller
+// that has to re-address one lease can do it without guessing.
+func (t *LeaseTable) Range(fn func(o leaseOwner, lease Lease) bool) {
 	t.leases.Range(fn)
 }
 
 // CreateLease adds a new lease and increments the IP load count.
 // If a lease explicitly exists (e.g. race), it is overwritten (and counts adjusted).
-func (t *LeaseTable) CreateLease(account string, lease Lease) {
-	t.leases.Compute(account, func(oldVal Lease, loaded bool) (Lease, xsync.ComputeOp) {
+func (t *LeaseTable) CreateLease(userID, account string, lease Lease) {
+	t.leases.Compute(owner(userID, account), func(oldVal Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if loaded {
 			t.stats.Dec(oldVal.EgressIP)
 		}
@@ -71,16 +89,16 @@ func (t *LeaseTable) CreateLease(account string, lease Lease) {
 // DeleteLease atomically removes a lease and decrements IP load stats.
 // Returns the deleted lease and true when a lease was actually deleted.
 //
-// onDelete (optional) runs inside the same per-account critical section that
+// onDelete (optional) runs inside the same per-owner critical section that
 // removes the lease. Rotation needs that: the tombstone that tells the next
 // lease which egress IP to avoid must exist before the account can draw a new
 // lease, and the allocation path reads it under this same key. Writing the
 // tombstone after Compute returned left a window where a concurrent request
 // could be handed the IP that had just been rotated away.
-func (t *LeaseTable) DeleteLease(account string, onDelete func(Lease)) (Lease, bool) {
+func (t *LeaseTable) DeleteLease(userID, account string, onDelete func(Lease)) (Lease, bool) {
 	var deleted Lease
 	ok := false
-	t.leases.Compute(account, func(oldVal Lease, loaded bool) (Lease, xsync.ComputeOp) {
+	t.leases.Compute(owner(userID, account), func(oldVal Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if loaded {
 			t.stats.Dec(oldVal.EgressIP)
 			deleted = oldVal
@@ -103,10 +121,10 @@ func (t *LeaseTable) DeleteLease(account string, onDelete func(Lease)) (Lease, b
 //
 // onDelete (optional) runs inside the same critical section; see DeleteLease for
 // why the rotation tombstone has to be written there.
-func (t *LeaseTable) DeleteLeaseIfOlderThan(account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
+func (t *LeaseTable) DeleteLeaseIfOlderThan(userID, account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
 	var deleted Lease
 	ok := false
-	t.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+	t.leases.Compute(owner(userID, account), func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if !loaded || current.CreatedAtNs > createdBeforeOrAtNs {
 			return current, xsync.CancelOp
 		}

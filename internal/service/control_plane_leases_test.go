@@ -123,7 +123,7 @@ func TestGetLease_NodeTagUsesEarliestSubscriptionThenMinTag(t *testing.T) {
 		LastAccessedNs: now,
 	})
 
-	got, err := cp.GetLease(plat.ID, "alice")
+	got, err := cp.GetLease(plat.ID, "", "alice")
 	if err != nil {
 		t.Fatalf("GetLease: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestGetLease_NodeTagPrefersEarliestEnabledSubscription(t *testing.T) {
 		LastAccessedNs: now,
 	})
 
-	got, err := cp.GetLease(plat.ID, "carol")
+	got, err := cp.GetLease(plat.ID, "", "carol")
 	if err != nil {
 		t.Fatalf("GetLease: %v", err)
 	}

@@ -48,7 +48,7 @@ func TestAPIContract_RotateLease_DeletesLeaseAndRecordsTombstone(t *testing.T) {
 	assertErrorCode(t, rec, "NOT_FOUND")
 
 	// The previous egress IP must be recorded as the account's rotation tombstone.
-	tombstone, ok := cp.Router.RotationTombstone(platformID, account)
+	tombstone, ok := cp.Router.RotationTombstone(platformID, "", account)
 	if !ok {
 		t.Fatal("rotate lease did not record a rotation tombstone")
 	}

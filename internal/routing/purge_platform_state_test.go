@@ -69,7 +69,7 @@ func TestPurgePlatformState_RemovesStateAndEmitsRemoveEvents(t *testing.T) {
 	if snap := router.SnapshotIPLoad(plat.ID); len(snap) != 0 {
 		t.Fatalf("IP load stats survived the purge: %v", snap)
 	}
-	if router.RangeLeases(plat.ID, func(string, Lease) bool { return true }) {
+	if router.RangeLeases(plat.ID, func(string, string, Lease) bool { return true }) {
 		t.Fatal("RangeLeases still reports state for the purged platform")
 	}
 

@@ -39,14 +39,14 @@ func TestScheduledRotator_Basic(t *testing.T) {
 	oldCreatedAtNs := now.Add(-200 * time.Millisecond).UnixNano()
 
 	state := router.ensurePlatformState("test-plat")
-	state.Leases.CreateLease("user1", Lease{
+	state.Leases.CreateLease("", "user1", Lease{
 		NodeHash:       h1,
 		EgressIP:       netip.MustParseAddr("1.1.1.1"),
 		CreatedAtNs:    oldCreatedAtNs,
 		ExpiryNs:       now.Add(1 * time.Hour).UnixNano(),
 		LastAccessedNs: oldCreatedAtNs,
 	})
-	state.Leases.CreateLease("user2", Lease{
+	state.Leases.CreateLease("", "user2", Lease{
 		NodeHash:       h2,
 		EgressIP:       netip.MustParseAddr("1.1.1.2"),
 		CreatedAtNs:    oldCreatedAtNs,
@@ -55,10 +55,10 @@ func TestScheduledRotator_Basic(t *testing.T) {
 	})
 
 	// Verify leases exist
-	if _, ok := state.Leases.GetLease("user1"); !ok {
+	if _, ok := state.Leases.GetLease("", "user1"); !ok {
 		t.Fatal("user1 lease not found before rotation")
 	}
-	if _, ok := state.Leases.GetLease("user2"); !ok {
+	if _, ok := state.Leases.GetLease("", "user2"); !ok {
 		t.Fatal("user2 lease not found before rotation")
 	}
 
@@ -87,10 +87,10 @@ func TestScheduledRotator_Basic(t *testing.T) {
 	}
 
 	// Verify leases were rotated (deleted)
-	if _, ok := state.Leases.GetLease("user1"); ok {
+	if _, ok := state.Leases.GetLease("", "user1"); ok {
 		t.Error("user1 lease should have been rotated")
 	}
-	if _, ok := state.Leases.GetLease("user2"); ok {
+	if _, ok := state.Leases.GetLease("", "user2"); ok {
 		t.Error("user2 lease should have been rotated")
 	}
 }
@@ -118,7 +118,7 @@ func TestScheduledRotator_NoRotationWhenDisabled(t *testing.T) {
 	oldCreatedAtNs := now.Add(-200 * time.Millisecond).UnixNano()
 
 	state := router.ensurePlatformState("test-plat")
-	state.Leases.CreateLease("user1", Lease{
+	state.Leases.CreateLease("", "user1", Lease{
 		NodeHash:       h1,
 		EgressIP:       netip.MustParseAddr("1.1.1.1"),
 		CreatedAtNs:    oldCreatedAtNs,
@@ -134,7 +134,7 @@ func TestScheduledRotator_NoRotationWhenDisabled(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	// Verify lease was NOT rotated
-	if _, ok := state.Leases.GetLease("user1"); !ok {
+	if _, ok := state.Leases.GetLease("", "user1"); !ok {
 		t.Error("user1 lease should NOT have been rotated (rotation disabled)")
 	}
 }
@@ -163,7 +163,7 @@ func TestScheduledRotator_OnlyRotatesOldLeases(t *testing.T) {
 	state := router.ensurePlatformState("test-plat")
 
 	// Old lease (should be rotated)
-	state.Leases.CreateLease("old-user", Lease{
+	state.Leases.CreateLease("", "old-user", Lease{
 		NodeHash:       h1,
 		EgressIP:       netip.MustParseAddr("1.1.1.1"),
 		CreatedAtNs:    now.Add(-200 * time.Millisecond).UnixNano(),
@@ -172,7 +172,7 @@ func TestScheduledRotator_OnlyRotatesOldLeases(t *testing.T) {
 	})
 
 	// New lease (should NOT be rotated)
-	state.Leases.CreateLease("new-user", Lease{
+	state.Leases.CreateLease("", "new-user", Lease{
 		NodeHash:       h2,
 		EgressIP:       netip.MustParseAddr("1.1.1.2"),
 		CreatedAtNs:    now.UnixNano(),
@@ -199,12 +199,12 @@ func TestScheduledRotator_OnlyRotatesOldLeases(t *testing.T) {
 	}
 
 	// Verify old lease was rotated
-	if _, ok := state.Leases.GetLease("old-user"); ok {
+	if _, ok := state.Leases.GetLease("", "old-user"); ok {
 		t.Error("old-user lease should have been rotated")
 	}
 
 	// Verify new lease was NOT rotated
-	if _, ok := state.Leases.GetLease("new-user"); !ok {
+	if _, ok := state.Leases.GetLease("", "new-user"); !ok {
 		t.Error("new-user lease should NOT have been rotated")
 	}
 }
@@ -274,7 +274,7 @@ func TestScheduledRotator_ParallelPlatformProcessing(t *testing.T) {
 		pool.rebuildPlatformView(plat)
 
 		state := router.ensurePlatformState(plat.ID)
-		state.Leases.CreateLease("user", Lease{
+		state.Leases.CreateLease("", "user", Lease{
 			NodeHash:       h,
 			EgressIP:       netip.MustParseAddr(nodeIP),
 			CreatedAtNs:    time.Now().Add(-100 * time.Millisecond).UnixNano(),
@@ -321,7 +321,7 @@ func TestScheduledRotator_ParallelPlatformProcessing(t *testing.T) {
 			t.Errorf("Platform %d state not found", i)
 			continue
 		}
-		if _, ok := state.Leases.GetLease("user"); ok {
+		if _, ok := state.Leases.GetLease("", "user"); ok {
 			t.Errorf("Platform %d lease should have been rotated", i)
 		}
 	}

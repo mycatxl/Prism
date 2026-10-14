@@ -159,7 +159,7 @@ func TestReverseProxy_BypassCreatesNoLease(t *testing.T) {
 		t.Fatalf("status: got %d, want %d (body=%q)", w.Code, http.StatusNoContent, w.Body.String())
 	}
 	leaseCount := 0
-	env.router.RangeLeases("plat-id", func(_ string, _ routing.Lease) bool {
+	env.router.RangeLeases("plat-id", func(_, _ string, _ routing.Lease) bool {
 		leaseCount++
 		return true
 	})

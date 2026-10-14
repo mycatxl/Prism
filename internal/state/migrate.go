@@ -39,6 +39,12 @@ const (
 	stateLatestVersion                           = stateVersionTenant
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
+	// Keep these version markers in sync with SQL files under migrations/cache/.
+	cacheVersionBaseSchema             = 1
+	cacheVersionSubscriptionNodesEvict = 2
+	cacheVersionLeaseOwner             = 3
+	cacheLatestVersion                 = cacheVersionLeaseOwner
+
 	stateBaseSchemaMigration = stateMigrationsPath + "/000001_state_base.up.sql"
 )
 
@@ -52,6 +58,12 @@ type preMigrateHook func(db *sql.DB, driver migratedb.Driver) error
 // so adding a migration cannot leave a stale expectation behind.
 func LatestVersion() int {
 	return stateLatestVersion
+}
+
+// CacheLatestVersion reports the newest cache.db migration version this build
+// embeds, for the same reason as LatestVersion.
+func CacheLatestVersion() int {
+	return cacheLatestVersion
 }
 
 // MigrateStateDB applies state.db migrations.

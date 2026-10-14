@@ -104,7 +104,7 @@ func TestRandomRoute_EmptyView(t *testing.T) {
 	router := makeRouter(pool, nil)
 
 	// No nodes → ErrNoAvailableNodes.
-	_, err := router.RouteRequest(platName, "", "example.com")
+	_, err := router.RouteRequest(platName, "", "", "example.com")
 	if err == nil {
 		t.Fatal("expected error for empty view")
 	}
@@ -115,7 +115,7 @@ func TestRandomRoute_SingleNode(t *testing.T) {
 	h1 := makeRoutableNode(t, pool, subMgr, `{"single":"1"}`, "1.2.3.4", "cloudflare.com", 50*time.Millisecond)
 
 	router := makeRouter(pool, nil)
-	res, err := router.RouteRequest(platName, "", "example.com")
+	res, err := router.RouteRequest(platName, "", "", "example.com")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -137,7 +137,7 @@ func TestRandomRoute_MultipleNodes(t *testing.T) {
 	// Call many times; we must always get one of our two nodes.
 	seen := map[node.Hash]int{}
 	for i := 0; i < 100; i++ {
-		res, err := router.RouteRequest(platName, "", "example.com")
+		res, err := router.RouteRequest(platName, "", "", "example.com")
 		if err != nil {
 			t.Fatalf("unexpected error on iteration %d: %v", i, err)
 		}
@@ -163,7 +163,7 @@ func TestStickyLease_CreateAndHit(t *testing.T) {
 	router := makeRouter(pool, &events)
 
 	// First request creates a lease.
-	res1, err := router.RouteRequest(platName, "user-A", "example.com")
+	res1, err := router.RouteRequest(platName, "", "user-A", "example.com")
 	if err != nil {
 		t.Fatalf("first route: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestStickyLease_CreateAndHit(t *testing.T) {
 	}
 
 	// Second request should hit sticky lease → same node.
-	res2, err := router.RouteRequest(platName, "user-A", "example.com")
+	res2, err := router.RouteRequest(platName, "", "user-A", "example.com")
 	if err != nil {
 		t.Fatalf("second route: %v", err)
 	}
@@ -209,11 +209,11 @@ func TestDeleteLease_EmitsLeaseRemoveWithLifetimeFields(t *testing.T) {
 	var events []routing.LeaseEvent
 	router := makeRouter(pool, &events)
 
-	res, err := router.RouteRequest(platName, "user-delete", "example.com")
+	res, err := router.RouteRequest(platName, "", "user-delete", "example.com")
 	if err != nil {
 		t.Fatalf("route: %v", err)
 	}
-	if !router.DeleteLease(platID, "user-delete") {
+	if !router.DeleteLease(platID, "", "user-delete") {
 		t.Fatal("DeleteLease should return true")
 	}
 
@@ -254,7 +254,7 @@ func TestStickyLease_Expiry(t *testing.T) {
 	router := makeRouter(pool, &events)
 
 	// Create lease.
-	res1, err := router.RouteRequest(platName, "user-expire", "example.com")
+	res1, err := router.RouteRequest(platName, "", "user-expire", "example.com")
 	if err != nil {
 		t.Fatalf("first route: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestStickyLease_Expiry(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 
 	// Next request should create new lease (expiry detected).
-	res2, err := router.RouteRequest(platName, "user-expire", "example.com")
+	res2, err := router.RouteRequest(platName, "", "user-expire", "example.com")
 	if err != nil {
 		t.Fatalf("expired route: %v", err)
 	}
@@ -300,7 +300,7 @@ func TestLeaseCleaner_SweepExpired(t *testing.T) {
 	router := makeRouter(pool, &events)
 
 	// Create lease.
-	_, err := router.RouteRequest(platName, "user-clean", "example.com")
+	_, err := router.RouteRequest(platName, "", "user-clean", "example.com")
 	if err != nil {
 		t.Fatalf("route: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestRestoreLeases(t *testing.T) {
 	}
 
 	// After restore, routing should hit the restored lease.
-	res, err := router.RouteRequest(platName, "restored-user", "example.com")
+	res, err := router.RouteRequest(platName, "", "restored-user", "example.com")
 	if err != nil {
 		t.Fatalf("route after restore: %v", err)
 	}
@@ -374,7 +374,7 @@ func TestRestoreLeases(t *testing.T) {
 		t.Fatal("should NOT create new lease for restored entry")
 	}
 
-	if ok := router.DeleteLease(platID, "restored-user"); !ok {
+	if ok := router.DeleteLease(platID, "", "restored-user"); !ok {
 		t.Fatal("DeleteLease should remove restored lease")
 	}
 	found := false
@@ -405,7 +405,7 @@ func TestRouteRequest_DefaultPlatform(t *testing.T) {
 	router := makeRouter(pool, nil)
 
 	// Empty platName should resolve to default platform.
-	res, err := router.RouteRequest("", "", "example.com")
+	res, err := router.RouteRequest("", "", "", "example.com")
 	if err != nil {
 		t.Fatalf("default platform route: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestRouteRequest_PlatformNotFound(t *testing.T) {
 	pool, _ := setupPool(t)
 	router := makeRouter(pool, nil)
 
-	_, err := router.RouteRequest("NonExistent", "", "example.com")
+	_, err := router.RouteRequest("NonExistent", "", "", "example.com")
 	if err == nil || err.Error() != "platform not found" {
 		t.Fatalf("expected 'platform not found', got: %v", err)
 	}
@@ -441,14 +441,14 @@ func TestP2C_FavorsIdleIP(t *testing.T) {
 
 	// Create several leases to push IP load on node 1.
 	for i := 0; i < 10; i++ {
-		_, _ = router.RouteRequest(platName, "p2c-loaded-"+string(rune('A'+i)), "example.com")
+		_, _ = router.RouteRequest(platName, "", "p2c-loaded-"+string(rune('A'+i)), "example.com")
 	}
 
 	// Now route with empty account (random route) many times.
 	// P2C should prefer h2 (lower load score).
 	counts := map[node.Hash]int{h1: 0, h2: 0}
 	for i := 0; i < 50; i++ {
-		res, err := router.RouteRequest(platName, "", "example.com")
+		res, err := router.RouteRequest(platName, "", "", "example.com")
 		if err != nil {
 			t.Fatalf("route %d: %v", i, err)
 		}
@@ -477,7 +477,7 @@ func TestRouteRequest_ConcurrentSafety(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, _ = router.RouteRequest(platName, "concurrent-user", "example.com")
+			_, _ = router.RouteRequest(platName, "", "concurrent-user", "example.com")
 		}(i)
 	}
 	wg.Wait()

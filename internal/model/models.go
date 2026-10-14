@@ -229,8 +229,16 @@ type NodeLatencyKey struct {
 }
 
 // Lease represents a sticky routing lease.
+// Lease is one sticky routing lease.
+//
+// UserID is part of the identity of a lease, not decoration: the account alone
+// is what the client sends, so two tenants that both call their account
+// "default" would otherwise share one egress IP. An empty UserID is the
+// single-tenant caller - the transitional global proxy token, an administrator
+// action, or a deployment with no accounts yet - and it behaves as before.
 type Lease struct {
 	PlatformID     string `json:"platform_id"`
+	UserID         string `json:"user_id"`
 	Account        string `json:"account"`
 	NodeHash       string `json:"node_hash"`
 	EgressIP       string `json:"egress_ip"`
@@ -242,6 +250,7 @@ type Lease struct {
 // LeaseKey is the composite primary key for leases.
 type LeaseKey struct {
 	PlatformID string
+	UserID     string
 	Account    string
 }
 

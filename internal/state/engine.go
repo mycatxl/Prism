@@ -69,11 +69,11 @@ func (e *StateEngine) MarkNodeLatencyDelete(nodeHash, domain string) {
 	e.dirtyNodeLatency.MarkDelete(NodeLatencyDirtyKey{NodeHash: nodeHash, Domain: domain})
 }
 
-func (e *StateEngine) MarkLease(platformID, account string) {
-	e.dirtyLeases.MarkUpsert(LeaseDirtyKey{PlatformID: platformID, Account: account})
+func (e *StateEngine) MarkLease(platformID, userID, account string) {
+	e.dirtyLeases.MarkUpsert(LeaseDirtyKey{PlatformID: platformID, UserID: userID, Account: account})
 }
-func (e *StateEngine) MarkLeaseDelete(platformID, account string) {
-	e.dirtyLeases.MarkDelete(LeaseDirtyKey{PlatformID: platformID, Account: account})
+func (e *StateEngine) MarkLeaseDelete(platformID, userID, account string) {
+	e.dirtyLeases.MarkDelete(LeaseDirtyKey{PlatformID: platformID, UserID: userID, Account: account})
 }
 
 func (e *StateEngine) MarkSubscriptionNode(subID, nodeHash string) {

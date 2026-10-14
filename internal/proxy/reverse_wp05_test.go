@@ -166,7 +166,7 @@ func TestReverseProxyAccountHeaderCompat(t *testing.T) {
 			}
 
 			leased := false
-			env.router.RangeLeases("plat-id", func(account string, _ routing.Lease) bool {
+			env.router.RangeLeases("plat-id", func(_, account string, _ routing.Lease) bool {
 				if account == tc.wantLease {
 					leased = true
 				}

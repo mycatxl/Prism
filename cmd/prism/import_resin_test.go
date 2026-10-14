@@ -313,8 +313,8 @@ func TestImportResinMigratesAndReportsSummary(t *testing.T) {
 	if got := databaseIntValue(t, statePath, "SELECT version FROM schema_migrations LIMIT 1"); got != state.LatestVersion() {
 		t.Fatalf("state schema_migrations version = %d, want %d", got, state.LatestVersion())
 	}
-	if got := databaseIntValue(t, cachePath, "SELECT version FROM schema_migrations LIMIT 1"); got != 2 {
-		t.Fatalf("cache schema_migrations version = %d, want 2", got)
+	if got := databaseIntValue(t, cachePath, "SELECT version FROM schema_migrations LIMIT 1"); got != state.CacheLatestVersion() {
+		t.Fatalf("cache schema_migrations version = %d, want %d", got, state.CacheLatestVersion())
 	}
 
 	// Resin rows are intact and the node identity is byte-identical (D3).

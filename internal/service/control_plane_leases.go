@@ -15,7 +15,11 @@ import (
 
 // LeaseResponse is the API response for a lease.
 type LeaseResponse struct {
-	PlatformID   string `json:"platform_id"`
+	PlatformID string `json:"platform_id"`
+	// UserID is the lease's owner. It is empty for the single-tenant path (the
+	// transitional global proxy token), which is what the console showed before
+	// leases carried an owner at all.
+	UserID       string `json:"user_id"`
 	Account      string `json:"account"`
 	NodeHash     string `json:"node_hash"`
 	NodeTag      string `json:"node_tag"`
@@ -27,6 +31,7 @@ type LeaseResponse struct {
 func leaseToResponse(lease model.Lease, nodeTag string) LeaseResponse {
 	return LeaseResponse{
 		PlatformID:   lease.PlatformID,
+		UserID:       lease.UserID,
 		Account:      lease.Account,
 		NodeHash:     lease.NodeHash,
 		NodeTag:      nodeTag,
@@ -57,9 +62,10 @@ func (s *ControlPlaneService) ListLeases(platformID string) ([]LeaseResponse, er
 		return nil, notFound("platform not found")
 	}
 	var result []LeaseResponse
-	s.Router.RangeLeases(platformID, func(account string, lease routing.Lease) bool {
+	s.Router.RangeLeases(platformID, func(userID, account string, lease routing.Lease) bool {
 		result = append(result, leaseToResponse(model.Lease{
 			PlatformID:     platformID,
+			UserID:         userID,
 			Account:        account,
 			NodeHash:       lease.NodeHash.Hex(),
 			EgressIP:       lease.EgressIP.String(),
@@ -75,11 +81,20 @@ func (s *ControlPlaneService) ListLeases(platformID string) ([]LeaseResponse, er
 }
 
 // GetLease returns a single lease.
-func (s *ControlPlaneService) GetLease(platformID, account string) (*LeaseResponse, error) {
+//
+// userID may be empty, which asks for the single-tenant lease. When it is empty
+// and the account is ambiguous - two tenants both using "default" - the call is
+// refused rather than resolved arbitrarily, because picking one would silently
+// show the operator the wrong tenant's exit IP.
+func (s *ControlPlaneService) GetLease(platformID, userID, account string) (*LeaseResponse, error) {
 	if _, ok := s.Pool.GetPlatform(platformID); !ok {
 		return nil, notFound("platform not found")
 	}
-	ml := s.Router.ReadLease(model.LeaseKey{PlatformID: platformID, Account: account})
+	owner, err := s.resolveLeaseOwner(platformID, userID, account)
+	if err != nil {
+		return nil, err
+	}
+	ml := s.Router.ReadLease(model.LeaseKey{PlatformID: platformID, UserID: owner, Account: account})
 	if ml == nil {
 		return nil, notFound("lease not found")
 	}
@@ -129,25 +144,70 @@ func (s *ControlPlaneService) InheritLeaseByPlatformName(platformName, parentAcc
 }
 
 // DeleteLease removes a single lease.
-func (s *ControlPlaneService) DeleteLease(platformID, account string) error {
+func (s *ControlPlaneService) DeleteLease(platformID, userID, account string) error {
 	if _, ok := s.Pool.GetPlatform(platformID); !ok {
 		return notFound("platform not found")
 	}
-	if !s.Router.DeleteLease(platformID, account) {
+	owner, err := s.resolveLeaseOwner(platformID, userID, account)
+	if err != nil {
+		return err
+	}
+	if !s.Router.DeleteLease(platformID, owner, account) {
 		return notFound("lease not found")
 	}
 	return nil
 }
 
+// resolveLeaseOwner turns a (user, account) request into the owner of an
+// existing lease.
+//
+// An explicit user is used as given. An empty one means "the single-tenant
+// lease", which is the owner an administrator action and the transitional
+// global-token path use; when no such lease exists but exactly one other user
+// holds that account, that lease is addressed instead, so the console keeps
+// working for a tenant lease. Several holders make the request ambiguous and it
+// is refused, because choosing one would act on the wrong tenant.
+func (s *ControlPlaneService) resolveLeaseOwner(platformID, userID, account string) (string, error) {
+	if userID != "" {
+		return userID, nil
+	}
+	if s.Router.ReadLease(model.LeaseKey{PlatformID: platformID, Account: account}) != nil {
+		return "", nil
+	}
+
+	holders := make([]string, 0, 2)
+	s.Router.RangeLeases(platformID, func(candidateUserID, candidateAccount string, _ routing.Lease) bool {
+		if candidateAccount == account {
+			holders = append(holders, candidateUserID)
+		}
+		return true
+	})
+	switch len(holders) {
+	case 0:
+		return "", nil
+	case 1:
+		return holders[0], nil
+	default:
+		return "", &ServiceError{
+			Code:    "CONFLICT",
+			Message: "account is held by several users; pass user_id to choose one",
+		}
+	}
+}
+
 // RotateLease removes a single lease and records a rotation tombstone holding
 // the egress IP it was using, so the next lease for the account avoids that IP
 // . It returns notFound when the account holds no lease.
-func (s *ControlPlaneService) RotateLease(platformID, account string) error {
+func (s *ControlPlaneService) RotateLease(platformID, userID, account string) error {
 	plat, ok := s.Pool.GetPlatform(platformID)
 	if !ok || plat == nil {
 		return notFound("platform not found")
 	}
-	if !s.Router.RotateLease(plat, account) {
+	owner, err := s.resolveLeaseOwner(platformID, userID, account)
+	if err != nil {
+		return err
+	}
+	if !s.Router.RotateLease(plat, owner, account) {
 		return notFound("lease not found")
 	}
 	return nil

@@ -336,9 +336,9 @@ func (a *prismApp) initTopologyRuntime(engine *state.StateEngine) (*netutil.Retr
 		OnLeaseEvent: func(e routing.LeaseEvent) {
 			switch e.Type {
 			case routing.LeaseCreate, routing.LeaseTouch, routing.LeaseReplace:
-				engine.MarkLease(e.PlatformID, e.Account)
+				engine.MarkLease(e.PlatformID, e.UserID, e.Account)
 			case routing.LeaseRemove, routing.LeaseExpire:
-				engine.MarkLeaseDelete(e.PlatformID, e.Account)
+				engine.MarkLeaseDelete(e.PlatformID, e.UserID, e.Account)
 			}
 			a.onLeaseEventForMetrics(e)
 		},
@@ -408,7 +408,7 @@ func (a *prismApp) downloadNodePicker() func(target string) (node.Hash, error) {
 		if a == nil || a.topoRuntime == nil || a.topoRuntime.router == nil {
 			return node.Zero, errors.New("router is not available")
 		}
-		res, err := a.topoRuntime.router.RouteRequest("", "", target)
+		res, err := a.topoRuntime.router.RouteRequest("", "", "", target)
 		if err != nil {
 			return node.Zero, err
 		}

@@ -135,10 +135,12 @@ func (r *ScheduledRotator) sweep() {
 func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Duration, stickyTTLNs int64, state *PlatformRoutingState, nowNs int64) {
 	intervalNs := int64(interval)
 
-	// Collect accounts that need rotation
-	candidates := make([]string, 0)
+	// Collect the lease owners that need rotation. The owner, not the account:
+	// the account alone would rotate whichever tenant happens to be stored
+	// under that name.
+	candidates := make([]leaseOwner, 0)
 
-	state.Leases.Range(func(account string, lease Lease) bool {
+	state.Leases.Range(func(o leaseOwner, lease Lease) bool {
 		select {
 		case <-r.stopCh:
 			return false
@@ -147,7 +149,7 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 
 		// Check if lease age exceeds rotation interval
 		if nowNs-lease.CreatedAtNs >= intervalNs {
-			candidates = append(candidates, account)
+			candidates = append(candidates, o)
 		}
 		return true
 	})
@@ -158,7 +160,7 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 	// deleting that fresh lease would rotate an account twice.
 	floorNs := nowNs - intervalNs
 	tombstoneTTL := rotationTombstoneTTL(interval, stickyTTLNs)
-	for _, account := range candidates {
+	for _, candidate := range candidates {
 		select {
 		case <-r.stopCh:
 			return
@@ -169,8 +171,8 @@ func (r *ScheduledRotator) rotatePlatformLeases(platID string, interval time.Dur
 		// its egress IP so the next lease avoids it. The tombstone is
 		// written inside the deletion's critical section, so a request arriving
 		// in between cannot be handed the IP that was just rotated away.
-		_, _ = r.router.DeleteLeaseIfOlderThan(platID, account, floorNs, func(removed Lease) {
-			r.router.recordRotationTombstone(platID, account, removed.EgressIP, nowNs, tombstoneTTL)
+		_, _ = r.router.DeleteLeaseIfOlderThan(platID, candidate.UserID, candidate.Account, floorNs, func(removed Lease) {
+			r.router.recordRotationTombstone(platID, candidate.UserID, candidate.Account, removed.EgressIP, nowNs, tombstoneTTL)
 		})
 	}
 }

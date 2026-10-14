@@ -72,7 +72,7 @@ func TestRouterCapacity_ConcurrentRouteRequests(t *testing.T) {
 					defer wg.Done()
 					for i := 0; i < requestsPerWorker; i++ {
 						account := fmt.Sprintf("acct-%d-%d", workerID, i)
-						_, err := router.RouteRequest(plat.Name, account, "https://example.com/test")
+						_, err := router.RouteRequest(plat.Name, "", account, "https://example.com/test")
 						if err != nil {
 							errCh <- err
 							return
@@ -113,7 +113,7 @@ func TestRouterCapacity_ConcurrentRouteRequests(t *testing.T) {
 				t.Fatal("expected routing state to exist")
 			}
 			leaseCount := 0
-			state.Leases.Range(func(_ string, _ Lease) bool {
+			state.Leases.Range(func(_ leaseOwner, _ Lease) bool {
 				leaseCount++
 				return true
 			})
@@ -157,7 +157,7 @@ func TestRouterCapacity_LeaseManagement(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < leaseCount; i++ {
 		account := fmt.Sprintf("lease-user-%d", i)
-		_, err := router.RouteRequest(plat.Name, account, "https://example.com/lease")
+		_, err := router.RouteRequest(plat.Name, "", account, "https://example.com/lease")
 		if err != nil {
 			t.Fatalf("failed to create lease %d: %v", i, err)
 		}
@@ -171,7 +171,7 @@ func TestRouterCapacity_LeaseManagement(t *testing.T) {
 		t.Fatal("expected routing state")
 	}
 	actualCount := 0
-	state.Leases.Range(func(_ string, _ Lease) bool {
+	state.Leases.Range(func(_ leaseOwner, _ Lease) bool {
 		actualCount++
 		return true
 	})
@@ -183,7 +183,7 @@ func TestRouterCapacity_LeaseManagement(t *testing.T) {
 	lookupCount := 10_000
 	for i := 0; i < lookupCount; i++ {
 		account := fmt.Sprintf("lease-user-%d", i)
-		_, _ = state.Leases.GetLease(account)
+		_, _ = state.Leases.GetLease("", account)
 	}
 	lookupElapsed := time.Since(lookupStart)
 	t.Logf("Completed %d lookups in %v (%.0f/sec)", lookupCount, lookupElapsed, float64(lookupCount)/lookupElapsed.Seconds())
@@ -194,13 +194,13 @@ func TestRouterCapacity_LeaseManagement(t *testing.T) {
 	deleteCount := 10_000
 	for i := 0; i < deleteCount; i++ {
 		account := fmt.Sprintf("lease-user-%d", i)
-		router.DeleteLease(plat.ID, account)
+		router.DeleteLease(plat.ID, "", account)
 	}
 	deleteElapsed := time.Since(deleteStart)
 	t.Logf("Deleted %d leases in %v (%.0f/sec)", deleteCount, deleteElapsed, float64(deleteCount)/deleteElapsed.Seconds())
 
 	remainingCount := 0
-	state.Leases.Range(func(_ string, _ Lease) bool {
+	state.Leases.Range(func(_ leaseOwner, _ Lease) bool {
 		remainingCount++
 		return true
 	})
@@ -248,7 +248,7 @@ func TestRouterCapacity_IPLoadTracking(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < leaseCount; i++ {
 		account := fmt.Sprintf("ipload-user-%d", i)
-		_, err := router.RouteRequest(plat.Name, account, "https://example.com/ipload")
+		_, err := router.RouteRequest(plat.Name, "", account, "https://example.com/ipload")
 		if err != nil {
 			t.Fatalf("failed to create lease: %v", err)
 		}

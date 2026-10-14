@@ -92,7 +92,7 @@ const (
 	leaseInvalidationRemove
 )
 
-func (r *Router) RouteRequest(platName, account, target string) (RouteResult, error) {
+func (r *Router) RouteRequest(platName, userID, account, target string) (RouteResult, error) {
 	plat, err := r.resolvePlatform(platName)
 	if err != nil {
 		return RouteResult{}, err
@@ -104,7 +104,7 @@ func (r *Router) RouteRequest(platName, account, target string) (RouteResult, er
 	if account == "" {
 		result, err = r.routeRandom(plat, state, targetDomain)
 	} else {
-		result, err = r.routeSticky(plat, state, account, targetDomain, time.Now())
+		result, err = r.routeSticky(plat, state, userID, account, targetDomain, time.Now())
 	}
 	if err != nil {
 		return RouteResult{}, err
@@ -190,6 +190,7 @@ func rotationFallbackEvents(fallbackSameIP bool) []string {
 func (r *Router) routeSticky(
 	plat *platform.Platform,
 	state *PlatformRoutingState,
+	userID string,
 	account string,
 	targetDomain string,
 	now time.Time,
@@ -198,10 +199,11 @@ func (r *Router) routeSticky(
 	var result RouteResult
 	var routeErr error
 
-	_, _ = state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+	_, _ = state.Leases.leases.Compute(owner(userID, account), func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		newLease, op, routeResult, err := r.decideStickyLease(
 			plat,
 			state,
+			userID,
 			account,
 			targetDomain,
 			now,
@@ -223,6 +225,7 @@ func (r *Router) routeSticky(
 func (r *Router) decideStickyLease(
 	plat *platform.Platform,
 	state *PlatformRoutingState,
+	userID string,
 	account string,
 	targetDomain string,
 	now time.Time,
@@ -239,10 +242,10 @@ func (r *Router) decideStickyLease(
 	}
 
 	if loaded {
-		if newLease, hitResult, ok := r.tryLeaseHit(plat, account, current, nowNs); ok {
+		if newLease, hitResult, ok := r.tryLeaseHit(plat, userID, account, current, nowNs); ok {
 			return newLease, xsync.UpdateOp, hitResult, nil
 		}
-		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, account, current, targetDomain, nowNs); ok {
+		if newLease, rotatedResult, ok := r.tryLeaseSameIPRotation(plat, userID, account, current, targetDomain, nowNs); ok {
 			return newLease, xsync.UpdateOp, rotatedResult, nil
 		}
 		invalidation = leaseInvalidationRemove
@@ -251,6 +254,7 @@ func (r *Router) decideStickyLease(
 	return r.createOrAbortStickyLease(
 		plat,
 		state,
+		userID,
 		account,
 		targetDomain,
 		now,
@@ -264,6 +268,7 @@ func (r *Router) decideStickyLease(
 func (r *Router) createOrAbortStickyLease(
 	plat *platform.Platform,
 	state *PlatformRoutingState,
+	userID string,
 	account string,
 	targetDomain string,
 	now time.Time,
@@ -272,18 +277,19 @@ func (r *Router) createOrAbortStickyLease(
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
 ) (Lease, xsync.ComputeOp, RouteResult, error) {
-	newLease, createdResult, err := r.createLease(plat, state, account, targetDomain, now, nowNs)
+	newLease, createdResult, err := r.createLease(plat, state, userID, account, targetDomain, now, nowNs)
 	if err != nil {
-		r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, account)
+		r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, userID, account)
 		lease, op := abortLeaseCreate(previous, hadPreviousLease)
 		return lease, op, RouteResult{}, err
 	}
 
-	r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, account)
+	r.cleanupPreviousLease(state, previous, hadPreviousLease, invalidation, plat.ID, userID, account)
 	state.IPLoadStats.Inc(newLease.EgressIP)
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseCreate,
 		PlatformID: plat.ID,
+		UserID:     userID,
 		Account:    account,
 		NodeHash:   newLease.NodeHash,
 		EgressIP:   newLease.EgressIP,
@@ -293,6 +299,7 @@ func (r *Router) createOrAbortStickyLease(
 
 func (r *Router) tryLeaseHit(
 	plat *platform.Platform,
+	userID string,
 	account string,
 	current Lease,
 	nowNs int64,
@@ -307,6 +314,7 @@ func (r *Router) tryLeaseHit(
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseTouch,
 		PlatformID: plat.ID,
+		UserID:     userID,
 		Account:    account,
 		NodeHash:   current.NodeHash,
 		EgressIP:   current.EgressIP,
@@ -320,6 +328,7 @@ func (r *Router) tryLeaseHit(
 
 func (r *Router) tryLeaseSameIPRotation(
 	plat *platform.Platform,
+	userID string,
 	account string,
 	current Lease,
 	targetDomain string,
@@ -343,6 +352,7 @@ func (r *Router) tryLeaseSameIPRotation(
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseReplace,
 		PlatformID: plat.ID,
+		UserID:     userID,
 		Account:    account,
 		NodeHash:   bestHash,
 		EgressIP:   current.EgressIP,
@@ -357,6 +367,7 @@ func (r *Router) tryLeaseSameIPRotation(
 func (r *Router) createLease(
 	plat *platform.Platform,
 	state *PlatformRoutingState,
+	userID string,
 	account string,
 	targetDomain string,
 	now time.Time,
@@ -364,7 +375,7 @@ func (r *Router) createLease(
 ) (Lease, RouteResult, error) {
 	// when rotation avoidance is on and the account carries a live
 	// tombstone, the previous egress IP is excluded from the P2C candidate set.
-	avoidIP := r.rotationAvoidIP(plat, account, nowNs)
+	avoidIP := r.rotationAvoidIP(plat, userID, account, nowNs)
 	h, entry, fallbackSameIP, err := r.selectLiveRandomRoute(plat, state.IPLoadStats, targetDomain, avoidIP)
 	if err != nil {
 		return Lease{}, RouteResult{}, err
@@ -395,6 +406,7 @@ func (r *Router) cleanupPreviousLease(
 	hadPreviousLease bool,
 	invalidation leaseInvalidationReason,
 	platformID string,
+	userID string,
 	account string,
 ) {
 	if !hadPreviousLease {
@@ -406,6 +418,7 @@ func (r *Router) cleanupPreviousLease(
 		r.emitLeaseEvent(LeaseEvent{
 			Type:        LeaseExpire,
 			PlatformID:  platformID,
+			UserID:      userID,
 			Account:     account,
 			NodeHash:    lease.NodeHash,
 			EgressIP:    lease.EgressIP,
@@ -415,6 +428,7 @@ func (r *Router) cleanupPreviousLease(
 		r.emitLeaseEvent(LeaseEvent{
 			Type:        LeaseRemove,
 			PlatformID:  platformID,
+			UserID:      userID,
 			Account:     account,
 			NodeHash:    lease.NodeHash,
 			EgressIP:    lease.EgressIP,
@@ -527,12 +541,13 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 	if !ok {
 		return nil
 	}
-	lease, ok := state.Leases.GetLease(key.Account)
+	lease, ok := state.Leases.GetLease(key.UserID, key.Account)
 	if !ok {
 		return nil
 	}
 	return &model.Lease{
 		PlatformID:     key.PlatformID,
+		UserID:         key.UserID,
 		Account:        key.Account,
 		NodeHash:       lease.NodeHash.Hex(),
 		EgressIP:       lease.EgressIP.String(),
@@ -542,7 +557,7 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 	}
 }
 
-// UpsertLease writes or replaces a lease for (platform_id, account).
+// UpsertLease writes or replaces a lease for (platform_id, user_id, account).
 // It updates per-IP lease counters and emits LeaseCreate/LeaseReplace events.
 func (r *Router) UpsertLease(ml model.Lease) error {
 	platformID := strings.TrimSpace(ml.PlatformID)
@@ -553,6 +568,10 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	if account == "" {
 		return errors.New("account is required")
 	}
+	// An empty user id is the single-tenant caller and stays valid: it is the
+	// transitional global-token path, where there is no account behind the
+	// request. Only the account is required, exactly as before.
+	userID := strings.TrimSpace(ml.UserID)
 
 	h, err := node.ParseHex(ml.NodeHash)
 	if err != nil {
@@ -573,7 +592,7 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	}
 
 	eventType := LeaseCreate
-	_, _ = state.Leases.leases.Compute(account, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
+	_, _ = state.Leases.leases.Compute(owner(userID, account), func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 		if loaded {
 			state.Leases.stats.Dec(current.EgressIP)
 			eventType = LeaseReplace
@@ -585,6 +604,7 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       eventType,
 		PlatformID: platformID,
+		UserID:     userID,
 		Account:    account,
 		NodeHash:   lease.NodeHash,
 		EgressIP:   lease.EgressIP,
@@ -626,35 +646,38 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 			LastAccessedNs: ml.LastAccessedNs,
 		}
 		// Directly insert into table and stats
-		state.Leases.CreateLease(ml.Account, l)
+		state.Leases.CreateLease(ml.UserID, ml.Account, l)
 	}
 }
 
 // RangeLeases iterates over all leases for a platform.
 // Returns false if the platform has no routing state.
-func (r *Router) RangeLeases(platformID string, fn func(account string, lease Lease) bool) bool {
+func (r *Router) RangeLeases(platformID string, fn func(userID, account string, lease Lease) bool) bool {
 	state, ok := r.states.Load(platformID)
 	if !ok {
 		return false
 	}
-	state.Leases.Range(fn)
+	state.Leases.Range(func(o leaseOwner, lease Lease) bool {
+		return fn(o.UserID, o.Account, lease)
+	})
 	return true
 }
 
 // DeleteLease removes a single lease by platform and account.
 // Returns true if a lease was deleted. Emits a LeaseRemove event.
-func (r *Router) DeleteLease(platformID, account string) bool {
+func (r *Router) DeleteLease(platformID, userID, account string) bool {
 	state, ok := r.states.Load(platformID)
 	if !ok {
 		return false
 	}
-	lease, deleted := state.Leases.DeleteLease(account, nil)
+	lease, deleted := state.Leases.DeleteLease(userID, account, nil)
 	if !deleted {
 		return false
 	}
 	r.emitLeaseEvent(LeaseEvent{
 		Type:        LeaseRemove,
 		PlatformID:  platformID,
+		UserID:      userID,
 		Account:     account,
 		NodeHash:    lease.NodeHash,
 		EgressIP:    lease.EgressIP,
@@ -670,18 +693,19 @@ func (r *Router) DeleteLease(platformID, account string) bool {
 // Returns the removed lease and true when a lease was deleted, so callers can
 // record a rotation tombstone for its egress IP.
 // Emits a LeaseRemove event.
-func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
+func (r *Router) DeleteLeaseIfOlderThan(platformID, userID, account string, createdBeforeOrAtNs int64, onDelete func(Lease)) (Lease, bool) {
 	state, ok := r.states.Load(platformID)
 	if !ok {
 		return Lease{}, false
 	}
-	lease, deleted := state.Leases.DeleteLeaseIfOlderThan(account, createdBeforeOrAtNs, onDelete)
+	lease, deleted := state.Leases.DeleteLeaseIfOlderThan(userID, account, createdBeforeOrAtNs, onDelete)
 	if !deleted {
 		return Lease{}, false
 	}
 	r.emitLeaseEvent(LeaseEvent{
 		Type:        LeaseRemove,
 		PlatformID:  platformID,
+		UserID:      userID,
 		Account:     account,
 		NodeHash:    lease.NodeHash,
 		EgressIP:    lease.EgressIP,
@@ -698,7 +722,7 @@ func (r *Router) DeleteLeaseIfOlderThan(platformID, account string, createdBefor
 // The tombstone is written inside the delete's critical section (not after it
 // returned), so a concurrent request for the same account cannot be handed the
 // IP that was just rotated away.
-func (r *Router) RotateLease(plat *platform.Platform, account string) bool {
+func (r *Router) RotateLease(plat *platform.Platform, userID, account string) bool {
 	if r == nil || plat == nil || account == "" {
 		return false
 	}
@@ -708,8 +732,8 @@ func (r *Router) RotateLease(plat *platform.Platform, account string) bool {
 	}
 	ttl := rotationTombstoneTTL(time.Duration(plat.ScheduledRotationIntervalNs), plat.StickyTTLNs)
 	nowNs := time.Now().UnixNano()
-	lease, deleted := state.Leases.DeleteLease(account, func(removed Lease) {
-		r.recordRotationTombstone(plat.ID, account, removed.EgressIP, nowNs, ttl)
+	lease, deleted := state.Leases.DeleteLease(userID, account, func(removed Lease) {
+		r.recordRotationTombstone(plat.ID, userID, account, removed.EgressIP, nowNs, ttl)
 	})
 	if !deleted {
 		return false
@@ -717,6 +741,7 @@ func (r *Router) RotateLease(plat *platform.Platform, account string) bool {
 	r.emitLeaseEvent(LeaseEvent{
 		Type:        LeaseRemove,
 		PlatformID:  plat.ID,
+		UserID:      userID,
 		Account:     account,
 		NodeHash:    lease.NodeHash,
 		EgressIP:    lease.EgressIP,
@@ -733,13 +758,13 @@ func (r *Router) DeleteAllLeases(platformID string) int {
 		return 0
 	}
 	count := 0
-	state.Leases.Range(func(account string, _ Lease) bool {
-		removed, deleted := state.Leases.DeleteLease(account, nil)
+	state.Leases.Range(func(o leaseOwner, _ Lease) bool {
+		removed, deleted := state.Leases.DeleteLease(o.UserID, o.Account, nil)
 		if deleted {
 			r.emitLeaseEvent(LeaseEvent{
 				Type:        LeaseRemove,
 				PlatformID:  platformID,
-				Account:     account,
+				Account:     o.Account,
 				NodeHash:    removed.NodeHash,
 				EgressIP:    removed.EgressIP,
 				CreatedAtNs: removed.CreatedAtNs,
@@ -770,13 +795,13 @@ func (r *Router) PurgePlatformState(platformID string) int {
 		return 0
 	}
 	count := 0
-	state.Leases.Range(func(account string, _ Lease) bool {
-		removed, deleted := state.Leases.DeleteLease(account, nil)
+	state.Leases.Range(func(o leaseOwner, _ Lease) bool {
+		removed, deleted := state.Leases.DeleteLease(o.UserID, o.Account, nil)
 		if deleted {
 			r.emitLeaseEvent(LeaseEvent{
 				Type:        LeaseRemove,
 				PlatformID:  platformID,
-				Account:     account,
+				Account:     o.Account,
 				NodeHash:    removed.NodeHash,
 				EgressIP:    removed.EgressIP,
 				CreatedAtNs: removed.CreatedAtNs,

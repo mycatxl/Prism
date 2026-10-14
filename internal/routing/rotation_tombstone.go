@@ -14,10 +14,15 @@ import (
 // only means an account may draw the same egress IP once again.
 const rotationTombstoneMaxEntries = 100_000
 
-// rotationTombstoneKey builds the cache key for one account on one platform.
-// "\x00" cannot appear in a platform ID or in an account name.
-func rotationTombstoneKey(platformID, account string) string {
-	return platformID + "\x00" + account
+// rotationTombstoneKey builds the cache key for one lease owner on one
+// platform. "\x00" cannot appear in a platform ID, a user ID or an account
+// name.
+//
+// The user is part of the key for the same reason it is part of a lease: the
+// account is what the client sends, so it is only unique within one user. Two
+// tenants sharing an account name must not inherit each other's avoided IP.
+func rotationTombstoneKey(platformID, userID, account string) string {
+	return platformID + "\x00" + userID + "\x00" + account
 }
 
 // rotationTombstone records the egress IP an account used before its lease was
@@ -131,11 +136,11 @@ func rotationTombstoneTTL(interval time.Duration, stickyTTLNs int64) time.Durati
 
 // rotationAvoidIP returns the egress IP the account's next lease must avoid,
 // when the platform enables rotation avoidance and a live tombstone exists.
-func (r *Router) rotationAvoidIP(plat *platform.Platform, account string, nowNs int64) netip.Addr {
+func (r *Router) rotationAvoidIP(plat *platform.Platform, userID, account string, nowNs int64) netip.Addr {
 	if r == nil || plat == nil || account == "" || !plat.RotationAvoidPreviousIP {
 		return netip.Addr{}
 	}
-	ip, ok := r.rotationTombstones.lookup(rotationTombstoneKey(plat.ID, account), nowNs)
+	ip, ok := r.rotationTombstones.lookup(rotationTombstoneKey(plat.ID, userID, account), nowNs)
 	if !ok {
 		return netip.Addr{}
 	}
@@ -145,18 +150,18 @@ func (r *Router) rotationAvoidIP(plat *platform.Platform, account string, nowNs 
 // recordRotationTombstone stores the egress IP an account was using when its
 // lease was rotated. The record is written regardless of the platform's
 // rotation_avoid_previous_ip flag; that flag only gates avoidance at pick time.
-func (r *Router) recordRotationTombstone(platformID, account string, ip netip.Addr, nowNs int64, ttl time.Duration) {
+func (r *Router) recordRotationTombstone(platformID, userID, account string, ip netip.Addr, nowNs int64, ttl time.Duration) {
 	if r == nil || account == "" || !ip.IsValid() || ttl <= 0 {
 		return
 	}
-	r.rotationTombstones.store(rotationTombstoneKey(platformID, account), ip, nowNs+int64(ttl))
+	r.rotationTombstones.store(rotationTombstoneKey(platformID, userID, account), ip, nowNs+int64(ttl))
 }
 
 // RotationTombstone returns the live rotation tombstone for (platformID,
-// account): the egress IP the next lease for that account should avoid.
-func (r *Router) RotationTombstone(platformID, account string) (netip.Addr, bool) {
+// userID, account): the egress IP the next lease for that owner should avoid.
+func (r *Router) RotationTombstone(platformID, userID, account string) (netip.Addr, bool) {
 	if r == nil {
 		return netip.Addr{}, false
 	}
-	return r.rotationTombstones.lookup(rotationTombstoneKey(platformID, account), time.Now().UnixNano())
+	return r.rotationTombstones.lookup(rotationTombstoneKey(platformID, userID, account), time.Now().UnixNano())
 }
