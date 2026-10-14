@@ -61,6 +61,9 @@ type Socks5InboundConfig struct {
 	Metering MeteringSink
 	// Quota decides whether a request may proceed. Nil allows everything.
 	Quota QuotaGate
+	// Sessions holds this inbound's live sessions per key, so a revoked key's
+	// sessions can be ended. Nil leaves revocation to the next request.
+	Sessions SessionTracker
 }
 
 // Socks5Inbound implements SOCKS5 CONNECT over a raw TCP connection.
@@ -70,6 +73,7 @@ type Socks5Inbound struct {
 	tunnel     tunnelDeps
 	events     EventEmitter
 	quota      QuotaGate
+	sessions   SessionTracker
 }
 
 type socks5HandshakeResult struct {
@@ -99,8 +103,9 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate),
 			dialTimeout: cfg.DialTimeout,
 		},
-		events: ev,
-		quota:  cfg.Quota,
+		events:   ev,
+		quota:    cfg.Quota,
+		sessions: cfg.Sessions,
 	}
 }
 
@@ -146,13 +151,19 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 	lifecycle.setAccount(handshake.account)
 	defer lifecycle.finish()
 
-	// The allowance is checked before anything is dialled.
-	if quotaErr := checkQuota(s.quota, handshake.key, 0); quotaErr != nil {
+	// The allowance is checked before anything is dialled. The concurrency
+	// limit counts this key's live sessions.
+	if quotaErr := checkQuota(s.quota, handshake.key, sessionCount(s.sessions, handshake.key)); quotaErr != nil {
 		_ = writeSocks5Reply(conn, socks5ReplyForProxyError(quotaErr), nil)
 		lifecycle.setProxyError(quotaErr)
 		lifecycle.setNetOK(false)
 		return
 	}
+
+	// Register the session so a revoked key can be hung up on rather than only
+	// being refused the next request.
+	untrack := trackSession(s.sessions, handshake.key, conn)
+	defer untrack()
 
 	prepare := prepareConnectTunnel(
 		baseCtx,

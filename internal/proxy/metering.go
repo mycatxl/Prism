@@ -1,6 +1,28 @@
 package proxy
 
-import "prism/internal/keys"
+import (
+	"io"
+
+	"prism/internal/keys"
+)
+
+// SessionTracker holds the live sessions of each key so they can be ended when
+// the key is no longer allowed to have them.
+//
+// It exists because counting is not enforcing: a counter can know that an
+// allowance is used up, but only a registry of what is open can hang up on it.
+// A disabled key keeping every tunnel it had already opened would make a
+// disable mean "at the next request", which is not what an operator expects.
+type SessionTracker interface {
+	// Track records one session against a key.
+	Track(keyID string, closer io.Closer)
+	// Untrack removes it. It is safe to call for a session that was never
+	// tracked, which keeps the caller's defer unconditional.
+	Untrack(keyID string, closer io.Closer)
+	// Count reports how many sessions one key currently holds. The concurrency
+	// limit reads it.
+	Count(keyID string) int
+}
 
 // checkQuota asks the gate whether a key may serve another request.
 //
@@ -8,9 +30,9 @@ import "prism/internal/keys"
 // may not. A nil gate, and a request that carried no key, both proceed: the
 // gate is optional and the transitional token path has no allowance to check.
 //
-// concurrent is the number of connections the key already holds. The callers
-// that can know it pass it; the ones that cannot pass zero, which means only
-// the traffic limit is enforced for them.
+// concurrent is the number of sessions the key already holds. The callers that
+// can know it pass it; the ones that cannot pass zero, which means only the
+// traffic limit is enforced for them.
 func checkQuota(gate QuotaGate, key *keys.KeyState, concurrent int) *ProxyError {
 	if gate == nil || key == nil {
 		return nil
@@ -20,6 +42,27 @@ func checkQuota(gate QuotaGate, key *keys.KeyState, concurrent int) *ProxyError 
 		return nil
 	}
 	return ErrQuotaExceeded
+}
+
+// sessionCount reports how many sessions a key holds, for the concurrency limit.
+func sessionCount(tracker SessionTracker, key *keys.KeyState) int {
+	if tracker == nil || key == nil || key.KeyID == "" {
+		return 0
+	}
+	return tracker.Count(key.KeyID)
+}
+
+// trackSession registers a session against a key and returns the function that
+// unregisters it.
+//
+// It answers a no-op when there is nothing to track: no tracker, or a request
+// that carried no key. That keeps every caller's defer unconditional.
+func trackSession(tracker SessionTracker, key *keys.KeyState, closer io.Closer) func() {
+	if tracker == nil || key == nil || key.KeyID == "" || closer == nil {
+		return func() {}
+	}
+	tracker.Track(key.KeyID, closer)
+	return func() { tracker.Untrack(key.KeyID, closer) }
 }
 
 // MeteringSink receives traffic attributed to the access key that caused it.

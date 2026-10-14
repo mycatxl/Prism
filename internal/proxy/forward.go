@@ -45,6 +45,10 @@ type ForwardProxyConfig struct {
 	// Quota decides whether a request may proceed. Nil allows everything,
 	// which is what a deployment without plans gets.
 	Quota QuotaGate
+	// Sessions holds this proxy's live tunnels per key, so a revoked key's
+	// tunnels can be ended. Nil disables that, leaving revocation to take
+	// effect on the next request.
+	Sessions SessionTracker
 }
 
 // ForwardProxy implements an HTTP forward proxy with Proxy-Authorization
@@ -67,6 +71,7 @@ type ForwardProxy struct {
 	authGuard         AuthFailureGuard
 	metering          MeteringSink
 	quota             QuotaGate
+	sessions          SessionTracker
 }
 
 // NewForwardProxy creates a new forward proxy handler.
@@ -95,6 +100,7 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 		authGuard:       cfg.AuthGuard,
 		metering:        cfg.Metering,
 		quota:           cfg.Quota,
+		sessions:        cfg.Sessions,
 	}
 }
 
@@ -391,7 +397,9 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	}
 	platName, account := identity.PlatformName, identity.Account
 
-	if quotaErr := checkQuota(p.quota, identity.Key, 0); quotaErr != nil {
+	// The concurrency limit counts this key's live tunnels, which is why the
+	// session registry is consulted here rather than at authentication.
+	if quotaErr := checkQuota(p.quota, identity.Key, sessionCount(p.sessions, identity.Key)); quotaErr != nil {
 		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, quotaErr)
 		return
@@ -478,6 +486,13 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		lifecycle.setNetOK(false)
 		return
 	}
+	// The tunnel is established: register it so a revoked key can be hung up on
+	// rather than only being refused the next request. The client connection is
+	// what gets closed - closing the upstream one would leave the client
+	// waiting on a socket nobody is reading.
+	untrack := trackSession(p.sessions, identity.Key, clientConn)
+	defer untrack()
+
 	lifecycle.setHTTPStatus(http.StatusOK)
 	relay := pumpPreparedTunnel(clientConn, clientBuf.Reader, prepare.session, tunnelPumpOptions{
 		onFirstIngressByte: lifecycle.markFirstByteReceived,
