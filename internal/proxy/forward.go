@@ -38,6 +38,13 @@ type ForwardProxyConfig struct {
 	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
 	// defaults to 0, which disables it).
 	AuthGuard AuthFailureGuard
+	// Metering attributes this proxy's traffic to the access key that caused
+	// it. Nil disables the accounting; the proxy then behaves exactly as it
+	// did before metering existed.
+	Metering MeteringSink
+	// Quota decides whether a request may proceed. Nil allows everything,
+	// which is what a deployment without plans gets.
+	Quota QuotaGate
 }
 
 // ForwardProxy implements an HTTP forward proxy with Proxy-Authorization
@@ -58,6 +65,8 @@ type ForwardProxy struct {
 	bypass            *TargetBypassMatcher
 	directGuard       DirectDialGuard
 	authGuard         AuthFailureGuard
+	metering          MeteringSink
+	quota             QuotaGate
 }
 
 // NewForwardProxy creates a new forward proxy handler.
@@ -84,6 +93,8 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
 		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate),
 		authGuard:       cfg.AuthGuard,
+		metering:        cfg.Metering,
+		quota:           cfg.Quota,
 	}
 }
 
@@ -257,8 +268,20 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	platName, account := identity.PlatformName, identity.Account
 
+	// The allowance is checked before the lifecycle exists, so a refused request
+	// never reaches the routing layer and never opens an upstream connection.
+	if quotaErr := checkQuota(p.quota, identity.Key, 0); quotaErr != nil {
+		recordProxyAuthFailure(p.authGuard, r)
+		writeProxyError(w, quotaErr)
+		return
+	}
+
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, false)
 	lifecycle.setTarget(r.Host, r.URL.String())
+	// Bytes are attributed from the lifecycle here: the HTTP transport is
+	// pooled per node and its connections outlive a single request, so a
+	// connection cannot be said to belong to one key.
+	lifecycle.attachMeter(p.metering, identity.Key, false)
 	defer lifecycle.finish()
 	lifecycle.setAccount(account)
 
@@ -368,8 +391,18 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	}
 	platName, account := identity.PlatformName, identity.Account
 
+	if quotaErr := checkQuota(p.quota, identity.Key, 0); quotaErr != nil {
+		recordProxyAuthFailure(p.authGuard, r)
+		writeProxyError(w, quotaErr)
+		return
+	}
+
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, true)
 	lifecycle.setTarget(target, "")
+	// A CONNECT tunnel dials its own upstream connection and holds it for the
+	// session, so the bytes can be attributed as they flow rather than at the
+	// end. That is what lets a long download be cut off mid-stream.
+	lifecycle.attachMeter(p.metering, identity.Key, true)
 	defer lifecycle.finish()
 	lifecycle.setAccount(account)
 
@@ -380,6 +413,7 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 			pool:        p.pool,
 			health:      p.health,
 			metricsSink: p.metricsSink,
+			metering:    p.metering,
 			bypass:      p.bypass,
 			directGuard: p.directGuard,
 			dialTimeout: p.transportConfig.DialTimeout,

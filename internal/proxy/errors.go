@@ -63,6 +63,19 @@ var (
 		PrismError: "ACCOUNT_REJECTED",
 		Message:    "Account extraction failed and platform rejects unmatched requests",
 	}
+	// ErrQuotaExceeded is returned when the key is valid but has used up its
+	// allowance, or is otherwise not in a state to serve requests (disabled,
+	// expired, or over its concurrency limit). 429 rather than 403: the
+	// credential is fine, and the client's correct response is to back off
+	// rather than to stop presenting it.
+	//
+	// The message stays general on purpose. Saying which limit was hit would
+	// tell a caller about an account they may not own.
+	ErrQuotaExceeded = &ProxyError{
+		HTTPCode:   http.StatusTooManyRequests,
+		PrismError: "QUOTA_EXCEEDED",
+		Message:    "Access key is not allowed to make more requests",
+	}
 	// Returned only while PRISM_DIRECT_DENY_PRIVATE is enabled, on every local
 	// dial path: the reverse-proxy bypass branch, the forward HTTP proxy, the
 	// CONNECT tunnel and the SOCKS5 inbound.

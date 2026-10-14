@@ -18,6 +18,10 @@ type requestLifecycle struct {
 	log                 RequestLogEntry
 	firstByteDurationNs atomic.Int64
 
+	// meter attributes this request's traffic to an access key, when one was
+	// presented. It is nil on the transitional token path.
+	meter *requestMeter
+
 	reqBodyCapture  *payloadCaptureReadCloser
 	respBodyCapture *payloadCaptureReadCloser
 }
@@ -83,6 +87,9 @@ func (l *requestLifecycle) finish() {
 	l.finished.DurationNs = durationNs
 	l.log.DurationNs = durationNs
 	l.log.FirstByteDurationNs = l.firstByteDurationNs.Load()
+	// The request count is reported after the log fields are final: the failed
+	// flag reads NetOK, which the paths set last.
+	l.reportFinish()
 	l.events.EmitRequestFinished(l.finished)
 	l.events.EmitRequestLog(l.log)
 }
@@ -126,12 +133,14 @@ func (l *requestLifecycle) setUpstreamError(stage string, err error) {
 func (l *requestLifecycle) addIngressBytes(n int64) {
 	if n > 0 {
 		l.log.IngressBytes += n
+		l.reportIngress(n)
 	}
 }
 
 func (l *requestLifecycle) addEgressBytes(n int64) {
 	if n > 0 {
 		l.log.EgressBytes += n
+		l.reportEgress(n)
 	}
 }
 

@@ -21,6 +21,9 @@ type tunnelDeps struct {
 	pool        outbound.PoolAccessor
 	health      HealthRecorder
 	metricsSink MetricsEventSink
+	// metering attributes this tunnel's bytes to the access key that opened
+	// it. Nil disables the accounting and leaves the global sink in charge.
+	metering    MeteringSink
 	bypass      *TargetBypassMatcher
 	directGuard DirectDialGuard
 	// dialTimeout bounds the local direct dial (PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT).
@@ -83,7 +86,10 @@ func prepareConnectTunnel(
 		if err := deps.directGuard.CheckTarget(ctx, target); err != nil {
 			return tunnelPrepareResult{proxyErr: ErrDirectTargetDenied}
 		}
-		return prepareDirectConnectTunnel(ctx, deps, target)
+		// The bypass path moves the user's bytes just as the routed one does,
+		// so it is metered too. Its platform id is empty: no platform was
+		// resolved, and the traffic is still the key's.
+		return prepareDirectConnectTunnel(ctx, deps, target, attributionFor(deps.metering, key, ""))
 	}
 
 	routed, routeErr := resolveRoutedOutbound(deps.router, deps.pool, platformName, account, target, key)
@@ -123,10 +129,21 @@ func prepareConnectTunnel(
 		}
 	}
 
+	// The bytes of this tunnel belong to one key. The platform comes from the
+	// route, which has already been resolved and checked.
+	attributed := attributionFor(deps.metering, key, routed.Route.PlatformID)
+
 	upstreamBase := rawConn
-	if deps.metricsSink != nil {
-		deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
-		upstreamBase = newCountingConn(rawConn, deps.metricsSink)
+	if deps.metricsSink != nil || attributed != nil {
+		if deps.metricsSink != nil {
+			deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
+		}
+		// The tunnel's upstream connection is dialled here and belongs to this
+		// session alone, so the bytes can be attributed to the key as they
+		// flow. This is the only path where that is true: the pooled HTTP
+		// transports reuse connections across requests, and attributing one of
+		// those would bill the next request's bytes to the wrong tenant.
+		upstreamBase = newAttributedCountingConn(rawConn, deps.metricsSink, attributed)
 	}
 
 	upstreamConn := newTLSLatencyConn(upstreamBase, func(latency time.Duration) {
@@ -144,7 +161,30 @@ func prepareConnectTunnel(
 	}
 }
 
-func prepareDirectConnectTunnel(ctx context.Context, deps tunnelDeps, target string) tunnelPrepareResult {
+// attributionFor builds the metering identity of one tunnel.
+//
+// It answers nil when there is nothing to attribute to: no metering sink, or a
+// request that carried no key (the transitional global-token path). A nil
+// result leaves the connection reporting only to the global metrics sink,
+// which is exactly the behaviour before access keys existed.
+func attributionFor(metering MeteringSink, key *keys.KeyState, platformID string) *keyAttribution {
+	if metering == nil || key == nil || key.KeyID == "" {
+		return nil
+	}
+	return &keyAttribution{
+		metering:   metering,
+		keyID:      key.KeyID,
+		userID:     key.UserID,
+		platformID: platformID,
+	}
+}
+
+func prepareDirectConnectTunnel(
+	ctx context.Context,
+	deps tunnelDeps,
+	target string,
+	attributed *keyAttribution,
+) tunnelPrepareResult {
 	// The dial-time half of the guard runs inside this dialer, so the address
 	// connected to is validated even after a re-resolution.
 	dialer := deps.directGuard.dialerWithTimeout(deps.dialTimeout)
@@ -162,9 +202,11 @@ func prepareDirectConnectTunnel(ctx context.Context, deps tunnelDeps, target str
 	}
 
 	upstreamConn := rawConn
-	if deps.metricsSink != nil {
-		deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
-		upstreamConn = newCountingConn(rawConn, deps.metricsSink)
+	if deps.metricsSink != nil || attributed != nil {
+		if deps.metricsSink != nil {
+			deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
+		}
+		upstreamConn = newAttributedCountingConn(rawConn, deps.metricsSink, attributed)
 	}
 	return tunnelPrepareResult{
 		session: &preparedTunnel{

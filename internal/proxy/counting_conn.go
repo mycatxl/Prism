@@ -30,9 +30,16 @@ type MetricsEventSink interface {
 // countingConn wraps a net.Conn, counting bytes read/written.
 // Flushes a traffic delta every trafficFlushThreshold bytes
 // and on Close (for the remainder).
+//
+// The optional attribution names the access key the bytes belong to. It is set
+// only on connections dedicated to one session - the tunnel paths, where the
+// upstream connection is dialled per request. The pooled HTTP transports must
+// leave it unset: their connections are reused across requests, so attributing
+// one to a key would bill the next request's bytes to the wrong tenant.
 type countingConn struct {
 	net.Conn
-	sink MetricsEventSink
+	sink        MetricsEventSink
+	attribution *keyAttribution
 
 	pendingRead  atomic.Int64
 	pendingWrite atomic.Int64
@@ -40,10 +47,33 @@ type countingConn struct {
 	flushArmed   atomic.Bool
 }
 
+// keyAttribution names the key a connection's traffic belongs to, plus the sink
+// that records it. It is a pointer so the counting path can test one field.
+type keyAttribution struct {
+	metering   MeteringSink
+	keyID      string
+	userID     string
+	platformID string
+}
+
 func newCountingConn(conn net.Conn, sink MetricsEventSink) *countingConn {
 	return &countingConn{
 		Conn: conn,
 		sink: sink,
+	}
+}
+
+// newAttributedCountingConn wraps a connection whose traffic belongs to one
+// access key, so the bytes are recorded under that key as they flow.
+//
+// This is what makes a long download stoppable: the counter flushes every
+// 32 KB, so a quota that is crossed mid-transfer is visible while the transfer
+// is still running, rather than only when it ends.
+func newAttributedCountingConn(conn net.Conn, sink MetricsEventSink, attributed *keyAttribution) *countingConn {
+	return &countingConn{
+		Conn:        conn,
+		sink:        sink,
+		attribution: attributed,
 	}
 }
 
@@ -93,8 +123,31 @@ func (c *countingConn) flushPendingTraffic() {
 	pendR := c.pendingRead.Swap(0)
 	pendW := c.pendingWrite.Swap(0)
 	if pendR > 0 || pendW > 0 {
-		c.sink.OnTrafficDelta(pendR, pendW)
+		if c.sink != nil {
+			c.sink.OnTrafficDelta(pendR, pendW)
+		}
+		c.reportAttributed(pendR, pendW)
 	}
+}
+
+// reportAttributed records the delta under this connection's key, if it has
+// one.
+//
+// It runs on the flush path - once per 32 KB or once a second, not per byte -
+// so it can afford the bookkeeping a quota needs, and the flush interval is
+// what bounds how late an over-quota connection can be noticed.
+func (c *countingConn) reportAttributed(ingress, egress int64) {
+	attribution := c.attribution
+	if attribution == nil || attribution.metering == nil || attribution.keyID == "" {
+		return
+	}
+	attribution.metering.OnKeyTrafficDelta(
+		attribution.keyID,
+		attribution.userID,
+		attribution.platformID,
+		ingress,
+		egress,
+	)
 }
 
 func (c *countingConn) Close() error {
@@ -103,7 +156,9 @@ func (c *countingConn) Close() error {
 	}
 	// Flush remaining bytes.
 	c.flushPendingTraffic()
-	c.sink.OnConnectionLifecycle(ConnectionOutbound, ConnectionClose)
+	if c.sink != nil {
+		c.sink.OnConnectionLifecycle(ConnectionOutbound, ConnectionClose)
+	}
 	return c.Conn.Close()
 }
 

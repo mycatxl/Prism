@@ -50,6 +50,11 @@ type ReverseProxyConfig struct {
 	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
 	// defaults to 0, which disables it).
 	AuthGuard AuthFailureGuard
+	// Metering attributes this proxy's traffic to the access key that caused
+	// it. Nil disables the accounting.
+	Metering MeteringSink
+	// Quota decides whether a request may proceed. Nil allows everything.
+	Quota QuotaGate
 }
 
 // ReverseProxy implements an HTTP reverse proxy.
@@ -71,6 +76,8 @@ type ReverseProxy struct {
 	bypass            *TargetBypassMatcher
 	directGuard       DirectDialGuard
 	authGuard         AuthFailureGuard
+	metering          MeteringSink
+	quota             QuotaGate
 }
 
 // NewReverseProxy creates a new reverse proxy handler.
@@ -99,6 +106,8 @@ func NewReverseProxy(cfg ReverseProxyConfig) *ReverseProxy {
 		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
 		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate),
 		authGuard:       cfg.AuthGuard,
+		metering:        cfg.Metering,
+		quota:           cfg.Quota,
 	}
 }
 
@@ -295,8 +304,18 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The allowance is checked before anything is dialled.
+	if quotaErr := checkQuota(p.quota, parsed.Key, 0); quotaErr != nil {
+		writeProxyError(w, quotaErr)
+		return
+	}
+
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeReverse, false)
 	lifecycle.setTarget(parsed.Host, "")
+	// The reverse proxy's upstream transport is pooled per node, exactly like
+	// the forward proxy's, so its connections are reused across requests and
+	// cannot carry a key. The lifecycle can: it is per request.
+	lifecycle.attachMeter(p.metering, parsed.Key, false)
 	upstreamTrace := newUpstreamRequestTrace(lifecycle.markFirstByteReceived)
 	var pendingEgressHeaderBytes int64
 	var egressBodyCounter *countingReadCloser

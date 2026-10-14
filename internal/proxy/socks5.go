@@ -56,6 +56,11 @@ type Socks5InboundConfig struct {
 	// DialTimeout bounds the local direct dial
 	// (PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT). Zero uses the guard default.
 	DialTimeout time.Duration
+	// Metering attributes this inbound's traffic to the access key that caused
+	// it. Nil disables the accounting.
+	Metering MeteringSink
+	// Quota decides whether a request may proceed. Nil allows everything.
+	Quota QuotaGate
 }
 
 // Socks5Inbound implements SOCKS5 CONNECT over a raw TCP connection.
@@ -64,6 +69,7 @@ type Socks5Inbound struct {
 	accessKeys AccessKeyVerifier
 	tunnel     tunnelDeps
 	events     EventEmitter
+	quota      QuotaGate
 }
 
 type socks5HandshakeResult struct {
@@ -88,11 +94,13 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 			pool:        cfg.Pool,
 			health:      cfg.Health,
 			metricsSink: cfg.MetricsSink,
+			metering:    cfg.Metering,
 			bypass:      NewTargetBypassMatcher(cfg.ProxyBypassRules),
 			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate),
 			dialTimeout: cfg.DialTimeout,
 		},
 		events: ev,
+		quota:  cfg.Quota,
 	}
 }
 
@@ -132,8 +140,19 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 		true,
 	)
 	lifecycle.setTarget(handshake.target, "")
+	// A SOCKS5 session dials its own upstream connection and holds it for the
+	// session, so the bytes are attributed as they flow.
+	lifecycle.attachMeter(s.tunnel.metering, handshake.key, true)
 	lifecycle.setAccount(handshake.account)
 	defer lifecycle.finish()
+
+	// The allowance is checked before anything is dialled.
+	if quotaErr := checkQuota(s.quota, handshake.key, 0); quotaErr != nil {
+		_ = writeSocks5Reply(conn, socks5ReplyForProxyError(quotaErr), nil)
+		lifecycle.setProxyError(quotaErr)
+		lifecycle.setNetOK(false)
+		return
+	}
 
 	prepare := prepareConnectTunnel(
 		baseCtx,
