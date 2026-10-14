@@ -98,6 +98,15 @@ func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64,
 		detail := auditDetail(r, maxBodyBytes)
 
 		scope := &auditScope{actor: defaultActor}
+		// A request that authenticated as somebody is attributed to them rather
+		// than to the shared token. The identity middleware runs outside this
+		// one, so the actor is already in the context; the fallback covers a
+		// deployment still on the transitional token, whose actor is the token's
+		// digest - unattributed, but at least not anonymous.
+		if actor, ok := ActorFromContext(r.Context()); ok && actor.UserID != "" {
+			scope.actor = actor.UserID
+			scope.userID = actor.UserID
+		}
 		r = r.WithContext(context.WithValue(r.Context(), auditScopeKey{}, scope))
 
 		recorder := &auditStatusRecorder{ResponseWriter: w, status: http.StatusOK}

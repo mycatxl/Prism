@@ -726,6 +726,45 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	}
 	log.Println("Usage accounting started")
 
+	// Console authentication. One session service is shared by the identity
+	// middleware and the auth handlers, so a login writes the row that the very
+	// next request reads.
+	//
+	// The state engine is the session store directly: its repository already has
+	// exactly the methods a session needs, and wrapping it would only add a layer
+	// to keep in step.
+	cpService.Pepper = a.keyPepper
+	// One limiter for both paths: the handler counts the failures and the
+	// middleware enforces the block, and two limiters would let an address fail
+	// one without the other noticing.
+	loginBlocklist := api.NewLoginBlocklist(a.envCfg.TrustedProxies)
+	sessionService := &auth.Service{
+		Store:     engine,
+		Pepper:    a.keyPepper,
+		Logf:      log.Printf,
+		Blocklist: loginBlocklist,
+	}
+	authDeps := &api.AuthDeps{
+		Issuer:    "Prism",
+		Blocklist: loginBlocklist,
+		Identity: &api.Identity{
+			Sessions:  sessionService,
+			AdminKeys: adminKeyResolver{verifier: keyVerifier},
+			// Administrators must carry a second factor when the policy says
+			// so. An administrator without one is admitted only far enough to
+			// enrol, which is what keeps the requirement from locking everyone
+			// out of a fresh install.
+			RequireAdminTOTP: func() bool { return a.envCfg.RequireAdminTOTP },
+			LegacyAdminToken: a.envCfg.AdminToken,
+			Logf:             log.Printf,
+		},
+		Handlers: &api.AuthHandlers{
+			Sessions: sessionService,
+			Accounts: cpService,
+			Logf:     log.Printf,
+		},
+	}
+
 	apiSrv := api.NewServerWithAddress(
 		a.envCfg.ListenAddress,
 		a.envCfg.ProxyPort,
@@ -738,6 +777,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		a.requestlogRepo,
 		a.metricsManager,
 		panelEgress,
+		authDeps,
 	)
 	// The optional admin listener (PRISM_ADMIN_LISTEN) reuses this handler but
 	// only exposes the management paths, never a proxy protocol.

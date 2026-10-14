@@ -63,7 +63,7 @@ func newTestServer() *Server {
 		BuildTime: "2026-01-01T00:00:00Z",
 		StartedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 	}
-	return NewServer(0, "test-admin-token", systemInfo, runtimeCfg, envCfg, nil, 1<<20, nil, nil, nil)
+	return NewServer(0, "test-admin-token", systemInfo, runtimeCfg, envCfg, nil, 1<<20, nil, nil, nil, nil)
 }
 
 // --- /healthz ---

@@ -12,6 +12,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/intel"
 	"prism/internal/intel/jobs"
@@ -84,6 +85,10 @@ type ControlPlaneService struct {
 	configMu      sync.Mutex
 	configVersion int
 	endpointMu    sync.RWMutex
+	// Pepper seals and opens account secrets. It is nil when no pepper is
+	// configured, which means access keys cannot be verified and a second
+	// factor cannot be enrolled - but the console still works with passwords.
+	Pepper *auth.Pepper
 }
 
 // ------------------------------------------------------------------

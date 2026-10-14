@@ -24,14 +24,15 @@ var webFS embed.FS
 //
 // The handler is registered on "/ui/" and inspects the full request path, so it
 // must not be wrapped in http.StripPrefix. authRequired is reported at
-// /ui/session.json; see newWebUIHandlerFromFS for why it is served from here.
-func newWebUIHandler(authRequired bool) http.Handler {
+// /ui/session.json, and sessionInfo answers who the caller is; see
+// newWebUIHandlerFromFS for why both are served from here.
+func newWebUIHandler(authRequired bool, sessionInfo func(*http.Request) sessionInfoForWebUI) http.Handler {
 	distFS, err := fs.Sub(webFS, webDistDir)
 	if err != nil {
 		log.Printf("WebUI embed disabled: %v", err)
 		return newWebUINotBuiltHandler()
 	}
-	return newWebUIHandlerFromFS(distFS, authRequired)
+	return newWebUIHandlerFromFS(distFS, authRequired, sessionInfo)
 }
 
 func newWebUINotBuiltHandler() http.Handler {
@@ -42,7 +43,7 @@ func newWebUINotBuiltHandler() http.Handler {
 	})
 }
 
-func newWebUIHandlerFromFS(distFS fs.FS, authRequired bool) http.Handler {
+func newWebUIHandlerFromFS(distFS fs.FS, authRequired bool, sessionInfo func(*http.Request) sessionInfoForWebUI) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.NotFound(w, r)
@@ -60,15 +61,24 @@ func newWebUIHandlerFromFS(distFS fs.FS, authRequired bool) http.Handler {
 		}
 
 		// The console's own auth mode, answered here rather than from an authenticated
-		// endpoint. The login page needs the answer *before* it holds a token, and a 401
-		// there is a console error the operator cannot dismiss -- on the first screen of
-		// every secured deployment. /ui/ is already gated by the access point's
-		// allow_management (cmd/prism/inbound_mux.go), so this adds no reach the console
-		// does not already have, and it replaces an inference ("401 means auth is on")
-		// with the deployment stating the fact.
+		// endpoint. The login page needs the answer *before* it holds a session, and a
+		// 401 there is a console error the operator cannot dismiss -- on the first
+		// screen of every secured deployment. /ui/ is already gated by the access
+		// point's allow_management (cmd/prism/inbound_mux.go), so this adds no reach
+		// the console does not already have.
+		//
+		// The body carries who the caller is, not only whether a login is needed. A
+		// page that has to make a second call to find out is a page that renders the
+		// login form for a moment on every reload, because the first call says "auth is
+		// on" and only the second says "and you already have it".
 		if assetPath == "session.json" {
 			w.Header().Set("Cache-Control", "no-store")
-			WriteJSON(w, http.StatusOK, map[string]bool{"auth_required": authRequired})
+			info := sessionInfoForWebUI{AuthRequired: authRequired}
+			if sessionInfo != nil {
+				info = sessionInfo(r)
+				info.AuthRequired = authRequired
+			}
+			WriteJSON(w, http.StatusOK, info)
 			return
 		}
 

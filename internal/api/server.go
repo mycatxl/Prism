@@ -70,6 +70,26 @@ type Server struct {
 	mux *http.ServeMux
 }
 
+// AuthDeps is the authentication surface the management API mounts.
+//
+// It is a separate value rather than more parameters because a deployment can
+// legitimately have none of it: without it the API falls back to the
+// transitional shared token, which keeps an un-migrated install working.
+type AuthDeps struct {
+	// Identity authenticates every management request.
+	Identity *Identity
+	// Handlers serves the login, logout, session and account-security routes.
+	Handlers *AuthHandlers
+	// Issuer is the name an authenticator app shows for this deployment. It
+	// appears in the enrolment URI, so an operator running several deployments
+	// can tell their entries apart.
+	Issuer string
+	// Blocklist is the failure limiter shared by the login handler and the
+	// middleware. Nil makes the server build its own, which is what a caller
+	// that does not construct a session service gets.
+	Blocklist *AuthFailureLimiter
+}
+
 // NewServer creates a new API server wired with all routes.
 // cp may be nil if the control plane is not yet initialized.
 //
@@ -86,6 +106,7 @@ func NewServer(
 	requestlogRepo *requestlog.Repo,
 	metricsManager *metrics.Manager,
 	panelEgress PanelEgressProvider,
+	authDeps *AuthDeps,
 ) *Server {
 	return NewServerWithAddress(
 		"",
@@ -99,6 +120,7 @@ func NewServer(
 		requestlogRepo,
 		metricsManager,
 		panelEgress,
+		authDeps,
 	)
 }
 
@@ -121,6 +143,7 @@ func NewServerWithAddress(
 	requestlogRepo *requestlog.Repo,
 	metricsManager *metrics.Manager,
 	panelEgress PanelEgressProvider,
+	authDeps *AuthDeps,
 ) *Server {
 	mux := http.NewServeMux()
 
@@ -133,7 +156,15 @@ func NewServerWithAddress(
 	// be registered without http.StripPrefix.
 	mux.Handle("/", newRootRedirectHandler())
 	mux.Handle("/ui", newUIRootRedirectHandler())
-	mux.Handle("/ui/", newWebUIHandler(adminToken != ""))
+
+	// The console's own view of the caller. It resolves the session cookie
+	// directly rather than through the identity middleware, because /ui/ is not
+	// behind that middleware - the login page itself is served from there.
+	var sessionInfo func(*http.Request) sessionInfoForWebUI
+	if authDeps != nil && authDeps.Identity != nil {
+		sessionInfo = authDeps.Identity.sessionInfo
+	}
+	mux.Handle("/ui/", newWebUIHandler(adminToken != "", sessionInfo))
 
 	// Authenticated routes
 	authed := http.NewServeMux()
@@ -278,14 +309,45 @@ func NewServerWithAddress(
 	if envCfg != nil {
 		trustedProxies = envCfg.TrustedProxies
 	}
-	authLimiter := NewAuthFailureLimiter(
-		authFailuresPerWindow,
-		authFailureWindow,
-		authFailureBlock,
-		trustedProxies,
-	)
+	authLimiter := NewLoginBlocklist(trustedProxies)
+	if authDeps != nil && authDeps.Blocklist != nil {
+		// A caller that built the session service already created the limiter
+		// the login handler counts against. Reusing it is what makes "too many
+		// failed attempts" mean the same thing to both paths.
+		authLimiter = authDeps.Blocklist
+	}
 	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(adminToken, authLimiter, cp))
-	mux.Handle("/api/", AuthMiddleware(adminToken, authLimiter, authedHandler))
+
+	// Authentication: the console's session routes, and the middleware that
+	// guards everything else.
+	//
+	// They are registered on the authed mux even though login is reachable
+	// without an identity - the identity middleware lets that one path through
+	// - because a route has to exist somewhere for the pattern to match and for
+	// the handler to be reachable at all.
+	if authDeps != nil && authDeps.Handlers != nil {
+		handlers := authDeps.Handlers
+		// The limiter is created here, so the handler is told how to name a
+		// client after the fact. Without it a failed login would not count
+		// towards the block that the middleware enforces.
+		handlers.ClientKey = authLimiter.ClientIP
+		authed.Handle("POST /api/v1/auth/login", handlers.HandleLogin())
+		authed.Handle("POST /api/v1/auth/logout", handlers.HandleLogout())
+		authed.Handle("GET /api/v1/auth/session", handlers.HandleSession())
+		authed.Handle("POST /api/v1/auth/password", handlers.HandleChangePassword())
+		authed.Handle("POST /api/v1/auth/totp/enrol", handlers.HandleStartTOTPEnrolment(authDeps.Issuer))
+		authed.Handle("POST /api/v1/auth/totp/confirm", handlers.HandleConfirmTOTPEnrolment())
+		authed.Handle("POST /api/v1/auth/totp/disable", handlers.HandleDisableTOTP())
+	}
+	if authDeps != nil && authDeps.Identity != nil {
+		// The identity middleware replaces the token comparison and keeps the
+		// failure limiter, so a blocked address is still refused before any
+		// password work happens.
+		authedHandler = limiterMiddleware(authLimiter, authedHandler)
+		mux.Handle("/api/", authDeps.Identity.Middleware(authedHandler))
+	} else {
+		mux.Handle("/api/", AuthMiddleware(adminToken, authLimiter, authedHandler))
+	}
 
 	// Connection hygiene belongs to the listener, not to this value: cmd/prism
 	// builds every served http.Server through NewListenerServer, which is the

@@ -81,7 +81,7 @@ func TestWebUINotBuiltHandlerAnswers503(t *testing.T) {
 // the embed resolves (the directory exists, it just holds no UI), so the handler
 // is constructed normally and then reports the missing index.html itself.
 func TestWebUIHandlerFromEmptyFSSaysNotBuilt(t *testing.T) {
-	h := newWebUIHandlerFromFS(fstest.MapFS{}, true)
+	h := newWebUIHandlerFromFS(fstest.MapFS{}, true, nil)
 
 	for _, path := range []string{"/ui/", "/ui/", "/ui/nodes"} {
 		rec := httptest.NewRecorder()
@@ -136,7 +136,7 @@ func TestWebUIHandlerServesAssetsAndFallsBackToIndex(t *testing.T) {
 		"index.html":    &fstest.MapFile{Data: []byte(indexBody)},
 		"assets/app.js": &fstest.MapFile{Data: []byte("console.log('prism')")},
 	}
-	h := newWebUIHandlerFromFS(distFS, true)
+	h := newWebUIHandlerFromFS(distFS, true, nil)
 
 	cases := []struct {
 		name       string
@@ -183,7 +183,7 @@ func TestWebUIHandlerUsesTheEmbeddedFS(t *testing.T) {
 		t.Fatalf("embed does not contain %s: %v", webDistDir, err)
 	}
 
-	h := newWebUIHandler(true)
+	h := newWebUIHandler(true, nil)
 	if h == nil {
 		t.Fatal("newWebUIHandler returned nil")
 	}
@@ -217,7 +217,7 @@ func TestWebUISessionModeAnswersBothWays(t *testing.T) {
 	distFS := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte(indexBody)}}
 
 	for _, required := range []bool{true, false} {
-		handler := newWebUIHandlerFromFS(distFS, required)
+		handler := newWebUIHandlerFromFS(distFS, required, nil)
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/ui/session.json", nil))
 

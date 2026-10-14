@@ -284,6 +284,28 @@ func (r *StateRepo) DeletePlan(id string) error {
 	return nil
 }
 
+// MarkUserLogin records when an account last authenticated.
+//
+// It is a targeted UPDATE rather than a read-modify-write of the whole row: the
+// login path runs on every successful authentication, and rewriting the row
+// would also rewrite the password hash and the second factor with values read a
+// moment earlier.
+func (r *StateRepo) MarkUserLogin(id string, atNs int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE users SET last_login_ns = ? WHERE id = ?
+	`, atNs, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- user_subscriptions ---
 
 // UpsertUserSubscription inserts or updates a subscription by ID.
@@ -884,6 +906,28 @@ func (r *StateRepo) DeleteSessionsByUser(userID string) (int64, error) {
 }
 
 // PruneSessions removes sessions that expired before nowNs.
+// TouchSession pushes a session's expiry back.
+//
+// It is a targeted UPDATE rather than a read-modify-write: sliding expiry runs
+// in the second half of every session's window, and rewriting the row would also
+// rewrite the user id and the recorded address with values read a moment
+// earlier.
+func (r *StateRepo) TouchSession(idHash string, expiresAtNs int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE sessions SET expires_at_ns = ? WHERE id_hash = ?
+	`, expiresAtNs, idHash)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *StateRepo) PruneSessions(nowNs int64) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -104,6 +104,14 @@ type EnvConfig struct {
 	// ProxyAuthFailLimit enables the same failure limiter on the proxy entry
 	// points. 0 disables it, which keeps the upstream Resin behaviour.
 	ProxyAuthFailLimit int
+	// RequireAdminTOTP makes a second factor mandatory for administrator
+	// accounts (PRISM_REQUIRE_ADMIN_TOTP).
+	//
+	// It is not a switch that can lock an operator out of their own deployment:
+	// an administrator without a second factor reaches the console only far
+	// enough to enrol one, which is the only way to satisfy the requirement from
+	// inside the product.
+	RequireAdminTOTP bool
 
 	// Request log
 	RequestLogQueueSize           int
@@ -214,6 +222,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", true, &errs)
 	cfg.DenyPrivateNodes = envBool("PRISM_DENY_PRIVATE_NODES", true, &errs)
 	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 30, &errs)
+	cfg.RequireAdminTOTP = envBool("PRISM_REQUIRE_ADMIN_TOTP", false, &errs)
 
 	// --- Request log ---
 	cfg.RequestLogQueueSize = envInt("PRISM_REQUEST_LOG_QUEUE_SIZE", 8192, &errs)

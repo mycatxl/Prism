@@ -294,6 +294,46 @@ func retryAfterSeconds(d time.Duration) int {
 	return int((d + time.Second - 1) / time.Second)
 }
 
+// NewLoginBlocklist builds the failure limiter that the login handler and the
+// management middleware share.
+//
+// It is exported so a caller that constructs the session service - which counts
+// its own failures - can hand the same limiter to both. Two limiters would mean
+// an address could fail the session limit and still be admitted by the
+// middleware, or the reverse.
+func NewLoginBlocklist(trustedProxies []string) *AuthFailureLimiter {
+	return NewAuthFailureLimiter(
+		authFailuresPerWindow,
+		authFailureWindow,
+		authFailureBlock,
+		trustedProxies,
+	)
+}
+
+// limiterMiddleware refuses an address that has failed authentication too often.
+//
+// It is the blocking half of AuthMiddleware without the credential comparison,
+// which moved into the identity middleware. A blocked address is refused before
+// the password work and before the session lookup, so neither can be used to
+// make the server do expensive things from an address that is already failing.
+func limiterMiddleware(limiter *AuthFailureLimiter, next http.Handler) http.Handler {
+	if limiter == nil {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clientIP := limiter.ClientIP(r)
+		if blocked, retryAfter := limiter.Blocked(clientIP); blocked {
+			if retryAfter > 0 {
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
+			}
+			WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED",
+				"too many failed authentication attempts; retry later")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // AuthMiddleware returns an http.Handler that validates the Bearer token in the
 // Authorization header against the expected admin token.
 //
@@ -301,6 +341,10 @@ func retryAfterSeconds(d time.Duration) int {
 // 429 RATE_LIMITED before the token comparison; only failed comparisons are
 // counted and successful requests are never recorded. limiter may be nil, which
 // disables this protection.
+//
+// It is the transitional path, used only when no identity is configured. A
+// deployment with sessions authenticates through the identity middleware
+// instead, and this is removed in the same release that turns sessions on.
 func AuthMiddleware(adminToken string, limiter *AuthFailureLimiter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Empty configured admin token means auth is intentionally disabled.
