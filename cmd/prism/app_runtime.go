@@ -694,6 +694,15 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Logf:     usage.DefaultLogf,
 	}).Start(accountingCtx)
 
+	// The rollover is what makes an allowance a period rather than a one-time
+	// grant: without it a user who spends their month on the first day stays
+	// refused forever, because nothing ever moves the period on.
+	go (&usage.PeriodReset{
+		Store:    engine,
+		Counters: a.usageCounters,
+		Logf:     usage.DefaultLogf,
+	}).Start(accountingCtx)
+
 	// The enforcer is what makes a disable mean "now" rather than "at the next
 	// request". It resolves keys through the same store the data plane
 	// authenticates against, so both see one answer.

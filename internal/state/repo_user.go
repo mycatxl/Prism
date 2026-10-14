@@ -404,6 +404,45 @@ func (r *StateRepo) AddSubscriptionUsedBytes(id string, delta int64) error {
 	return nil
 }
 
+// ResetSubscriptionPeriod starts a new usage period for a subscription.
+//
+// It zeroes the period's usage and moves the period start in one statement, so
+// a reader never sees a reset counter still labelled with the old period. The
+// guard on period_start_ns is what keeps two workers - or a worker racing an
+// operator - from resetting the same period twice and wiping usage that belongs
+// to the period that just began.
+//
+// It reports ErrNotFound when the subscription does not exist, and nil when the
+// period had already moved on: a lost race is not a failure.
+func (r *StateRepo) ResetSubscriptionPeriod(id string, fromPeriodStartNs, toPeriodStartNs int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE user_subscriptions
+		SET period_start_ns = ?, period_used_bytes = 0
+		WHERE id = ? AND period_start_ns = ?
+	`, toPeriodStartNs, id, fromPeriodStartNs)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		return nil
+	}
+
+	// Nothing was updated. Either the subscription is gone, or its period moved
+	// between the read and this write. The two are told apart so a caller can
+	// log a genuine missing row without logging every lost race.
+	var exists int
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM user_subscriptions WHERE id = ?`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("check subscription %s: %w", id, err)
+	}
+	if exists == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // --- access_keys ---
 
 // normalizeAccessKey fills the defaults Insert and Update share, so the two

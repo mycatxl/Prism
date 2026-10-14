@@ -203,3 +203,39 @@ func (c *Counters) Size() int {
 	}
 	return c.entries.Size()
 }
+
+// ResetUser returns a user's running total to zero.
+//
+// It is what a period rollover does: the allowance belongs to a period, and a
+// new period starts with nothing used. Without it the persisted counter would
+// reset while the in-memory one kept the old total, and the quota would refuse
+// every request of a user whose new month had just begun - the failure mode of
+// a correct database and a stale cache.
+//
+// The per-key buckets are deliberately left alone. They are the record of what
+// actually moved and are destined for the usage tables; the aggregate is only
+// ever a running total against an allowance.
+func (c *Counters) ResetUser(userID string) {
+	if c == nil || c.users == nil || userID == "" {
+		return
+	}
+	total, ok := c.users.Load(userID)
+	if !ok || total == nil {
+		return
+	}
+	total.Store(0)
+}
+
+// LoadUser overwrites a user's running total.
+//
+// It is how a restart restores the aggregate from the persisted period usage,
+// and how a period rollover sets it back to zero without dropping the entry.
+func (c *Counters) LoadUser(userID string, bytes int64) {
+	if c == nil || c.users == nil || userID == "" {
+		return
+	}
+	total, _ := c.users.LoadOrCompute(userID, func() (*atomic.Int64, bool) {
+		return new(atomic.Int64), false
+	})
+	total.Store(bytes)
+}
