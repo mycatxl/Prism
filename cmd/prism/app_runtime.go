@@ -71,6 +71,15 @@ type prismApp struct {
 	// only credential - the behaviour of a deployment that has not been
 	// migrated yet.
 	keyPepper *auth.Pepper
+	// usageCounters is the live per-key traffic view the data plane writes to.
+	// It is the only accounting structure the proxy touches; persistence
+	// happens in the flusher.
+	usageCounters *usage.Counters
+	// usageSessions holds each key's live tunnels, so a revoked key can be hung
+	// up on rather than only refused its next request.
+	usageSessions *usage.ConnRegistry
+	// stopUsageAccounting cancels the flusher and the enforcer.
+	stopUsageAccounting func()
 }
 
 // run assembles and runs the Prism service.
@@ -654,6 +663,60 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	}).Start()
 	log.Println("Usage retention started")
 
+	// Accounting. One counter set and one session registry are shared by every
+	// inbound: a key's allowance spans the protocols it uses, and so does the
+	// set of tunnels that may need ending.
+	//
+	// Nothing here touches the database on the data path. The counters are
+	// in-memory atomics, and the flusher below is the only thing that reaches
+	// disk.
+	a.usageCounters = usage.NewCounters()
+	a.usageSessions = usage.NewConnRegistry()
+	usageLimiter := usage.NewLimiter(a.usageCounters)
+	usageQuota := &usage.Gate{Limiter: usageLimiter}
+	usageMetering := &usage.Sink{Counters: a.usageCounters}
+
+	// The allowance is a running total and the counters start empty, so the
+	// persisted usage is loaded back before anything can be served. Without
+	// this a restart would hand every user their whole allowance again.
+	if subs, err := engine.ListUserSubscriptions(); err != nil {
+		log.Printf("Usage accounting: cannot read subscriptions to restore usage: %v", err)
+	} else if seeded := a.usageCounters.SeedFromSubscriptions(subs, time.Now().UnixNano()); seeded > 0 {
+		log.Printf("Usage accounting: restored period usage for %d subscription(s)", seeded)
+	}
+
+	accountingCtx, cancelAccounting := context.WithCancel(context.Background())
+	a.stopUsageAccounting = cancelAccounting
+
+	go (&usage.Flusher{
+		Counters: a.usageCounters,
+		Store:    engine,
+		Logf:     usage.DefaultLogf,
+	}).Start(accountingCtx)
+
+	// The enforcer is what makes a disable mean "now" rather than "at the next
+	// request". It resolves keys through the same store the data plane
+	// authenticates against, so both see one answer.
+	if accessKeys != nil {
+		go (&usage.Enforcer{
+			Registry: a.usageSessions,
+			Limiter:  usageLimiter,
+			Lookup: func(keyID string) *keys.KeyState {
+				state, ok := accessKeys.Get(keyID)
+				if !ok {
+					// A key that cannot be resolved is one that was deleted, or
+					// whose owner was. Answering nil is what tells the enforcer
+					// to close its sessions.
+					return nil
+				}
+				return state
+			},
+			GracePercent: usage.DefaultGracePercent,
+			Logf:         usage.DefaultLogf,
+		}).Start(accountingCtx)
+	}
+	log.Println("Usage accounting started")
+
 	apiSrv := api.NewServerWithAddress(
 		a.envCfg.ListenAddress,
 		a.envCfg.ProxyPort,
@@ -722,6 +785,9 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
 		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
 		AuthGuard:         proxyAuthGuard,
+		Metering:          usageMetering,
+		Quota:             usageQuota,
+		Sessions:          a.usageSessions,
 	})
 
 	reverseProxy := proxy.NewReverseProxy(proxy.ReverseProxyConfig{
@@ -739,6 +805,8 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
 		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
 		AuthGuard:         proxyAuthGuard,
+		Metering:          usageMetering,
+		Quota:             usageQuota,
 	})
 	socks5Inbound := proxy.NewSocks5Inbound(proxy.Socks5InboundConfig{
 		ProxyToken:        a.envCfg.ProxyToken,
@@ -751,6 +819,9 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
 		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
 		DialTimeout:       a.envCfg.ProxyTransportDialTimeout,
+		Metering:          usageMetering,
+		Quota:             usageQuota,
+		Sessions:          a.usageSessions,
 	})
 	// the SOCKS5 username/password check happens on a raw TCP
 	// session, so the mux cannot meter it with an http.ResponseWriter; the
@@ -945,6 +1016,12 @@ func (a *prismApp) shutdown() {
 	}
 	if a.stopUsageRetention != nil {
 		a.stopUsageRetention()
+	}
+	// Cancelling the accounting runs the flusher's final pass, which writes to
+	// state.db - so it has to happen here, while that database is still open,
+	// and not with the later teardown.
+	if a.stopUsageAccounting != nil {
+		a.stopUsageAccounting()
 	}
 	shutdownBlocking("metrics manager", a.metricsManager.Stop)
 	log.Println("Metrics manager stopped")

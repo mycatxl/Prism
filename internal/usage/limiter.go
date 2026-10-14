@@ -28,6 +28,16 @@ const (
 	ReasonDisabled    = "disabled"
 )
 
+// DefaultGracePercent is the tolerance applied to the traffic limit before a
+// session that is already running is cut.
+//
+// It is not a free allowance: a request that would start after the limit has
+// no grace at all, and is refused outright. The grace exists only so that a
+// transfer that crossed the line is not severed with its last bytes still in
+// flight, which costs the operator one percent and saves every large download
+// from failing at the finish line.
+const DefaultGracePercent = 1
+
 // Limiter decides whether a request may proceed.
 //
 // It reads the live counters and the key's own plan snapshot, so it never
