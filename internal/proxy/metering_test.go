@@ -449,3 +449,75 @@ func (m *platformRecordingMeter) platformID() string {
 	defer m.mu.Unlock()
 	return m.pid
 }
+
+// A tunnel's bytes must be counted exactly once.
+//
+// This is the assertion the whole design turns on. The bytes reach the meter
+// from the connection - it flushes every 32 KB so an over-quota transfer can be
+// cut mid-stream - while the same totals also reach the request log through the
+// lifecycle. If the lifecycle also reported them, every tunnel would bill its key
+// twice, and a quota would run out at half the traffic the user actually bought.
+//
+// An echo of N bytes moves N out and N back, so the exact answer is 2N.
+func TestMetering_ConnectTunnelCountsEachByteExactlyOnce(t *testing.T) {
+	env := newProxyE2EEnv(t)
+
+	targetLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen target: %v", err)
+	}
+	defer targetLn.Close()
+
+	go func() {
+		conn, err := targetLn.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(conn, conn) // echo
+	}()
+
+	meter := newRecordingMeter()
+	fp := NewForwardProxy(ForwardProxyConfig{
+		ProxyToken: "tok",
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
+		Router:     env.router,
+		Pool:       env.pool,
+		Health:     &mockHealthRecorder{},
+		Events:     newMockEventEmitter(),
+		Metering:   meter,
+	})
+
+	conn, reader := openTunnel(t, fp, targetLn.Addr().String())
+
+	// Two flush thresholds, so the counting connection flushes mid-stream and
+	// the close flush carries only the remainder. Both paths are exercised.
+	const payloadLen = int(trafficFlushThreshold) + 4096
+	payload := make([]byte, payloadLen)
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("write into the tunnel: %v", err)
+	}
+	echo := make([]byte, payloadLen)
+	if _, err := io.ReadFull(reader, echo); err != nil {
+		t.Fatalf("read the echo: %v", err)
+	}
+
+	// Closing flushes the last of the bytes that are still pending.
+	_ = conn.Close()
+
+	want := int64(2 * payloadLen)
+	deadline := time.Now().Add(2 * time.Second)
+	var got int64
+	for time.Now().Before(deadline) {
+		got = meter.bytesFor("k-meter")
+		if got >= want {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if got != want {
+		t.Fatalf("attributed %d bytes for an echo of %d, want exactly %d (twice that would mean the lifecycle "+
+			"reported the connection's bytes a second time)", got, payloadLen, want)
+	}
+}
