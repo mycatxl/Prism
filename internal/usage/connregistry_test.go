@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -23,11 +24,11 @@ func (c *fakeConn) wasClosed() bool { return c.closed.Load() > 0 }
 
 // registryWithCloseSpy returns a registry plus the slice it appends closed
 // connections to, so a test can assert which connections were hung up on.
-func registryWithCloseSpy() (*ConnRegistry, *[]net.Conn) {
-	var closed []net.Conn
+func registryWithCloseSpy() (*ConnRegistry, *[]io.Closer) {
+	var closed []io.Closer
 	var mu sync.Mutex
 	registry := NewConnRegistry()
-	registry.closeFn = func(conn net.Conn) error {
+	registry.closeFn = func(conn io.Closer) error {
 		mu.Lock()
 		closed = append(closed, conn)
 		mu.Unlock()

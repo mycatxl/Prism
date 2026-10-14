@@ -1,7 +1,7 @@
 package usage
 
 import (
-	"net"
+	"io"
 	"sync"
 
 	"github.com/puzpuzpuz/xsync/v4"
@@ -30,7 +30,7 @@ type ConnRegistry struct {
 	conns *xsync.Map[string, *connSet]
 	// closeFn closes one connection. It is a field so a test can observe the
 	// calls without opening real sockets; production passes the identity.
-	closeFn func(net.Conn) error
+	closeFn func(io.Closer) error
 }
 
 // connSet is one key's live connections, guarded by its own lock.
@@ -40,7 +40,7 @@ type ConnRegistry struct {
 // counters lock-free.
 type connSet struct {
 	mu    sync.Mutex
-	conns map[net.Conn]struct{}
+	conns map[io.Closer]struct{}
 }
 
 // NewConnRegistry returns an empty registry that closes connections by calling
@@ -48,7 +48,7 @@ type connSet struct {
 func NewConnRegistry() *ConnRegistry {
 	return &ConnRegistry{
 		conns:   xsync.NewMap[string, *connSet](),
-		closeFn: func(conn net.Conn) error { return conn.Close() },
+		closeFn: func(conn io.Closer) error { return conn.Close() },
 	}
 }
 
@@ -57,12 +57,12 @@ func NewConnRegistry() *ConnRegistry {
 // A nil connection, or an empty key id, is ignored: the single-tenant path has
 // no key to attribute the connection to, and it is never force-closed by a
 // quota.
-func (r *ConnRegistry) Track(keyID string, conn net.Conn) {
+func (r *ConnRegistry) Track(keyID string, conn io.Closer) {
 	if r == nil || keyID == "" || conn == nil {
 		return
 	}
 	set, _ := r.conns.LoadOrCompute(keyID, func() (*connSet, bool) {
-		return &connSet{conns: make(map[net.Conn]struct{})}, false
+		return &connSet{conns: make(map[io.Closer]struct{})}, false
 	})
 	set.mu.Lock()
 	set.conns[conn] = struct{}{}
@@ -71,7 +71,7 @@ func (r *ConnRegistry) Track(keyID string, conn net.Conn) {
 
 // Untrack removes one connection. It is safe to call for a connection that was
 // never tracked, which keeps the caller's defer simple.
-func (r *ConnRegistry) Untrack(keyID string, conn net.Conn) {
+func (r *ConnRegistry) Untrack(keyID string, conn io.Closer) {
 	if r == nil || keyID == "" || conn == nil {
 		return
 	}
@@ -131,11 +131,11 @@ func (r *ConnRegistry) CloseKey(keyID string) int {
 		return 0
 	}
 	set.mu.Lock()
-	conns := make([]net.Conn, 0, len(set.conns))
+	conns := make([]io.Closer, 0, len(set.conns))
 	for conn := range set.conns {
 		conns = append(conns, conn)
 	}
-	set.conns = make(map[net.Conn]struct{})
+	set.conns = make(map[io.Closer]struct{})
 	set.mu.Unlock()
 
 	for _, conn := range conns {
