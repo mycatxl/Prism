@@ -4,7 +4,7 @@ import { AppShell } from "../components/AppShell";
 import { NotFoundPage } from "../components/NotFoundPage";
 import { LoadingState } from "../components/ui/QueryState";
 import { RequireAuth } from "../features/auth/RequireAuth";
-
+const AccountSecurityPage = lazy(() => import("../features/auth/AccountSecurityPage").then((m) => ({ default: m.AccountSecurityPage })));
 const LoginPage = lazy(() => import("../features/auth/LoginPage").then((m) => ({ default: m.LoginPage })));
 const WorkbenchPage = lazy(() => import("../features/dashboard/WorkbenchPage").then((m) => ({ default: m.WorkbenchPage })));
 const EndpointsPage = lazy(() => import("../features/endpoints/EndpointsPage").then((m) => ({ default: m.EndpointsPage })));
@@ -85,6 +85,7 @@ export function AppRoutes() {
         <Route path="/system-config" element={<Page><SystemConfigPage /></Page>} />
         <Route path="/jobs" element={<Page><JobsPage /></Page>} />
         <Route path="/audit" element={<Page><AuditLogsPage /></Page>} />
+        <Route path="/account-security" element={<Page><AccountSecurityPage /></Page>} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>

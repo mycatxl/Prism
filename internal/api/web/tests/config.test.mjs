@@ -51,7 +51,6 @@ test("rejects invalid ports, secret-bearing origins and self-proxy loops", () =>
       /PRISM_API_TARGET/,
     );
   const config = readServerConfig({
-    RESIN_ADMIN_TOKEN: "private",
     RESIN_PROXY_TOKEN: "private-proxy",
   });
   assert(!JSON.stringify(config).includes("private"));
@@ -121,7 +120,7 @@ test("production panel serves deep links and forwards only supplied credentials"
       join(dir, "dist", "assets", "app.js"),
       "window.appLoaded=true;",
     );
-    await writeFile(join(dir, ".env"), "RESIN_ADMIN_TOKEN=not-public\n");
+    await writeFile(join(dir, ".env"), "RESIN_PROXY_TOKEN=not-public\n");
     backend.listen(0, "127.0.0.1");
     await once(backend, "listening");
     panel = createPanelServer({

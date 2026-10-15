@@ -13,14 +13,14 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "退出登录": "Sign Out",
   "当前为免认证访问模式": "Running in no-auth mode",
   "管理员登录": "Admin Login",
-  "管理员令牌": "Admin Token",
-  "管理员令牌通过 `PRISM_ADMIN_TOKEN` 环境变量配置":
-    "The administrator token is configured through the `PRISM_ADMIN_TOKEN` environment variable",
-  "显示管理员令牌": "Show Admin Token",
-  "隐藏管理员令牌": "Hide Admin Token",
+  "管理员账号": "Administrator account",
+  "用户名": "Username",
+  "密码": "Password",
+  "双重验证码": "Two-factor code",
   "进入控制台": "Enter Console",
   "校验中...": "Verifying...",
-  "请输入 Admin Token": "Please enter Admin Token",
+  "请输入用户名": "Enter your username",
+  "请输入密码": "Enter your password",
   "总览看板": "Dashboard",
   "平台管理": "Platforms",
   "集中维护平台策略与节点分配规则。": "Centrally manage platform policies and node allocation rules.",
@@ -403,10 +403,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "最近 24 小时": "Last 24 hours",
   "刚刚": "Just now",
   "0 秒": "0s",
-  "PRISM_ADMIN_TOKEN 为空，控制面 API 免认证": "PRISM_ADMIN_TOKEN is empty, control-plane API is unauthenticated",
   "PRISM_PROXY_TOKEN 为空，正/反向代理免认证": "PRISM_PROXY_TOKEN is empty, forward/reverse proxy is unauthenticated",
-  "PRISM_ADMIN_TOKEN 强度较弱，建议更换为更高熵随机令牌":
-    "PRISM_ADMIN_TOKEN is weak, use a higher-entropy random token",
   "PRISM_PROXY_TOKEN 强度较弱，建议更换为更高熵随机令牌":
     "PRISM_PROXY_TOKEN is weak, use a higher-entropy random token",
   "按分类查看和修改设置，可随时撤销未保存更改。":
@@ -887,6 +884,65 @@ Note: Once enabled, requests without authentication information are rejected ins
   "地图数据加载失败": "Failed to load map data",
   "这个地址没有对应的页面，可能已经被移除或改名。": "This address has no page. It may have been removed or renamed.",
   "订阅详情": "Subscription details",
+  // The auth surfaces: the login form, the account-security page and the shell's
+  // session notices. Registered after a coverage scan found them unregistered.
+  "代理令牌未设置": "Proxy token is not set",
+  "会话失效": "Session expired",
+  "使用你的 Prism 账号登录。": "Sign in with your Prism account.",
+  "使用身份验证器为登录增加一次性验证码。": "Add a one-time code from an authenticator app to sign-in.",
+  "修改后，账户的所有现有会话都会立即失效。":
+    "After a change, every existing session of this account is invalidated immediately.",
+  "修改密码": "Change password",
+  "停用双因素认证": "Disable two-factor authentication",
+  "两次输入的新密码不一致。": "The two new passwords do not match.",
+  "双因素认证": "Two-factor authentication",
+  "双因素认证已启用": "Two-factor authentication is on",
+  "双因素认证已启用。": "Two-factor authentication is on.",
+  "启用双因素认证后填写身份验证器中的 6 位验证码。":
+    "Once two-factor authentication is on, enter the 6-digit code from your authenticator app.",
+  "在身份验证器中添加账户后，输入当前显示的 6 位验证码。":
+    "Add the account to your authenticator app, then enter the 6-digit code it shows.",
+  "失败次数过多，请稍后重试。": "Too many failed attempts. Try again later.",
+  "尚未启用双因素认证。管理员可以在这里生成身份验证器配置并确认。":
+    "Two-factor authentication is not on yet. An administrator can generate an authenticator configuration here and confirm it.",
+  "开始设置双因素认证": "Start two-factor setup",
+  "当前密码": "Current password",
+  "当前密码不正确。": "The current password is incorrect.",
+  "手动设置密钥": "Manual secret",
+  "控制台必须通过 HTTPS 访问，或在本机使用 HTTP。":
+    "The console requires HTTPS, or plain HTTP on this machine.",
+  "新密码": "New password",
+  "新密码不能与当前密码相同。": "The new password must differ from the current one.",
+  "新密码至少需要 12 个字符。": "The new password needs at least 12 characters.",
+  "新密码长度不足。": "The new password is too short.",
+  "旧版令牌配置仍存在": "Legacy token configuration is still present",
+  "显示密码": "Show password",
+  "更新密码": "Update password",
+  "服务未配置安全密钥，暂时无法保存双因素认证。":
+    "The service has no security pepper configured, so two-factor authentication cannot be saved yet.",
+  "每次登录都需要身份验证器生成的 6 位验证码。":
+    "Every sign-in requires the 6-digit code from your authenticator app.",
+  "用户名或密码不正确。": "The username or password is incorrect.",
+  "登录": "Sign in",
+  "登录状态由安全 Cookie 保持，不会把密码或会话令牌写入浏览器存储。":
+    "The session is kept in secure cookies; neither the password nor the session token is written to browser storage.",
+  "确认并启用": "Confirm and enable",
+  "确认新密码": "Confirm new password",
+  "确认验证码": "Confirm code",
+  "管理密码与双因素认证，保护控制台访问。":
+    "Manage the password and two-factor authentication that protect console access.",
+  "至少 12 个字符。": "At least 12 characters.",
+  "请输入身份验证器中的 6 位验证码。": "Enter the 6-digit code from your authenticator app.",
+  "账户安全": "Account security",
+  "账户尚未启用双因素认证。": "This account does not have two-factor authentication on.",
+  "账户已经启用双因素认证。": "This account already has two-factor authentication on.",
+  "身份验证器配置 URI": "Authenticator configuration URI",
+  "身份验证码": "Authenticator code",
+  "隐藏密码": "Hide password",
+  "需要登录": "Sign-in required",
+  "验证码不正确，请检查身份验证器。": "The code is incorrect. Check your authenticator app.",
+  "验证码不正确，请检查身份验证器后重试。":
+    "The code is incorrect. Check your authenticator app and try again.",
 };
 
 export function translateDocumentTitle(locale: AppLocale): string {

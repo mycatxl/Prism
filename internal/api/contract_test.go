@@ -31,8 +31,6 @@ import (
 	"prism/internal/topology"
 )
 
-const testAdminToken = "test-admin-token"
-
 func newControlPlaneTestServer(t *testing.T) (*Server, *service.ControlPlaneService, *atomic.Pointer[config.RuntimeConfig]) {
 	return newControlPlaneTestServerWithBodyLimit(t, 1<<20)
 }
@@ -107,7 +105,7 @@ func newControlPlaneTestServerWithBodyLimit(
 		BuildTime: "2026-01-01T00:00:00Z",
 		StartedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 	}
-	srv := NewServer(0, testAdminToken, systemInfo, runtimeCfg, cp.EnvCfg, cp, apiMaxBodyBytes, nil, nil, nil, nil)
+	srv := NewServer(0, systemInfo, runtimeCfg, cp.EnvCfg, cp, apiMaxBodyBytes, nil, nil, nil, testAuthDepsForServer())
 	return srv, cp, runtimeCfg
 }
 
@@ -135,7 +133,7 @@ func doJSONRequest(t *testing.T, srv *Server, method, path string, body any, aut
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	}
 	if authed {
-		req.Header.Set("Authorization", "Bearer "+testAdminToken)
+		req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	}
 
 	rec := httptest.NewRecorder()
@@ -260,7 +258,7 @@ func newObservabilityTestServer(t *testing.T) (*Server, *requestlog.Repo, *metri
 		RuntimeStats:                contractRuntimeStats{platformID: platformID},
 	})
 
-	srv := NewServer(0, testAdminToken, systemInfo, runtimeCfg, nil, nil, 1<<20, requestlogRepo, metricsManager, nil, nil)
+	srv := NewServer(0, systemInfo, runtimeCfg, nil, nil, 1<<20, requestlogRepo, metricsManager, nil, testAuthDepsForServer())
 	return srv, requestlogRepo, metricsManager, platformID
 }
 
@@ -1158,20 +1156,11 @@ func TestAPIContract_SystemEnvConfigSnapshot(t *testing.T) {
 			body["default_platform_allocation_policy"],
 		)
 	}
-	if body["admin_token_set"] != false {
-		t.Fatalf("admin_token_set: got %v, want false", body["admin_token_set"])
-	}
 	if body["proxy_token_set"] != false {
 		t.Fatalf("proxy_token_set: got %v, want false", body["proxy_token_set"])
 	}
-	if body["admin_token_weak"] != false {
-		t.Fatalf("admin_token_weak: got %v, want false", body["admin_token_weak"])
-	}
 	if body["proxy_token_weak"] != false {
 		t.Fatalf("proxy_token_weak: got %v, want false", body["proxy_token_weak"])
-	}
-	if _, ok := body["admin_token"]; ok {
-		t.Fatalf("admin_token should not be exposed: body=%s", rec.Body.String())
 	}
 	if _, ok := body["proxy_token"]; ok {
 		t.Fatalf("proxy_token should not be exposed: body=%s", rec.Body.String())

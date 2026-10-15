@@ -44,8 +44,7 @@ func newTestServer() *Server {
 		RequestLogQueueFlushInterval:                    5 * time.Minute,
 		RequestLogDBMaxMB:                               512,
 		RequestLogDBRetainCount:                         5,
-		AdminToken:                                      "test-admin-token",
-		ProxyToken:                                      "test-proxy-token",
+		ProxyToken:                                      "test-proxy-token-0123456789",
 		MetricThroughputIntervalSeconds:                 1,
 		MetricThroughputRetentionSeconds:                3600,
 		MetricBucketSeconds:                             3600,
@@ -63,7 +62,7 @@ func newTestServer() *Server {
 		BuildTime: "2026-01-01T00:00:00Z",
 		StartedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
 	}
-	return NewServer(0, "test-admin-token", systemInfo, runtimeCfg, envCfg, nil, 1<<20, nil, nil, nil, nil)
+	return NewServer(0, systemInfo, runtimeCfg, envCfg, nil, 1<<20, nil, nil, nil, testAuthDepsForServer())
 }
 
 // --- /healthz ---
@@ -173,7 +172,7 @@ func TestWebUI_LegacyRootPathNoLongerServed(t *testing.T) {
 func TestSystemInfo_OK(t *testing.T) {
 	srv := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
-	req.Header.Set("Authorization", "Bearer test-admin-token")
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 
@@ -284,7 +283,7 @@ func TestSystemInfo_RequiresAuth(t *testing.T) {
 func TestSystemConfig_OK(t *testing.T) {
 	srv := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config", nil)
-	req.Header.Set("Authorization", "Bearer test-admin-token")
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 
@@ -358,7 +357,7 @@ func TestSystemConfig_RequiresAuth(t *testing.T) {
 func TestSystemEnvConfig_OK(t *testing.T) {
 	srv := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config/env", nil)
-	req.Header.Set("Authorization", "Bearer test-admin-token")
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 
@@ -395,23 +394,14 @@ func TestSystemEnvConfig_OK(t *testing.T) {
 	if body["probe_timeout"] != "15s" {
 		t.Errorf("probe_timeout: got %q, want %q", body["probe_timeout"], "15s")
 	}
-	if body["admin_token_set"] != true {
-		t.Errorf("admin_token_set: got %v, want true", body["admin_token_set"])
-	}
 	if body["proxy_token_set"] != true {
 		t.Errorf("proxy_token_set: got %v, want true", body["proxy_token_set"])
-	}
-	if body["admin_token_weak"] != false {
-		t.Errorf("admin_token_weak: got %v, want false", body["admin_token_weak"])
 	}
 	if body["proxy_token_weak"] != false {
 		t.Errorf("proxy_token_weak: got %v, want false", body["proxy_token_weak"])
 	}
 	if rules, ok := body["proxy_bypass_rules"].([]any); !ok || len(rules) != 2 || rules[0] != "localhost" || rules[1] != "127.*" {
 		t.Errorf("proxy_bypass_rules: got %#v, want [localhost 127.*]", body["proxy_bypass_rules"])
-	}
-	if _, ok := body["admin_token"]; ok {
-		t.Error("admin_token should not be exposed in /system/config/env")
 	}
 	if _, ok := body["proxy_token"]; ok {
 		t.Error("proxy_token should not be exposed in /system/config/env")
@@ -434,7 +424,7 @@ func TestSystemEnvConfig_RequiresAuth(t *testing.T) {
 func TestSystemDefaultConfig_OK(t *testing.T) {
 	srv := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config/default", nil)
-	req.Header.Set("Authorization", "Bearer test-admin-token")
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	rec := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rec, req)
 

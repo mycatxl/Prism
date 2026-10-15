@@ -315,12 +315,12 @@ export function WorkbenchPage() {
       ),
     });
   }
-  if (env.data && (!env.data.admin_token_set || !env.data.proxy_token_set)) {
+  if (env.data && !env.data.proxy_token_set) {
     issues.push({
       key: "tokens",
       tone: "warn",
       title: t("令牌未设置"),
-      detail: t("部分令牌未设置"),
+      detail: t("代理令牌未设置"),
       action: (
         <Button asChild size="sm">
           <Link to="/system-config">{t("设置")}</Link>

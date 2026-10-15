@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
-	"crypto/subtle"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"prism/internal/auth"
@@ -87,16 +87,13 @@ type Identity struct {
 	Sessions SessionResolver
 	// AdminKeys resolves automation credentials. Nil disables that path.
 	AdminKeys AdminKeyResolver
+	// FailureLimiter blocks and counts failed management authentication attempts.
+	// Login failures are counted by the session service itself; this limiter covers
+	// invalid or missing admin access keys and stale session cookies.
+	FailureLimiter *AuthFailureLimiter
 	// RequireAdminTOTP makes a second factor mandatory for administrators. An
 	// administrator without one is let in only far enough to enrol.
 	RequireAdminTOTP func() bool
-	// LegacyAdminToken is the transitional global admin token.
-	//
-	// It is a step in the migration, not a feature: it keeps the existing
-	// console and scripts working while the session flow is deployed. It is
-	// removed in the same release that turns the session on, so nothing here
-	// should grow to depend on it.
-	LegacyAdminToken string
 	// Logf receives authentication refusals. Nil silences them.
 	Logf func(format string, args ...any)
 }
@@ -130,8 +127,24 @@ func (i *Identity) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
+		clientIP := ""
+		if i != nil && i.FailureLimiter != nil {
+			clientIP = i.FailureLimiter.ClientIP(r)
+			if blocked, retryAfter := i.FailureLimiter.Blocked(clientIP); blocked {
+				if retryAfter > 0 {
+					w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
+				}
+				WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED",
+					"too many failed authentication attempts; retry later")
+				return
+			}
+		}
+
 		actor, ok := i.resolve(r)
 		if !ok {
+			if i != nil && i.FailureLimiter != nil {
+				i.FailureLimiter.RecordFailure(clientIP)
+			}
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 			return
 		}
@@ -174,27 +187,7 @@ func (i *Identity) resolve(r *http.Request) (Actor, bool) {
 	if actor, ok := i.resolveAdminKey(r); ok {
 		return actor, true
 	}
-	return i.resolveLegacyToken(r)
-}
-
-// resolveLegacyToken accepts the transitional global admin token.
-//
-// The comparison is constant time so it cannot be used to learn the token a byte
-// at a time. The actor carries no user, because a shared token names nobody;
-// that is exactly the property the session flow exists to replace, and the
-// audit trail shows it as an unattributed administrator.
-func (i *Identity) resolveLegacyToken(r *http.Request) (Actor, bool) {
-	if i.LegacyAdminToken == "" {
-		return Actor{}, false
-	}
-	credential, ok := bearerCredential(r)
-	if !ok {
-		return Actor{}, false
-	}
-	if subtle.ConstantTimeCompare([]byte(credential), []byte(i.LegacyAdminToken)) != 1 {
-		return Actor{}, false
-	}
-	return Actor{Role: model.UserRoleAdmin}, true
+	return Actor{}, false
 }
 
 func (i *Identity) resolveSession(r *http.Request) (Actor, bool) {

@@ -31,7 +31,7 @@ every mihomo node still fails with `ENGINE_NOT_BUILT`.
 ## Run
 
 ```bash
-cp .env.example .env    # then set PRISM_ADMIN_TOKEN and PRISM_PROXY_TOKEN
+./bin/prism init       # creates the administrator account, the pepper and a proxy token
 ./bin/prism check-config
 ./bin/prism
 ```
@@ -58,8 +58,10 @@ off only on a trusted network.
 
 The management API lives under `/api/v1/`. `GET /api/v1/system/capabilities`
 reports the engines, protocols and build tags this binary actually has, so a
-client never has to guess what a build can do. Mutating calls need
-`Authorization: Bearer <PRISM_ADMIN_TOKEN>`.
+client never has to guess what a build can do. The console authenticates with a
+username, a password and an optional TOTP code, and keeps the session in a
+HttpOnly cookie; automation sends an admin access key instead:
+`Authorization: Bearer <admin-access-key>`.
 
 ## Layout
 

@@ -9,12 +9,12 @@ import (
 )
 
 // worldReadableEnv writes a .env the way a legacy installation may have it:
-// mode 0644, i.e. readable by every local user. It holds both tokens.
+// worldReadableEnv writes a .env the way a legacy installation may have it:
+// mode 0644, i.e. readable by every local user. It holds the proxy token.
 func worldReadableEnv(t *testing.T, dir string) (path, content string) {
 	t.Helper()
 	path = filepath.Join(dir, envFileName)
-	content = "# legacy .env\nPRISM_ADMIN_TOKEN=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\n" +
-		"PRISM_PROXY_TOKEN=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n"
+	content = "# legacy .env\nPRISM_PROXY_TOKEN=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

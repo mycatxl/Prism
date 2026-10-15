@@ -571,7 +571,7 @@ func TestImportResinCommandImportsIntoConfiguredDirectories(t *testing.T) {
 	targetCache := filepath.Join(t.TempDir(), "cache")
 	targetLog := filepath.Join(t.TempDir(), "logs")
 
-	t.Setenv("PRISM_ADMIN_TOKEN", strings.Repeat("a", 32))
+	t.Setenv("PRISM_PROXY_TOKEN", strings.Repeat("b", 32))
 	t.Setenv("PRISM_PROXY_TOKEN", strings.Repeat("b", 32))
 	t.Setenv("PRISM_LISTEN_ADDRESS", "127.0.0.1")
 	t.Setenv("PRISM_PORT", strconv.Itoa(freeTestPort(t)))

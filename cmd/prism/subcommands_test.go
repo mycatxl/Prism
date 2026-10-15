@@ -122,10 +122,8 @@ func TestInitCommandCreatesAdminPepperAndEnv(t *testing.T) {
 	envPath := filepath.Join(dir, ".env")
 	assertMode0600(t, envPath)
 	content := readFileString(t, envPath)
-	for _, key := range []string{"PRISM_ADMIN_TOKEN", "PRISM_PROXY_TOKEN"} {
-		if got := envValue(t, content, key); len(got) != 64 {
-			t.Errorf("%s must be written as a 32-byte hex token, got %q", key, got)
-		}
+	if got := envValue(t, content, "PRISM_PROXY_TOKEN"); len(got) != 64 {
+		t.Errorf("PRISM_PROXY_TOKEN must be written as a 32-byte hex token, got %q", got)
 	}
 	if got := envValue(t, content, "PRISM_LISTEN_ADDRESS"); got != "127.0.0.1" {
 		t.Errorf("PRISM_LISTEN_ADDRESS = %q, want 127.0.0.1", got)
@@ -233,8 +231,8 @@ func TestInitCommandEnvIsAcceptedByConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the generated configuration must be accepted by the service: %v", err)
 	}
-	if cfg.AdminToken == "" || cfg.ProxyToken == "" {
-		t.Error("the generated configuration must still carry both tokens until the planes are switched over")
+	if cfg.ProxyToken == "" {
+		t.Error("the generated configuration must carry the data-plane proxy token")
 	}
 	if cfg.StateDir != filepath.Join(dir, "state") {
 		t.Errorf("PRISM_STATE_DIR = %q, want %q", cfg.StateDir, filepath.Join(dir, "state"))
@@ -390,7 +388,7 @@ func TestBackupProducesConsistentDatabasesAndManifest(t *testing.T) {
 	createSQLiteDatabase(t, filepath.Join(stateDir, "intel.db"))
 
 	// Secrets must never be copied into a backup.
-	if err := os.WriteFile(filepath.Join(stateDir, ".env"), []byte("PRISM_ADMIN_TOKEN=secret\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(stateDir, ".env"), []byte("PRISM_PROXY_TOKEN=secret\n"), 0o600); err != nil {
 		t.Fatalf("write state dir .env: %v", err)
 	}
 
@@ -662,11 +660,9 @@ func makeTestBackup(t *testing.T) string {
 
 func TestCheckConfigNeverPrintsSecrets(t *testing.T) {
 	const (
-		adminToken = "0123456789abcdef0123456789abcdef"
 		proxyToken = "fedcba9876543210fedcba9876543210"
 		qualityKey = "quality-key-should-never-be-printed"
 	)
-	t.Setenv("PRISM_ADMIN_TOKEN", adminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", proxyToken)
 	t.Setenv("PRISM_QUALITY_API_KEY", qualityKey)
 	t.Setenv("PRISM_ADMIN_LISTEN", "127.0.0.1:12345")
@@ -677,7 +673,7 @@ func TestCheckConfigNeverPrintsSecrets(t *testing.T) {
 	}
 
 	out := stdout.String()
-	for _, secret := range []string{adminToken, proxyToken, qualityKey} {
+	for _, secret := range []string{proxyToken, qualityKey} {
 		if strings.Contains(out, secret) {
 			t.Fatalf("check-config output leaked a secret: %s", out)
 		}
@@ -685,8 +681,8 @@ func TestCheckConfigNeverPrintsSecrets(t *testing.T) {
 			t.Fatal("check-config stderr leaked a secret")
 		}
 	}
-	if !strings.Contains(out, "PRISM_ADMIN_TOKEN=***") {
-		t.Fatalf("check-config must mark the admin token as set, got: %s", out)
+	if !strings.Contains(out, "PRISM_PROXY_TOKEN=***") {
+		t.Fatalf("check-config must mark the proxy token as set, got: %s", out)
 	}
 	if !strings.Contains(out, "PRISM_ADMIN_LISTEN=127.0.0.1:12345") {
 		t.Fatalf("check-config must print the effective admin listener, got: %s", out)
@@ -784,8 +780,7 @@ func TestPersistenceBootstrapHardensEnvConfiguredDirs(t *testing.T) {
 	t.Setenv("PRISM_STATE_DIR", stateDir)
 	t.Setenv("PRISM_CACHE_DIR", cacheDir)
 
-	// The configuration validator requires explicit tokens to be present.
-	t.Setenv("PRISM_ADMIN_TOKEN", "0123456789abcdef0123456789abcdef")
+	// The configuration validator requires an explicit proxy token to be present.
 	t.Setenv("PRISM_PROXY_TOKEN", "fedcba9876543210fedcba9876543210")
 	t.Setenv("PRISM_ADMIN_LISTEN", "127.0.0.1:12346")
 

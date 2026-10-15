@@ -367,38 +367,31 @@ func TestIdentity_PrefersTheSessionOverAKey(t *testing.T) {
 	}
 }
 
-// The transitional token still works, and is recorded as an administrator with
-// no user - which is exactly the property the session flow replaces.
-func TestIdentity_LegacyTokenIsAccepted(t *testing.T) {
-	identity := &Identity{LegacyAdminToken: "the-shared-token"}
-	var seen Actor
+// Without a session or a valid admin access key the management middleware fails
+// closed; the removed shared administrator token is not accepted.
+func TestIdentity_SharedTokenIsNotAccepted(t *testing.T) {
+	identity := &Identity{
+		AdminKeys: fakeAdminKeys{
+			credential: "pk-valid-admin",
+			identity: AdminKeyIdentity{
+				KeyID:  "k-1",
+				UserID: "u-admin",
+				Role:   model.UserRoleAdmin,
+			},
+		},
+	}
 	handler := identity.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		seen, _ = ActorFromContext(r.Context())
-		w.WriteHeader(http.StatusOK)
+		t.Fatal("unauthenticated request reached the handler")
 	}))
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
-	req.Header.Set("Authorization", "Bearer the-shared-token")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !seen.IsAdmin() {
-		t.Fatalf("actor = %+v, want an administrator", seen)
-	}
-	if seen.UserID != "" {
-		t.Fatalf("the shared token was attributed to user %q", seen.UserID)
-	}
-
-	// A different token is refused.
-	bad := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
-	bad.Header.Set("Authorization", "Bearer the-wrong-token")
-	badRec := httptest.NewRecorder()
-	handler.ServeHTTP(badRec, bad)
-	if badRec.Code != http.StatusUnauthorized {
-		t.Fatalf("a wrong shared token got %d, want 401", badRec.Code)
+	for _, credential := range []string{"the-shared-token", "the-wrong-token"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
+		req.Header.Set("Authorization", "Bearer "+credential)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("credential %q got status %d, want 401", credential, rec.Code)
+		}
 	}
 }
 

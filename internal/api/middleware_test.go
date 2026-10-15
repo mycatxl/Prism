@@ -13,7 +13,7 @@ import (
 )
 
 func TestAuthMiddleware_ValidToken(t *testing.T) {
-	handler := AuthMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testIdentityMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -29,7 +29,7 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_MissingHeader(t *testing.T) {
-	handler := AuthMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testIdentityMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called")
 	}))
 
@@ -45,7 +45,7 @@ func TestAuthMiddleware_MissingHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_WrongToken(t *testing.T) {
-	handler := AuthMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testIdentityMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called")
 	}))
 
@@ -62,7 +62,7 @@ func TestAuthMiddleware_WrongToken(t *testing.T) {
 }
 
 func TestAuthMiddleware_InvalidFormat(t *testing.T) {
-	handler := AuthMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := testIdentityMiddleware("secret-token", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("handler should not be called")
 	}))
 
@@ -77,18 +77,17 @@ func TestAuthMiddleware_InvalidFormat(t *testing.T) {
 	}
 }
 
-func TestAuthMiddleware_EmptyConfiguredToken_DisablesAuth(t *testing.T) {
-	handler := AuthMiddleware("", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
+func TestIdentity_EmptyCredentialIsRejected(t *testing.T) {
+	handler := testIdentityMiddleware("", prismAuthLimiter(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not be called without a valid admin key")
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rec := httptest.NewRecorder()
-
 	handler.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusOK)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
 

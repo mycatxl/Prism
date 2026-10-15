@@ -19,14 +19,9 @@ func setEnvs(t *testing.T, envs map[string]string) {
 }
 
 // requiredEnvs returns the minimum env vars needed for LoadEnvConfig to succeed.
-//
-// PRISM-DEVIATION: X1 Prism requires tokens of at least 16 characters by
-// default, so the fixture uses long tokens; upstream's short literals
-// ("upstream-admin-token"/"upstream-proxy-token") are rejected before any other validation.
 func requiredEnvs() map[string]string {
 	return map[string]string{
 		"PRISM_AUTH_VERSION": "V1",
-		"PRISM_ADMIN_TOKEN":  "upstream-admin-token",
 		"PRISM_PROXY_TOKEN":  "upstream-proxy-token",
 	}
 }
@@ -284,22 +279,8 @@ func TestLoadEnvConfig_NodeDNSUpstreamsRejectsObjectFormat(t *testing.T) {
 	assertContains(t, err.Error(), "PRISM_NODE_DNS_UPSTREAMS: invalid JSON string array")
 }
 
-func TestLoadEnvConfig_MissingAdminToken(t *testing.T) {
-	t.Setenv("PRISM_AUTH_VERSION", "V1")
-	t.Setenv("PRISM_PROXY_TOKEN", "upstream-proxy-token")
-	// Ensure PRISM_ADMIN_TOKEN is not set
-	os.Unsetenv("PRISM_ADMIN_TOKEN")
-
-	_, err := LoadEnvConfig()
-	if err == nil {
-		t.Fatal("expected error for missing PRISM_ADMIN_TOKEN")
-	}
-	assertContains(t, err.Error(), "PRISM_ADMIN_TOKEN must be defined and non-empty")
-}
-
 func TestLoadEnvConfig_MissingProxyToken(t *testing.T) {
 	t.Setenv("PRISM_AUTH_VERSION", "V1")
-	t.Setenv("PRISM_ADMIN_TOKEN", "upstream-admin-token")
 	os.Unsetenv("PRISM_PROXY_TOKEN")
 
 	_, err := LoadEnvConfig()
@@ -310,7 +291,6 @@ func TestLoadEnvConfig_MissingProxyToken(t *testing.T) {
 }
 
 func TestLoadEnvConfig_MissingAuthVersion(t *testing.T) {
-	t.Setenv("PRISM_ADMIN_TOKEN", "upstream-admin-token")
 	t.Setenv("PRISM_PROXY_TOKEN", "upstream-proxy-token")
 	os.Unsetenv("PRISM_AUTH_VERSION")
 
@@ -323,7 +303,6 @@ func TestLoadEnvConfig_MissingAuthVersion(t *testing.T) {
 
 func TestLoadEnvConfig_EmptyAuthVersionDefaultsToV1(t *testing.T) {
 	t.Setenv("PRISM_AUTH_VERSION", "  ")
-	t.Setenv("PRISM_ADMIN_TOKEN", "upstream-admin-token")
 	t.Setenv("PRISM_PROXY_TOKEN", "upstream-proxy-token")
 
 	cfg, err := LoadEnvConfig()
@@ -337,7 +316,6 @@ func TestLoadEnvConfig_InvalidAuthVersion(t *testing.T) {
 	for _, value := range []string{"V2", "LEGACY_V0"} {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("PRISM_AUTH_VERSION", value)
-			t.Setenv("PRISM_ADMIN_TOKEN", "upstream-admin-token")
 			t.Setenv("PRISM_PROXY_TOKEN", "upstream-proxy-token")
 
 			_, err := LoadEnvConfig()
@@ -350,14 +328,12 @@ func TestLoadEnvConfig_InvalidAuthVersion(t *testing.T) {
 	}
 }
 
-// PRISM-DEVIATION: X2 an empty token still disables that authentication scope,
-// but only with the explicit opt-in switch and a loopback listen address.
-// Upstream Resin accepted the empty tokens on their own.
-func TestLoadEnvConfig_EmptyTokensAllowedWhenDefined(t *testing.T) {
+// PRISM-DEVIATION: X2 — an empty proxy token disables the data-plane
+// authentication scope, but only with the explicit opt-in switch and a
+// loopback listen address. Upstream Resin accepted an empty token on its own.
+func TestLoadEnvConfig_EmptyProxyTokenAllowedWhenDefined(t *testing.T) {
 	t.Setenv("PRISM_AUTH_VERSION", "V1")
-	t.Setenv("PRISM_ADMIN_TOKEN", "")
 	t.Setenv("PRISM_PROXY_TOKEN", "")
-	t.Setenv("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "true")
 	t.Setenv("PRISM_ALLOW_EMPTY_PROXY_TOKEN", "true")
 	t.Setenv("PRISM_LISTEN_ADDRESS", "127.0.0.1")
 
@@ -365,21 +341,18 @@ func TestLoadEnvConfig_EmptyTokensAllowedWhenDefined(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertEqual(t, "AdminToken", cfg.AdminToken, "")
 	assertEqual(t, "ProxyToken", cfg.ProxyToken, "")
 }
 
-func TestLoadEnvConfig_EmptyTokensCannotDisableAuthentication(t *testing.T) {
+func TestLoadEnvConfig_EmptyProxyTokenCannotDisableAuthentication(t *testing.T) {
 	for _, value := range []string{"", " \t"} {
 		t.Run(fmt.Sprintf("empty-%d", len(value)), func(t *testing.T) {
 			setEnvs(t, requiredEnvs())
-			t.Setenv("PRISM_ADMIN_TOKEN", value)
 			t.Setenv("PRISM_PROXY_TOKEN", value)
 			_, err := LoadEnvConfig()
 			if err == nil {
-				t.Fatal("empty tokens must not start an unauthenticated service")
+				t.Fatal("an empty proxy token must not start an unauthenticated data plane")
 			}
-			assertContains(t, err.Error(), "PRISM_ADMIN_TOKEN must be defined and non-empty")
 			assertContains(t, err.Error(), "PRISM_PROXY_TOKEN must be defined and non-empty")
 		})
 	}
@@ -390,7 +363,6 @@ func TestLoadEnvConfig_ProxyTokenReservedKeywords(t *testing.T) {
 	for _, token := range tests {
 		t.Run(token, func(t *testing.T) {
 			t.Setenv("PRISM_AUTH_VERSION", "V1")
-			t.Setenv("PRISM_ADMIN_TOKEN", "upstream-admin-token")
 			t.Setenv("PRISM_PROXY_TOKEN", token)
 
 			_, err := LoadEnvConfig()
@@ -425,7 +397,6 @@ func TestLoadEnvConfig_ProxyTokenForbiddenChars_V1(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("PRISM_AUTH_VERSION", "V1")
-			t.Setenv("PRISM_ADMIN_TOKEN", "upstream-admin-token")
 			t.Setenv("PRISM_PROXY_TOKEN", tc.token)
 
 			_, err := LoadEnvConfig()
@@ -739,12 +710,7 @@ func assertContains(t *testing.T, s, substr string) {
 	}
 }
 
-// --- Prism-specific cases restored from 3633100 ---
-
-const (
-	testAdminToken = "0123456789abcdef0123456789abcdef"
-	testProxyToken = "fedcba9876543210fedcba9876543210"
-)
+const testProxyToken = "fedcba9876543210fedcba9876543210"
 
 // unsetEnvForConfigTest removes the given variables for the duration of a test
 // so that LoadEnvConfig never sees ambient shell state.
@@ -771,11 +737,10 @@ func unsetEnvForConfigTest(t *testing.T, keys ...string) {
 func clearTokenEnv(t *testing.T) {
 	t.Helper()
 	unsetEnvForConfigTest(t,
-		"PRISM_ADMIN_TOKEN", "RESIN_ADMIN_TOKEN",
 		"PRISM_PROXY_TOKEN", "RESIN_PROXY_TOKEN",
 		"PRISM_AUTH_VERSION", "RESIN_AUTH_VERSION",
 		"PRISM_ENFORCE_STRONG_TOKENS",
-		"PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "PRISM_ALLOW_EMPTY_PROXY_TOKEN",
+		"PRISM_ALLOW_EMPTY_PROXY_TOKEN",
 		"PRISM_ALLOW_INSECURE_LISTEN",
 	)
 }
@@ -824,7 +789,6 @@ func TestLookupEnvFallsBackToResinPrefix(t *testing.T) {
 		"PRISM_DEFAULT_PLATFORM_REGION_FILTERS", "RESIN_DEFAULT_PLATFORM_REGION_FILTERS",
 		"PRISM_TRUSTED_PROXIES", "RESIN_TRUSTED_PROXIES",
 	)
-	t.Setenv("PRISM_ADMIN_TOKEN", testAdminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", testProxyToken)
 
 	// Nothing but the Resin spelling is defined: every helper must serve it.
@@ -857,16 +821,15 @@ func TestLookupEnvFallsBackToResinPrefix(t *testing.T) {
 		t.Fatalf("PRISM_TRUSTED_PROXIES from RESIN_TRUSTED_PROXIES: got %v", cfg.TrustedProxies)
 	}
 
-	// The token reads use the same fallback.
-	unsetEnvForConfigTest(t, "PRISM_ADMIN_TOKEN", "PRISM_PROXY_TOKEN")
-	t.Setenv("RESIN_ADMIN_TOKEN", testAdminToken)
+	// The proxy token read uses the same fallback.
+	unsetEnvForConfigTest(t, "PRISM_PROXY_TOKEN")
 	t.Setenv("RESIN_PROXY_TOKEN", testProxyToken)
 	cfg, err = LoadEnvConfig()
 	if err != nil {
 		t.Fatalf("LoadEnvConfig with RESIN_ tokens: %v", err)
 	}
-	if cfg.AdminToken != testAdminToken || cfg.ProxyToken != testProxyToken {
-		t.Fatal("RESIN_ADMIN_TOKEN / RESIN_PROXY_TOKEN must be served through the fallback")
+	if cfg.ProxyToken != testProxyToken {
+		t.Fatal("RESIN_PROXY_TOKEN must be served through the fallback")
 	}
 }
 
@@ -874,7 +837,6 @@ func TestLookupEnvPrefersPrismPrefix(t *testing.T) {
 	resetLegacyEnvWarnings()
 	clearTokenEnv(t)
 	unsetEnvForConfigTest(t, "PRISM_PORT", "RESIN_PORT")
-	t.Setenv("PRISM_ADMIN_TOKEN", testAdminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", testProxyToken)
 
 	t.Setenv("RESIN_PORT", "3000")
@@ -940,7 +902,6 @@ func TestQualityVariablesHaveNoResinFallback(t *testing.T) {
 		"PRISM_QUALITY_ENABLED", "RESIN_QUALITY_ENABLED",
 		"PRISM_ABUSEIPDB_API_KEY", "RESIN_ABUSEIPDB_API_KEY",
 	)
-	t.Setenv("PRISM_ADMIN_TOKEN", testAdminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", testProxyToken)
 	t.Setenv("RESIN_QUALITY_API_KEY", "resin-quality-key")
 	t.Setenv("RESIN_ABUSEIPDB_API_KEY", "resin-abuse-key")
@@ -963,7 +924,6 @@ func TestQualityVariablesHaveNoResinFallback(t *testing.T) {
 func TestEnforceStrongTokensOffRestoresUpstreamBehaviour(t *testing.T) {
 	clearTokenEnv(t)
 	unsetEnvForConfigTest(t, "PRISM_LISTEN_ADDRESS", "RESIN_LISTEN_ADDRESS")
-	t.Setenv("PRISM_ADMIN_TOKEN", "qwerty123")
 	t.Setenv("PRISM_PROXY_TOKEN", "12345678")
 
 	t.Setenv("PRISM_ENFORCE_STRONG_TOKENS", "true")
@@ -982,8 +942,8 @@ func TestEnforceStrongTokensOffRestoresUpstreamBehaviour(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PRISM_ENFORCE_STRONG_TOKENS=false must accept a short token: %v", err)
 	}
-	if !IsWeakToken(cfg.AdminToken) || !IsWeakToken(cfg.ProxyToken) {
-		t.Fatal("weak tokens must still be reported as weak")
+	if !IsWeakToken(cfg.ProxyToken) {
+		t.Fatal("weak proxy tokens must still be reported as weak")
 	}
 
 	// The upstream validator rules survive the deviation.
@@ -1001,7 +961,6 @@ func TestEmptyTokenRequiresOptInAndLoopback(t *testing.T) {
 	clearTokenEnv(t)
 	unsetEnvForConfigTest(t, "PRISM_LISTEN_ADDRESS", "RESIN_LISTEN_ADDRESS")
 	t.Setenv("PRISM_LISTEN_ADDRESS", "127.0.0.1")
-	t.Setenv("PRISM_ADMIN_TOKEN", testAdminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", "")
 
 	_, err := LoadEnvConfig()
@@ -1035,70 +994,6 @@ func TestEmptyTokenRequiresOptInAndLoopback(t *testing.T) {
 	if cfg.ProxyToken != "" {
 		t.Fatalf("cfg.ProxyToken = %q, want empty", cfg.ProxyToken)
 	}
-	if cfg.AdminToken != testAdminToken {
-		t.Fatal("the admin token must stay configured")
-	}
-}
-
-func TestEmptyAdminTokenRequiresItsOwnOptIn(t *testing.T) {
-	clearTokenEnv(t)
-	unsetEnvForConfigTest(t, "PRISM_LISTEN_ADDRESS", "RESIN_LISTEN_ADDRESS")
-	t.Setenv("PRISM_LISTEN_ADDRESS", "127.0.0.1")
-	t.Setenv("PRISM_ADMIN_TOKEN", "")
-	t.Setenv("PRISM_PROXY_TOKEN", testProxyToken)
-
-	_, err := LoadEnvConfig()
-	if err == nil {
-		t.Fatal("an empty admin token must be refused without PRISM_ALLOW_EMPTY_ADMIN_TOKEN=true")
-	}
-	if !strings.Contains(err.Error(), "PRISM_ALLOW_EMPTY_ADMIN_TOKEN=true") {
-		t.Fatalf("the error must explain the opt-in, got: %v", err)
-	}
-
-	t.Setenv("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "true")
-	if _, err := LoadEnvConfig(); err != nil {
-		t.Fatalf("empty admin token on loopback with opt-in: %v", err)
-	}
-}
-
-// PRISM-DEVIATION: X2 — the empty-token loopback rule covers the independent
-// management listener too, not only PRISM_LISTEN_ADDRESS.
-func TestEmptyTokenRequiresLoopbackAdminListen(t *testing.T) {
-	clearTokenEnv(t)
-	unsetEnvForConfigTest(t,
-		"PRISM_LISTEN_ADDRESS", "RESIN_LISTEN_ADDRESS",
-		"PRISM_ADMIN_LISTEN", "RESIN_ADMIN_LISTEN",
-	)
-	t.Setenv("PRISM_LISTEN_ADDRESS", "127.0.0.1")
-	t.Setenv("PRISM_PROXY_TOKEN", testProxyToken)
-	t.Setenv("PRISM_ADMIN_TOKEN", "")
-	t.Setenv("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "true")
-
-	// A loopback management listener stays allowed with an empty admin token.
-	t.Setenv("PRISM_ADMIN_LISTEN", "127.0.0.1:9090")
-	if _, err := LoadEnvConfig(); err != nil {
-		t.Fatalf("empty admin token with a loopback PRISM_ADMIN_LISTEN: %v", err)
-	}
-
-	// A public management listener must be refused: it is bound verbatim and
-	// would expose the management plane without authentication.
-	t.Setenv("PRISM_ADMIN_LISTEN", "0.0.0.0:9090")
-	_, err := LoadEnvConfig()
-	if err == nil {
-		t.Fatal("an empty token with a non-loopback PRISM_ADMIN_LISTEN must be refused")
-	}
-	if !strings.Contains(err.Error(), "PRISM_ADMIN_LISTEN") {
-		t.Fatalf("the error must name the listener, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "PRISM_ALLOW_INSECURE_LISTEN=true") {
-		t.Fatalf("the error must explain the override, got: %v", err)
-	}
-
-	// The documented override still works.
-	t.Setenv("PRISM_ALLOW_INSECURE_LISTEN", "true")
-	if _, err := LoadEnvConfig(); err != nil {
-		t.Fatalf("PRISM_ALLOW_INSECURE_LISTEN=true must accept a public admin listener: %v", err)
-	}
 }
 
 // PRISM-DEVIATION: X2 — an empty *proxy* token is the other way into the same
@@ -1111,7 +1006,6 @@ func TestEmptyProxyTokenRequiresLoopbackAdminListen(t *testing.T) {
 		"PRISM_ADMIN_LISTEN", "RESIN_ADMIN_LISTEN",
 	)
 	t.Setenv("PRISM_LISTEN_ADDRESS", "127.0.0.1")
-	t.Setenv("PRISM_ADMIN_TOKEN", testAdminToken)
 	t.Setenv("PRISM_PROXY_TOKEN", "")
 	t.Setenv("PRISM_ALLOW_EMPTY_PROXY_TOKEN", "true")
 	t.Setenv("PRISM_ADMIN_LISTEN", "[::1]:9090")

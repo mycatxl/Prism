@@ -23,8 +23,6 @@ import (
 // node documents come from the subscription parser fixtures Prism already
 // ships.
 
-const exportTestAdminToken = "export-test-admin-token"
-
 // newExportTestControlPlane builds a minimal but real control plane: a state
 // engine on a temp directory, a node pool and a subscription manager.
 func newExportTestControlPlane(t *testing.T) *service.ControlPlaneService {
@@ -87,7 +85,7 @@ func addExportTestNode(t *testing.T, pool *topology.GlobalNodePool, sub *subscri
 func newExportTestServer(t *testing.T) (*service.ControlPlaneService, *httptest.Server) {
 	t.Helper()
 	cp := newExportTestControlPlane(t)
-	srv := NewServer(0, exportTestAdminToken, service.SystemInfo{}, nil, cp.EnvCfg, cp, 1<<20, nil, nil, nil, nil)
+	srv := NewServer(0, service.SystemInfo{}, nil, cp.EnvCfg, cp, 1<<20, nil, nil, nil, testAuthDepsForServer())
 	server := httptest.NewServer(srv.Handler())
 	t.Cleanup(server.Close)
 	return cp, server
@@ -99,7 +97,7 @@ func doExportAuthedRequest(t *testing.T, method, url string, body io.Reader) *ht
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+exportTestAdminToken)
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("do request: %v", err)
@@ -179,8 +177,9 @@ func TestExportNodesRejectsUnknownFormatAndFilter(t *testing.T) {
 	}
 }
 
-// TestExportNodesRequiresAdminToken checks rule R7.
-func TestExportNodesRequiresAdminToken(t *testing.T) {
+// TestExportNodesRequiresAuthentication checks rule R7: the export endpoints
+// are management-plane routes and must reject an anonymous request.
+func TestExportNodesRequiresAuthentication(t *testing.T) {
 	_, server := newExportTestServer(t)
 	resp, err := http.Get(server.URL + "/api/v1/nodes/export?format=csv")
 	if err != nil {

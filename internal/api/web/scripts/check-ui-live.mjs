@@ -101,6 +101,7 @@ const PAPER = lightToken("canvas");
 const INK = lightToken("ink");
 
 const LOCALE = "zh-CN";
+const ADMIN_USER = "admin";
 const DASHBOARD = "/ui/dashboard";
 const NODES = "/ui/nodes";
 
@@ -167,22 +168,19 @@ async function reservePort() {
   return port;
 }
 
-function startBackend({ root, port, adminToken, proxyToken }) {
+function startBackend({ root, port, proxyToken }) {
   const backend = spawn(binary, [], {
     cwd: root,
     env: {
       ...process.env,
-      RESIN_ADMIN_TOKEN: adminToken,
-      RESIN_PROXY_TOKEN: proxyToken,
-      RESIN_STATE_DIR: join(root, "state"),
-      RESIN_CACHE_DIR: join(root, "cache"),
-      RESIN_LOG_DIR: join(root, "logs"),
-      RESIN_LISTEN_ADDRESS: "127.0.0.1",
-      RESIN_PORT: String(port),
-      PRISM_UI_HOST: "127.0.0.1",
-      PRISM_UI_PORT: String(port),
-      RESIN_PROBE_CONCURRENCY: "2",
-      RESIN_RESOURCE_FETCH_TIMEOUT: "2s",
+      PRISM_PROXY_TOKEN: proxyToken,
+      PRISM_STATE_DIR: join(root, "state"),
+      PRISM_CACHE_DIR: join(root, "cache"),
+      PRISM_LOG_DIR: join(root, "logs"),
+      PRISM_LISTEN_ADDRESS: "127.0.0.1",
+      PRISM_PORT: String(port),
+      PRISM_PROBE_CONCURRENCY: "2",
+      PRISM_RESOURCE_FETCH_TIMEOUT: "2s",
       PRISM_QUALITY_ENABLED: "true",
       PRISM_QUALITY_API_KEY: "",
       PRISM_ABUSEIPDB_API_KEY: "",
@@ -197,6 +195,60 @@ function startBackend({ root, port, adminToken, proxyToken }) {
     stderr = (stderr + data).slice(-4000);
   });
   return { backend, exit: once(backend, "exit"), stderr: () => stderr };
+}
+
+/**
+ * Creates the administrator the panel signs in as.
+ *
+ * `prism init` is a one-shot: it refuses to run against a store that already
+ * holds a user, and it is what writes the key pepper the session service needs,
+ * so it has to happen before the backend is started. It also mints the proxy
+ * token, which is returned here because the backend has to be given that same
+ * token rather than one of its own.
+ */
+async function initBackend({ root, adminPassword }) {
+  const init = spawn(
+    binary,
+    ["init", "--dir", root, "--admin-username", ADMIN_USER, "--admin-password", adminPassword],
+    {
+      cwd: root,
+      env: {
+        ...process.env,
+        PRISM_STATE_DIR: join(root, "state"),
+        PRISM_CACHE_DIR: join(root, "cache"),
+        PRISM_LOG_DIR: join(root, "logs"),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  init.stdout.on("data", (data) => {
+    output += data;
+  });
+  init.stderr.on("data", (data) => {
+    output += data;
+  });
+  const [code] = await once(init, "exit");
+  if (code !== 0) throw new Error(`prism init exited ${code}: ${output.trim()}`);
+
+  const token = /^PRISM_PROXY_TOKEN=(.*)$/m.exec(readFileSync(join(root, ".env"), "utf8"))?.[1]?.trim();
+  if (!token) throw new Error("prism init did not write PRISM_PROXY_TOKEN to .env");
+  return token;
+}
+
+/**
+ * The headers a state-changing request made from a session needs.
+ *
+ * The session cookie is HttpOnly and rides along with the context on its own,
+ * but the double-submit token does not: the server compares the header against
+ * the cookie, so a caller that is not the console has to echo it explicitly.
+ * Reading it back is also the assertion that the login issued one.
+ */
+async function csrfHeaders(context) {
+  const cookies = await context.cookies();
+  const token = cookies.find((cookie) => cookie.name === "prism_csrf")?.value ?? "";
+  if (!token) throw new Error("the signed-in browser context holds no prism_csrf cookie");
+  return { "X-Prism-CSRF": token };
 }
 
 async function waitForHealth(origin, backend, stderr) {
@@ -222,32 +274,34 @@ async function waitForHealth(origin, backend, stderr) {
  * outbounds point at closed loopback ports, so nothing here reaches the network
  * beyond localhost. The exit map, the node table and the subscription table all
  * need at least one row to be worth asserting on.
+ *
+ * It runs through the signed-in browser context, so these calls carry the same
+ * session and CSRF token the panel itself uses.
  */
-async function seedInventory(origin, adminToken) {
-  const headers = { Authorization: "Bearer " + adminToken, "Content-Type": "application/json" };
+async function seedInventory(origin, context) {
+  const headers = { "Content-Type": "application/json", ...(await csrfHeaders(context)) };
   const content = JSON.stringify({
     outbounds: [
       { type: "http", tag: "Local Alpha", server: "127.0.0.1", server_port: 9 },
       { type: "http", tag: "Local Beta", server: "127.0.0.1", server_port: 10 },
     ],
   });
-  const created = await fetch(origin + "/api/v1/subscriptions", {
-    method: "POST",
+  const created = await context.request.post(origin + "/api/v1/subscriptions", {
     headers,
-    body: JSON.stringify({ name: "UI_Local", source_type: "local", enabled: true, content }),
+    data: { name: "UI_Local", source_type: "local", enabled: true, content },
   });
-  assert(created.ok, `fixture subscription must be created (HTTP ${created.status})`);
+  assert(created.ok(), `fixture subscription must be created (HTTP ${created.status()})`);
   const { id } = await created.json();
 
-  const refreshed = await fetch(origin + `/api/v1/subscriptions/${id}/actions/refresh`, {
-    method: "POST",
+  const refreshed = await context.request.post(origin + `/api/v1/subscriptions/${id}/actions/refresh`, {
     headers,
   });
-  assert(refreshed.ok, `fixture subscription must refresh (HTTP ${refreshed.status})`);
+  assert(refreshed.ok(), `fixture subscription must refresh (HTTP ${refreshed.status()})`);
 
   for (let attempt = 0; attempt < 40; attempt++) {
-    const page = await fetch(origin + "/api/v1/nodes?limit=1", { headers }).then((r) => r.json());
-    if ((page.total ?? 0) > 0) return page.total;
+    const listed = await context.request.get(origin + "/api/v1/nodes?limit=1", { headers });
+    const body = await listed.json();
+    if ((body.total ?? 0) > 0) return body.total;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   throw new Error("the fixture subscription never imported its nodes");
@@ -257,23 +311,29 @@ async function seedInventory(origin, adminToken) {
 // Checks
 // ---------------------------------------------------------------------------
 
-check("backend boots, inventory imports and the panel signs in", async ({ origin, page, adminToken }) => {
+check("backend boots, inventory imports and the panel signs in", async ({ origin, page, context, adminPassword }) => {
   const health = await fetch(origin + "/healthz");
   assert.equal(health.status, 200, "/healthz must answer 200");
 
-  const nodes = await seedInventory(origin, adminToken);
-  assert(nodes >= 2, `the fixture subscription must import two nodes (imported ${nodes})`);
-
   await page.goto(origin + "/ui/");
-  await page.locator("#token").waitFor({ state: "visible", timeout: 15000 });
+  await page.locator("#username").waitFor({ state: "visible", timeout: 15000 });
   assert.match(page.url(), /\/ui\/login/, "an anonymous visit to /ui/ must land on the sign-in page");
 
-  await page.locator("#token").fill(adminToken);
+  await page.locator("#username").fill(ADMIN_USER);
+  await page.locator("#password").fill(adminPassword);
   await page.locator('form button[type="submit"]').click();
   await page.waitForURL(/\/ui\/dashboard$/, { timeout: 15000 });
 
-  const stored = await page.evaluate(() => sessionStorage.getItem("prism.admin-session"));
-  assert.equal(stored, adminToken, "the admin token must be kept in sessionStorage under prism.admin-session");
+  // The session lives in an HttpOnly cookie, so nothing that grants access may
+  // be left behind in the storage a script on the page can read.
+  const stored = await page.evaluate(() => [
+    sessionStorage.getItem("prism.admin-session"),
+    localStorage.getItem("prism.admin-session"),
+  ]);
+  assert.deepEqual(stored, [null, null], "the session must not be written to browser storage");
+
+  const nodes = await seedInventory(origin, context);
+  assert(nodes >= 2, `the fixture subscription must import two nodes (imported ${nodes})`);
 });
 
 check("every route renders without a page or console error", async ({ origin, page, errors }) => {
@@ -686,8 +746,7 @@ async function rendered(page) {
 }
 
 const root = await mkdtemp(join(tmpdir(), "prism-live-test-"));
-const adminToken = randomBytes(32).toString("hex");
-const proxyToken = randomBytes(32).toString("hex");
+const adminPassword = randomBytes(24).toString("hex");
 const results = [];
 let browser;
 let backend;
@@ -697,7 +756,8 @@ let setupError;
 try {
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
-  const started = startBackend({ root, port, adminToken, proxyToken });
+  const proxyToken = await initBackend({ root, adminPassword });
+  const started = startBackend({ root, port, proxyToken });
   backend = started.backend;
   backendExit = started.exit;
   await waitForHealth(origin, backend, started.stderr);
@@ -714,7 +774,7 @@ try {
   const page = await context.newPage();
   const errors = watchPage(page);
 
-  const fixture = { origin, page, adminToken, errors };
+  const fixture = { origin, page, context, adminPassword, errors };
   for (const { name, run } of checks) {
     try {
       await run(fixture);

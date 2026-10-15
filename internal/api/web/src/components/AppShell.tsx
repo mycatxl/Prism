@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useSyncExternalStore } from "react";
-import { LogOut } from "lucide-react";
+import { LogOut, ShieldCheck } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ApiError } from "../lib/api-client";
+import { ApiError, logout } from "../lib/api-client";
 import { cn } from "../lib/cn";
 import { navigation } from "../lib/navigation";
-import { useAuthStore } from "../features/auth/auth-store";
+import { useAuthStore, clearSession } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../features/systemInfo/api";
 import { useI18n } from "../i18n";
@@ -22,16 +22,9 @@ function subscribeOnline(callback: () => void) {
   };
 }
 
-/**
- * The application frame: a 136px glass rail beside the page on wide screens, and
- * a horizontally scrolling glass bar above it below 1100px. The rail carries the
- * page list, grouped by section, and a footer with the instance's live state and
- * version on the left and the theme toggle on the right.
- */
 export function AppShell() {
   const { t } = useI18n();
-  const token = useAuthStore((state) => state.token);
-  const clearToken = useAuthStore((state) => state.clearToken);
+  const session = useAuthStore((state) => state.session);
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
@@ -51,7 +44,7 @@ export function AppShell() {
 
   const unauthorized = info.error instanceof ApiError && info.error.status === 401;
   const disconnected = !online || info.isError;
-  const weakTokens = env.data ? [!env.data.admin_token_set, !env.data.proxy_token_set].filter(Boolean).length : 0;
+  const weakTokens = env.data && !env.data.proxy_token_set ? 1 : 0;
 
   useEffect(() => {
     const heading = document.querySelector<HTMLElement>("main h1");
@@ -60,18 +53,22 @@ export function AppShell() {
     document.querySelector(".shell-main")?.scrollTo({ top: 0, behavior: "instant" });
   }, [location.pathname]);
 
-  const logout = () => {
-    clearToken();
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch {
+      clearSession();
+    }
     queryClient.clear();
     navigate("/login?reauth=1", { replace: true });
   };
 
   const statusText = unauthorized
-    ? t("令牌失效")
+    ? t("会话失效")
     : disconnected
       ? t("连接中断")
       : weakTokens > 0
-        ? t("令牌未设置")
+        ? t("旧版令牌配置仍存在")
         : info.data
           ? t("实例在线")
           : t("连接中");
@@ -91,11 +88,7 @@ export function AppShell() {
           return (
             <Fragment key={item.path}>
               {section && <div className="shell-nav__section">{t(section)}</div>}
-              <NavLink
-                to={item.path}
-                aria-current={active ? "page" : undefined}
-                className={cn("shell-nav__link", active && "is-active")}
-              >
+              <NavLink to={item.path} aria-current={active ? "page" : undefined} className={cn("shell-nav__link", active && "is-active")}>
                 {t(item.label)}
               </NavLink>
             </Fragment>
@@ -103,7 +96,10 @@ export function AppShell() {
         })}
         <div className="shell-nav__extra">
           <LanguageSwitcher collapsed />
-          <Button variant="ghost" size="icon" onClick={logout} aria-label={t("退出登录")} title={t("退出登录")} className="text-ink-soft hover:text-ink">
+          <Button variant="ghost" size="icon" onClick={() => navigate("/account-security")} aria-label={t("账户安全")} title={t("账户安全")} className="text-ink-soft hover:text-ink">
+            <ShieldCheck size={14} aria-hidden />
+          </Button>
+          <Button variant="ghost" size="icon" onClick={() => void handleLogout()} aria-label={t("退出登录")} title={t("退出登录")} className="text-ink-soft hover:text-ink">
             <LogOut size={14} aria-hidden />
           </Button>
         </div>
@@ -118,7 +114,7 @@ export function AppShell() {
       </nav>
 
       <main className="shell-main">
-        {token ? <Outlet /> : <div className="p-6 text-sm text-ink-soft">{t("需要管理员令牌")}</div>}
+        {session.authenticated || !session.auth_required ? <Outlet /> : <div className="p-6 text-sm text-ink-soft">{t("需要登录")}</div>}
       </main>
     </div>
   );

@@ -1,5 +1,4 @@
 import { ApiError, apiRequest, type ApiErrorBody } from "../../lib/api-client";
-import { getStoredAuthToken } from "../auth/auth-store";
 import type {
   EgressProbeResult,
   LatencyProbeResult,
@@ -248,15 +247,10 @@ export async function exportNodes(
   const query = new URLSearchParams({ format });
   appendNodeFilters(query, filters);
 
-  const headers = new Headers();
-  const token = getStoredAuthToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
   const timeout = AbortSignal.timeout(EXPORT_TIMEOUT_MS);
   const response = await fetch(`${API_BASE_URL}${basePath}/export?${query.toString()}`, {
     method: "GET",
-    headers,
+    credentials: "same-origin",
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
   });
   if (!response.ok) {

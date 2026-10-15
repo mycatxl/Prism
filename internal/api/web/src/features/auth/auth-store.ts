@@ -1,53 +1,44 @@
 import { create } from "zustand";
-import { readMigratedValue, removeStoredValues } from "../../lib/storage";
 
-const TOKEN_KEY = "prism.admin-session";
-const LEGACY_TOKEN_KEYS = ["prismx.admin-session"];
+export type AuthUser = {
+  id: string;
+  username: string;
+  role: string;
+  has_totp: boolean;
+};
 
-function loadInitialToken(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-  try {
-    return readMigratedValue(window.sessionStorage, TOKEN_KEY, LEGACY_TOKEN_KEYS) ?? "";
-  } catch {
-    return "";
-  }
-}
+export type SessionInfo = {
+  auth_required: boolean;
+  authenticated: boolean;
+  user?: AuthUser;
+  must_enrol_totp?: boolean;
+};
 
 type AuthState = {
-  token: string;
-  setToken: (token: string) => void;
-  clearToken: () => void;
+  session: SessionInfo;
+  setSession: (session: SessionInfo) => void;
+  clearSession: () => void;
+};
+
+const anonymousSession: SessionInfo = {
+  auth_required: true,
+  authenticated: false,
 };
 
 export const useAuthStore = create<AuthState>((set) => ({
-  token: loadInitialToken(),
-  setToken: (token) => {
-    const next = token.trim();
-    if (typeof window !== "undefined") {
-      try {
-        window.sessionStorage.setItem(TOKEN_KEY, next);
-        removeStoredValues(window.sessionStorage, LEGACY_TOKEN_KEYS);
-      } catch { /* In-memory session remains usable. */ }
-    }
-    set({ token: next });
-  },
-  clearToken: () => {
-    if (typeof window !== "undefined") {
-      try {
-        removeStoredValues(window.sessionStorage, [
-          TOKEN_KEY,
-          ...LEGACY_TOKEN_KEYS,
-          "prism.proxy-session-token",
-          "prismx.proxy-session-token",
-        ]);
-      } catch { /* Nothing persisted. */ }
-    }
-    set({ token: "" });
-  },
+  session: anonymousSession,
+  setSession: (session) => set({ session }),
+  clearSession: () => set({ session: anonymousSession }),
 }));
 
-export function getStoredAuthToken(): string {
-  return useAuthStore.getState().token;
+export function getSession(): SessionInfo {
+  return useAuthStore.getState().session;
+}
+
+export function setSession(session: SessionInfo): void {
+  useAuthStore.getState().setSession(session);
+}
+
+export function clearSession(): void {
+  useAuthStore.getState().clearSession();
 }

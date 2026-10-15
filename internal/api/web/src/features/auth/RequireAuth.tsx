@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "./auth-store";
-import { fetchAuthMode } from "../../lib/api-client";
+import { fetchSession } from "../../lib/api-client";
 import { LoadingState } from "../../components/ui/QueryState";
 
 type RequireAuthProps = {
@@ -9,49 +9,32 @@ type RequireAuthProps = {
 };
 
 export function RequireAuth({ children }: RequireAuthProps) {
-  const token = useAuthStore((state) => state.token);
+  const session = useAuthStore((state) => state.session);
   const location = useLocation();
-  const [checked, setChecked] = useState(Boolean(token));
-  const [anonymousAllowed, setAnonymousAllowed] = useState(false);
+  const [checked, setChecked] = useState(session.authenticated || !session.auth_required);
 
   useEffect(() => {
-    if (token) {
-      setAnonymousAllowed(false);
-      setChecked(true);
+    // Nothing to probe when the store already knows the answer: the render path
+    // below returns the children in that case, so calling setState here would be
+    // a state update without a purpose.
+    if (session.authenticated || !session.auth_required) {
       return;
     }
-
     let active = true;
     const controller = new AbortController();
-
-    const checkAuthMode = async () => {
-      try {
-        const authRequired = await fetchAuthMode(controller.signal);
-        if (!active) {
-          return;
-        }
-        setAnonymousAllowed(!authRequired);
-      } catch {
-        if (!active) {
-          return;
-        }
-        setAnonymousAllowed(false);
-      } finally {
-        if (active) {
-          setChecked(true);
-        }
-      }
-    };
-
-    void checkAuthMode();
-
+    void fetchSession(controller.signal).finally(() => {
+      if (active) setChecked(true);
+    });
     return () => {
       active = false;
       controller.abort();
     };
-  }, [token]);
+  }, [session.auth_required, session.authenticated]);
 
-  if (token || anonymousAllowed) {
+  if (session.authenticated || !session.auth_required) {
+    if (session.must_enrol_totp && location.pathname !== "/account-security") {
+      return <Navigate to="/account-security?enrol=1" replace />;
+    }
     return children;
   }
 

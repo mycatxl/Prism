@@ -82,27 +82,18 @@ func setAuditActor(r *http.Request, actor, userID string) {
 
 // AuditMiddleware records successful management write operations. A nil store
 // disables auditing entirely.
-func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64, next http.Handler) http.Handler {
+func AuditMiddleware(store AuditLogStore, maxBodyBytes int64, next http.Handler) http.Handler {
 	if store == nil {
 		return next
 	}
-	defaultActor := AuditActor(adminToken)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r == nil || !auditWriteMethods[r.Method] {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Peek at the body before the handler consumes it; only key names are
-		// kept and the full body is replayed to the handler afterwards.
 		detail := auditDetail(r, maxBodyBytes)
-
-		scope := &auditScope{actor: defaultActor}
-		// A request that authenticated as somebody is attributed to them rather
-		// than to the shared token. The identity middleware runs outside this
-		// one, so the actor is already in the context; the fallback covers a
-		// deployment still on the transitional token, whose actor is the token's
-		// digest - unattributed, but at least not anonymous.
+		scope := &auditScope{}
 		if actor, ok := ActorFromContext(r.Context()); ok && actor.UserID != "" {
 			scope.actor = actor.UserID
 			scope.userID = actor.UserID
@@ -111,9 +102,7 @@ func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64,
 
 		recorder := &auditStatusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
-
 		if recorder.status < 200 || recorder.status >= 300 {
-			// Failed mutations are not audited: nothing changed.
 			return
 		}
 		action := auditAction(r)
@@ -135,13 +124,14 @@ func AuditMiddleware(store AuditLogStore, adminToken string, maxBodyBytes int64,
 	})
 }
 
-// AuditActor returns the audit actor for an admin token: the first 8 hex
-// characters of its sha256 digest. The token itself is never recorded.
-func AuditActor(adminToken string) string {
-	if adminToken == "" {
+// CredentialActor returns a short non-reversible fingerprint for a credential.
+// It is used only by token-path proxy actions; management sessions and admin
+// access keys are attributed through ActorFromContext instead.
+func CredentialActor(credential string) string {
+	if credential == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(adminToken))
+	sum := sha256.Sum256([]byte(credential))
 	return hex.EncodeToString(sum[:auditActorHashBytes])
 }
 

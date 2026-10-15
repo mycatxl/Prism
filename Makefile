@@ -85,10 +85,10 @@ capacity:
 verify: lint test test-race protocol-matrix coverage-gate test-web
 
 # End-to-end smoke test: boots the built binary against a throw-away
-# environment (temporary state/cache/log directories, freshly generated tokens,
-# a loopback egress probe) and exercises health, the UI, API auth, the
-# management listener, HTTP and SOCKS5 forwarding, the reverse-proxy path,
-# online backup, check-config and restart persistence. 23 checks, about two
+# environment (temporary state/cache/log directories, a generated admin account
+# and proxy token, a loopback egress probe) and exercises health, the UI, API
+# auth, the management listener, HTTP and SOCKS5 forwarding, the reverse-proxy
+# path, online backup, check-config and restart persistence. 25 checks, about two
 # seconds, and it never reaches the network. It needs bin/prism, so it runs
 # after `make backend`; CI runs it as its own step rather than folding it into
 # `verify`, which stays free of build artifacts.

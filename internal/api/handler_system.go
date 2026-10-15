@@ -46,9 +46,7 @@ type systemEnvConfigResponse struct {
 	MetricLeasesRetentionSeconds                    int             `json:"metric_leases_retention_seconds"`
 	MetricLatencyBinWidthMS                         int             `json:"metric_latency_bin_width_ms"`
 	MetricLatencyBinOverflowMS                      int             `json:"metric_latency_bin_overflow_ms"`
-	AdminTokenSet                                   bool            `json:"admin_token_set"`
 	ProxyTokenSet                                   bool            `json:"proxy_token_set"`
-	AdminTokenWeak                                  bool            `json:"admin_token_weak"`
 	ProxyTokenWeak                                  bool            `json:"proxy_token_weak"`
 	AuthVersion                                     string          `json:"auth_version"`
 }
@@ -121,7 +119,6 @@ func systemEnvConfigSnapshot(envCfg *config.EnvConfig) *systemEnvConfigResponse 
 	if envCfg == nil {
 		return nil
 	}
-	adminTokenSet := envCfg.AdminToken != ""
 	proxyTokenSet := envCfg.ProxyToken != ""
 	return &systemEnvConfigResponse{
 		CacheDir:                              envCfg.CacheDir,
@@ -161,9 +158,7 @@ func systemEnvConfigSnapshot(envCfg *config.EnvConfig) *systemEnvConfigResponse 
 		MetricLeasesRetentionSeconds:                    envCfg.MetricLeasesRetentionSeconds,
 		MetricLatencyBinWidthMS:                         envCfg.MetricLatencyBinWidthMS,
 		MetricLatencyBinOverflowMS:                      envCfg.MetricLatencyBinOverflowMS,
-		AdminTokenSet:                                   adminTokenSet,
 		ProxyTokenSet:                                   proxyTokenSet,
-		AdminTokenWeak:                                  adminTokenSet && config.IsWeakToken(envCfg.AdminToken),
 		ProxyTokenWeak:                                  proxyTokenSet && config.IsWeakToken(envCfg.ProxyToken),
 		AuthVersion:                                     string(envCfg.AuthVersion),
 	}

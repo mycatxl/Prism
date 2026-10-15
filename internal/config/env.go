@@ -122,7 +122,6 @@ type EnvConfig struct {
 
 	// Auth
 	AuthVersion AuthVersion
-	AdminToken  string `json:"-"`
 	ProxyToken  string `json:"-"`
 
 	// Metrics
@@ -231,26 +230,18 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.RequestLogDBMaxMB = envInt("PRISM_REQUEST_LOG_DB_MAX_MB", 512, &errs)
 	cfg.RequestLogDBRetainCount = envInt("PRISM_REQUEST_LOG_DB_RETAIN_COUNT", 2, &errs)
 
-	// --- Auth (Prism never starts listeners with missing or empty tokens) ---
-	// The token reads go through lookupEnv as well, so a Resin installation
-	// keeping RESIN_ADMIN_TOKEN / RESIN_PROXY_TOKEN keeps working (X3).
+	// --- Auth ---
 	authVersionRaw, _ := lookupEnv("PRISM_AUTH_VERSION")
-	adminToken, hasAdminToken := lookupEnv("PRISM_ADMIN_TOKEN")
 	proxyToken, hasProxyToken := lookupEnv("PRISM_PROXY_TOKEN")
 	cfg.AuthVersion = AuthVersionV1
 	if strings.TrimSpace(authVersionRaw) != "" {
 		cfg.AuthVersion = NormalizeAuthVersion(authVersionRaw)
 	}
-	cfg.AdminToken = adminToken
 	cfg.ProxyToken = proxyToken
 
-	// PRISM-DEVIATION: X1 — strong tokens are required by default.
 	// PRISM_ENFORCE_STRONG_TOKENS=false restores the upstream Resin behaviour,
-	// where weak tokens are only reported through /api/v1/system/config/env.
+	// where weak proxy tokens are only reported through /api/v1/system/config/env.
 	enforceStrongTokens := envBool("PRISM_ENFORCE_STRONG_TOKENS", true, &errs)
-	// PRISM-DEVIATION: X2 — empty tokens disable authentication and require an
-	// explicit opt-in plus a loopback listener.
-	allowEmptyAdminToken := envBool("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", false, &errs)
 	allowEmptyProxyToken := envBool("PRISM_ALLOW_EMPTY_PROXY_TOKEN", false, &errs)
 	allowInsecureListen := envBool("PRISM_ALLOW_INSECURE_LISTEN", false, &errs)
 	// --- Metrics ---
@@ -276,30 +267,16 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		)
 	}
 
-	adminTokenEmpty := !hasAdminToken || strings.TrimSpace(cfg.AdminToken) == ""
 	proxyTokenEmpty := !hasProxyToken || strings.TrimSpace(cfg.ProxyToken) == ""
 
-	// PRISM-DEVIATION: X1 — weak tokens are rejected by default; setting
+	// PRISM-DEVIATION: X1 — weak proxy tokens are rejected by default; setting
 	// PRISM_ENFORCE_STRONG_TOKENS=false restores the upstream Resin behaviour
 	// where they are only flagged in /api/v1/system/config/env.
-	if adminTokenEmpty {
-		if !allowEmptyAdminToken {
-			errs = append(errs, "PRISM_ADMIN_TOKEN must be defined and non-empty; run prism init to generate private tokens, or set PRISM_ALLOW_EMPTY_ADMIN_TOKEN=true to disable admin authentication")
-		}
-	} else if enforceStrongTokens && len(cfg.AdminToken) < 16 {
-		errs = append(errs, "PRISM_ADMIN_TOKEN must be at least 16 characters")
-	}
-
-	// PRISM-DEVIATION: X2 — an empty token disables that authentication scope
-	// and must be requested explicitly.
 	if proxyTokenEmpty {
 		if !allowEmptyProxyToken {
-			errs = append(errs, "PRISM_PROXY_TOKEN must be defined and non-empty; run prism init to generate private tokens, or set PRISM_ALLOW_EMPTY_PROXY_TOKEN=true to disable proxy authentication")
+			errs = append(errs, "PRISM_PROXY_TOKEN must be defined and non-empty; run prism init to generate a private proxy token, or set PRISM_ALLOW_EMPTY_PROXY_TOKEN=true to disable proxy authentication")
 		}
 	} else {
-		// PRISM-DEVIATION: X1 — the 16-character minimum is part of the Prism
-		// policy gate (PRISM_ENFORCE_STRONG_TOKENS), not of the upstream V1
-		// validator.
 		if enforceStrongTokens && len(cfg.ProxyToken) < 16 {
 			errs = append(errs, "PRISM_PROXY_TOKEN must be at least 16 characters")
 		}
@@ -311,19 +288,13 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		}
 	}
 
-	// PRISM-DEVIATION: X2 — with authentication disabled the listener must stay
-	// on loopback unless PRISM_ALLOW_INSECURE_LISTEN=true is set explicitly.
-	if (adminTokenEmpty || proxyTokenEmpty) && !allowInsecureListen && !isLoopbackListenAddress(cfg.ListenAddress) {
-		errs = append(errs, "PRISM_LISTEN_ADDRESS must be a loopback address when a token is empty; set PRISM_ALLOW_INSECURE_LISTEN=true to override")
+	if proxyTokenEmpty && !allowInsecureListen && !isLoopbackListenAddress(cfg.ListenAddress) {
+		errs = append(errs, "PRISM_LISTEN_ADDRESS must be a loopback address when the proxy token is empty; set PRISM_ALLOW_INSECURE_LISTEN=true to override")
 	}
-	// PRISM-DEVIATION: X2 — the management listener is bound verbatim, so it
-	// needs the same loopback gate as PRISM_LISTEN_ADDRESS: otherwise a token
-	// that is empty in one scope exposes the management plane on a public
-	// interface while the primary listener still looks compliant.
-	if (adminTokenEmpty || proxyTokenEmpty) && !allowInsecureListen &&
+	if proxyTokenEmpty && !allowInsecureListen &&
 		cfg.AdminListen != "" && !isLoopbackListenAddress(cfg.AdminListen) {
 		errs = append(errs, fmt.Sprintf(
-			"PRISM_ADMIN_LISTEN (%s) must be a loopback address when a token is empty; set PRISM_ALLOW_INSECURE_LISTEN=true to override",
+			"PRISM_ADMIN_LISTEN (%s) must be a loopback address when the proxy token is empty; set PRISM_ALLOW_INSECURE_LISTEN=true to override",
 			cfg.AdminListen,
 		))
 	}

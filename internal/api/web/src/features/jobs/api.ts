@@ -1,5 +1,4 @@
 import { apiRequest } from "../../lib/api-client";
-import { getStoredAuthToken } from "../auth/auth-store";
 import type {
   CancelIntelJobResponse,
   CreateIntelJobRequest,
@@ -69,19 +68,8 @@ export function retryFailedIntelJob(jobID: string): Promise<RetryFailedJobRespon
     method: "POST",
   });
 }
-
-// EventSource cannot send an Authorization header, so the backend accepts the
-// admin token as ?access_token= for this one endpoint (handler_intel.go:145-253,
-// constant-time compare against the same token as AuthMiddleware).
-//
-// The token is written into this request URL and nowhere else: it never reaches
-// the address bar, history.replaceState, localStorage or sessionStorage, and no
-// error message or log in this feature ever includes the built URL.
+// EventSource sends same-origin cookies automatically, so the stream does not
+// need a credential in the URL or in browser storage.
 export function buildIntelJobEventsURL(jobID: string): string {
-  const token = getStoredAuthToken().trim();
-  const query = new URLSearchParams();
-  if (token) {
-    query.set("access_token", token);
-  }
-  return `${API_BASE_URL}${JOBS_PATH}/${encodeURIComponent(jobID)}/events?${query.toString()}`;
+  return `${API_BASE_URL}${JOBS_PATH}/${encodeURIComponent(jobID)}/events`;
 }

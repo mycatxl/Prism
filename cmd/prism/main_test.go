@@ -67,22 +67,16 @@ func newDefaultPlatformEnvConfig() *config.EnvConfig {
 }
 
 func TestLoadDotenvFile_LoadsEmptyProxyToken(t *testing.T) {
-	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_ADMIN_TOKEN", "RESIN_PROXY_TOKEN")
+	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_PROXY_TOKEN")
 
-	// PRISM-DEVIATION: X2 — disabling authentication by leaving a token empty
-	// now requires an explicit opt-in; upstream Resin accepted it silently.
-	t.Setenv("PRISM_ALLOW_EMPTY_ADMIN_TOKEN", "true")
+	// PRISM-DEVIATION: X2 — disabling proxy authentication by leaving the token
+	// empty now requires an explicit opt-in; upstream Resin accepted it silently.
 	t.Setenv("PRISM_ALLOW_EMPTY_PROXY_TOKEN", "true")
-	// PRISM-DEVIATION: X3 — RESIN_ADMIN_TOKEN now feeds PRISM_ADMIN_TOKEN, and
-	// this fixture uses a short token on purpose. Turn the Prism strong-token
-	// policy off so the test keeps covering dotenv loading and empty tokens
-	// rather than the token length gate.
 	t.Setenv("PRISM_ENFORCE_STRONG_TOKENS", "false")
 
 	path := filepath.Join(t.TempDir(), ".env")
 	content := strings.Join([]string{
 		"RESIN_AUTH_VERSION=V1",
-		"RESIN_ADMIN_TOKEN=admin-secret",
 		"RESIN_PROXY_TOKEN=",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -111,7 +105,7 @@ func TestLoadDotenvFile_LoadsEmptyProxyToken(t *testing.T) {
 }
 
 func TestLoadDotenvFile_DoesNotOverrideExistingEnv(t *testing.T) {
-	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_ADMIN_TOKEN", "RESIN_PROXY_TOKEN")
+	unsetEnvForDotenvTest(t, "RESIN_AUTH_VERSION", "RESIN_PROXY_TOKEN")
 	if err := os.Setenv("RESIN_PROXY_TOKEN", "real-env-token"); err != nil {
 		t.Fatalf("Setenv(RESIN_PROXY_TOKEN): %v", err)
 	}
@@ -119,7 +113,6 @@ func TestLoadDotenvFile_DoesNotOverrideExistingEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".env")
 	content := strings.Join([]string{
 		"RESIN_AUTH_VERSION=V1",
-		"RESIN_ADMIN_TOKEN=admin-secret",
 		"RESIN_PROXY_TOKEN=dotenv-token",
 	}, "\n") + "\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {

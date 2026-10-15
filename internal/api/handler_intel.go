@@ -1,12 +1,9 @@
 package api
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"prism/internal/intel/jobs"
@@ -143,17 +140,15 @@ func HandleIntelIP(cp *service.ControlPlaneService) http.HandlerFunc {
 }
 
 // HandleIntelJobEvents implements GET /api/v1/intel/jobs/{id}/events (SSE).
-//
-// Because the browser EventSource API cannot send an Authorization header, this
-// single endpoint also accepts ?access_token=<admin token>. The token
-// is compared in constant time and a failure is counted by the same login
-// failure limiter as the regular auth middleware.
-func HandleIntelJobEvents(adminToken string, limiter *AuthFailureLimiter, cp *service.ControlPlaneService) http.HandlerFunc {
+// The management identity middleware authenticates the request before it reaches
+// this handler; EventSource sends the session cookie automatically.
+func HandleIntelJobEvents(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		jobID := PathParam(r, "id")
-		if !intelEventAuthorized(w, r, adminToken, limiter) {
+		if _, ok := ActorFromContext(r.Context()); !ok {
+			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 			return
 		}
+		jobID := PathParam(r, "id")
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
@@ -233,46 +228,6 @@ func sseTerminalStatus(status string) bool {
 	default:
 		return false
 	}
-}
-
-func intelEventAuthorized(w http.ResponseWriter, r *http.Request, adminToken string, limiter *AuthFailureLimiter) bool {
-	// An empty configured token means authentication is intentionally disabled.
-	if adminToken == "" {
-		return true
-	}
-	clientIP := limiter.ClientIP(r)
-	if blocked, retryAfter := limiter.Blocked(clientIP); blocked {
-		if retryAfter > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
-		}
-		WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many failed authentication attempts; retry later")
-		return false
-	}
-
-	token := accessTokenFromRequest(r)
-	if token == "" {
-		limiter.RecordFailure(clientIP)
-		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing access token")
-		return false
-	}
-	if subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) != 1 {
-		limiter.RecordFailure(clientIP)
-		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid access token")
-		return false
-	}
-	return true
-}
-
-// accessTokenFromRequest reads the admin token from the Authorization header or,
-// only for the SSE endpoint, from the access_token query parameter.
-func accessTokenFromRequest(r *http.Request) string {
-	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
-		if token, ok := strings.CutPrefix(auth, "Bearer "); ok {
-			return strings.TrimSpace(token)
-		}
-		return auth
-	}
-	return strings.TrimSpace(r.URL.Query().Get("access_token"))
 }
 
 func writeSSEProgress(w http.ResponseWriter, flusher http.Flusher, frame *jobs.Progress) {

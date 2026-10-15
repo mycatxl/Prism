@@ -15,20 +15,13 @@ import (
 )
 
 // HTTP-level coverage of the SSE endpoint GET /api/v1/intel/jobs/{id}/events.
-//
-// The endpoint is the one route that deliberately bypasses AuthMiddleware: an
-// EventSource cannot set an Authorization header, so it accepts the admin token
-// from ?access_token= as well. That makes it the only place where the token may
-// travel in a URL, and the only place where the query-parameter fallback is
-// allowed to work at all. Both halves of that contract are pinned here, plus the
-// subscriber cap the hub enforces and the terminal frame.
-//
-// The tests drive a real httptest.Server with the route registered on a mux, so
-// the path parameter is populated exactly as it is in production.
+// EventSource sends same-origin cookies automatically, so production routes the
+// stream through the same identity middleware as every other management API.
+// Query credentials are never accepted.
 
 // newIntelEventsServer starts a real server carrying the SSE route over a live
 // intel service, and returns it together with a freshly created job id.
-func newIntelEventsServer(t *testing.T, adminToken string, limiter *AuthFailureLimiter) (*httptest.Server, string, *service.ControlPlaneService) {
+func newIntelEventsServer(t *testing.T, limiter *AuthFailureLimiter) (*httptest.Server, string, *service.ControlPlaneService) {
 	t.Helper()
 	cp := &service.ControlPlaneService{}
 	svc := wireIntelForTest(t, cp)
@@ -41,9 +34,17 @@ func newIntelEventsServer(t *testing.T, adminToken string, limiter *AuthFailureL
 		t.Fatalf("CreateJob: %v", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(adminToken, limiter, cp))
-	srv := httptest.NewServer(mux)
+	inner := http.NewServeMux()
+	inner.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(cp))
+	identity := &Identity{
+		AdminKeys: fakeAdminKeys{
+			credential: testAdminCredential,
+			identity:   AdminKeyIdentity{KeyID: "test-key", UserID: "u-admin", Role: "admin"},
+		},
+		FailureLimiter: limiter,
+	}
+	handler := limiterMiddleware(limiter, identity.Middleware(inner))
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return srv, job.ID, cp
 }
@@ -52,8 +53,8 @@ func newEventsLimiter() *AuthFailureLimiter {
 	return NewAuthFailureLimiter(1000, time.Minute, time.Minute, nil)
 }
 
-// eventsURL renders the endpoint URL for a job, optionally carrying the token in
-// the query string.
+// eventsURL renders the endpoint URL for a job, optionally carrying an ignored
+// query string used to prove query credentials do not authenticate requests.
 func eventsURL(srv *httptest.Server, jobID, query string) string {
 	url := srv.URL + "/api/v1/intel/jobs/" + jobID + "/events"
 	if query != "" {
@@ -62,28 +63,23 @@ func eventsURL(srv *httptest.Server, jobID, query string) string {
 	return url
 }
 
-// TestIntelJobEvents_Authentication pins every way the endpoint decides whether
-// a caller may subscribe.
+// TestIntelJobEvents_Authentication pins the single management authentication
+// path used by the SSE endpoint.
 func TestIntelJobEvents_Authentication(t *testing.T) {
-	const token = "sse-admin-token"
-
 	for _, tc := range []struct {
 		name       string
 		query      string
 		header     string
-		adminToken string
 		wantStatus int
 	}{
-		{"query token", "access_token=" + token, "", token, http.StatusOK},
-		{"authorization bearer", "", "Bearer " + token, token, http.StatusOK},
-		{"authorization bare value", "", token, token, http.StatusOK},
-		{"missing token", "", "", token, http.StatusUnauthorized},
-		{"wrong query token", "access_token=nope", "", token, http.StatusUnauthorized},
-		{"wrong header token", "", "Bearer nope", token, http.StatusUnauthorized},
-		{"empty configured token accepts anyone", "", "", "", http.StatusOK},
+		{"admin access key", "", "Bearer " + testAdminCredential, http.StatusOK},
+		{"query token without header", "access_token=" + testAdminCredential, "", http.StatusUnauthorized},
+		{"wrong query token with no header", "access_token=nope", "", http.StatusUnauthorized},
+		{"wrong header token", "", "Bearer nope", http.StatusUnauthorized},
+		{"bare header value", "", testAdminCredential, http.StatusUnauthorized},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			srv, jobID, _ := newIntelEventsServer(t, tc.adminToken, newEventsLimiter())
+			srv, jobID, _ := newIntelEventsServer(t, newEventsLimiter())
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
@@ -105,22 +101,18 @@ func TestIntelJobEvents_Authentication(t *testing.T) {
 				t.Fatalf("status = %d, want %d (body %s)", resp.StatusCode, tc.wantStatus, body)
 			}
 			if tc.wantStatus != http.StatusOK {
-				// A rejected subscription must never open the stream.
 				body, _ := io.ReadAll(resp.Body)
 				if strings.Contains(string(body), "event:") {
 					t.Fatalf("a rejected request wrote an SSE frame: %q", body)
 				}
 				return
 			}
-
 			if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 				t.Errorf("Content-Type = %q, want text/event-stream", ct)
 			}
 			if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
 				t.Errorf("Cache-Control = %q, want no-store", cc)
 			}
-			// The first frames replay the current state so a reconnecting client
-			// does not have to poll the job first.
 			if frames := readSSEUntil(t, resp.Body, "event: progress", 5*time.Second); len(frames) == 0 {
 				t.Error("the stream must replay the current state first")
 			}
@@ -128,39 +120,44 @@ func TestIntelJobEvents_Authentication(t *testing.T) {
 	}
 }
 
-// TestIntelJobEvents_QueryTokenDoesNotAuthenticateOtherRoutes pins that the
-// ?access_token= fallback is scoped to the SSE endpoint. If it ever leaked into
-// AuthMiddleware, every management route would start accepting the admin token
-// from a URL — and URLs end up in reverse-proxy access logs.
+// TestIntelJobEvents_QueryTokenDoesNotAuthenticateOtherRoutes pins that a query
+// credential cannot authenticate any management route.
 func TestIntelJobEvents_QueryTokenDoesNotAuthenticateOtherRoutes(t *testing.T) {
-	const token = "sse-admin-token"
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	guarded := AuthMiddleware(token, newEventsLimiter(), inner)
+	identity := &Identity{AdminKeys: fakeAdminKeys{
+		credential: testAdminCredential,
+		identity:   AdminKeyIdentity{KeyID: "test-key", UserID: "u-admin", Role: "admin"},
+	}}
+	guarded := identity.Middleware(inner)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes?access_token="+token, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/nodes?access_token="+testAdminCredential, nil)
 	rec := httptest.NewRecorder()
 	guarded.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("AuthMiddleware accepted a query token: status = %d, want 401", rec.Code)
+		t.Fatalf("Identity accepted a query token: status = %d, want 401", rec.Code)
 	}
 
-	// The header still works on the management surface.
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/nodes", nil)
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
 	rec = httptest.NewRecorder()
 	guarded.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("AuthMiddleware rejected a valid header token: status = %d", rec.Code)
+		t.Fatalf("Identity rejected a valid admin key: status = %d", rec.Code)
 	}
 }
 
 // TestIntelJobEvents_UnknownJobIsNotFound pins that a subscriber cannot open a
 // stream for a job that does not exist.
 func TestIntelJobEvents_UnknownJobIsNotFound(t *testing.T) {
-	srv, _, _ := newIntelEventsServer(t, "tok", newEventsLimiter())
-	resp, err := srv.Client().Get(eventsURL(srv, "does-not-exist", "access_token=tok"))
+	srv, _, _ := newIntelEventsServer(t, newEventsLimiter())
+	req, err := http.NewRequest(http.MethodGet, eventsURL(srv, "does-not-exist", "access_token="+testAdminCredential), nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -170,16 +167,14 @@ func TestIntelJobEvents_UnknownJobIsNotFound(t *testing.T) {
 	}
 }
 
-// TestIntelJobEvents_FailedAuthsAreRateLimited pins that a wrong token counts
-// against the shared authentication-failure budget, so the SSE endpoint cannot
-// be used to brute-force the admin token without being blocked.
+// TestIntelJobEvents_FailedAuthsAreRateLimited pins the shared failure limiter
+// around the identity middleware.
 func TestIntelJobEvents_FailedAuthsAreRateLimited(t *testing.T) {
 	limiter := NewAuthFailureLimiter(3, time.Minute, time.Minute, nil)
-	srv, jobID, _ := newIntelEventsServer(t, "right", limiter)
+	srv, jobID, _ := newIntelEventsServer(t, limiter)
 
-	// Exhaust the failure budget.
 	for i := 0; i < 3; i++ {
-		resp, err := srv.Client().Get(eventsURL(srv, jobID, "access_token=wrong"))
+		resp, err := srv.Client().Get(eventsURL(srv, jobID, ""))
 		if err != nil {
 			t.Fatalf("attempt %d: %v", i+1, err)
 		}
@@ -189,8 +184,7 @@ func TestIntelJobEvents_FailedAuthsAreRateLimited(t *testing.T) {
 		}
 	}
 
-	// The next attempt is blocked before the token is even compared.
-	resp, err := srv.Client().Get(eventsURL(srv, jobID, "access_token=right"))
+	resp, err := srv.Client().Get(eventsURL(srv, jobID, ""))
 	if err != nil {
 		t.Fatalf("GET after the failure budget: %v", err)
 	}
@@ -207,7 +201,7 @@ func TestIntelJobEvents_FailedAuthsAreRateLimited(t *testing.T) {
 // the subscriber slots are gone, a further subscriber is refused instead of
 // hanging. The refusal is 429 (the service documents it that way), never a 500.
 func TestIntelJobEvents_SubscriberCapIsEnforced(t *testing.T) {
-	srv, jobID, cp := newIntelEventsServer(t, "tok", newEventsLimiter())
+	srv, jobID, cp := newIntelEventsServer(t, newEventsLimiter())
 
 	// Take every slot through the service: opening 64 real streams is slow and
 	// adds nothing over the handler-level assertion below.
@@ -225,7 +219,12 @@ func TestIntelJobEvents_SubscriberCapIsEnforced(t *testing.T) {
 		}
 	})
 
-	resp, err := srv.Client().Get(eventsURL(srv, jobID, "access_token=tok"))
+	req, err := http.NewRequest(http.MethodGet, eventsURL(srv, jobID, "access_token="+testAdminCredential), nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET with the cap reached: %v", err)
 	}
@@ -254,11 +253,6 @@ func TestIntelJobEvents_StreamEndsWhenTheJobFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
-	// This fixture's scope resolver returns no node hashes, so the job settles
-	// inside CreateJob. It used to be forced terminal with CancelJob, which is no
-	// longer possible: CancelJob refuses to rewrite a job that already reached a
-	// terminal status. A job that finished on its own is exactly the state this
-	// test needs - the subscriber arrives after the job is done.
 	stored, err := svc.Manager().Store().GetJob(context.Background(), job.ID)
 	if err != nil {
 		t.Fatalf("GetJob: %v", err)
@@ -267,12 +261,21 @@ func TestIntelJobEvents_StreamEndsWhenTheJobFinishes(t *testing.T) {
 		t.Fatalf("job = %+v, want a terminal status before subscribing", stored)
 	}
 
-	mux := http.NewServeMux()
-	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents("tok", newEventsLimiter(), cp))
-	srv := httptest.NewServer(mux)
+	inner := http.NewServeMux()
+	inner.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(cp))
+	identity := &Identity{AdminKeys: fakeAdminKeys{
+		credential: testAdminCredential,
+		identity:   AdminKeyIdentity{KeyID: "test-key", UserID: "u-admin", Role: "admin"},
+	}}
+	srv := httptest.NewServer(identity.Middleware(inner))
 	t.Cleanup(srv.Close)
 
-	resp, err := srv.Client().Get(eventsURL(srv, job.ID, "access_token=tok"))
+	req, err := http.NewRequest(http.MethodGet, eventsURL(srv, job.ID, "access_token="+testAdminCredential), nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
+	resp, err := srv.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -281,7 +284,6 @@ func TestIntelJobEvents_StreamEndsWhenTheJobFinishes(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
-	// A terminal job must close the stream, so the body reaches EOF.
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read the stream: %v", err)

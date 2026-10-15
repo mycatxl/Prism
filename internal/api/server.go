@@ -72,32 +72,18 @@ type Server struct {
 
 // AuthDeps is the authentication surface the management API mounts.
 //
-// It is a separate value rather than more parameters because a deployment can
-// legitimately have none of it: without it the API falls back to the
-// transitional shared token, which keeps an un-migrated install working.
+// Identity is mandatory for management routes. Without it the server still
+// builds its public health and UI routes, but every /api/ request fails closed.
 type AuthDeps struct {
-	// Identity authenticates every management request.
-	Identity *Identity
-	// Handlers serves the login, logout, session and account-security routes.
-	Handlers *AuthHandlers
-	// Issuer is the name an authenticator app shows for this deployment. It
-	// appears in the enrolment URI, so an operator running several deployments
-	// can tell their entries apart.
-	Issuer string
-	// Blocklist is the failure limiter shared by the login handler and the
-	// middleware. Nil makes the server build its own, which is what a caller
-	// that does not construct a session service gets.
+	Identity  *Identity
+	Handlers  *AuthHandlers
+	Issuer    string
 	Blocklist *AuthFailureLimiter
 }
 
 // NewServer creates a new API server wired with all routes.
-// cp may be nil if the control plane is not yet initialized.
-//
-// port is part of the constructor contract only: nothing is bound here, so the
-// value is not read. The listener is created and served by cmd/prism.
 func NewServer(
 	port int,
-	adminToken string,
 	systemInfo service.SystemInfo,
 	runtimeCfg *atomic.Pointer[config.RuntimeConfig],
 	envCfg *config.EnvConfig,
@@ -111,7 +97,6 @@ func NewServer(
 	return NewServerWithAddress(
 		"",
 		port,
-		adminToken,
 		systemInfo,
 		runtimeCfg,
 		envCfg,
@@ -125,16 +110,9 @@ func NewServer(
 }
 
 // NewServerWithAddress creates a new API server with an explicit listen address.
-// panelEgress may be nil: the panel egress fields stay empty.
-//
-// listenAddress and port are part of the constructor contract only: this value
-// only ever produces the mux, and cmd/prism binds the address itself (through
-// NewListenerServer and the endpoint runtime). Passing them here is harmless but
-// does not configure anything.
 func NewServerWithAddress(
 	listenAddress string,
 	port int,
-	adminToken string,
 	systemInfo service.SystemInfo,
 	runtimeCfg *atomic.Pointer[config.RuntimeConfig],
 	envCfg *config.EnvConfig,
@@ -145,6 +123,7 @@ func NewServerWithAddress(
 	panelEgress PanelEgressProvider,
 	authDeps *AuthDeps,
 ) *Server {
+
 	mux := http.NewServeMux()
 
 	// Public (no auth)
@@ -164,7 +143,7 @@ func NewServerWithAddress(
 	if authDeps != nil && authDeps.Identity != nil {
 		sessionInfo = authDeps.Identity.sessionInfo
 	}
-	mux.Handle("/ui/", newWebUIHandler(adminToken != "", sessionInfo))
+	mux.Handle("/ui/", newWebUIHandler(true, sessionInfo))
 
 	// Authenticated routes
 	authed := http.NewServeMux()
@@ -296,7 +275,7 @@ func NewServerWithAddress(
 	var authedHandler http.Handler = authed
 	if cp != nil && cp.Engine != nil {
 		authed.Handle("GET /api/v1/audit-logs", HandleListAuditLogs(cp.Engine))
-		authedHandler = AuditMiddleware(cp.Engine, adminToken, apiMaxBodyBytes, authed)
+		authedHandler = AuditMiddleware(cp.Engine, apiMaxBodyBytes, authed)
 	}
 	authedHandler = RequestBodyLimitMiddleware(apiMaxBodyBytes, authedHandler)
 	// The body phase gets its own bound: ReadHeaderTimeout stops at the end of
@@ -316,7 +295,7 @@ func NewServerWithAddress(
 		// failed attempts" mean the same thing to both paths.
 		authLimiter = authDeps.Blocklist
 	}
-	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(adminToken, authLimiter, cp))
+	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(cp))
 
 	// Authentication: the console's session routes, and the middleware that
 	// guards everything else.
@@ -340,13 +319,19 @@ func NewServerWithAddress(
 		authed.Handle("POST /api/v1/auth/totp/disable", handlers.HandleDisableTOTP())
 	}
 	if authDeps != nil && authDeps.Identity != nil {
-		// The identity middleware replaces the token comparison and keeps the
-		// failure limiter, so a blocked address is still refused before any
-		// password work happens.
+		authDeps.Identity.FailureLimiter = authLimiter
+	}
+	if authDeps != nil && authDeps.Identity != nil {
+		// The identity middleware authenticates both console sessions and admin
+		// access keys, while this limiter blocks addresses with repeated failures.
 		authedHandler = limiterMiddleware(authLimiter, authedHandler)
 		mux.Handle("/api/", authDeps.Identity.Middleware(authedHandler))
 	} else {
-		mux.Handle("/api/", AuthMiddleware(adminToken, authLimiter, authedHandler))
+		// No identity is a safe failure mode: the management surface must never
+		// silently fall back to a shared credential.
+		mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+		}))
 	}
 
 	// Connection hygiene belongs to the listener, not to this value: cmd/prism

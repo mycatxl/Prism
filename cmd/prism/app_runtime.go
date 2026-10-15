@@ -755,7 +755,6 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 			// enrol, which is what keeps the requirement from locking everyone
 			// out of a fresh install.
 			RequireAdminTOTP: func() bool { return a.envCfg.RequireAdminTOTP },
-			LegacyAdminToken: a.envCfg.AdminToken,
 			Logf:             log.Printf,
 		},
 		Handlers: &api.AuthHandlers{
@@ -768,7 +767,6 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	apiSrv := api.NewServerWithAddress(
 		a.envCfg.ListenAddress,
 		a.envCfg.ProxyPort,
-		a.envCfg.AdminToken,
 		systemInfo,
 		a.runtimeCfg,
 		a.envCfg,

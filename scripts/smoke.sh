@@ -3,7 +3,7 @@
 # Prism smoke test.
 #
 # Boots bin/prism against a throw-away environment (temporary state/cache/log
-# directories plus freshly generated tokens) and exercises the public surface:
+# directories plus a generated admin account and proxy token) and exercises the
 # health, UI, API auth, environment-defined management listener, HTTP and SOCKS5
 # forwarding through a local HTTP proxy node, the reverse proxy path and
 # restart persistence.
@@ -94,6 +94,40 @@ http_code() {
     printf '%s' "$code"
 }
 
+csrf_from_jar() {
+    # csrf_from_jar <cookie-jar> -> prints the readable double-submit token.
+    awk '$6 == "prism_csrf" { print $7; exit }' "$1" 2>/dev/null
+}
+
+login_session() {
+    # login_session <base> <cookie-jar>
+    local base="$1" jar="$2" status
+    printf '{"username":"%s","password":"%s"}\n' "$ADMIN_USER" "$ADMIN_PASSWORD" > "$WORK_DIR/login.json"
+    : > "$jar"
+    status="$(http_code -b "$jar" -c "$jar" \
+        -H 'Content-Type: application/json' \
+        --data-binary "@$WORK_DIR/login.json" \
+        "$base/api/v1/auth/login")"
+    if [ "$status" != "200" ]; then
+        log "login failed for $base (HTTP $status)"
+        sed "s/${ADMIN_PASSWORD}/***REDACTED***/g" "$BODY_FILE" >&2 || true
+        return 1
+    fi
+    if [ -z "$(csrf_from_jar "$jar")" ]; then
+        log "login for $base did not issue a CSRF cookie"
+        return 1
+    fi
+}
+
+session_code() {
+    # session_code <cookie-jar> <curl-args...>
+    local jar="$1"
+    shift
+    local csrf
+    csrf="$(csrf_from_jar "$jar")"
+    http_code -b "$jar" -c "$jar" -H "X-Prism-CSRF: $csrf" "$@"
+}
+
 wait_for_healthz() {
     local base="$1" attempts=0
     while [ "$attempts" -lt 60 ]; do
@@ -126,8 +160,11 @@ PROXY_PID=""
 TRACE_PID=""
 BODY_FILE="$WORK_DIR/body.txt"
 PRISM_LOG="$WORK_DIR/prism.log"
-ADMIN_TOKEN=""
 PROXY_TOKEN=""
+MAIN_JAR="$WORK_DIR/main.cookies"
+ADMIN_JAR="$WORK_DIR/admin.cookies"
+MAIN_CSRF=""
+ADMIN_CSRF=""
 
 cleanup() {
     local status=$?
@@ -138,9 +175,9 @@ cleanup() {
         fi
     done
     if [ "$FAIL" -gt 0 ] && [ -f "$PRISM_LOG" ]; then
-        printf '\n[smoke] --- last Prism log lines (tokens redacted) ---\n'
-        sed -e "s/${ADMIN_TOKEN:-__none__}/***REDACTED***/g" \
-            -e "s/${PROXY_TOKEN:-__none__}/***REDACTED***/g" "$PRISM_LOG" | tail -n 40
+        printf '\n[smoke] --- last Prism log lines (secrets redacted) ---\n'
+        sed -e "s/${PROXY_TOKEN:-__none__}/***REDACTED***/g" \
+            -e "s/${ADMIN_PASSWORD:-__none__}/***REDACTED***/g" "$PRISM_LOG" | tail -n 40
         printf '[smoke] --- end of log ---\n\n'
     fi
     if [ "${PRISM_SMOKE_KEEP:-0}" = "1" ]; then
@@ -164,8 +201,9 @@ if [ ! -x "$BIN" ]; then
     exit 1
 fi
 
-ADMIN_TOKEN="$(random_token)"
-PROXY_TOKEN="$(random_token)"
+PROXY_TOKEN=""
+ADMIN_USER="admin"
+ADMIN_PASSWORD="smoke-admin-password-0123456789"
 MAIN_PORT="$(free_port)"
 ADMIN_PORT="$(free_port)"
 TARGET_PORT="$(free_port)"
@@ -174,34 +212,42 @@ PROXY_PORT="$(free_port)"
 
 MAIN_BASE="http://127.0.0.1:$MAIN_PORT"
 ADMIN_BASE="http://127.0.0.1:$ADMIN_PORT"
-PROXY_URL="http://Default:$PROXY_TOKEN@127.0.0.1:$MAIN_PORT"
-SOCKS_URL="socks5h://Default:$PROXY_TOKEN@127.0.0.1:$MAIN_PORT"
 
 mkdir -p "$WORK_DIR/state" "$WORK_DIR/cache" "$WORK_DIR/logs" "$WORK_DIR/www"
 printf 'PRISM_SMOKE_TARGET\n' > "$WORK_DIR/www/index.html"
 
-cat > "$WORK_DIR/.env" <<EOF
-PRISM_ADMIN_TOKEN=$ADMIN_TOKEN
-PRISM_PROXY_TOKEN=$PROXY_TOKEN
-PRISM_LISTEN_ADDRESS=127.0.0.1
-PRISM_PORT=$MAIN_PORT
-PRISM_ADMIN_LISTEN=127.0.0.1:$ADMIN_PORT
-PRISM_STATE_DIR=./state
-PRISM_CACHE_DIR=./cache
-PRISM_LOG_DIR=./logs
-PRISM_EGRESS_TRACE_URL=http://127.0.0.1:$TRACE_PORT/cdn-cgi/trace
-# The reverse-proxy check below dials a loopback target directly. That only
-# happens for hosts matched by the operator bypass rules (upstream Resin
-# behaviour); SSRF protection for this path (on by default) is
-# PRISM_DIRECT_DENY_PRIVATE, disabled below.
-PRISM_PROXY_BYPASS=127.0.0.1
-# Every mock in this test (subscription server, nodes, bypass target) lives on
-# loopback, so the v0.1.0 private-address defaults are switched off here.
-PRISM_RESOURCE_FETCH_ALLOW_PRIVATE=true
-PRISM_DENY_PRIVATE_NODES=false
-PRISM_DIRECT_DENY_PRIVATE=false
-EOF
-chmod 0600 "$WORK_DIR/.env"
+if ! PRISM_STATE_DIR="$WORK_DIR/state" PRISM_CACHE_DIR="$WORK_DIR/cache" \
+    "$BIN" init --dir "$WORK_DIR" --admin-username "$ADMIN_USER" \
+    --admin-password "$ADMIN_PASSWORD" > "$WORK_DIR/init.log" 2>&1; then
+    fail "prism init failed"
+    cat "$WORK_DIR/init.log" >&2
+    exit 1
+fi
+PROXY_TOKEN="$(sed -n 's/^PRISM_PROXY_TOKEN=//p' "$WORK_DIR/.env")"
+if [ -z "$PROXY_TOKEN" ]; then
+    fail "prism init did not write PRISM_PROXY_TOKEN"
+    exit 1
+fi
+
+# Existing process variables win over the generated .env, so the smoke run can
+# use dynamically reserved ports while still exercising the initialized store
+# and pepper.
+export PRISM_PROXY_TOKEN="$PROXY_TOKEN"
+export PRISM_LISTEN_ADDRESS=127.0.0.1
+export PRISM_PORT="$MAIN_PORT"
+export PRISM_ADMIN_LISTEN="127.0.0.1:$ADMIN_PORT"
+export PRISM_STATE_DIR="$WORK_DIR/state"
+export PRISM_CACHE_DIR="$WORK_DIR/cache"
+export PRISM_LOG_DIR="$WORK_DIR/logs"
+export PRISM_EGRESS_TRACE_URL="http://127.0.0.1:$TRACE_PORT/cdn-cgi/trace"
+# The reverse-proxy check below dials a loopback target directly. Private
+# address protection is disabled because every smoke fixture is loopback-only.
+export PRISM_PROXY_BYPASS=127.0.0.1
+export PRISM_RESOURCE_FETCH_ALLOW_PRIVATE=true
+export PRISM_DENY_PRIVATE_NODES=false
+export PRISM_DIRECT_DENY_PRIVATE=false
+PROXY_URL="http://Default:$PROXY_TOKEN@127.0.0.1:$MAIN_PORT"
+SOCKS_URL="socks5h://Default:$PROXY_TOKEN@127.0.0.1:$MAIN_PORT"
 
 # --- local test target server -------------------------------------------------
 python3 -m http.server "$TARGET_PORT" --bind 127.0.0.1 --directory "$WORK_DIR/www" \
@@ -355,10 +401,15 @@ case "$ui_status" in
     *) fail "/ui/ returned HTTP $ui_status (expected 200 or 503)" ;;
 esac
 
-check_status "/api/v1/system/info rejects missing token" 401 \
+check_status "/api/v1/system/info rejects missing session" 401 \
     "$(http_code "$MAIN_BASE/api/v1/system/info")"
-check_status "/api/v1/system/info accepts the admin token" 200 \
-    "$(http_code -H "Authorization: Bearer $ADMIN_TOKEN" "$MAIN_BASE/api/v1/system/info")"
+if login_session "$MAIN_BASE" "$MAIN_JAR"; then
+    pass "main listener login issued session and CSRF cookies"
+else
+    fail "main listener login failed"
+fi
+check_status "/api/v1/system/info accepts the session" 200 \
+    "$(session_code "$MAIN_JAR" "$MAIN_BASE/api/v1/system/info")"
 if grep -q '"build_tags"' "$BODY_FILE"; then
     pass "/api/v1/system/info reports build_tags"
 else
@@ -367,8 +418,13 @@ fi
 
 # --- optional independent management listener (PRISM_ADMIN_LISTEN) ------------
 check_status "admin listener /healthz" 200 "$(http_code "$ADMIN_BASE/healthz")"
-check_status "admin listener /api with token" 200 \
-    "$(http_code -H "Authorization: Bearer $ADMIN_TOKEN" "$ADMIN_BASE/api/v1/system/info")"
+if login_session "$ADMIN_BASE" "$ADMIN_JAR"; then
+    pass "admin listener login issued session and CSRF cookies"
+else
+    fail "admin listener login failed"
+fi
+check_status "admin listener /api with session" 200 \
+    "$(session_code "$ADMIN_JAR" "$ADMIN_BASE/api/v1/system/info")"
 admin_proxy_status="$(http_code -X CONNECT "$ADMIN_BASE/")"
 if [ "$admin_proxy_status" = "404" ] || [ "$admin_proxy_status" = "405" ]; then
     pass "admin listener refuses CONNECT (HTTP $admin_proxy_status)"
@@ -381,8 +437,7 @@ create_body="$WORK_DIR/create-sub.json"
 cat > "$create_body" <<EOF
 {"name":"local-smoke","source_type":"local","content":"127.0.0.1:$PROXY_PORT","enabled":true}
 EOF
-create_status="$(http_code -X POST \
-    -H "Authorization: Bearer $ADMIN_TOKEN" \
+create_status="$(session_code "$MAIN_JAR" -X POST \
     -H "Content-Type: application/json" \
     --data-binary "@$create_body" \
     "$MAIN_BASE/api/v1/subscriptions")"
@@ -395,15 +450,14 @@ fi
 
 if [ -n "$SUB_ID" ]; then
     check_status "subscription refresh" 200 \
-        "$(http_code -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "$(session_code "$MAIN_JAR" -X POST \
             "$MAIN_BASE/api/v1/subscriptions/$SUB_ID/actions/refresh")"
 fi
 
 nodes_ready=0
 attempts=0
 while [ "$attempts" -lt 60 ]; do
-    if [ "$(http_code -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MAIN_BASE/api/v1/nodes?limit=10")" = "200" ] \
+    if [ "$(session_code "$MAIN_JAR" "$MAIN_BASE/api/v1/nodes?limit=10")" = "200" ] \
         && python3 -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get("total",0)>=1 else 1)' "$BODY_FILE" 2>/dev/null; then
         nodes_ready=1
         break
@@ -475,14 +529,18 @@ manifest = json.loads((root / "manifest.json").read_text())
 names = {entry["name"] for entry in manifest["files"]}
 if not {"state.db", "cache.db"} <= names:
     raise SystemExit(f"manifest is missing databases: {sorted(names)}")
-if not names <= {"state.db", "cache.db", "intel.db"}:
+if not names <= {"state.db", "cache.db", "intel.db", "pepper"}:
     raise SystemExit(f"manifest lists unexpected files: {sorted(names)}")
-for entry in manifest["files"]:
-    conn = sqlite3.connect(root / entry["name"])
+# pepper is not a database; it is the key the password hashes are derived from,
+# so a backup without it cannot verify a single stored credential.
+if "pepper" not in names:
+    raise SystemExit("manifest is missing the password pepper")
+for name in sorted(names & {"state.db", "cache.db", "intel.db"}):
+    conn = sqlite3.connect(root / name)
     check = conn.execute("PRAGMA quick_check").fetchone()[0]
     conn.close()
     if check != "ok":
-        raise SystemExit(f"quick_check {entry['name']}: {check}")
+        raise SystemExit(f"quick_check {name}: {check}")
 PY
 then
     pass "online backup databases are consistent (quick_check ok)"
@@ -502,7 +560,7 @@ fi
 check_exit=0
 ( cd "$WORK_DIR" && "$BIN" check-config ) > "$WORK_DIR/check-config.log" 2>&1 || check_exit=$?
 if [ "$check_exit" -eq 0 ] \
-    && ! grep -q "$ADMIN_TOKEN" "$WORK_DIR/check-config.log" \
+    && ! grep -q "$ADMIN_PASSWORD" "$WORK_DIR/check-config.log" \
     && ! grep -q "$PROXY_TOKEN" "$WORK_DIR/check-config.log"; then
     pass "check-config succeeds without printing any token"
 else
@@ -530,14 +588,14 @@ if ! wait_for_healthz "$MAIN_BASE"; then
     exit 1
 fi
 
-if [ "$(http_code -H "Authorization: Bearer $ADMIN_TOKEN" "$MAIN_BASE/api/v1/platforms")" = "200" ] \
+if [ "$(session_code "$MAIN_JAR" "$MAIN_BASE/api/v1/platforms")" = "200" ] \
     && python3 -c 'import json,sys;sys.exit(0 if json.load(open(sys.argv[1])).get("total",0)>=1 else 1)' "$BODY_FILE" 2>/dev/null; then
     pass "platform survived the restart"
 else
     fail "platforms were not restored after the restart"
 fi
 
-if [ "$(http_code -H "Authorization: Bearer $ADMIN_TOKEN" "$MAIN_BASE/api/v1/subscriptions")" = "200" ] \
+if [ "$(session_code "$MAIN_JAR" "$MAIN_BASE/api/v1/subscriptions")" = "200" ] \
     && grep -q 'local-smoke' "$BODY_FILE"; then
     pass "subscription survived the restart"
 else

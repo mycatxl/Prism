@@ -1,4 +1,4 @@
-import { getStoredAuthToken } from "../features/auth/auth-store";
+import { clearSession, setSession, type SessionInfo } from "../features/auth/auth-store";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
 
@@ -19,6 +19,7 @@ export class ApiError extends Error {
 
   constructor(status: number, code: string, message: string, body: ApiErrorBody | null) {
     super(message);
+    this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.body = body;
@@ -28,8 +29,6 @@ export class ApiError extends Error {
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonValue;
-  auth?: boolean;
-  token?: string;
   signal?: AbortSignal;
 };
 
@@ -40,58 +39,85 @@ function buildURL(path: string): string {
   return `${API_BASE_URL}${path}`;
 }
 
+function timeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
+
+function csrfToken(): string {
+  if (typeof document === "undefined") {
+    return "";
+  }
+  const cookie = document.cookie
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("prism_csrf="));
+  if (!cookie) {
+    return "";
+  }
+  try {
+    return decodeURIComponent(cookie.slice("prism_csrf=".length));
+  } catch {
+    return "";
+  }
+}
+
+function isSafeMethod(method: string): boolean {
+  return method === "GET" || method === "HEAD" || method === "OPTIONS";
+}
+
 async function parseErrorBody(response: Response): Promise<ApiErrorBody | null> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
     return null;
   }
-
   try {
     return (await response.json()) as ApiErrorBody;
   } catch {
     return null;
   }
 }
-
-/**
- * Whether this deployment needs an admin token, asked before one exists.
- *
- * The login page used to probe `GET /api/v1/system/info` without credentials and read
- * 401 as "auth is on". The answer was right and the request was wrong: Chromium logs
- * the 401 response itself, so the first screen of a secured deployment could never be
- * console-clean, and the question was expressed as a failure. The SPA handler answers
- * it directly at /ui/session.json.
- *
- * Fails closed: an unreadable answer means "a token is required", which is the safe
- * default to show a stranger.
- */
-export async function fetchAuthMode(signal?: AbortSignal): Promise<boolean> {
+export async function fetchSession(signal?: AbortSignal): Promise<SessionInfo> {
   const response = await fetch(buildURL("/ui/session.json"), {
+    credentials: "same-origin",
     headers: { Accept: "application/json" },
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+    signal: timeoutSignal(signal, 10_000),
   });
   if (!response.ok) {
     throw new ApiError(response.status, "SESSION_MODE_UNAVAILABLE", "无法确定登录方式", null);
   }
-  const body = (await response.json()) as { auth_required?: boolean };
-  return body.auth_required !== false;
+  const body = (await response.json()) as SessionInfo;
+  const session: SessionInfo = {
+    auth_required: body.auth_required !== false,
+    authenticated: body.authenticated === true,
+    user: body.user,
+    must_enrol_totp: body.must_enrol_totp === true,
+  };
+  setSession(session);
+  return session;
+}
+
+/** Whether this deployment requires a logged-in console session. */
+export async function fetchAuthMode(signal?: AbortSignal): Promise<boolean> {
+  const session = await fetchSession(signal);
+  return session.auth_required;
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, auth = true, token, signal } = options;
-  if (method !== "GET" && !navigator.onLine) {
+  const { method = "GET", body, signal } = options;
+  if (method !== "GET" && typeof navigator !== "undefined" && !navigator.onLine) {
     throw new ApiError(0, "OFFLINE", "离线时无法提交操作", null);
   }
-  const headers = new Headers();
 
+  const headers = new Headers();
+  headers.set("Accept", "application/json");
   if (body !== undefined) {
     headers.set("Content-Type", "application/json; charset=utf-8");
   }
-
-  if (auth) {
-    const resolvedToken = token?.trim() || getStoredAuthToken();
-    if (resolvedToken) {
-      headers.set("Authorization", `Bearer ${resolvedToken}`);
+  if (!isSafeMethod(method)) {
+    const token = csrfToken();
+    if (token) {
+      headers.set("X-Prism-CSRF", token);
     }
   }
 
@@ -99,13 +125,17 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000),
+    credentials: "same-origin",
+    signal: timeoutSignal(signal, 30_000),
   });
 
   if (!response.ok) {
     const parsed = await parseErrorBody(response);
     const code = parsed?.error?.code ?? "HTTP_ERROR";
     const message = parsed?.error?.message ?? response.statusText;
+    if (response.status === 401) {
+      clearSession();
+    }
     throw new ApiError(response.status, code, message, parsed);
   }
 
@@ -119,4 +149,29 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
 
   return (await response.json()) as T;
+}
+
+export type LoginResponse = {
+  authenticated: true;
+  user: NonNullable<SessionInfo["user"]>;
+  expires_at_ns: number;
+};
+
+export async function login(username: string, password: string, totp: string): Promise<LoginResponse> {
+  const response = await apiRequest<LoginResponse>("/api/v1/auth/login", {
+    method: "POST",
+    body: { username, password, totp },
+  });
+  setSession({
+    auth_required: true,
+    authenticated: true,
+    user: response.user,
+    must_enrol_totp: false,
+  });
+  return response;
+}
+
+export async function logout(): Promise<void> {
+  await apiRequest<void>("/api/v1/auth/logout", { method: "POST" });
+  clearSession();
 }

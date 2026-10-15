@@ -2,7 +2,6 @@ package api
 
 import (
 	"container/list"
-	"crypto/subtle"
 	"net"
 	"net/http"
 	"net/netip"
@@ -330,59 +329,6 @@ func limiterMiddleware(limiter *AuthFailureLimiter, next http.Handler) http.Hand
 				"too many failed authentication attempts; retry later")
 			return
 		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// AuthMiddleware returns an http.Handler that validates the Bearer token in the
-// Authorization header against the expected admin token.
-//
-// A client that already exceeded the failure limiter is answered with
-// 429 RATE_LIMITED before the token comparison; only failed comparisons are
-// counted and successful requests are never recorded. limiter may be nil, which
-// disables this protection.
-//
-// It is the transitional path, used only when no identity is configured. A
-// deployment with sessions authenticates through the identity middleware
-// instead, and this is removed in the same release that turns sessions on.
-func AuthMiddleware(adminToken string, limiter *AuthFailureLimiter, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Empty configured admin token means auth is intentionally disabled.
-		if adminToken == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		clientIP := limiter.ClientIP(r)
-		if blocked, retryAfter := limiter.Blocked(clientIP); blocked {
-			if retryAfter > 0 {
-				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
-			}
-			WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many failed authentication attempts; retry later")
-			return
-		}
-
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			limiter.RecordFailure(clientIP)
-			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "missing Authorization header")
-			return
-		}
-
-		const prefix = "Bearer "
-		if !strings.HasPrefix(auth, prefix) {
-			limiter.RecordFailure(clientIP)
-			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid Authorization header format")
-			return
-		}
-
-		token := auth[len(prefix):]
-		if subtle.ConstantTimeCompare([]byte(token), []byte(adminToken)) != 1 {
-			limiter.RecordFailure(clientIP)
-			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid admin token")
-			return
-		}
-
 		next.ServeHTTP(w, r)
 	})
 }

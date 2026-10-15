@@ -9,12 +9,14 @@ import { Fieldset, Input } from "../../components/ui/Input";
 import { ErrorState } from "../../components/ui/QueryState";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { cn } from "../../lib/cn";
+import { ApiError, fetchSession, login } from "../../lib/api-client";
 import { useAuthStore } from "./auth-store";
-import { apiRequest, ApiError, fetchAuthMode } from "../../lib/api-client";
 import { useI18n } from "../../i18n";
 
 const formSchema = z.object({
-  token: z.string().trim().min(1, "请输入 Admin Token"),
+  username: z.string().trim().min(1, "请输入用户名"),
+  password: z.string().min(1, "请输入密码"),
+  totp: z.string().trim().refine((value) => value === "" || /^\\d{6}$/.test(value), "请输入 6 位验证码"),
 });
 
 type LoginFormInput = z.infer<typeof formSchema>;
@@ -24,20 +26,28 @@ function destination(search: string) {
   return next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/dashboard";
 }
 
-/**
- * The entry door.
- *
- * Two columns on a wide screen: what Prism is on the paper, and the single field
- * that opens it on a raised sheet. The token is a credential, so it is typed in
- * mono, masked until the operator asks to see it, and its error is stated under
- * the field rather than colouring the whole column.
- */
+function loginErrorMessage(error: ApiError, t: (text: string, options?: Record<string, unknown>) => string): string {
+  switch (error.code) {
+    case "TOTP_REQUIRED":
+      return t("请输入身份验证器中的 6 位验证码。");
+    case "TOTP_INVALID":
+      return t("验证码不正确，请检查身份验证器后重试。");
+    case "RATE_LIMITED":
+      return t("失败次数过多，请稍后重试。");
+    case "HTTPS_REQUIRED":
+      return t("控制台必须通过 HTTPS 访问，或在本机使用 HTTP。");
+    case "UNAUTHORIZED":
+      return t("用户名或密码不正确。");
+    default:
+      return t("登录失败：{{message}}", { message: error.message });
+  }
+}
+
 export function LoginPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const location = useLocation();
-  const setToken = useAuthStore((state) => state.setToken);
-  const storedToken = useAuthStore((state) => state.token);
+  const session = useAuthStore((state) => state.session);
   const [submitError, setSubmitError] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
@@ -47,87 +57,55 @@ export function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<LoginFormInput>({
     resolver: zodResolver(formSchema),
-    defaultValues: { token: "" },
+    defaultValues: { username: "", password: "", totp: "" },
   });
 
   useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    const next = destination(location.search);
-
-    if (storedToken) {
-      navigate(next, { replace: true });
+    if (session.authenticated || !session.auth_required) {
+      navigate(destination(location.search), { replace: true });
       return;
     }
 
-    if (params.get("reauth")) return;
-
     let active = true;
     const controller = new AbortController();
-
-    const checkAuthMode = async () => {
-      try {
-        // Anonymous access is a property of the deployment, not a failed request: a
-        // tokenless probe of an authenticated endpoint answers 401, and the browser
-        // logs that response as a console error on this very page.
-        const authRequired = await fetchAuthMode(controller.signal);
-        if (!active || authRequired) {
-          return;
-        }
-        navigate(next, { replace: true });
-      } catch {
-        // Keep login page for secured deployments or temporary network errors.
+    void fetchSession(controller.signal).then((next) => {
+      if (active && (next.authenticated || !next.auth_required)) {
+        navigate(destination(location.search), { replace: true });
       }
-    };
-    void checkAuthMode();
-
+    }).catch(() => {
+      // Keep the form visible when the session probe cannot complete.
+    });
     return () => {
       active = false;
       controller.abort();
     };
-  }, [location.search, navigate, storedToken]);
+  }, [location.search, navigate, session.auth_required, session.authenticated]);
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError("");
-
     try {
-      await apiRequest("/api/v1/system/info", {
-        auth: true,
-        token: values.token,
-      });
+      await login(values.username, values.password, values.totp);
+      navigate(destination(location.search), { replace: true });
     } catch (error) {
       if (error instanceof ApiError) {
-        setSubmitError(error.status === 401
-          ? t("管理员令牌不正确，请检查后重试。")
-          : t("登录失败：{{message}}", { message: error.message }));
+        setSubmitError(loginErrorMessage(error, t));
       } else {
         setSubmitError(t("无法连接服务，请检查连接后重试。"));
       }
-      return;
     }
-
-    setToken(values.token);
-
-    const next = destination(location.search);
-    navigate(next, { replace: true });
   });
-
-  const fieldErrorId = "token-error";
 
   return (
     <main className="login-shell ground flex min-h-dvh flex-col lg:flex-row">
-      <section
-        aria-label="Prism"
-        className="login-intro flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14"
-      >
+      <section aria-label="Prism" className="login-intro flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14">
         <div className="flex items-center gap-2.5">
           <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" className="size-10" />
           <span className="text-lg font-semibold tracking-tight">Prism</span>
         </div>
-
         <div className="max-w-[46ch]">
           <h1 className="text-2xl">{t("管理你的节点，读懂每个出口。")}</h1>
           <ul className="mt-5 space-y-2">
-            {["订阅与节点", "出口类型与风险记录", "路由与请求日志"].map(label => (
+            {["订阅与节点", "出口类型与风险记录", "路由与请求日志"].map((label) => (
               <li key={label} className="flex items-center gap-2 text-sm text-ink-soft">
                 <Check size={14} className="shrink-0 text-signal" aria-hidden />
                 {t(label)}
@@ -135,7 +113,6 @@ export function LoginPage() {
             ))}
           </ul>
         </div>
-
         <p className="text-xs text-ink-faint">{t("节点、出口与质量，一处掌握。")}</p>
       </section>
 
@@ -144,58 +121,69 @@ export function LoginPage() {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-lg">{t("欢迎回来")}</h2>
-              <p className="mt-1 text-sm leading-relaxed text-ink-soft">{t("使用部署时设置的管理员令牌。")}</p>
+              <p className="mt-1 text-sm leading-relaxed text-ink-soft">{t("使用你的 Prism 账号登录。")}</p>
             </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <LanguageSwitcher />
-            </div>
+            <LanguageSwitcher />
           </div>
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
-            <Fieldset label={t("管理员令牌")} htmlFor="token">
+            <Fieldset label={t("用户名")} htmlFor="username">
+              <Input
+                id="username"
+                autoComplete="username"
+                autoCapitalize="none"
+                aria-invalid={errors.username ? true : undefined}
+                {...register("username")}
+              />
+              {errors.username?.message ? <p className="text-xs text-alert">{t(errors.username.message)}</p> : null}
+            </Fieldset>
+
+            <Fieldset label={t("密码")} htmlFor="password">
               <div className="flex items-start gap-1.5">
                 <Input
-                  id="token"
-                  className={cn(
-                    "min-w-0 flex-1 font-mono",
-                    errors.token && "border-alert ring-1 ring-alert/40",
-                  )}
-                  aria-invalid={errors.token ? true : undefined}
-                  aria-describedby={errors.token?.message ? fieldErrorId : undefined}
-                  autoComplete="off"
-                  autoCapitalize="none"
-                  spellCheck={false}
+                  id="password"
+                  className={cn("min-w-0 flex-1", errors.password && "border-alert ring-1 ring-alert/40")}
                   type={isPasswordVisible ? "text" : "password"}
-                  {...register("token")}
+                  autoComplete="current-password"
+                  aria-invalid={errors.password ? true : undefined}
+                  {...register("password")}
                 />
                 <Button
                   type="button"
                   variant="quiet"
                   size="icon"
                   className="shrink-0 text-ink-faint hover:text-ink"
-                  aria-label={isPasswordVisible ? t("隐藏管理员令牌") : t("显示管理员令牌")}
-                  title={isPasswordVisible ? t("隐藏管理员令牌") : t("显示管理员令牌")}
+                  aria-label={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
+                  title={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
                   onClick={() => setIsPasswordVisible((visible) => !visible)}
                 >
                   {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
                 </Button>
               </div>
-              {errors.token?.message ? (
-                <p id={fieldErrorId} role="alert" className="text-xs text-alert">
-                  {t(errors.token.message)}
-                </p>
-              ) : null}
+              {errors.password?.message ? <p className="text-xs text-alert">{t(errors.password.message)}</p> : null}
+            </Fieldset>
+
+            <Fieldset label={t("身份验证码")} hint={t("启用双因素认证后填写身份验证器中的 6 位验证码。")} htmlFor="totp">
+              <Input
+                id="totp"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                className="font-mono tracking-[0.25em]"
+                maxLength={6}
+                aria-invalid={errors.totp ? true : undefined}
+                {...register("totp")}
+              />
+              {errors.totp?.message ? <p className="text-xs text-alert">{t(errors.totp.message)}</p> : null}
             </Fieldset>
 
             {submitError ? <ErrorState message={submitError} /> : null}
-
             <Button type="submit" variant="primary" className="w-full" disabled={isSubmitting} loading={isSubmitting}>
-              {t("进入工作台")}
+              {t("登录")}
             </Button>
           </form>
 
           <p className="mt-5 border-t border-rule pt-3 text-xs leading-relaxed text-ink-faint">
-            {t("令牌仅保留在当前标签页，关闭后需要重新登录。")}
+            {t("登录状态由安全 Cookie 保持，不会把密码或会话令牌写入浏览器存储。")}
           </p>
         </div>
       </section>

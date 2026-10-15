@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -46,7 +44,7 @@ func doAuthedRequest(handler http.Handler, remoteAddr, xff, token string) *httpt
 // applies to a correct token from the same address.
 func TestAuthRateLimit_BlocksAfterTenFailures(t *testing.T) {
 	limiter := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, nil)
-	handler := AuthMiddleware("correct-token", limiter, okHandler())
+	handler := testIdentityMiddleware("correct-token", limiter, okHandler())
 
 	for i := 1; i <= 10; i++ {
 		rec := doAuthedRequest(handler, "192.0.2.10:4000", "", "wrong-token")
@@ -90,7 +88,7 @@ func TestAuthRateLimit_BlocksAfterTenFailures(t *testing.T) {
 // proxy.
 func TestAuthRateLimit_IgnoresForgedXForwardedFor(t *testing.T) {
 	limiter := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, nil)
-	handler := AuthMiddleware("correct-token", limiter, okHandler())
+	handler := testIdentityMiddleware("correct-token", limiter, okHandler())
 
 	for i := 1; i <= 10; i++ {
 		xff := "203.0.113." + strconv.Itoa(i)
@@ -110,7 +108,7 @@ func TestAuthRateLimit_IgnoresForgedXForwardedFor(t *testing.T) {
 // configured trusted proxy.
 func TestAuthRateLimit_TrustsConfiguredProxyXForwardedFor(t *testing.T) {
 	limiter := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, []string{"10.0.0.0/8"})
-	handler := AuthMiddleware("correct-token", limiter, okHandler())
+	handler := testIdentityMiddleware("correct-token", limiter, okHandler())
 
 	for i := 1; i <= 10; i++ {
 		rec := doAuthedRequest(handler, "10.1.2.3:4000", "198.51.100.7", "wrong-token")
@@ -132,7 +130,7 @@ func TestAuthRateLimit_TrustsConfiguredProxyXForwardedFor(t *testing.T) {
 	// The rightmost untrusted hop wins: trusted proxies inside the chain are
 	// skipped.
 	chainLimiter := NewAuthFailureLimiter(1, time.Minute, time.Minute, []string{"10.0.0.0/8"})
-	chainHandler := AuthMiddleware("correct-token", chainLimiter, okHandler())
+	chainHandler := testIdentityMiddleware("correct-token", chainLimiter, okHandler())
 	if rec := doAuthedRequest(chainHandler, "10.9.9.9:1", "198.51.100.9, 10.4.4.4", "wrong"); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("chained XFF first attempt: got %d, want 401", rec.Code)
 	}
@@ -160,7 +158,7 @@ func TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor(t *testing.T)
 
 	// Part 1: the trusted proxy appends the observed peer address.
 	appending := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, trusted)
-	handler := AuthMiddleware("correct-token", appending, okHandler())
+	handler := testIdentityMiddleware("correct-token", appending, okHandler())
 	for i := 1; i <= 10; i++ {
 		xff := "203.0.113." + strconv.Itoa(i) + ", " + realPeer
 		if rec := doAuthedRequest(handler, peer, xff, "wrong-token"); rec.Code != http.StatusUnauthorized {
@@ -180,7 +178,7 @@ func TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor(t *testing.T)
 	// Part 2: the documented failure mode — the proxy passes a client-supplied
 	// header through verbatim, so each distinct value is its own bucket.
 	forwarding := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, trusted)
-	handler = AuthMiddleware("correct-token", forwarding, okHandler())
+	handler = testIdentityMiddleware("correct-token", forwarding, okHandler())
 	for i := 1; i <= 11; i++ {
 		xff := "203.0.113." + strconv.Itoa(i)
 		if rec := doAuthedRequest(handler, peer, xff, "wrong-token"); rec.Code != http.StatusUnauthorized {
@@ -196,7 +194,7 @@ func TestAuthRateLimit_TrustedLoopbackProxyAndRotatingForwardedFor(t *testing.T)
 // authentications count towards the limit.
 func TestAuthRateLimit_SuccessfulRequestsAreNotCounted(t *testing.T) {
 	limiter := NewAuthFailureLimiter(10, time.Minute, 5*time.Minute, nil)
-	handler := AuthMiddleware("correct-token", limiter, okHandler())
+	handler := testIdentityMiddleware("correct-token", limiter, okHandler())
 
 	for i := 0; i < 20; i++ {
 		rec := doAuthedRequest(handler, "192.0.2.30:4000", "", "correct-token")
@@ -297,10 +295,7 @@ func (f *fakeAuditStore) ListAudit(beforeID int64, limit int) ([]model.AuditEntr
 // management writes are recorded, reads and failed writes are not, and the
 // detail holds key names only.
 func TestAuditLog_RecordsWritesOnly(t *testing.T) {
-	const (
-		adminToken = "admin-token-for-audit"
-		payload    = `{"name":"platform-secret-value","sticky_ttl":3600}`
-	)
+	const payload = `{"name":"platform-secret-value","sticky_ttl":3600}`
 
 	store := &fakeAuditStore{}
 	var sawBody string
@@ -321,7 +316,7 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "listed"})
 	}))
 
-	handler := RequestBodyLimitMiddleware(1<<20, AuditMiddleware(store, adminToken, 1<<20, authed))
+	handler := RequestBodyLimitMiddleware(1<<20, testIdentityWithHeader(testAdminCredential, nil, AuditMiddleware(store, 1<<20, authed)))
 
 	// 1. A successful write is audited and the handler still sees the full body.
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/platforms/plat-1", strings.NewReader(payload))
@@ -340,9 +335,8 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 		t.Fatalf("audit entries after PATCH: got %d, want 1", len(entries))
 	}
 	entry := entries[0]
-	sum := sha256.Sum256([]byte(adminToken))
-	if want := hex.EncodeToString(sum[:4]); entry.Actor != want {
-		t.Fatalf("actor: got %q, want sha256 prefix %q", entry.Actor, want)
+	if entry.Actor != "u-admin" {
+		t.Fatalf("actor: got %q, want %q", entry.Actor, "u-admin")
 	}
 	if entry.Action != "PATCH /api/v1/platforms/{id}" {
 		t.Fatalf("action: got %q", entry.Action)
@@ -409,8 +403,6 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 // and fails here.
 func TestAuditLog_BodyLimitWrapsAuditPeek(t *testing.T) {
 	const (
-		adminToken = "admin-token-for-body-limit"
-		// bodyLimit cuts inside the second key of the payload.
 		bodyLimit = 13
 		// `{"aaaa":1,"bb` is the first bodyLimit bytes.
 		payload = `{"aaaa":1,"bbbb":2}`
@@ -428,7 +420,7 @@ func TestAuditLog_BodyLimitWrapsAuditPeek(t *testing.T) {
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "patched"})
 	}))
 
-	handler := RequestBodyLimitMiddleware(bodyLimit, AuditMiddleware(store, adminToken, 1<<20, authed))
+	handler := RequestBodyLimitMiddleware(bodyLimit, testIdentityWithHeader(testAdminCredential, nil, AuditMiddleware(store, 1<<20, authed)))
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/platforms/plat-1", strings.NewReader(payload))
 	rec := httptest.NewRecorder()

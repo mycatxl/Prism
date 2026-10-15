@@ -91,8 +91,9 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 		// The audit row names the credential that actually acted. It is set
 		// before the response is written, so the middleware reads it after the
 		// handler returns and records the key rather than the admin token.
+		setAuditActor(r, CredentialActor(identity.Credential), "")
 		if identity.Key != nil {
-			setAuditActor(r, AuditActor(identity.Credential), identity.Key.UserID)
+			setAuditActor(r, CredentialActor(identity.Credential), identity.Key.UserID)
 		}
 
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -100,7 +101,7 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 
 	var handler http.Handler = mux
 	if cp.Engine != nil {
-		handler = AuditMiddleware(cp.Engine, proxyToken, apiMaxBodyBytes, mux)
+		handler = AuditMiddleware(cp.Engine, apiMaxBodyBytes, mux)
 	}
 	handler = RequestBodyLimitMiddleware(apiMaxBodyBytes, handler)
 	// This route carries a body and is served by the same listener as the

@@ -1050,10 +1050,6 @@ export function SystemConfigPage() {
                           {activeCategory === "deployment" && (
                             <StaticGroup title={t("服务鉴权状态")}>
                               <StaticRow
-                                label={t("已配置管理端令牌")}
-                                value={envBaseline.admin_token_set ? t("已配置") : t("未配置")}
-                              />
-                              <StaticRow
                                 label={t("已配置代理令牌")}
                                 value={envBaseline.proxy_token_set ? t("已配置") : t("未配置")}
                               />
