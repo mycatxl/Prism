@@ -269,6 +269,15 @@ type Input struct {
 	Failed map[string]string
 	// Now is the evaluation instant (UTC).
 	Now time.Time
+	// Bands are the score thresholds behind the band names. The zero value
+	// means the shipped thresholds, which is what a caller with no settings
+	// surface to read from should pass.
+	Bands quality.Bands
+}
+
+// bandSet resolves the thresholds this run scores against.
+func (in Input) bandSet() quality.Bands {
+	return in.Bands.Normalized()
 }
 
 // AssessInput is the full entry point of the algorithm.
@@ -324,7 +333,7 @@ func AssessInput(in Input) Assessment {
 		}
 		score := total
 		out.PurityScore = &score
-		out.PurityBand = quality.PurityBand(out.PurityScore)
+		out.PurityBand = in.bandSet().Name(out.PurityScore)
 		out.State = StateValid
 	} else {
 		state, reason := noEvidenceState(in, evidence)

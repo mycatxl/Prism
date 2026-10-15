@@ -950,6 +950,33 @@ func TestAssess_BandThresholds(t *testing.T) {
 	}
 }
 
+func TestAssess_ConfiguredBandThresholds(t *testing.T) {
+	// The band thresholds are a setting, so the same score must be able to
+	// land in a different band without the scoring itself changing: score 75
+	// is "mixed" under the shipped bands and "clean" under these.
+	bands := quality.Bands{Excellent: 80, Clean: 70, Fair: 60, Mixed: 50}
+	input := func() Input {
+		return Input{
+			IP:       netip.MustParseAddr(testIPv4),
+			Evidence: evidence(ev("proxycheck").risk(25)),
+			Enabled:  map[string]bool{SourceProxycheck: true},
+			Now:      testNow,
+		}
+	}
+
+	configured := input()
+	configured.Bands = bands
+	if got := AssessInput(configured); got.PurityBand != "clean" {
+		t.Fatalf("configured bands: band = %q, want %q", got.PurityBand, "clean")
+	}
+
+	// The zero value keeps the shipped bands, which is what a caller with no
+	// settings to read must get.
+	if got := AssessInput(input()); got.PurityBand != "mixed" {
+		t.Fatalf("default bands: band = %q, want %q", got.PurityBand, "mixed")
+	}
+}
+
 func TestAssess_ConfidenceBoundaries(t *testing.T) {
 	cases := []struct {
 		name       string

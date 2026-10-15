@@ -25,6 +25,7 @@ import (
 	"prism/internal/model"
 	"prism/internal/netutil"
 	"prism/internal/node"
+	"prism/internal/quality"
 	"prism/internal/state"
 )
 
@@ -147,8 +148,22 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 			}
 		},
 		AssessmentSweepInterval: assessmentSweepInterval,
-		Census:                  a,
-		Logf:                    log.Printf,
+		// The purity bands a score is labelled with are a runtime setting, read
+		// at each assessment so a change made in the console applies to the
+		// next node that is scored rather than to the next restart. The zero
+		// value of the stored setting is the shipped threshold, which is what
+		// Normalized() restores.
+		Bands: func() quality.Bands {
+			bands := runtimeConfigSnapshot(a.runtimeCfg).PurityBands.Normalized()
+			return quality.Bands{
+				Excellent: bands.Excellent,
+				Clean:     bands.Clean,
+				Fair:      bands.Fair,
+				Mixed:     bands.Mixed,
+			}
+		},
+		Census: a,
+		Logf:   log.Printf,
 	})
 	if err != nil {
 		return fmt.Errorf("intel service: %w", err)

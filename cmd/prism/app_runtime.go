@@ -639,8 +639,12 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Intel:          a.intelSvc,
 	}
 
-	// audit retention runs once a day (90 days, at most 100000 rows).
-	a.stopAuditPruner = api.StartAuditPruner(engine, 24*time.Hour)
+	// audit retention runs once a day. The window is read from the runtime
+	// config at each pass, so a change made in the console applies without a
+	// restart; the row cap (100000) stays fixed.
+	a.stopAuditPruner = api.StartAuditPrunerWithRetention(engine, 24*time.Hour, func() int {
+		return runtimeConfigSnapshot(a.runtimeCfg).AuditRetentionDays
+	})
 	//: the same published retention windows bound metrics.db. The pruner
 	// deletes in bounded batches, so it never holds the write lock for long.
 	if a.metricsDB != nil {
@@ -660,6 +664,15 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.stopUsageRetention = (&usage.Retention{
 		Store: engine,
 		Logf:  usage.DefaultLogf,
+		// The daily window follows usage_retention_days, read at each pass so
+		// the console can shorten or lengthen it without a restart.
+		DailyKeepFn: func() time.Duration {
+			days := config.RetentionDays(
+				runtimeConfigSnapshot(a.runtimeCfg).UsageRetentionDays,
+				config.DefaultUsageRetentionDays,
+			)
+			return time.Duration(days) * 24 * time.Hour
+		},
 	}).Start()
 	log.Println("Usage retention started")
 
@@ -673,6 +686,16 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.usageCounters = usage.NewCounters()
 	a.usageSessions = usage.NewConnRegistry()
 	usageLimiter := usage.NewLimiter(a.usageCounters)
+
+	// The management service reads and writes the same live objects the data
+	// plane uses: the key store the proxy authorises against, the counters the
+	// allowance is drawn from, and the registry of open tunnels. Handing them
+	// over here is what makes an operator's change take effect on a user's next
+	// request instead of at the next restart.
+	cpService.Keys = accessKeys
+	cpService.Usage = a.usageCounters
+	cpService.Conns = a.usageSessions
+	cpService.Limiter = usageLimiter
 	usageQuota := &usage.Gate{Limiter: usageLimiter}
 	usageMetering := &usage.Sink{Counters: a.usageCounters}
 
@@ -760,7 +783,12 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Handlers: &api.AuthHandlers{
 			Sessions: sessionService,
 			Accounts: cpService,
-			Logf:     log.Printf,
+			// Self-service sign-up: the policy comes from the environment,
+			// because who may create an account is a deployment decision rather
+			// than something the console should be able to open by itself.
+			Registration:     cpService,
+			RegistrationMode: func() config.RegistrationMode { return a.envCfg.Registration },
+			Logf:             log.Printf,
 		},
 	}
 

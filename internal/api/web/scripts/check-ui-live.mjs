@@ -51,7 +51,20 @@ const RAIL_PATHS = [
   "/ui/resources",
   "/ui/system-config",
   "/ui/audit",
+  // The management console the tenant API added, and the account surface every
+  // session reaches: one more destination per page, in the order the rail
+  // groups them (管理, then 账号).
+  "/ui/admin/users",
+  "/ui/admin/plans",
+  "/ui/admin/invites",
+  "/ui/admin/usage",
+  "/ui/admin/settings",
+  "/ui/account-security",
 ];
+
+// What a tenant session gets instead: the self-service destinations, which an
+// operator never sees, plus the account surface both roles share.
+const TENANT_RAIL = ["/ui/me", "/ui/me/keys", "/ui/me/guide", "/ui/account-security"];
 
 // Class tokens the redesign deleted. A trailing dash means "prefix". `card` is
 // matched as a whole token, because the kit's own utilities are named around it.
@@ -429,10 +442,8 @@ check("the rail reaches every destination and marks the current one", async ({ o
 
   const rail = page.locator('nav[aria-label="主导航"]');
   await rail.waitFor({ state: "visible", timeout: 15000 });
-  // Two rail variants live in this nav and the 2xl breakpoint swaps which one is shown
-  // (AppShell renders the board rail inside `2xl:block` and the standard list inside
-  // `2xl:hidden`), so the DOM carries 24 links while 12 are reachable. Assert against the
-  // rail a user can click, which is also what makes this check meaningful at 1536px.
+  // The rail is one list, so this is an exact count rather than a lower bound:
+  // every destination the console offers is here, and nothing else is.
   assert.equal(await rail.locator("a:visible").count(), RAIL_PATHS.length, "the rail must carry one link per destination");
   for (const path of RAIL_PATHS) {
     assert.equal(await rail.locator(`a[href="${path}"]:visible`).count(), 1, `the rail must link to ${path}`);
@@ -453,6 +464,101 @@ check("the rail reaches every destination and marks the current one", async ({ o
     "page",
     "the clicked route must become current",
   );
+});
+
+/**
+ * The tenant half of the console, which no other check reaches. The bundle and
+ * the routing are shared, so the honest proof is a browser: sign a tenant in and
+ * assert both what they get (their own rail, their own pages) and what they must
+ * never get (a management route bounces them home, the admin API answers 403).
+ */
+check("a tenant session reaches the self-service panel and nothing else", async ({ origin, browser, context }) => {
+  const adminHeaders = { "Content-Type": "application/json", ...(await csrfHeaders(context)) };
+  const suffix = randomBytes(4).toString("hex");
+  const planResponse = await context.request.post(origin + "/api/v1/admin/plans", {
+    headers: adminHeaders,
+    data: {
+      name: `UI Tenant ${suffix}`,
+      platforms: [],
+      ip_tiers: [],
+      traffic_bytes: 0,
+      period: "30d",
+      max_concurrent: 5,
+      max_rps: 10,
+      max_bandwidth_bps: 0,
+      max_keys: 2,
+      duration_days: 30,
+      status: "active",
+    },
+  });
+  const plan = await planResponse.json();
+  assert(planResponse.ok(), `the fixture plan must be created (HTTP ${planResponse.status()}: ${JSON.stringify(plan)})`);
+
+  const tenantName = `ui-tenant-${suffix}`;
+  const tenantPassword = randomBytes(12).toString("hex");
+  const userResponse = await context.request.post(origin + "/api/v1/admin/users", {
+    headers: adminHeaders,
+    data: {
+      username: tenantName,
+      password: tenantPassword,
+      role: "user",
+      plan_id: plan.id,
+      duration_days: 30,
+    },
+  });
+  const user = await userResponse.json();
+  assert(userResponse.ok(), `the fixture tenant must be created (HTTP ${userResponse.status()}: ${JSON.stringify(user)})`);
+
+  const tenantContext = await browser.newContext({
+    locale: LOCALE,
+    viewport: { width: 1440, height: 900 },
+    reducedMotion: "reduce",
+  });
+  await tenantContext.addInitScript((locale) => {
+    localStorage.setItem("prism.locale", locale);
+  }, LOCALE);
+  const tenantPage = await tenantContext.newPage();
+  const tenantErrors = watchPage(tenantPage);
+  try {
+    await tenantPage.goto(origin + "/ui/");
+    await tenantPage.locator("#username").waitFor({ state: "visible", timeout: 15000 });
+    await tenantPage.locator("#username").fill(tenantName);
+    await tenantPage.locator("#password").fill(tenantPassword);
+    await tenantPage.locator('form button[type="submit"]').click();
+    // The landing page comes from the role the server returned, not from a path
+    // baked into the sign-in form.
+    await tenantPage.waitForURL(/\/ui\/me$/, { timeout: 15000 });
+
+    const rail = tenantPage.locator('nav[aria-label="主导航"]');
+    await rail.waitFor({ state: "visible", timeout: 15000 });
+    assert.equal(
+      await rail.locator("a:visible").count(),
+      TENANT_RAIL.length,
+      "a tenant rail holds the self-service destinations and nothing else",
+    );
+    for (const path of TENANT_RAIL) {
+      assert.equal(await rail.locator(`a[href="${path}"]:visible`).count(), 1, `the tenant rail must link to ${path}`);
+    }
+
+    for (const path of TENANT_RAIL) {
+      tenantErrors.reset(path);
+      await tenantPage.goto(origin + path);
+      assert(await rendered(tenantPage), `${path}: no page heading rendered`);
+      await tenantPage.waitForTimeout(150);
+      const logged = tenantErrors.drain();
+      assert.deepEqual(logged, [], `${path}: ${logged.map((entry) => entry.text).join("; ")}`);
+    }
+
+    await tenantPage.goto(origin + DASHBOARD);
+    await tenantPage.waitForURL(/\/ui\/me$/, { timeout: 15000 });
+
+    const refused = await tenantContext.request.get(origin + "/api/v1/admin/users?limit=1");
+    assert.equal(refused.status(), 403, "the admin API must refuse a tenant session");
+    const ownOverview = await tenantContext.request.get(origin + "/api/v1/me/overview");
+    assert(ownOverview.ok(), `the tenant must read their own overview (HTTP ${ownOverview.status()})`);
+  } finally {
+    await tenantContext.close();
+  }
 });
 
 check("keyboard focus is visible", async ({ origin, page }) => {
@@ -774,7 +880,7 @@ try {
   const page = await context.newPage();
   const errors = watchPage(page);
 
-  const fixture = { origin, page, context, adminPassword, errors };
+  const fixture = { origin, page, context, adminPassword, errors, browser };
   for (const { name, run } of checks) {
     try {
       await run(fixture);

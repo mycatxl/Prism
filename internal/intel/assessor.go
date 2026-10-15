@@ -21,6 +21,8 @@ type Assessor struct {
 	onChange func(ips []netip.Addr)
 	now      func() time.Time
 	logf     func(format string, args ...any)
+	// bands supplies the score thresholds; see AssessorOptions.Bands.
+	bands func() quality.Bands
 }
 
 // AssessorOptions configures the assessor. Store is required.
@@ -35,6 +37,10 @@ type AssessorOptions struct {
 	OnChange func(ips []netip.Addr)
 	Now      func() time.Time
 	Logf     func(format string, args ...any)
+	// Bands reports the score thresholds to score against. Nil means the
+	// shipped thresholds, which keeps a caller that has no runtime config to
+	// read from behaving as it did before the thresholds were configurable.
+	Bands func() quality.Bands
 }
 
 // NewAssessor builds an assessor. A nil store is a programming error (R5).
@@ -57,6 +63,7 @@ func NewAssessor(opts AssessorOptions) *Assessor {
 		onChange: opts.OnChange,
 		now:      now,
 		logf:     logf,
+		bands:    opts.Bands,
 	}
 }
 
@@ -66,6 +73,15 @@ func (a *Assessor) enabledSources() map[string]bool {
 		return nil
 	}
 	return a.enabled()
+}
+
+// bandSet resolves the thresholds to score against, falling back to the
+// shipped ones when no settings surface was wired.
+func (a *Assessor) bandSet() quality.Bands {
+	if a == nil || a.bands == nil {
+		return quality.DefaultBands()
+	}
+	return a.bands().Normalized()
 }
 
 // AssessIP recomputes and persists the assessment of one IP.
@@ -84,6 +100,7 @@ func (a *Assessor) AssessIP(ctx context.Context, ip netip.Addr) (store.Assessmen
 		Enabled:  a.enabledSources(),
 		Failed:   failed,
 		Now:      now,
+		Bands:    a.bandSet(),
 	})
 	row := AssessmentRow(result, now)
 	if err := a.store.UpsertAssessment(ctx, row); err != nil {

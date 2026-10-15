@@ -36,7 +36,8 @@ const (
 	stateVersionPlatformNodeCriteria             = 15
 	stateVersionDropExportProfiles               = 16
 	stateVersionTenant                           = 17
-	stateLatestVersion                           = stateVersionTenant
+	stateVersionInvites                          = 18
+	stateLatestVersion                           = stateVersionInvites
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	// Keep these version markers in sync with SQL files under migrations/cache/.

@@ -58,6 +58,11 @@ func writeServiceError(w http.ResponseWriter, err error) {
 			// authenticated, so the response says what is actually wrong
 			// instead of claiming the credential is bad.
 			status = http.StatusForbidden
+		case "REGISTRATION_CLOSED":
+			// Sign-ups are switched off for this deployment. The request is
+			// well formed and nobody was asked to authenticate, so the answer
+			// is about policy rather than about a credential.
+			status = http.StatusForbidden
 		case "RATE_LIMITED":
 			// The SSE subscriber cap is the one path that reaches this: the
 			// service documents it as 429 and the client should retry rather

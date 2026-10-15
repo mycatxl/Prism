@@ -1,0 +1,223 @@
+package api
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"prism/internal/auth"
+	"prism/internal/model"
+)
+
+// The role gate is what keeps the two management surfaces apart: the routes a
+// signed-in user owns (/api/v1/auth and /api/v1/me) and everything else, which
+// belongs to the administrator. The tests below drive it through the identity
+// middleware, because the gate only means anything behind one.
+
+// userRoleIdentity authenticates a signed-in account that is not an
+// administrator, and gives it an access key as well.
+func userRoleIdentity() *Identity {
+	user := &model.User{
+		ID:       "u-reader",
+		Username: "reader",
+		Role:     model.UserRoleUser,
+		Status:   model.UserStatusActive,
+	}
+	return &Identity{
+		Sessions: &fakeSessions{
+			user:    user,
+			session: &model.Session{IDHash: "user-session", UserID: user.ID},
+		},
+		AdminKeys: fakeAdminKeys{
+			credential: "pk_test_user",
+			identity:   AdminKeyIdentity{KeyID: "user-key", UserID: user.ID, Role: model.UserRoleUser},
+		},
+	}
+}
+
+func TestIsUserReachablePath(t *testing.T) {
+	cases := map[string]bool{
+		"/api/v1/auth":         true,
+		"/api/v1/auth/login":   true,
+		"/api/v1/auth/session": true,
+		"/api/v1/me":           true,
+		"/api/v1/me/keys":      true,
+		"/api/v1/me/usage":     true,
+		// Close to a reachable path, but not under it: a prefix match on the
+		// raw string would let these through.
+		"/api/v1/authz":       false,
+		"/api/v1/meta":        false,
+		"/api/v1/metoo":       false,
+		"/api/v1/me2":         false,
+		"/api/v1/platforms":   false,
+		"/api/v1/admin/plans": false,
+		"/api/v1":             false,
+		"":                    false,
+	}
+	for path, want := range cases {
+		if got := isUserReachablePath(path); got != want {
+			t.Errorf("isUserReachablePath(%q) = %v, want %v", path, got, want)
+		}
+	}
+}
+
+func TestRequireAdmin(t *testing.T) {
+	csrfToken, err := auth.NewCSRFToken()
+	if err != nil {
+		t.Fatalf("NewCSRFToken: %v", err)
+	}
+	admin := testIdentityWithLimiter(testAdminCredential, nil)
+
+	cases := []struct {
+		name string
+		// identity resolves the request; nil means "use a user-role identity".
+		identity *Identity
+		// session is the cookie value, key an automation credential; either may
+		// be empty to leave that credential out.
+		session string
+		key     string
+		method  string
+		path    string
+		// csrf sends a matching double-submit pair for a write.
+		csrf        bool
+		wantStatus  int
+		wantCode    string
+		wantReached bool
+	}{
+		{
+			name:       "a user is refused on the control plane",
+			session:    "user-session",
+			method:     http.MethodGet,
+			path:       "/api/v1/platforms",
+			wantStatus: http.StatusForbidden,
+			wantCode:   "FORBIDDEN",
+		},
+		{
+			name:        "a user reaches their own panel",
+			session:     "user-session",
+			method:      http.MethodGet,
+			path:        "/api/v1/me/keys",
+			wantStatus:  http.StatusOK,
+			wantReached: true,
+		},
+		{
+			name:        "a user reaches the authentication routes",
+			session:     "user-session",
+			method:      http.MethodGet,
+			path:        "/api/v1/auth/session",
+			wantStatus:  http.StatusOK,
+			wantReached: true,
+		},
+		{
+			// The prefix rule must not leak onto a neighbour that merely starts
+			// with the same letters.
+			name:       "a user is refused where the path only shares a prefix",
+			session:    "user-session",
+			method:     http.MethodGet,
+			path:       "/api/v1/metoo",
+			wantStatus: http.StatusForbidden,
+			wantCode:   "FORBIDDEN",
+		},
+		{
+			// The CSRF pair matches, so the refusal below is the role and not
+			// the missing token.
+			name:       "a write from a user is refused on the control plane",
+			session:    "user-session",
+			method:     http.MethodPost,
+			path:       "/api/v1/admin/plans",
+			csrf:       true,
+			wantStatus: http.StatusForbidden,
+			wantCode:   "FORBIDDEN",
+		},
+		{
+			// A key inherits the role of whoever holds it: minting one for a
+			// user must not smuggle that user past the gate.
+			name:       "a key held by a user does not open the control plane",
+			key:        "pk_test_user",
+			method:     http.MethodGet,
+			path:       "/api/v1/platforms",
+			wantStatus: http.StatusForbidden,
+			wantCode:   "FORBIDDEN",
+		},
+		{
+			name:       "no credential is refused as unauthenticated",
+			method:     http.MethodGet,
+			path:       "/api/v1/me/keys",
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "UNAUTHORIZED",
+		},
+		{
+			name:        "an administrator reaches the control plane",
+			identity:    admin,
+			session:     "admin-session",
+			method:      http.MethodGet,
+			path:        "/api/v1/platforms",
+			wantStatus:  http.StatusOK,
+			wantReached: true,
+		},
+		{
+			name:        "an administrator also reaches the user panel",
+			identity:    admin,
+			session:     "admin-session",
+			method:      http.MethodGet,
+			path:        "/api/v1/me/keys",
+			wantStatus:  http.StatusOK,
+			wantReached: true,
+		},
+		{
+			// Sign-in and sign-up are how a caller obtains a credential, so
+			// they arrive without an actor on purpose. The role gate must not
+			// be the middleware that refuses them: answering 401 to the request
+			// that creates the session would lock every console out.
+			name:        "an unauthenticated caller reaches the sign-in route",
+			method:      http.MethodPost,
+			path:        "/api/v1/auth/login",
+			wantStatus:  http.StatusOK,
+			wantReached: true,
+		},
+		{
+			name:        "an unauthenticated caller reaches the sign-up route",
+			method:      http.MethodPost,
+			path:        "/api/v1/auth/register",
+			wantStatus:  http.StatusOK,
+			wantReached: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reached := false
+			next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				reached = true
+				w.WriteHeader(http.StatusOK)
+			})
+
+			identity := tc.identity
+			if identity == nil {
+				identity = userRoleIdentity()
+			}
+
+			req := sessionRequest(tc.method, tc.path, tc.session)
+			if tc.key != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.key)
+			}
+			if tc.csrf {
+				req.AddCookie(&http.Cookie{Name: auth.CSRFCookieName, Value: csrfToken})
+				req.Header.Set(auth.CSRFHeaderName, csrfToken)
+			}
+
+			rec := httptest.NewRecorder()
+			identity.Middleware(requireAdmin(next)).ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d (body=%s)", rec.Code, tc.wantStatus, rec.Body.String())
+			}
+			if tc.wantCode != "" {
+				assertErrorCode(t, rec, tc.wantCode)
+			}
+			if reached != tc.wantReached {
+				t.Errorf("handler reached = %v, want %v", reached, tc.wantReached)
+			}
+		})
+	}
+}

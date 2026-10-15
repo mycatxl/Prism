@@ -999,6 +999,7 @@
   }
 
   .sheet-shell {
+    position: fixed;
     top: 0.5rem;
     right: 0.5rem;
     bottom: 0.5rem;
@@ -1184,16 +1185,6 @@
   font-weight: 600;
 }
 
-.shell-nav__link.is-active::before {
-  content: "";
-  position: absolute;
-  top: 9px;
-  bottom: 9px;
-  left: 0;
-  width: 3px;
-  border-radius: 2px;
-  background-color: var(--color-brand);
-}
 
 .shell-nav__link:focus-visible {
   outline-offset: -2px;
@@ -1334,9 +1325,6 @@
     padding: 7px 10px;
   }
 
-  .shell-nav__link.is-active::before {
-    display: none;
-  }
 
   .shell-nav__foot {
     position: sticky;

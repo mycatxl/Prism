@@ -16,6 +16,7 @@ import (
 	"prism/internal/intel/providers"
 	"prism/internal/intel/store"
 	"prism/internal/node"
+	"prism/internal/quality"
 )
 
 // parseNodeHash decodes the canonical 32-character hex node hash used as the
@@ -209,6 +210,10 @@ type Options struct {
 	// tests use a short tick.
 	Tick time.Duration
 	Logf func(format string, args ...any)
+
+	// Bands reports the purity score thresholds the assessments are banded
+	// against. Nil means the shipped thresholds.
+	Bands func() quality.Bands
 }
 
 // Service is the intel facade used by the control plane and the API layer.
@@ -286,6 +291,7 @@ func NewService(opts Options) (*Service, error) {
 		Enabled:  opts.EnabledSources,
 		OnChange: opts.OnAssessmentChanged,
 		Now:      clock.Now,
+		Bands:    opts.Bands,
 		Logf:     logf,
 	})
 	svc.onEvidenceWrittenHook = opts.OnEvidenceWritten

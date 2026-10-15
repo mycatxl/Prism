@@ -159,3 +159,30 @@ type Session struct {
 	IP          string `json:"ip"`
 	UA          string `json:"ua"`
 }
+
+// Invite statuses. A disabled invite is refused even if it has uses left, which
+// is how an operator revokes a leaked code without deleting the record of it.
+const (
+	InviteStatusActive   = "active"
+	InviteStatusDisabled = "disabled"
+)
+
+// Invite is a registration invitation.
+//
+// It bounds self-service sign-up in two ways at once: MaxUses says how many
+// accounts may be created with the code (0 means unlimited), and PlanID says
+// what they start on. UsedCount is incremented by a conditional UPDATE, so the
+// last use cannot be taken twice. ExpiresAtNs of 0 never expires.
+type Invite struct {
+	ID          string `json:"id"`
+	Code        string `json:"code"`
+	PlanID      string `json:"plan_id"`
+	MaxUses     int    `json:"max_uses"`
+	UsedCount   int    `json:"used_count"`
+	ExpiresAtNs int64  `json:"expires_at_ns"`
+	Note        string `json:"note"`
+	Status      string `json:"status"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAtNs int64  `json:"created_at_ns"`
+	UpdatedAtNs int64  `json:"updated_at_ns"`
+}

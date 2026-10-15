@@ -62,6 +62,11 @@ client never has to guess what a build can do. The console authenticates with a
 username, a password and an optional TOTP code, and keeps the session in a
 HttpOnly cookie; automation sends an admin access key instead:
 `Authorization: Bearer <admin-access-key>`.
+The deployment is multi-tenant: an administrator keeps the nodes, plans and
+tenant accounts, while each tenant only sees its own subscription, keys and
+usage under `/api/v1/me/*`. Roles, registration modes, plan snapshots, key
+revocation and the retention windows are documented in
+[`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md).
 
 ## Layout
 

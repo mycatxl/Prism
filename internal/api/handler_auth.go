@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"prism/internal/auth"
+	"prism/internal/config"
 	"prism/internal/service"
 )
 
@@ -30,6 +31,13 @@ type AuthHandlers struct {
 	// Accounts performs the account-level operations. Nil disables the
 	// second-factor and password endpoints.
 	Accounts AccountService
+	// Registration performs self-service sign-up. Nil disables
+	// POST /api/v1/auth/register, which is what a deployment that never meant
+	// to open sign-ups should get.
+	Registration TenantRegistrar
+	// RegistrationMode reports the deployment's policy - off, invite or open.
+	// Nil is read as off: a policy that cannot be read must not open the door.
+	RegistrationMode func() config.RegistrationMode
 	// ClientKey names the address a failed login is counted against. Nil means
 	// failures are not counted, which is what a deployment without a limiter
 	// gets.

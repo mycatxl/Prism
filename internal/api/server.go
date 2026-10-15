@@ -239,6 +239,55 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/geoip/lookup", HandleGeoIPLookup(cp))
 		authed.Handle("POST /api/v1/geoip/lookup", HandleGeoIPLookupPost(cp))
 		authed.Handle("POST /api/v1/geoip/actions/update-now", HandleGeoIPUpdate(cp))
+
+		// The multi-tenant administration surface.
+		//
+		// Everything below is the administrator's, and it is private by
+		// default: the role gate lets a user-role session reach /api/v1/auth
+		// and /api/v1/me and refuses the rest, so a route added here is
+		// protected by existing rather than by remembering to protect it.
+		authed.Handle("GET /api/v1/admin/plans", HandleAdminListPlans(cp))
+		authed.Handle("POST /api/v1/admin/plans", HandleAdminCreatePlan(cp))
+		authed.Handle("GET /api/v1/admin/plans/{id}", HandleAdminGetPlan(cp))
+		authed.Handle("PATCH /api/v1/admin/plans/{id}", HandleAdminUpdatePlan(cp))
+		authed.Handle("DELETE /api/v1/admin/plans/{id}", HandleAdminDeletePlan(cp))
+
+		authed.Handle("GET /api/v1/admin/users", HandleAdminListUsers(cp))
+		authed.Handle("POST /api/v1/admin/users", HandleAdminCreateUser(cp))
+		authed.Handle("GET /api/v1/admin/users/{id}", HandleAdminGetUser(cp))
+		authed.Handle("PATCH /api/v1/admin/users/{id}", HandleAdminUpdateUser(cp))
+		authed.Handle("DELETE /api/v1/admin/users/{id}", HandleAdminDeleteUser(cp))
+		authed.Handle("GET /api/v1/admin/users/{id}/keys", HandleAdminListUserKeys(cp))
+		authed.Handle("POST /api/v1/admin/users/{id}/keys", HandleAdminCreateUserKey(cp))
+		authed.Handle("PATCH /api/v1/admin/users/{id}/keys/{keyID}", HandleAdminUpdateUserKey(cp))
+		authed.Handle("DELETE /api/v1/admin/users/{id}/keys/{keyID}", HandleAdminDeleteUserKey(cp))
+		authed.Handle("GET /api/v1/admin/users/{id}/usage", HandleAdminGetUserUsage(cp))
+
+		authed.Handle("GET /api/v1/admin/subscriptions", HandleAdminListSubscriptions(cp))
+		authed.Handle("POST /api/v1/admin/subscriptions", HandleAdminCreateSubscription(cp))
+		authed.Handle("GET /api/v1/admin/subscriptions/{id}", HandleAdminGetSubscription(cp))
+		authed.Handle("PATCH /api/v1/admin/subscriptions/{id}", HandleAdminUpdateSubscription(cp))
+		authed.Handle("DELETE /api/v1/admin/subscriptions/{id}", HandleAdminDeleteSubscription(cp))
+
+		authed.Handle("GET /api/v1/admin/invites", HandleAdminListInvites(cp))
+		authed.Handle("POST /api/v1/admin/invites", HandleAdminCreateInvite(cp))
+		authed.Handle("DELETE /api/v1/admin/invites/{id}", HandleAdminDeleteInvite(cp))
+
+		authed.Handle("GET /api/v1/admin/usage/summary", HandleAdminUsageSummary(cp))
+		authed.Handle("GET /api/v1/admin/usage/users", HandleAdminUsageUsers(cp))
+		authed.Handle("GET /api/v1/admin/usage/daily", HandleAdminUsageDaily(cp))
+		authed.Handle("GET /api/v1/admin/usage/platforms", HandleAdminUsagePlatforms(cp))
+
+		// The user's own panel. Every handler keys off the session's actor, so
+		// there is no id in these paths to point at somebody else.
+		authed.Handle("GET /api/v1/me/overview", HandleMeOverview(cp))
+		authed.Handle("GET /api/v1/me/subscription", HandleMeSubscription(cp))
+		authed.Handle("GET /api/v1/me/usage", HandleMeUsage(cp))
+		authed.Handle("GET /api/v1/me/keys", HandleMeKeys(cp))
+		authed.Handle("POST /api/v1/me/keys", HandleMeCreateKey(cp))
+		authed.Handle("DELETE /api/v1/me/keys/{keyID}", HandleMeDeleteKey(cp))
+		authed.Handle("GET /api/v1/me/security/sessions", HandleMeSessions(cp))
+		authed.Handle("DELETE /api/v1/me/security/sessions/{sessionID}", HandleMeRevokeSession(cp))
 	}
 
 	// Request log endpoints (always registered if repo is available).
@@ -282,6 +331,13 @@ func NewServerWithAddress(
 	// the header block, and ReadTimeout has to stay unset for the SSE stream.
 	authedHandler = RequestBodyDeadlineMiddleware(RequestBodyTimeout, authedHandler)
 
+	// The role gate sits inside the identity middleware, which is what makes
+	// its 403 mean "the credential is fine, the role is not". It wraps the
+	// audit and body handling as well, so a request from a user-role session
+	// never reaches the management handlers and is not recorded as a
+	// management write.
+	authedHandler = requireAdmin(authedHandler)
+
 	// Login failure limiting. Only failed authentications count and
 	// X-Forwarded-For is honoured solely for PRISM_TRUSTED_PROXIES.
 	var trustedProxies []string
@@ -311,6 +367,11 @@ func NewServerWithAddress(
 		// towards the block that the middleware enforces.
 		handlers.ClientKey = authLimiter.ClientIP
 		authed.Handle("POST /api/v1/auth/login", handlers.HandleLogin())
+		// Sign-up is the second route reachable without an identity. It is
+		// always registered: the handler refuses when the deployment has
+		// registration switched off, and an endpoint that says no is better
+		// than a console that cannot tell "closed" from "not built".
+		authed.Handle("POST /api/v1/auth/register", handlers.HandleRegister())
 		authed.Handle("POST /api/v1/auth/logout", handlers.HandleLogout())
 		authed.Handle("GET /api/v1/auth/session", handlers.HandleSession())
 		authed.Handle("POST /api/v1/auth/password", handlers.HandleChangePassword())

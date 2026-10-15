@@ -351,24 +351,49 @@ func HandleListAuditLogs(store AuditLogStore) http.Handler {
 	})
 }
 
-// PruneAuditLogs applies the audit retention policy: 90 days, at most 100000
-// entries. It returns the number of removed rows.
-func PruneAuditLogs(store AuditLogStore) (int64, error) {
+// PruneAuditLogsWithRetention applies the audit retention policy with an
+// explicit window, in days.
+//
+// The entry cap is not configurable and stays fixed: it bounds how large the
+// table may grow, which is a different promise from how long a row stays
+// readable. A non-positive window means the shipped default.
+func PruneAuditLogsWithRetention(store AuditLogStore, retentionDays int) (int64, error) {
 	if store == nil {
 		return 0, nil
 	}
-	olderThanNs := time.Now().Add(-auditRetentionDays * 24 * time.Hour).UnixNano()
+	days := retentionDays
+	if days <= 0 {
+		days = auditRetentionDays
+	}
+	olderThanNs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
 	return store.PruneAudit(olderThanNs, auditMaxEntries)
 }
 
-// StartAuditPruner runs the retention job every interval until the returned
-// stop function is called. A nil store makes it a no-op.
-func StartAuditPruner(store AuditLogStore, interval time.Duration) func() {
+// PruneAuditLogs applies the shipped audit retention policy: 90 days, at most
+// 100000 entries. It returns the number of removed rows.
+func PruneAuditLogs(store AuditLogStore) (int64, error) {
+	return PruneAuditLogsWithRetention(store, 0)
+}
+
+// StartAuditPrunerWithRetention runs the retention job every interval until
+// the returned stop function is called.
+//
+// The window is read at each pass rather than captured once, so shortening or
+// lengthening it in the console applies to the next pass instead of to the next
+// restart. A nil store makes it a no-op, and a nil reader uses the shipped
+// window.
+func StartAuditPrunerWithRetention(store AuditLogStore, interval time.Duration, retentionDays func() int) func() {
 	if store == nil {
 		return func() {}
 	}
 	if interval <= 0 {
 		interval = auditPruneInterval
+	}
+	readRetention := func() int {
+		if retentionDays == nil {
+			return 0
+		}
+		return retentionDays()
 	}
 	done := make(chan struct{})
 	var once sync.Once
@@ -378,7 +403,7 @@ func StartAuditPruner(store AuditLogStore, interval time.Duration) func() {
 		for {
 			select {
 			case <-ticker.C:
-				removed, err := PruneAuditLogs(store)
+				removed, err := PruneAuditLogsWithRetention(store, readRetention())
 				if err != nil {
 					log.Printf("audit: retention prune failed: %v", err)
 					continue
@@ -394,4 +419,9 @@ func StartAuditPruner(store AuditLogStore, interval time.Duration) func() {
 	return func() {
 		once.Do(func() { close(done) })
 	}
+}
+
+// StartAuditPruner runs the retention job with the shipped window.
+func StartAuditPruner(store AuditLogStore, interval time.Duration) func() {
+	return StartAuditPrunerWithRetention(store, interval, nil)
 }

@@ -16,11 +16,13 @@ import (
 	"prism/internal/config"
 	"prism/internal/intel"
 	"prism/internal/intel/jobs"
+	"prism/internal/keys"
 	"prism/internal/netutil"
 	"prism/internal/proxy"
 	"prism/internal/routing"
 	"prism/internal/state"
 	"prism/internal/topology"
+	"prism/internal/usage"
 )
 
 // GeoIPService defines the GeoIP interface for testing.
@@ -82,6 +84,15 @@ type ControlPlaneService struct {
 	// It is nil until is wired.
 	Intel *intel.Service
 
+	// Keys is the live key store the data plane reads. Usage, Conns and
+	// Limiter are the accounting the same path consults. All four are nil in a
+	// management-only deployment, and every method here treats nil as "the
+	// database is the only record": the console keeps working without a data
+	// plane, and there is exactly one place that knows the difference.
+	Keys          *keys.Store
+	Usage         *usage.Counters
+	Conns         *usage.ConnRegistry
+	Limiter       *usage.Limiter
 	configMu      sync.Mutex
 	configVersion int
 	endpointMu    sync.RWMutex
@@ -120,6 +131,9 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"intel_max_running_jobs":                   true,
 	"intel_auto_checks":                        true,
 	"intel_refresh_schedule":                   true,
+	"audit_retention_days":                     true,
+	"usage_retention_days":                     true,
+	"purity_bands":                             true,
 }
 
 var platformPatchAllowedFields = map[string]bool{

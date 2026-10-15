@@ -113,7 +113,8 @@ func (i *Identity) logf(format string, args ...any) {
 // before that inner mux is reached - so matching on Pattern here would compare
 // against the outer "/api/" match and let nothing through.
 var publicPaths = map[string]bool{
-	"POST /api/v1/auth/login": true,
+	"POST /api/v1/auth/login":    true,
+	"POST /api/v1/auth/register": true,
 }
 
 // Middleware authenticates a management request and notes the actor.

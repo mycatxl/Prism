@@ -113,6 +113,10 @@ type EnvConfig struct {
 	// inside the product.
 	RequireAdminTOTP bool
 
+	// Registration says who may create an account for themselves
+	// (PRISM_REGISTRATION). Off by default; see RegistrationMode.
+	Registration RegistrationMode
+
 	// Request log
 	RequestLogQueueSize           int
 	RequestLogQueueFlushBatchSize int
@@ -222,6 +226,26 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.DenyPrivateNodes = envBool("PRISM_DENY_PRIVATE_NODES", true, &errs)
 	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 30, &errs)
 	cfg.RequireAdminTOTP = envBool("PRISM_REQUIRE_ADMIN_TOTP", false, &errs)
+	// --- Registration ---
+	// PRISM_REGISTRATION decides whether the console offers a sign-up form and
+	// what it accepts. Anything unrecognised is refused rather than treated as
+	// a mode the operator did not ask for.
+	registrationRaw := strings.TrimSpace(envStr("PRISM_REGISTRATION", string(RegistrationOff)))
+	if registrationRaw == "" {
+		// Set but empty means "not configured", the same way an empty
+		// PRISM_EGRESS_TRACE_URL means "keep the shipped target". Treating it
+		// as an unknown mode would refuse to start over a blank line in a
+		// .env file.
+		registrationRaw = string(RegistrationOff)
+	}
+	cfg.Registration = RegistrationMode(registrationRaw)
+	if !cfg.Registration.Valid() {
+		errs = append(errs, fmt.Sprintf(
+			"PRISM_REGISTRATION: invalid value %q (allowed: %s, %s, %s)",
+			registrationRaw, RegistrationOff, RegistrationInvite, RegistrationOpen,
+		))
+		cfg.Registration = RegistrationOff
+	}
 
 	// --- Request log ---
 	cfg.RequestLogQueueSize = envInt("PRISM_REQUEST_LOG_QUEUE_SIZE", 8192, &errs)
@@ -736,4 +760,38 @@ func isLoopbackListenAddress(addr string) bool {
 		return false
 	}
 	return ip.IsLoopback()
+}
+
+// RegistrationMode says who may create an account for themselves.
+//
+// The zero value is "off" rather than "open": an installation that has not
+// thought about self-service sign-up is not open to it, and a config row read
+// back from the environment is not allowed to change that by omission.
+type RegistrationMode string
+
+const (
+	// RegistrationOff refuses every self-service sign-up. Accounts are created
+	// by an administrator.
+	RegistrationOff RegistrationMode = "off"
+	// RegistrationInvite accepts a sign-up that presents a valid invite code,
+	// and opens the subscription the code carries.
+	RegistrationInvite RegistrationMode = "invite"
+	// RegistrationOpen accepts any sign-up. No plan is attached, so the account
+	// reaches nothing until an administrator grants one.
+	RegistrationOpen RegistrationMode = "open"
+)
+
+// Valid reports whether the mode is one this build understands.
+func (m RegistrationMode) Valid() bool {
+	switch m {
+	case RegistrationOff, RegistrationInvite, RegistrationOpen:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllowsRegistration reports whether the mode admits a sign-up at all.
+func (m RegistrationMode) AllowsRegistration() bool {
+	return m == RegistrationInvite || m == RegistrationOpen
 }

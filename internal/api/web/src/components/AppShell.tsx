@@ -4,7 +4,8 @@ import { LogOut, ShieldCheck } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, logout } from "../lib/api-client";
 import { cn } from "../lib/cn";
-import { navigation } from "../lib/navigation";
+import { navigationFor } from "../lib/navigation";
+import { isAdminRole } from "../lib/roles";
 import { useAuthStore, clearSession } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
 import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../features/systemInfo/api";
@@ -30,21 +31,28 @@ export function AppShell() {
   const queryClient = useQueryClient();
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
 
+  // Instance health and the environment dump are operator surfaces: a tenant
+  // session is refused both by the role gate, so the shell must not ask.
+  const isAdmin = isAdminRole(session.user?.role);
+  const navItems = navigationFor(session.user?.role);
+
   const info = useQuery({
     queryKey: SYSTEM_INFO_QUERY_KEY,
     queryFn: getSystemInfo,
     refetchInterval: 30_000,
     retry: false,
+    enabled: isAdmin,
   });
   const env = useQuery({
     queryKey: ["system-config-env", "shell"],
     queryFn: getEnvConfig,
     staleTime: 30_000,
+    enabled: isAdmin,
   });
 
   const unauthorized = info.error instanceof ApiError && info.error.status === 401;
-  const disconnected = !online || info.isError;
-  const weakTokens = env.data && !env.data.proxy_token_set ? 1 : 0;
+  const disconnected = !online || (isAdmin && info.isError);
+  const weakTokens = isAdmin && env.data && !env.data.proxy_token_set ? 1 : 0;
 
   useEffect(() => {
     const heading = document.querySelector<HTMLElement>("main h1");
@@ -82,9 +90,9 @@ export function AppShell() {
           <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" aria-hidden className="shell-brand__mark" />
           <span>Prism</span>
         </div>
-        {navigation.map((item, index) => {
+        {navItems.map((item, index) => {
           const active = location.pathname === item.path || location.pathname.startsWith(item.path + "/");
-          const section = index === 0 || navigation[index - 1].section !== item.section ? item.section : null;
+          const section = index === 0 || navItems[index - 1].section !== item.section ? item.section : null;
           return (
             <Fragment key={item.path}>
               {section && <div className="shell-nav__section">{t(section)}</div>}
@@ -104,11 +112,13 @@ export function AppShell() {
           </Button>
         </div>
         <div className="shell-nav__foot">
-          <span className="shell-version" title={statusText} role="status">
-            <span className={cn("shell-live", `shell-live--${statusTone}`)} aria-hidden />
-            <span className="sr-only">{statusText}</span>
-            <span className="shell-version__text">{version || "Prism"}</span>
-          </span>
+          {isAdmin && (
+            <span className="shell-version" title={statusText} role="status">
+              <span className={cn("shell-live", `shell-live--${statusTone}`)} aria-hidden />
+              <span className="sr-only">{statusText}</span>
+              <span className="shell-version__text">{version || "Prism"}</span>
+            </span>
+          )}
           <ThemeSwitcher className="shell-theme-toggle" />
         </div>
       </nav>

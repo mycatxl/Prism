@@ -1,0 +1,339 @@
+import { apiRequest } from "../../lib/api-client";
+import type {
+  AdminCreateKeyResponse,
+  AdminInvite,
+  AdminKey,
+  AdminPlan,
+  AdminSubscription,
+  AdminSystemConfig,
+  AdminSystemConfigPatch,
+  AdminUsageDailyResponse,
+  AdminUsagePlatformsResponse,
+  AdminUsageSummary,
+  AdminUsageUsersResponse,
+  AdminUser,
+  AdminUserDetail,
+  PlanPatch,
+  PlanWrite,
+  WritePage,
+} from "./types";
+
+function toQueryString(params: Record<string, string | number | undefined | null>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      search.set(key, String(value));
+    }
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
+
+// ---------------------------------------------------------------------------
+// 套餐 /api/v1/admin/plans
+// ---------------------------------------------------------------------------
+
+export async function listPlans(): Promise<{ items: AdminPlan[] }> {
+  return apiRequest<{ items: AdminPlan[] }>("/api/v1/admin/plans");
+}
+
+export async function createPlan(input: PlanWrite): Promise<AdminPlan> {
+  return apiRequest<AdminPlan>("/api/v1/admin/plans", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function getPlan(id: string): Promise<AdminPlan> {
+  return apiRequest<AdminPlan>(`/api/v1/admin/plans/${encodeURIComponent(id)}`);
+}
+
+export async function updatePlan(id: string, patch: PlanPatch): Promise<AdminPlan> {
+  return apiRequest<AdminPlan>(`/api/v1/admin/plans/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function deletePlan(id: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/admin/plans/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 用户 /api/v1/admin/users
+// ---------------------------------------------------------------------------
+
+export type ListUsersParams = {
+  q?: string;
+  status?: string;
+  role?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export async function listUsers(params: ListUsersParams = {}): Promise<WritePage<AdminUser>> {
+  const qs = toQueryString(params);
+  return apiRequest<WritePage<AdminUser>>(`/api/v1/admin/users${qs}`);
+}
+
+export type CreateUserInput = {
+  username: string;
+  password?: string;
+  role: string;
+  plan_id?: string;
+  duration_days?: number;
+};
+
+export async function createUser(input: CreateUserInput): Promise<AdminUser> {
+  return apiRequest<AdminUser>("/api/v1/admin/users", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function getUser(id: string): Promise<AdminUserDetail> {
+  return apiRequest<AdminUserDetail>(`/api/v1/admin/users/${encodeURIComponent(id)}`);
+}
+
+export type UpdateUserPatch = {
+  status?: string;
+  role?: string;
+  password?: string;
+};
+
+export async function updateUser(id: string, patch: UpdateUserPatch): Promise<AdminUserDetail> {
+  return apiRequest<AdminUserDetail>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function deleteUser(id: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/admin/users/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 用户密钥 /api/v1/admin/users/{id}/keys
+// ---------------------------------------------------------------------------
+
+export async function listUserKeys(userId: string): Promise<{ items: AdminKey[] }> {
+  return apiRequest<{ items: AdminKey[] }>(`/api/v1/admin/users/${encodeURIComponent(userId)}/keys`);
+}
+
+export type CreateUserKeyInput = {
+  name: string;
+  platforms?: string[];
+  ip_allowlist?: string[];
+  expires_in_days?: number;
+};
+
+export async function createUserKey(
+  userId: string,
+  input: CreateUserKeyInput,
+): Promise<AdminCreateKeyResponse> {
+  return apiRequest<AdminCreateKeyResponse>(`/api/v1/admin/users/${encodeURIComponent(userId)}/keys`, {
+    method: "POST",
+    body: input,
+  });
+}
+
+export type UpdateUserKeyPatch = {
+  name?: string;
+  platforms?: string[];
+  ip_allowlist?: string[];
+  status?: string;
+};
+
+export async function updateUserKey(
+  userId: string,
+  keyId: string,
+  patch: UpdateUserKeyPatch,
+): Promise<AdminKey> {
+  return apiRequest<AdminKey>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(keyId)}`,
+    {
+      method: "PATCH",
+      body: patch,
+    },
+  );
+}
+
+export async function deleteUserKey(userId: string, keyId: string): Promise<void> {
+  return apiRequest<void>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(keyId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 订阅 /api/v1/admin/subscriptions
+// ---------------------------------------------------------------------------
+
+export type ListSubscriptionsParams = {
+  user_id?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export async function listSubscriptions(
+  params: ListSubscriptionsParams = {},
+): Promise<WritePage<AdminSubscription>> {
+  const qs = toQueryString(params);
+  return apiRequest<WritePage<AdminSubscription>>(`/api/v1/admin/subscriptions${qs}`);
+}
+
+export type CreateSubscriptionInput = {
+  user_id: string;
+  plan_id: string;
+  duration_days?: number;
+};
+
+export async function createSubscription(input: CreateSubscriptionInput): Promise<AdminSubscription> {
+  return apiRequest<AdminSubscription>("/api/v1/admin/subscriptions", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export type UpdateSubscriptionPatch = {
+  status?: string;
+  extend_days?: number;
+  expires_at_ns?: number;
+  plan_id?: string;
+  duration_days?: number;
+};
+
+export async function updateSubscription(
+  id: string,
+  patch: UpdateSubscriptionPatch,
+): Promise<AdminSubscription> {
+  return apiRequest<AdminSubscription>(`/api/v1/admin/subscriptions/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function deleteSubscription(id: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/admin/subscriptions/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+export const updateUserSubscription = updateSubscription;
+
+// ---------------------------------------------------------------------------
+// 邀请码 /api/v1/admin/invites
+// ---------------------------------------------------------------------------
+
+export type ListInvitesParams = {
+  limit?: number;
+  offset?: number;
+};
+
+export async function listInvites(params: ListInvitesParams = {}): Promise<WritePage<AdminInvite>> {
+  const qs = toQueryString(params);
+  return apiRequest<WritePage<AdminInvite>>(`/api/v1/admin/invites${qs}`);
+}
+
+export type CreateInviteInput = {
+  plan_id?: string;
+  max_uses?: number;
+  expires_in_days?: number;
+  note?: string;
+};
+
+export async function createInvite(input: CreateInviteInput): Promise<AdminInvite> {
+  return apiRequest<AdminInvite>("/api/v1/admin/invites", {
+    method: "POST",
+    body: input,
+  });
+}
+
+export async function deleteInvite(id: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/admin/invites/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 用量 /api/v1/admin/usage
+// ---------------------------------------------------------------------------
+
+export async function getUsageSummary(): Promise<AdminUsageSummary> {
+  return apiRequest<AdminUsageSummary>("/api/v1/admin/usage/summary");
+}
+
+export type GetUsageUsersParams = {
+  from_ns?: number;
+  to_ns?: number;
+  limit?: number;
+  days?: number;
+};
+
+export async function getUsageUsers(
+  params: GetUsageUsersParams = {},
+): Promise<AdminUsageUsersResponse> {
+  const qs = toQueryString(params);
+  return apiRequest<AdminUsageUsersResponse>(`/api/v1/admin/usage/users${qs}`);
+}
+
+export type GetUsageDailyParams = {
+  days?: number;
+};
+
+export async function getUsageDaily(
+  params: GetUsageDailyParams = {},
+): Promise<AdminUsageDailyResponse> {
+  const qs = toQueryString(params);
+  return apiRequest<AdminUsageDailyResponse>(`/api/v1/admin/usage/daily${qs}`);
+}
+
+export type GetUsagePlatformsParams = {
+  days?: number;
+};
+
+export async function getUsagePlatforms(
+  params: GetUsagePlatformsParams = {},
+): Promise<AdminUsagePlatformsResponse> {
+  const qs = toQueryString(params);
+  return apiRequest<AdminUsagePlatformsResponse>(`/api/v1/admin/usage/platforms${qs}`);
+}
+export const getUsageByUser = getUsageUsers;
+export const getUsageByPlatform = getUsagePlatforms;
+
+export async function getUserUsage(
+  userId: string,
+  days?: number,
+): Promise<AdminUsageDailyResponse> {
+  const qs = days ? `?days=${days}` : "";
+  return apiRequest<AdminUsageDailyResponse>(
+    `/api/v1/admin/users/${encodeURIComponent(userId)}/usage${qs}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 设置 /api/v1/system/config
+// ---------------------------------------------------------------------------
+
+export async function getSystemConfig(): Promise<AdminSystemConfig> {
+  return apiRequest<AdminSystemConfig>("/api/v1/system/config");
+}
+
+export async function updateSystemConfig(
+  patch: AdminSystemConfigPatch,
+): Promise<AdminSystemConfig> {
+  return apiRequest<AdminSystemConfig>("/api/v1/system/config", {
+    method: "PATCH",
+    body: patch,
+  });
+}
+
+export async function getDefaultSystemConfig(): Promise<AdminSystemConfig> {
+  return apiRequest<AdminSystemConfig>("/api/v1/system/config/default");
+}

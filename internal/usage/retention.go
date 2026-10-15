@@ -54,6 +54,11 @@ type Retention struct {
 	HourlyKeep time.Duration
 	// DailyKeep is how long daily rows are kept. Zero uses DefaultDailyKeep.
 	DailyKeep time.Duration
+	// DailyKeepFn, when set, supplies the daily window at each pass instead of
+	// DailyKeep, so a change made in the console applies to the next pass
+	// rather than to the next restart. It wins over DailyKeep; a non-positive
+	// answer falls back to DefaultDailyKeep.
+	DailyKeepFn func() time.Duration
 	// Interval is how often Start runs a pass. Zero uses DefaultInterval.
 	Interval time.Duration
 	// Logf receives progress messages. Nil silences them.
@@ -78,6 +83,11 @@ func (r *Retention) hourlyKeep() time.Duration {
 }
 
 func (r *Retention) dailyKeep() time.Duration {
+	if r.DailyKeepFn != nil {
+		if keep := r.DailyKeepFn(); keep > 0 {
+			return keep
+		}
+	}
 	if r.DailyKeep > 0 {
 		return r.DailyKeep
 	}

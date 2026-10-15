@@ -973,3 +973,137 @@ func decodeOptionalStringSliceJSON(value sql.NullString) ([]string, error) {
 	}
 	return decodeStringSliceJSON(value.String)
 }
+
+// --- console reads added for the multi-tenant console ---
+
+// ListSessionsByUser returns one user's live console sessions, newest first.
+//
+// Only the session id hash is stored, so that hash is what identifies a session
+// to its owner; the value that was handed out at login is never in the database
+// and cannot be reconstructed here.
+func (r *StateRepo) ListSessionsByUser(userID string) ([]model.Session, error) {
+	rows, err := r.db.Query(`
+		SELECT id_hash, user_id, created_at_ns, expires_at_ns, ip, ua
+		FROM sessions
+		WHERE user_id = ?
+		ORDER BY created_at_ns DESC, id_hash
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list sessions by user: %w", err)
+	}
+	defer rows.Close()
+
+	result := []model.Session{}
+	for rows.Next() {
+		var s model.Session
+		if err := rows.Scan(&s.IDHash, &s.UserID, &s.CreatedAtNs, &s.ExpiresAtNs, &s.IP, &s.UA); err != nil {
+			return nil, err
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+// DeleteUserSession ends one session, but only if it belongs to the user named.
+//
+// The ownership test is in the WHERE clause rather than in a preceding read, so
+// a caller that guesses a session id cannot end someone else's session: the
+// delete simply matches nothing.
+func (r *StateRepo) DeleteUserSession(userID, idHash string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec("DELETE FROM sessions WHERE user_id = ? AND id_hash = ?", userID, idHash)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return n, nil
+}
+
+// ListActiveUserSubscriptions returns every active subscription, oldest first.
+//
+// It is the read behind "which users are on a plan right now": a user has at
+// most one active subscription, and the ones that are not active are history.
+func (r *StateRepo) ListActiveUserSubscriptions() ([]model.UserSubscription, error) {
+	rows, err := r.db.Query(
+		"SELECT "+userSubscriptionColumns+" FROM user_subscriptions WHERE status = ? ORDER BY starts_at_ns DESC, id",
+		model.SubscriptionStatusActive,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := []model.UserSubscription{}
+	for rows.Next() {
+		s, err := scanUserSubscription(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}
+
+// ListUsageDailyRange returns every user's usage in the window, one row per
+// key, platform and UTC day.
+//
+// Both usage tables are read, for the same reason ListUsageByUser reads both:
+// the recent days are still hourly rows, the older ones have been summarized
+// into daily rows, and a given hour lives in exactly one of the two. The
+// console folds these rows into per-user, per-platform and per-day totals.
+func (r *StateRepo) ListUsageDailyRange(fromNs, toNs int64) ([]model.UsageRow, error) {
+	rows, err := r.db.Query(`
+		SELECT key_id, user_id, platform_id, day_ts_ns,
+		       SUM(ingress_bytes), SUM(egress_bytes), SUM(requests), SUM(errors)
+		FROM (
+			SELECT key_id, user_id, platform_id, day_ts_ns,
+			       ingress_bytes, egress_bytes, requests, errors
+			FROM usage_daily
+			WHERE day_ts_ns >= ? AND day_ts_ns < ?
+			UNION ALL
+			SELECT key_id, user_id, platform_id,
+			       (hour_ts_ns / 86400000000000) * 86400000000000 AS day_ts_ns,
+			       ingress_bytes, egress_bytes, requests, errors
+			FROM usage_hourly
+			WHERE hour_ts_ns >= ? AND hour_ts_ns < ?
+		)
+		GROUP BY key_id, user_id, platform_id, day_ts_ns
+		ORDER BY day_ts_ns DESC, user_id
+	`, fromNs, toNs, fromNs, toNs)
+	if err != nil {
+		return nil, fmt.Errorf("list usage range: %w", err)
+	}
+	defer rows.Close()
+
+	result := []model.UsageRow{}
+	for rows.Next() {
+		var row model.UsageRow
+		if err := rows.Scan(&row.KeyID, &row.UserID, &row.PlatformID, &row.TSNs,
+			&row.IngressBytes, &row.EgressBytes, &row.Requests, &row.Errors); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+// DeleteUserSubscription removes one subscription row.
+//
+// Usage is deliberately left alone: usage rows carry no foreign key to a
+// subscription, so the traffic a user already generated stays accountable after
+// the subscription that allowed it is gone.
+func (r *StateRepo) DeleteUserSubscription(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec("DELETE FROM user_subscriptions WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}

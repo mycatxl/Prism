@@ -205,23 +205,74 @@ func PurityScore(risk *int) *int {
 	return &score
 }
 
-// PurityBand defines Prism's product bands, independently of provider risk bands.
-func PurityBand(score *int) string {
+// Band names, from the best score to the worst. They are the vocabulary the
+// console, the platform criteria and the plan IP tiers all use, so a name is
+// never rendered straight from a number.
+const (
+	BandUnknown   = "unknown"
+	BandExcellent = "excellent"
+	BandClean     = "clean"
+	BandFair      = "fair"
+	BandMixed     = "mixed"
+	BandPoor      = "poor"
+)
+
+// Bands are the score thresholds behind the band names.
+//
+// They are hot-updatable settings rather than constants, because where the line
+// between "clean" and "fair" sits is a product decision that changes as the
+// quality of the pools does. The zero value means "the shipped thresholds", so
+// a config persisted before the setting existed keeps behaving as it did.
+type Bands struct {
+	Excellent int `json:"excellent"`
+	Clean     int `json:"clean"`
+	Fair      int `json:"fair"`
+	Mixed     int `json:"mixed"`
+}
+
+// DefaultBands returns the shipped thresholds.
+func DefaultBands() Bands {
+	return Bands{Excellent: 95, Clean: 90, Fair: 80, Mixed: 60}
+}
+
+// Normalized returns the bands with unusable values replaced by the shipped
+// ones.
+//
+// Two inputs are refused rather than honoured: an all-zero set (a config row
+// written before the setting existed) and a set that does not descend (which
+// would name a high score worse than a lower one). Both would otherwise change
+// how every existing platform filter behaves, silently.
+func (b Bands) Normalized() Bands {
+	if b.Mixed <= 0 || b.Mixed >= b.Fair || b.Fair >= b.Clean || b.Clean >= b.Excellent || b.Excellent > 100 {
+		return DefaultBands()
+	}
+	return b
+}
+
+// Name returns the band a score falls in.
+func (b Bands) Name(score *int) string {
 	if score == nil || *score < 0 || *score > 100 {
-		return "unknown"
+		return BandUnknown
 	}
+	bands := b.Normalized()
 	switch {
-	case *score >= 95:
-		return "excellent"
-	case *score >= 90:
-		return "clean"
-	case *score >= 80:
-		return "fair"
-	case *score >= 60:
-		return "mixed"
+	case *score >= bands.Excellent:
+		return BandExcellent
+	case *score >= bands.Clean:
+		return BandClean
+	case *score >= bands.Fair:
+		return BandFair
+	case *score >= bands.Mixed:
+		return BandMixed
 	default:
-		return "poor"
+		return BandPoor
 	}
+}
+
+// PurityBand defines Prism's product bands, independently of provider risk
+// bands, using the shipped thresholds.
+func PurityBand(score *int) string {
+	return DefaultBands().Name(score)
 }
 
 func EffectivePurityBand(summary Summary) string {
