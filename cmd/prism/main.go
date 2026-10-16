@@ -96,6 +96,22 @@ func loadRuntimeConfig(engine *state.StateEngine, envCfg *config.EnvConfig) *con
 	if strings.TrimSpace(runtimeCfg.EgressTraceURL) == "" {
 		runtimeCfg.EgressTraceURL = config.DefaultEgressTraceURL
 	}
+	// The usage-alert settings landed after that, and a row persisted before
+	// them decodes to zero. The scanner reads a zero as "use the shipped
+	// setting", but PATCH validation refuses one outright
+	// (internal/service/control_plane_system.go, validateAlertConfig), so
+	// leaving it in place would make every later settings change fail on a
+	// deployment upgraded from an earlier state.db. The first PATCH persists
+	// the filled-in values.
+	if runtimeCfg.AlertUsageRatio <= 0 || runtimeCfg.AlertUsageRatio > 1 {
+		runtimeCfg.AlertUsageRatio = config.DefaultAlertUsageRatio
+	}
+	if runtimeCfg.AlertWindowMinutes <= 0 {
+		runtimeCfg.AlertWindowMinutes = config.DefaultAlertWindowMinutes
+	}
+	if runtimeCfg.AlertRetentionDays <= 0 {
+		runtimeCfg.AlertRetentionDays = config.DefaultAlertRetentionDays
+	}
 	// PRISM_EGRESS_TRACE_URL wins over the persisted value: an offline
 	// deployment points the egress probe at a local endpoint and expects that to
 	// apply on every start (the field stays hot-updatable via PATCH afterwards).
@@ -103,8 +119,35 @@ func loadRuntimeConfig(engine *state.StateEngine, envCfg *config.EnvConfig) *con
 		if traceURL := strings.TrimSpace(envCfg.EgressTraceURL); traceURL != "" {
 			runtimeCfg.EgressTraceURL = traceURL
 		}
+		// The alert settings are pinned only by a variable that carries a
+		// value: turning one back to the shipped setting is a console change,
+		// and a deployment file with a bare `PRISM_ALERT_USAGE_RATIO=` line
+		// must not silently undo it on every restart.
+		if alertSettingSet(alertUsageRatioEnv) {
+			runtimeCfg.AlertUsageRatio = envCfg.AlertUsageRatio
+		}
+		if alertSettingSet(alertWindowMinutesEnv) {
+			runtimeCfg.AlertWindowMinutes = envCfg.AlertWindowMinutes
+		}
+		if alertSettingSet(alertRetentionDaysEnv) {
+			runtimeCfg.AlertRetentionDays = envCfg.AlertRetentionDays
+		}
 	}
 	return runtimeCfg
+}
+
+// Environment variables that pin the usage-alert settings for a start.
+const (
+	alertUsageRatioEnv    = "PRISM_ALERT_USAGE_RATIO"
+	alertWindowMinutesEnv = "PRISM_ALERT_WINDOW_MINUTES"
+	alertRetentionDaysEnv = "PRISM_ALERT_RETENTION_DAYS"
+)
+
+// alertSettingSet reports whether an environment variable pins its alert
+// setting for this start. An absent variable, and one set to the empty string,
+// both leave the persisted value alone.
+func alertSettingSet(name string) bool {
+	return strings.TrimSpace(os.Getenv(name)) != ""
 }
 
 func newDirectDownloader(

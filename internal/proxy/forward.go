@@ -34,6 +34,11 @@ type ForwardProxyConfig struct {
 	// DirectDenyPrivate enables the local dial guard (PRISM_DIRECT_DENY_PRIVATE)
 	// on this proxy's local direct branch, keeping Resin behaviour when false.
 	DirectDenyPrivate bool
+
+	// BlockedDestinationPorts lists the destination ports this proxy's local
+	// direct branch refuses (PRISM_BLOCKED_DESTINATION_PORTS). It is independent
+	// of DirectDenyPrivate: clearing that switch never reopens a blocked port.
+	BlockedDestinationPorts []int
 	// AuthGuard optionally rate limits failed proxy authentications. A nil
 	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
 	// defaults to 0, which disables it).
@@ -96,7 +101,7 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 		transportConfig: transportCfg,
 		transportPool:   transportPool,
 		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
-		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate),
+		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
 		authGuard:       cfg.AuthGuard,
 		metering:        cfg.Metering,
 		quota:           cfg.Quota,

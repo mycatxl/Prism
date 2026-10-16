@@ -58,6 +58,8 @@ type prismApp struct {
 	metricsRetention  metrics.RetentionPolicy
 	//: the usage summary and prune loop over state.db.
 	stopUsageRetention func()
+	//: the usage alert scanner over state.db.
+	stopUsageAlerts func()
 	//: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
@@ -676,6 +678,13 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	}).Start()
 	log.Println("Usage retention started")
 
+	// Usage alerts scan on a short cadence of their own: the detector compares a
+	// one-hour window, so a crossing is reported while it is still worth acting
+	// on. The ratio, window and retention come from the runtime config at each
+	// pass, which is what lets the console change them without a restart.
+	a.stopUsageAlerts = service.StartUsageAlertScanner(cpService, service.UsageAlertScanInterval, log.Printf)
+	log.Println("Usage alerts started")
+
 	// Accounting. One counter set and one session registry are shared by every
 	// inbound: a key's allowance spans the protocols it uses, and so does the
 	// set of tunnels that may need ending.
@@ -848,55 +857,58 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	}
 
 	forwardProxy := proxy.NewForwardProxy(proxy.ForwardProxyConfig{
-		ProxyToken:        a.envCfg.ProxyToken,
-		AccessKeys:        keyVerifier,
-		Router:            a.topoRuntime.router,
-		Pool:              a.topoRuntime.pool,
-		Health:            a.topoRuntime.pool,
-		Events:            proxyEvents,
-		MetricsSink:       a.metricsManager,
-		OutboundTransport: outboundTransportCfg,
-		TransportPool:     a.transportPool,
-		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
-		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
-		AuthGuard:         proxyAuthGuard,
-		Metering:          usageMetering,
-		Quota:             usageQuota,
-		Sessions:          a.usageSessions,
+		ProxyToken:              a.envCfg.ProxyToken,
+		AccessKeys:              keyVerifier,
+		Router:                  a.topoRuntime.router,
+		Pool:                    a.topoRuntime.pool,
+		Health:                  a.topoRuntime.pool,
+		Events:                  proxyEvents,
+		MetricsSink:             a.metricsManager,
+		OutboundTransport:       outboundTransportCfg,
+		TransportPool:           a.transportPool,
+		ProxyBypassRules:        a.envCfg.ProxyBypassRules,
+		DirectDenyPrivate:       a.envCfg.DirectDenyPrivate,
+		BlockedDestinationPorts: a.envCfg.BlockedDestinationPorts,
+		AuthGuard:               proxyAuthGuard,
+		Metering:                usageMetering,
+		Quota:                   usageQuota,
+		Sessions:                a.usageSessions,
 	})
 
 	reverseProxy := proxy.NewReverseProxy(proxy.ReverseProxyConfig{
-		ProxyToken:        a.envCfg.ProxyToken,
-		AccessKeys:        keyVerifier,
-		Router:            a.topoRuntime.router,
-		Pool:              a.topoRuntime.pool,
-		PlatformLookup:    a.topoRuntime.pool,
-		Health:            a.topoRuntime.pool,
-		Matcher:           a.accountMatcher,
-		Events:            proxyEvents,
-		MetricsSink:       a.metricsManager,
-		OutboundTransport: outboundTransportCfg,
-		TransportPool:     a.transportPool,
-		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
-		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
-		AuthGuard:         proxyAuthGuard,
-		Metering:          usageMetering,
-		Quota:             usageQuota,
+		ProxyToken:              a.envCfg.ProxyToken,
+		AccessKeys:              keyVerifier,
+		Router:                  a.topoRuntime.router,
+		Pool:                    a.topoRuntime.pool,
+		PlatformLookup:          a.topoRuntime.pool,
+		Health:                  a.topoRuntime.pool,
+		Matcher:                 a.accountMatcher,
+		Events:                  proxyEvents,
+		MetricsSink:             a.metricsManager,
+		OutboundTransport:       outboundTransportCfg,
+		TransportPool:           a.transportPool,
+		ProxyBypassRules:        a.envCfg.ProxyBypassRules,
+		DirectDenyPrivate:       a.envCfg.DirectDenyPrivate,
+		BlockedDestinationPorts: a.envCfg.BlockedDestinationPorts,
+		AuthGuard:               proxyAuthGuard,
+		Metering:                usageMetering,
+		Quota:                   usageQuota,
 	})
 	socks5Inbound := proxy.NewSocks5Inbound(proxy.Socks5InboundConfig{
-		ProxyToken:        a.envCfg.ProxyToken,
-		AccessKeys:        keyVerifier,
-		Router:            a.topoRuntime.router,
-		Pool:              a.topoRuntime.pool,
-		Health:            a.topoRuntime.pool,
-		Events:            proxyEvents,
-		MetricsSink:       a.metricsManager,
-		ProxyBypassRules:  a.envCfg.ProxyBypassRules,
-		DirectDenyPrivate: a.envCfg.DirectDenyPrivate,
-		DialTimeout:       a.envCfg.ProxyTransportDialTimeout,
-		Metering:          usageMetering,
-		Quota:             usageQuota,
-		Sessions:          a.usageSessions,
+		ProxyToken:              a.envCfg.ProxyToken,
+		AccessKeys:              keyVerifier,
+		Router:                  a.topoRuntime.router,
+		Pool:                    a.topoRuntime.pool,
+		Health:                  a.topoRuntime.pool,
+		Events:                  proxyEvents,
+		MetricsSink:             a.metricsManager,
+		ProxyBypassRules:        a.envCfg.ProxyBypassRules,
+		DirectDenyPrivate:       a.envCfg.DirectDenyPrivate,
+		BlockedDestinationPorts: a.envCfg.BlockedDestinationPorts,
+		DialTimeout:             a.envCfg.ProxyTransportDialTimeout,
+		Metering:                usageMetering,
+		Quota:                   usageQuota,
+		Sessions:                a.usageSessions,
 	})
 	// the SOCKS5 username/password check happens on a raw TCP
 	// session, so the mux cannot meter it with an http.ResponseWriter; the
@@ -1091,6 +1103,9 @@ func (a *prismApp) shutdown() {
 	}
 	if a.stopUsageRetention != nil {
 		a.stopUsageRetention()
+	}
+	if a.stopUsageAlerts != nil {
+		a.stopUsageAlerts()
 	}
 	// Cancelling the accounting runs the flusher's final pass, which writes to
 	// state.db - so it has to happen here, while that database is still open,

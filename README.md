@@ -49,10 +49,12 @@ Every setting is a `PRISM_*` variable; `.env.example` and
 check-config` prints the effective configuration with every secret masked.
 
 Several switches are on by default: `PRISM_DENY_PRIVATE_NODES`,
-`PRISM_DIRECT_DENY_PRIVATE` and proxy-entry failure limiting
-(`PRISM_PROXY_AUTH_FAIL_LIMIT=30`). They refuse loopback, private, link-local,
-CGNAT, reserved and cloud-metadata targets on every local dial path. Turn them
-off only on a trusted network.
+`PRISM_DIRECT_DENY_PRIVATE`, `PRISM_BLOCKED_DESTINATION_PORTS=25,465,587` and
+proxy-entry failure limiting (`PRISM_PROXY_AUTH_FAIL_LIMIT=30`). The first two
+refuse loopback, private, link-local, CGNAT, reserved and cloud-metadata targets
+on every local dial path; the port list independently refuses the SMTP ports, so
+an exposed deployment is not an outbound mail relay. Turn them off only on a
+trusted network.
 
 ## API
 
@@ -66,7 +68,7 @@ The deployment is multi-tenant: an administrator keeps the nodes, plans and
 tenant accounts, while each tenant only sees its own subscription, keys and
 usage under `/api/v1/me/*`. Roles, registration modes, plan snapshots, key
 revocation and the retention windows are documented in
-[`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md).
+[`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md). That guide also covers the abuse-protection defaults and the usage-anomaly alerts: an account that spends a third of its plan quota inside an hour is reported once (`PRISM_ALERT_USAGE_RATIO`, `PRISM_ALERT_WINDOW_MINUTES`, `PRISM_ALERT_RETENTION_DAYS`, all three hot-changeable in the console).
 
 ## Layout
 

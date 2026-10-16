@@ -1053,6 +1053,73 @@ func TestLoadRuntimeConfig_EgressTraceURLEnvOverrideAndLegacyFallback(t *testing
 	}
 }
 
+func TestLoadRuntimeConfig_UsageAlertSettings(t *testing.T) {
+	root := t.TempDir()
+	engine, closer, err := state.PersistenceBootstrap(filepath.Join(root, "state"), filepath.Join(root, "cache"))
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	// A settings row persisted before the usage-alert fields existed decodes to
+	// zero. The scanner reads a zero as "use the shipped setting", but PATCH
+	// validation refuses one (validateAlertConfig), so every settings change on
+	// a deployment upgraded from an earlier state.db would fail unless the
+	// values are filled in at startup.
+	legacy := config.NewDefaultRuntimeConfig()
+	legacy.AlertUsageRatio = 0
+	legacy.AlertWindowMinutes = 0
+	legacy.AlertRetentionDays = 0
+	if err := engine.SaveSystemConfig(legacy, 1, time.Now().UnixNano()); err != nil {
+		t.Fatalf("SaveSystemConfig(legacy): %v", err)
+	}
+	cfg := loadRuntimeConfig(engine, &config.EnvConfig{})
+	if cfg.AlertUsageRatio != config.DefaultAlertUsageRatio {
+		t.Fatalf("legacy alert_usage_ratio: got %g, want %g", cfg.AlertUsageRatio, config.DefaultAlertUsageRatio)
+	}
+	if cfg.AlertWindowMinutes != config.DefaultAlertWindowMinutes {
+		t.Fatalf("legacy alert_window_minutes: got %d, want %d", cfg.AlertWindowMinutes, config.DefaultAlertWindowMinutes)
+	}
+	if cfg.AlertRetentionDays != config.DefaultAlertRetentionDays {
+		t.Fatalf("legacy alert_retention_days: got %d, want %d", cfg.AlertRetentionDays, config.DefaultAlertRetentionDays)
+	}
+
+	// An environment variable that carries a value wins on every start...
+	t.Setenv(alertUsageRatioEnv, "0.5")
+	t.Setenv(alertWindowMinutesEnv, "15")
+	t.Setenv(alertRetentionDaysEnv, "7")
+	if err := engine.SaveSystemConfig(config.NewDefaultRuntimeConfig(), 2, time.Now().UnixNano()); err != nil {
+		t.Fatalf("SaveSystemConfig(persisted): %v", err)
+	}
+	cfg = loadRuntimeConfig(engine, &config.EnvConfig{
+		AlertUsageRatio:    0.5,
+		AlertWindowMinutes: 15,
+		AlertRetentionDays: 7,
+	})
+	if cfg.AlertUsageRatio != 0.5 || cfg.AlertWindowMinutes != 15 || cfg.AlertRetentionDays != 7 {
+		t.Fatalf("env alert settings: got %g/%d/%d, want 0.5/15/7",
+			cfg.AlertUsageRatio, cfg.AlertWindowMinutes, cfg.AlertRetentionDays)
+	}
+
+	// ... while a bare `PRISM_ALERT_*=` line in a deployment file does not: the
+	// persisted value has to survive the restart.
+	for _, name := range []string{alertUsageRatioEnv, alertWindowMinutesEnv, alertRetentionDaysEnv} {
+		t.Setenv(name, "")
+	}
+	cfg = loadRuntimeConfig(engine, &config.EnvConfig{
+		AlertUsageRatio:    0.5,
+		AlertWindowMinutes: 15,
+		AlertRetentionDays: 7,
+	})
+	if cfg.AlertUsageRatio != config.DefaultAlertUsageRatio ||
+		cfg.AlertWindowMinutes != config.DefaultAlertWindowMinutes ||
+		cfg.AlertRetentionDays != config.DefaultAlertRetentionDays {
+		t.Fatalf("empty env alert settings: got %g/%d/%d, want %g/%d/%d",
+			cfg.AlertUsageRatio, cfg.AlertWindowMinutes, cfg.AlertRetentionDays,
+			config.DefaultAlertUsageRatio, config.DefaultAlertWindowMinutes, config.DefaultAlertRetentionDays)
+	}
+}
+
 // TestBootstrapNodes_RestoredEgressIPEntersTheReverseIndex pins
 // : a node whose egress IP is restored from nodes_dynamic must be
 // resolvable through the pool's egress index, otherwise NotifyEgressIPDirty

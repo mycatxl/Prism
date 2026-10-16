@@ -63,6 +63,19 @@ type UsagePlatformRow struct {
 	TotalBytes   int64  `json:"total_bytes"`
 }
 
+// UsagePlanRow is one plan's footprint over a window: how many accounts ride on
+// it, what they spent, and how much of the current period they have used.
+type UsagePlanRow struct {
+	// PlanID and PlanName are empty for the row that collects accounts with
+	// traffic but no active subscription: they are real traffic, and dropping
+	// them would make the table add up to less than the deployment's total.
+	PlanID      string `json:"plan_id"`
+	PlanName    string `json:"plan_name"`
+	Subscribers int    `json:"subscribers"`
+	TotalBytes  int64  `json:"total_bytes"`
+	PeriodBytes int64  `json:"period_bytes"`
+}
+
 // expiringSoonDays is the horizon behind "expiring soon". A week is the window
 // in which a renewal conversation can still happen before access stops.
 const expiringSoonDays = 7
@@ -249,6 +262,67 @@ func (s *ControlPlaneService) UsageByPlatform(days int, nowNs int64) ([]UsagePla
 			return result[i].TotalBytes > result[j].TotalBytes
 		}
 		return result[i].PlatformID < result[j].PlatformID
+	})
+	return result, nil
+}
+
+// UsageByPlan returns traffic per plan over the last days, heaviest first.
+//
+// The plan is a promise about a group of accounts, so the number that matters to
+// an operator is not one user's traffic but the footprint of everyone riding on
+// it. Accounts with traffic and no active subscription are collected into one
+// extra row with an empty plan id, so the table still adds up.
+func (s *ControlPlaneService) UsageByPlan(days int, nowNs int64) ([]UsagePlanRow, error) {
+	if s == nil || s.Engine == nil {
+		return nil, internal("no state engine", nil)
+	}
+	days = clampUsageDays(days)
+	fromNs, toNs := usageWindow(days, nowNs)
+	rows, err := s.Engine.ListUsageDailyRange(fromNs, toNs)
+	if err != nil {
+		return nil, internal("list usage", err)
+	}
+	subs, err := s.Engine.ListActiveUserSubscriptions()
+	if err != nil {
+		return nil, internal("list active subscriptions", err)
+	}
+	views, err := s.subscriptionViews(subs)
+	if err != nil {
+		return nil, err
+	}
+
+	byPlan := make(map[string]*UsagePlanRow)
+	bucket := func(planID, planName string) *UsagePlanRow {
+		entry, ok := byPlan[planID]
+		if !ok {
+			entry = &UsagePlanRow{PlanID: planID, PlanName: planName}
+			byPlan[planID] = entry
+		}
+		if entry.PlanName == "" {
+			entry.PlanName = planName
+		}
+		return entry
+	}
+	planByUser := make(map[string]string, len(views))
+	for _, view := range views {
+		entry := bucket(view.PlanID, view.PlanName)
+		entry.Subscribers++
+		entry.PeriodBytes += view.PeriodUsedBytes
+		planByUser[view.UserID] = view.PlanID
+	}
+	for _, row := range rows {
+		bucket(planByUser[row.UserID], "").TotalBytes += row.IngressBytes + row.EgressBytes
+	}
+
+	result := make([]UsagePlanRow, 0, len(byPlan))
+	for _, entry := range byPlan {
+		result = append(result, *entry)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].TotalBytes != result[j].TotalBytes {
+			return result[i].TotalBytes > result[j].TotalBytes
+		}
+		return result[i].PlanID < result[j].PlanID
 	})
 	return result, nil
 }

@@ -51,6 +51,17 @@ type RuntimeConfig struct {
 	AuditRetentionDays int         `json:"audit_retention_days"`
 	UsageRetentionDays int         `json:"usage_retention_days"`
 	PurityBands        PurityBands `json:"purity_bands"`
+
+	// Usage alerts. These are the settings the alert scanner reads: how much of
+	// a plan's quota one account may spend inside a short window before the
+	// console reports it, over how many minutes that window is measured, and how
+	// long such a report is kept.
+	//
+	// A zero in any of them means "use the shipped setting", which is what a
+	// config persisted before they existed decodes to.
+	AlertUsageRatio    float64 `json:"alert_usage_ratio"`
+	AlertWindowMinutes int     `json:"alert_window_minutes"`
+	AlertRetentionDays int     `json:"alert_retention_days"`
 }
 
 // DefaultEgressTraceURL is the shipped node egress probe target. It is also the
@@ -65,6 +76,22 @@ const (
 	DefaultAuditRetentionDays = 90
 	// DefaultUsageRetentionDays is how long a summarized usage day is kept.
 	DefaultUsageRetentionDays = 400
+)
+
+// Shipped usage-alert settings. They live here rather than in the environment
+// for the same reason the retention windows do: how eagerly the console reports
+// a single account is an operational decision, not a deployment one - the same
+// three fields are hot-updatable through the settings page.
+const (
+	// DefaultAlertUsageRatio is the share of a plan's quota an account has to
+	// reach inside one window to be reported. A third of the quota inside an
+	// hour is a pace ordinary use does not reach, and it still leaves time to
+	// react before the quota itself is gone.
+	DefaultAlertUsageRatio = 0.3
+	// DefaultAlertWindowMinutes is the window the ratio is measured over.
+	DefaultAlertWindowMinutes = 60
+	// DefaultAlertRetentionDays is how long an alert stays readable.
+	DefaultAlertRetentionDays = 90
 )
 
 // PurityBands are the score thresholds behind the purity band names.
@@ -105,6 +132,28 @@ func (b PurityBands) Normalized() PurityBands {
 func RetentionDays(configured, shipped int) int {
 	if configured <= 0 {
 		return shipped
+	}
+	return configured
+}
+
+// AlertRatio returns the share of a plan quota that has to be reached for an
+// account to be reported, falling back to the shipped ratio for a value nothing
+// can act on: a ratio outside (0, 1] would either report every account from its
+// first byte or name a level that cannot be reached before the quota is already
+// spent. A config persisted before the setting existed decodes to 0 and lands
+// here.
+func AlertRatio(configured float64) float64 {
+	if configured <= 0 || configured > 1 {
+		return DefaultAlertUsageRatio
+	}
+	return configured
+}
+
+// AlertWindow returns the number of minutes a usage alert is measured over,
+// falling back to the shipped window for a value that measures nothing.
+func AlertWindow(configured int) int {
+	if configured <= 0 {
+		return DefaultAlertWindowMinutes
 	}
 	return configured
 }
@@ -151,5 +200,8 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		AuditRetentionDays:            DefaultAuditRetentionDays,
 		UsageRetentionDays:            DefaultUsageRetentionDays,
 		PurityBands:                   DefaultPurityBands(),
+		AlertUsageRatio:               DefaultAlertUsageRatio,
+		AlertWindowMinutes:            DefaultAlertWindowMinutes,
+		AlertRetentionDays:            DefaultAlertRetentionDays,
 	}
 }

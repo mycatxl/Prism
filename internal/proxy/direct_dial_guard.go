@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,35 +20,67 @@ import (
 //   - the CONNECT tunnel's local direct branch,
 //   - the SOCKS5 inbound's local direct branch.
 //
-// It implements PRISM_DIRECT_DENY_PRIVATE, which is opt-in: the zero value is
-// disabled and every method is a no-op, so a build or a configuration that does
-// not enable the switch keeps the upstream Resin behaviour (local direct
-// targets are dialled with no address policy).
+// It applies two independent policies:
 //
-// When it is enabled the policy is applied twice, because a single check is not
-// enough:
+//   - the destination port set refuses ports listed in
+//     PRISM_BLOCKED_DESTINATION_PORTS (the shipped default is the SMTP set
+//     25/465/587, so an open deployment is not an outbound mail relay),
+//   - the address set refuses loopback, private, link-local, CGNAT, reserved
+//     and cloud metadata addresses while PRISM_DIRECT_DENY_PRIVATE is enabled.
 //
-//  1. CheckTarget resolves the target name and refuses the request when any
+// The port check runs first and needs no switch of its own, so turning
+// PRISM_DIRECT_DENY_PRIVATE off never reopens a blocked port. The zero value
+// refuses no port and no address: a build or a configuration that wires
+// neither switch keeps the upstream Resin behaviour (local direct targets are
+// dialled with no policy).
+//
+// Each enabled policy is applied twice, because a single check is not enough:
+//
+//  1. CheckTarget refuses the request when the target port is blocked or any
 //     resolved address is in the denied set. A name that cannot be resolved is
 //     refused too: a guard that fails open is not a guard.
 //  2. dialer() returns a net.Dialer whose ControlContext hook re-checks the
-//     address the socket is about to be connected to. A resolver that answers
-//     differently between the two calls (DNS rebinding) therefore cannot reach
-//     a denied address either.
+//     port and the address the socket is about to be connected to. A resolver
+//     that answers differently between the two calls (DNS rebinding) therefore
+//     cannot reach a denied address either.
 type DirectDialGuard struct {
 	enabled bool
+	// blockedPorts is the destination port set both halves of the port policy
+	// refuse. A nil set means "block no port". It is built once by
+	// WithBlockedDestinationPorts and only read afterwards, so copies of the
+	// guard may share it.
+	blockedPorts map[int]bool
 	// lookup resolves a hostname to every address it currently maps to. It is a
 	// field so tests can pin resolution without touching the system resolver.
 	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
-// NewDirectDialGuard returns the local dial policy for one switch value.
+// NewDirectDialGuard returns the local dial policy for one address switch
+// value. It refuses no destination port; the port list is carried by
+// WithBlockedDestinationPorts, which keeps this constructor's signature stable.
 func NewDirectDialGuard(enabled bool) DirectDialGuard {
 	return DirectDialGuard{enabled: enabled, lookup: defaultDirectLookup}
 }
 
 // Enabled reports whether the policy refuses addresses.
 func (g DirectDialGuard) Enabled() bool { return g.enabled }
+
+// WithBlockedDestinationPorts returns a copy of the policy that refuses the
+// given destination ports on every local direct dial. It is the chainable
+// carrier of PRISM_BLOCKED_DESTINATION_PORTS: an empty or nil list blocks no
+// port, and passing one never changes the address policy.
+func (g DirectDialGuard) WithBlockedDestinationPorts(ports []int) DirectDialGuard {
+	if len(ports) == 0 {
+		g.blockedPorts = nil
+		return g
+	}
+	blocked := make(map[int]bool, len(ports))
+	for _, port := range ports {
+		blocked[port] = true
+	}
+	g.blockedPorts = blocked
+	return g
+}
 
 // withLookup returns a copy of the policy using a pinned resolver. Tests only.
 func (g DirectDialGuard) withLookup(lookup func(context.Context, string) ([]netip.Addr, error)) DirectDialGuard {
@@ -60,6 +93,19 @@ func defaultDirectLookup(ctx context.Context, host string) ([]netip.Addr, error)
 }
 
 const directDenyPrivateHint = "PRISM_DIRECT_DENY_PRIVATE"
+
+// blockedDestinationPortsHint names the setting that carries the denied
+// destination ports. Every refusal of that policy quotes it, so an operator
+// can find the switch that caused the denial.
+const blockedDestinationPortsHint = "PRISM_BLOCKED_DESTINATION_PORTS"
+
+// errDirectDialPortBlocked is returned when a local direct target uses a
+// destination port refused by PRISM_BLOCKED_DESTINATION_PORTS. It is
+// independent of PRISM_DIRECT_DENY_PRIVATE: emptying the port list is the only
+// way to allow the port.
+var errDirectDialPortBlocked = errors.New(
+	"direct target denied: " + blockedDestinationPortsHint +
+		" blocks this destination port (set the variable to an empty value to allow every port)")
 
 // errDirectDialDenied is returned when a local direct target is inside the
 // denied address set.
@@ -74,7 +120,12 @@ var errDirectDialUnresolvable = errors.New(
 	"direct target denied: " + directDenyPrivateHint + " is fail-closed and the target name did not resolve")
 
 // CheckTarget applies the policy to a target host[:port] before it is dialled.
+// The destination port is checked first and on its own, so a disabled address
+// policy cannot skip it; an allowed port then follows the address rules.
 func (g DirectDialGuard) CheckTarget(ctx context.Context, host string) error {
+	if err := g.checkTargetPort(host); err != nil {
+		return err
+	}
 	if !g.enabled {
 		return nil
 	}
@@ -115,6 +166,25 @@ func (g DirectDialGuard) CheckTarget(ctx context.Context, host string) error {
 	return nil
 }
 
+// checkTargetPort refuses a pre-dial target whose destination port is in the
+// blocked set, independently of PRISM_DIRECT_DENY_PRIVATE. A target without an
+// explicit port has nothing to refuse here: it is dialled on its scheme's
+// default port, and the dial-time hook still validates the port the socket is
+// actually connected to.
+func (g DirectDialGuard) checkTargetPort(host string) error {
+	if len(g.blockedPorts) == 0 {
+		return nil
+	}
+	port, ok := directTargetPort(host)
+	if !ok {
+		return nil
+	}
+	if g.blockedPorts[port] {
+		return fmt.Errorf("%w: port %d", errDirectDialPortBlocked, port)
+	}
+	return nil
+}
+
 // defaultDirectDialTimeout is the dial deadline of every local direct dial when
 // the caller does not inject one. A bare net.Dialer has no timeout at all, so a
 // black-holed target would hold the connection (and the request) indefinitely.
@@ -125,33 +195,40 @@ const defaultDirectDialTimeout = 30 * time.Second
 // disables TCP keep-alives) if the dialer is ever built differently.
 const defaultDirectDialKeepAlive = 30 * time.Second
 
-// dialer returns the dialer every local direct dial must use. With the policy
-// disabled it is a plain net.Dialer plus the dial deadline, which keeps Resin
-// behaviour apart from that robustness bound.
+// dialer returns the dialer every local direct dial must use. With both
+// policies off it is a plain net.Dialer plus the dial deadline, which keeps
+// Resin behaviour apart from that robustness bound.
 func (g DirectDialGuard) dialer() *net.Dialer {
 	return g.dialerWithTimeout(defaultDirectDialTimeout)
 }
 
 // dialerWithTimeout returns the guard dialer carrying the given dial deadline.
 // A non-positive timeout falls back to the default, so a missing configuration
-// can never reintroduce an unbounded dial.
+// can never reintroduce an unbounded dial. The dial-time hook is installed
+// whenever either policy is active, so a blocked port is refused even with
+// PRISM_DIRECT_DENY_PRIVATE off.
 func (g DirectDialGuard) dialerWithTimeout(timeout time.Duration) *net.Dialer {
 	if timeout <= 0 {
 		timeout = defaultDirectDialTimeout
 	}
 	dialer := &net.Dialer{Timeout: timeout, KeepAlive: defaultDirectDialKeepAlive}
-	if !g.enabled {
+	if !g.enabled && len(g.blockedPorts) == 0 {
 		return dialer
 	}
 	// ControlContext runs after name resolution and immediately before the
-	// connect, so the address that is actually connected to is the one that is
-	// validated here, not a re-resolution done somewhere else.
+	// connect, so the port and the address that are actually connected to are
+	// the ones validated here, not a re-resolution done somewhere else.
 	dialer.ControlContext = g.controlContext
 	return dialer
 }
 
-// controlContext is the dial-time half of the policy.
+// controlContext is the dial-time half of the policy. It checks the
+// destination port first and on its own, so a disabled address policy cannot
+// skip it, then validates the address while PRISM_DIRECT_DENY_PRIVATE is on.
 func (g DirectDialGuard) controlContext(_ context.Context, _ string, address string, _ syscall.RawConn) error {
+	if err := g.checkDialAddressPort(address); err != nil {
+		return err
+	}
 	if !g.enabled {
 		return nil
 	}
@@ -164,6 +241,25 @@ func (g DirectDialGuard) controlContext(_ context.Context, _ string, address str
 	}
 	if isDeniedDirectAddr(addr) {
 		return fmt.Errorf("%w: %s", errDirectDialDenied, addr)
+	}
+	return nil
+}
+
+// checkDialAddressPort refuses the socket address a dial is about to use when
+// its destination port is in the blocked set. Unlike the pre-dial check it
+// fails closed on an address whose port cannot be read: net.Dialer hands this
+// hook a resolved ip:port, so a missing port means the dial path skipped
+// validation and the port cannot be proven safe.
+func (g DirectDialGuard) checkDialAddressPort(address string) error {
+	if len(g.blockedPorts) == 0 {
+		return nil
+	}
+	port, ok := directTargetPort(address)
+	if !ok {
+		return fmt.Errorf("%w: unvalidated dial address %q", errDirectDialPortBlocked, address)
+	}
+	if g.blockedPorts[port] {
+		return fmt.Errorf("%w: port %d", errDirectDialPortBlocked, port)
 	}
 	return nil
 }
@@ -240,4 +336,24 @@ func directTargetHostname(host string) string {
 		return trimmed[1 : len(trimmed)-1]
 	}
 	return trimmed
+}
+
+// directTargetPort extracts the destination port of a host[:port] segment. The
+// boolean is false when the segment carries no readable port, which callers
+// treat as "nothing to match" for a pre-dial target and as a fail-closed
+// refusal for a socket address that must have one.
+func directTargetPort(host string) (int, bool) {
+	trimmed := strings.TrimSpace(host)
+	if trimmed == "" {
+		return 0, false
+	}
+	_, portRaw, err := net.SplitHostPort(trimmed)
+	if err != nil {
+		return 0, false
+	}
+	port, err := strconv.Atoi(portRaw)
+	if err != nil {
+		return 0, false
+	}
+	return port, true
 }

@@ -170,6 +170,40 @@ export type AdminUsagePlatformsResponse = {
   items: AdminUsagePlatformItem[];
 };
 
+/** One plan's footprint. `plan_id` is empty for the row that collects accounts with no active subscription. */
+export type AdminUsagePlanItem = {
+  plan_id: string;
+  plan_name: string;
+  subscribers: number;
+  total_bytes: number;
+  period_bytes: number;
+};
+
+export type AdminUsagePlansResponse = {
+  items: AdminUsagePlanItem[];
+};
+
+/** One usage-anomaly detection. `acknowledged_at_ns` is 0 while the alert is still open. */
+export type AdminUsageAlertItem = {
+  id: string;
+  kind: string;
+  user_id: string;
+  username: string;
+  plan_id: string;
+  plan_name: string;
+  window_minutes: number;
+  threshold_ratio: number;
+  used_bytes: number;
+  quota_bytes: number;
+  detected_at_ns: number;
+  acknowledged_at_ns: number;
+  note: string;
+};
+
+export type AdminUsageAlertsResponse = {
+  items: AdminUsageAlertItem[];
+};
+
 export type PurityBands = {
   excellent: number;
   clean: number;

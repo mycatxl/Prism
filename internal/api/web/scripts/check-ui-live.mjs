@@ -408,6 +408,66 @@ check("legacy node envelopes do not crash the node pool", async ({ origin, page,
   }
 });
 
+// The usage alert queue is the one console surface a deployment cannot produce
+// for a test run: an alert only exists once the detector has seen a real usage
+// bucket cross a plan quota. Routing the two endpoint calls gives the panel a
+// row to render, so the test still covers what an operator sees and clicks.
+check("the usage alert queue renders and clears an alert", async ({ origin, page, errors }) => {
+  const alertsRoute = /\/api\/v1\/admin\/alerts(?:\?|$)/;
+  const acknowledgeRoute = /\/api\/v1\/admin\/alerts\/[^/]+\/actions\/acknowledge$/;
+  const alertRow = {
+    id: "alrt_ui_check",
+    kind: "usage_anomaly",
+    user_id: "usr_ui_check",
+    username: "ui-alert-tenant",
+    plan_id: "plan_ui_check",
+    plan_name: "UI Alert Plan",
+    window_minutes: 60,
+    threshold_ratio: 0.3,
+    used_bytes: 4294967296,
+    quota_bytes: 10737418240,
+    detected_at_ns: 1767225600000000000,
+    acknowledged_at_ns: 0,
+    note: "",
+  };
+  const listURLs = [];
+  let acknowledged = 0;
+  await page.route(alertsRoute, async (route) => {
+    listURLs.push(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [alertRow] }),
+    });
+  });
+  await page.route(acknowledgeRoute, async (route) => {
+    acknowledged += 1;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...alertRow, acknowledged_at_ns: Date.now() * 1000000 }),
+    });
+  });
+  try {
+    errors.reset("/ui/admin/usage alert queue");
+    await page.goto(origin + "/ui/admin/usage");
+    await rendered(page);
+    const main = page.locator("main");
+    await main.getByText("ui-alert-tenant").first().waitFor({ timeout: 5000 });
+    assert.ok(
+      listURLs.some((url) => url.includes("unacknowledged=true")),
+      "the queue must open on the unacknowledged alerts: " + listURLs.join(", "),
+    );
+    await main.getByRole("button", { name: "确认" }).first().click();
+    for (let i = 0; i < 60 && acknowledged === 0; i += 1) await page.waitForTimeout(50);
+    assert.equal(acknowledged, 1, "clicking 确认 must acknowledge the alert");
+    assert.deepEqual(errors.drain(), [], "the alert queue must not emit a console error");
+  } finally {
+    await page.unroute(alertsRoute);
+    await page.unroute(acknowledgeRoute);
+  }
+});
+
 check("the design tokens are the ones actually applied", async ({ origin, page }) => {
   await page.goto(origin + DASHBOARD);
   await rendered(page);

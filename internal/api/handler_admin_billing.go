@@ -316,3 +316,21 @@ func HandleAdminGetUserUsage(cp *service.ControlPlaneService) http.HandlerFunc {
 		writeTenantItems(w, rows)
 	}
 }
+
+// HandleAdminUsagePlans implements GET /api/v1/admin/usage/plans.
+func HandleAdminUsagePlans(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		days, err := intQuery(r, "days", 0)
+		if err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
+		}
+		rows, err := cp.UsageByPlan(days, adminNowNs())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		writeTenantItems(w, rows)
+	}
+}

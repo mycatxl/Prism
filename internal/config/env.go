@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,12 @@ type EnvConfig struct {
 	// DirectDenyPrivate refuses loopback, private and link-local targets on the
 	// local direct reverse-proxy path (PRISM_DIRECT_DENY_PRIVATE).
 	DirectDenyPrivate bool
+	// BlockedDestinationPorts are the destination ports refused on every local
+	// direct dial (PRISM_BLOCKED_DESTINATION_PORTS). The shipped default is the
+	// SMTP set 25/465/587, so an open deployment is not an outbound mail relay;
+	// an empty list disables the port policy and leaves DirectDenyPrivate in
+	// charge of the addresses.
+	BlockedDestinationPorts []int
 	// DenyPrivateNodes refuses a node whose server names loopback, the LAN, a
 	// link-local address or a cloud metadata endpoint, resolving the name when it
 	// is not a literal (PRISM_DENY_PRIVATE_NODES).
@@ -112,6 +119,18 @@ type EnvConfig struct {
 	// enough to enrol one, which is the only way to satisfy the requirement from
 	// inside the product.
 	RequireAdminTOTP bool
+	// Usage alerts. These three decide when the console reports a single
+	// account as having run ahead of its plan, and how long that report is kept
+	// (PRISM_ALERT_USAGE_RATIO, PRISM_ALERT_WINDOW_MINUTES,
+	// PRISM_ALERT_RETENTION_DAYS). They seed the matching RuntimeConfig fields
+	// at startup and stay hot-updatable there afterwards.
+	//
+	// AlertUsageRatio is the share of a plan's quota the account has to reach
+	// inside AlertWindowMinutes before it is reported. Nothing can act on a
+	// ratio outside (0, 1], so such a value refuses the configuration outright.
+	AlertUsageRatio    float64
+	AlertWindowMinutes int
+	AlertRetentionDays int
 
 	// Registration says who may create an account for themselves
 	// (PRISM_REGISTRATION). Off by default; see RegistrationMode.
@@ -223,6 +242,20 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	cfg.ProxyBypassRules = envDelimitedStringSlice("PRISM_PROXY_BYPASS", []string{})
 	cfg.TrustedProxies = envDelimitedStringSlice("PRISM_TRUSTED_PROXIES", []string{})
 	cfg.DirectDenyPrivate = envBool("PRISM_DIRECT_DENY_PRIVATE", true, &errs)
+	// PRISM_BLOCKED_DESTINATION_PORTS is read through the raw environment on
+	// purpose: it is a Prism-only setting, so there is no upstream RESIN_
+	// spelling to fall back to, and "set but empty" must stay distinguishable
+	// from "not set" (unset gets the shipped SMTP denylist, empty means
+	// "block no port").
+	rawBlockedPorts, blockedPortsSet := os.LookupEnv(blockedDestinationPortsEnv)
+	if !blockedPortsSet {
+		rawBlockedPorts = defaultBlockedDestinationPortsRaw
+	}
+	blockedPorts, blockedPortsErr := parseBlockedDestinationPorts(rawBlockedPorts)
+	if blockedPortsErr != nil {
+		errs = append(errs, blockedPortsErr.Error())
+	}
+	cfg.BlockedDestinationPorts = blockedPorts
 	cfg.DenyPrivateNodes = envBool("PRISM_DENY_PRIVATE_NODES", true, &errs)
 	cfg.ProxyAuthFailLimit = envInt("PRISM_PROXY_AUTH_FAIL_LIMIT", 30, &errs)
 	cfg.RequireAdminTOTP = envBool("PRISM_REQUIRE_ADMIN_TOTP", false, &errs)
@@ -246,6 +279,13 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		))
 		cfg.Registration = RegistrationOff
 	}
+	// --- Usage alerts ---
+	// The three PRISM_ALERT_* variables seed the alert settings at startup; the
+	// same three fields stay hot-updatable through the settings page, which is
+	// why they also exist on RuntimeConfig.
+	cfg.AlertUsageRatio = envFloat("PRISM_ALERT_USAGE_RATIO", DefaultAlertUsageRatio, &errs)
+	cfg.AlertWindowMinutes = envInt("PRISM_ALERT_WINDOW_MINUTES", DefaultAlertWindowMinutes, &errs)
+	cfg.AlertRetentionDays = envInt("PRISM_ALERT_RETENTION_DAYS", DefaultAlertRetentionDays, &errs)
 
 	// --- Request log ---
 	cfg.RequestLogQueueSize = envInt("PRISM_REQUEST_LOG_QUEUE_SIZE", 8192, &errs)
@@ -481,6 +521,18 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	if cfg.RequestLogQueueFlushBatchSize > cfg.RequestLogQueueSize/2 {
 		errs = append(errs, "PRISM_REQUEST_LOG_QUEUE_SIZE must be at least 2x PRISM_REQUEST_LOG_QUEUE_FLUSH_BATCH_SIZE")
 	}
+	// The usage-alert settings are read by the alert scanner, which cannot
+	// answer for a ratio that reports nothing or a window that measures
+	// nothing: an out-of-range value refuses the whole configuration and names
+	// the variable it came from.
+	if cfg.AlertUsageRatio <= 0 || cfg.AlertUsageRatio > 1 {
+		errs = append(errs, fmt.Sprintf(
+			"PRISM_ALERT_USAGE_RATIO: must be greater than 0 and at most 1, got %g",
+			cfg.AlertUsageRatio,
+		))
+	}
+	validatePositive("PRISM_ALERT_WINDOW_MINUTES", cfg.AlertWindowMinutes, &errs)
+	validatePositive("PRISM_ALERT_RETENTION_DAYS", cfg.AlertRetentionDays, &errs)
 
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("config validation failed:\n  %s", strings.Join(errs, "\n  "))
@@ -594,6 +646,22 @@ func envInt(key string, defaultVal int, errs *[]string) int {
 	return n
 }
 
+// envFloat reads a floating point setting. Like the integer and duration
+// helpers it answers the default for an unset or empty variable, and a
+// malformed value is reported by the name of the variable.
+func envFloat(key string, defaultVal float64, errs *[]string) float64 {
+	v, ok := lookupEnv(key)
+	if !ok || v == "" {
+		return defaultVal
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		*errs = append(*errs, fmt.Sprintf("%s: invalid number %q", key, v))
+		return defaultVal
+	}
+	return f
+}
+
 func envDuration(key string, defaultVal time.Duration, errs *[]string) time.Duration {
 	v, ok := lookupEnv(key)
 	if !ok || v == "" {
@@ -646,6 +714,47 @@ func splitDelimitedStringSlice(raw string) []string {
 		return []string{}
 	}
 	return out
+}
+
+// blockedDestinationPortsEnv is the environment variable that carries the
+// destination port denylist of every local direct dial.
+const blockedDestinationPortsEnv = "PRISM_BLOCKED_DESTINATION_PORTS"
+
+// defaultBlockedDestinationPortsRaw is the shipped value of
+// PRISM_BLOCKED_DESTINATION_PORTS: the SMTP ports an open deployment must not
+// relay through. It is kept as the raw spelling so "unset" and "set to empty"
+// stay distinguishable.
+const defaultBlockedDestinationPortsRaw = "25,465,587"
+
+// parseBlockedDestinationPorts parses the comma-separated port list of
+// PRISM_BLOCKED_DESTINATION_PORTS. An empty value blocks no port; every other
+// token must parse as an integer inside 1..65535, and a bad token refuses the
+// whole setting with the token itself named. The result is deduplicated and
+// sorted, so the effective configuration does not depend on the order the
+// operator wrote it in.
+func parseBlockedDestinationPorts(raw string) ([]int, error) {
+	ports := make([]int, 0, 3)
+	seen := make(map[int]bool)
+	for _, token := range strings.Split(raw, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		port, err := strconv.Atoi(token)
+		if err != nil || port < 1 || port > 65535 {
+			return nil, fmt.Errorf(
+				"%s: invalid port %q (must be an integer between 1 and 65535)",
+				blockedDestinationPortsEnv, token,
+			)
+		}
+		if seen[port] {
+			continue
+		}
+		seen[port] = true
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+	return ports, nil
 }
 
 // cleanDirPath normalises a directory path. Absolute paths are allowed (Docker

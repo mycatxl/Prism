@@ -7,7 +7,10 @@ import type {
   AdminSubscription,
   AdminSystemConfig,
   AdminSystemConfigPatch,
+  AdminUsageAlertItem,
+  AdminUsageAlertsResponse,
   AdminUsageDailyResponse,
+  AdminUsagePlansResponse,
   AdminUsagePlatformsResponse,
   AdminUsageSummary,
   AdminUsageUsersResponse,
@@ -306,6 +309,47 @@ export async function getUsagePlatforms(
 }
 export const getUsageByUser = getUsageUsers;
 export const getUsageByPlatform = getUsagePlatforms;
+
+export type GetUsagePlansParams = {
+  days?: number;
+};
+
+export async function getUsagePlans(
+  params: GetUsagePlansParams = {},
+): Promise<AdminUsagePlansResponse> {
+  const qs = toQueryString(params);
+  return apiRequest<AdminUsagePlansResponse>(`/api/v1/admin/usage/plans${qs}`);
+}
+
+export type GetUsageAlertsParams = {
+  limit?: number;
+  since_ns?: number;
+  unacknowledged?: boolean;
+};
+
+export async function getUsageAlerts(
+  params: GetUsageAlertsParams = {},
+): Promise<AdminUsageAlertsResponse> {
+  /*
+   * `toQueryString` carries primitives, and the backend accepts only the
+   * `strconv.ParseBool` spellings for this flag, so the boolean leaves here as
+   * "true"/"false" rather than as 1/0 — a spelling it would reject with 400.
+   */
+  const qs = toQueryString({
+    limit: params.limit,
+    since_ns: params.since_ns,
+    unacknowledged:
+      params.unacknowledged === undefined ? undefined : String(params.unacknowledged),
+  });
+  return apiRequest<AdminUsageAlertsResponse>(`/api/v1/admin/alerts${qs}`);
+}
+
+export async function acknowledgeAlert(id: string): Promise<AdminUsageAlertItem> {
+  return apiRequest<AdminUsageAlertItem>(
+    `/api/v1/admin/alerts/${encodeURIComponent(id)}/actions/acknowledge`,
+    { method: "POST" },
+  );
+}
 
 export async function getUserUsage(
   userId: string,

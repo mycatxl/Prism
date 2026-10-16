@@ -430,6 +430,10 @@ func printEnvConfig(w io.Writer, cfg *config.EnvConfig) {
 		{"PRISM_DEFAULT_PLATFORM_STICKY_TTL", cfg.DefaultPlatformStickyTTL.String()},
 		{"PRISM_GEOIP_UPDATE_SCHEDULE", cfg.GeoIPUpdateSchedule},
 		{"PRISM_PROXY_BYPASS", strings.Join(cfg.ProxyBypassRules, ",")},
+		{"PRISM_BLOCKED_DESTINATION_PORTS", formatPortList(cfg.BlockedDestinationPorts)},
+		{"PRISM_ALERT_USAGE_RATIO", strconv.FormatFloat(cfg.AlertUsageRatio, 'g', -1, 64)},
+		{"PRISM_ALERT_WINDOW_MINUTES", strconv.Itoa(cfg.AlertWindowMinutes)},
+		{"PRISM_ALERT_RETENTION_DAYS", strconv.Itoa(cfg.AlertRetentionDays)},
 		{"PRISM_PROXY_TOKEN", maskSecret(cfg.ProxyToken)},
 		{"PRISM_QUALITY_ENABLED", strconv.FormatBool(cfg.Quality.Enabled)},
 		{"PRISM_QUALITY_API_KEY", maskSecret(cfg.Quality.APIKey)},
@@ -447,6 +451,20 @@ func maskSecret(value string) string {
 		return "(unset)"
 	}
 	return "***"
+}
+
+// formatPortList renders the effective destination port denylist of
+// PRISM_BLOCKED_DESTINATION_PORTS for check-config. An empty list is printed
+// as "(none)" so "no port is blocked" is never mistaken for a missing row.
+func formatPortList(ports []int) string {
+	if len(ports) == 0 {
+		return "(none)"
+	}
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, strconv.Itoa(port))
+	}
+	return strings.Join(parts, ",")
 }
 
 // --- backup ---

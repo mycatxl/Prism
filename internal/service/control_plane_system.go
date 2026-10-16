@@ -134,6 +134,9 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"audit_retention_days":                     true,
 	"usage_retention_days":                     true,
 	"purity_bands":                             true,
+	"alert_usage_ratio":                        true,
+	"alert_window_minutes":                     true,
+	"alert_retention_days":                     true,
 }
 
 var platformPatchAllowedFields = map[string]bool{
@@ -333,6 +336,33 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	}
 	if verr := validateIntelConfig(cfg); verr != nil {
 		return verr
+	}
+	if verr := validateAlertConfig(cfg); verr != nil {
+		return verr
+	}
+	return nil
+}
+
+// validateAlertConfig bounds the usage-alert settings.
+//
+// A ratio has to be inside (0, 1]: zero would report every account from its
+// first byte, and a ratio above one names a level that cannot be reached before
+// the quota is already gone. The window and the retention are counted in minutes
+// and days, and a zero in either means "no window" / "keep nothing", which is not
+// a setting the scanner can act on.
+//
+// A value that is not a number at all never reaches this function: the patch is
+// decoded into the field's own type first, so "alert_usage_ratio": "lots" fails
+// as a validation error before any of this runs.
+func validateAlertConfig(cfg *config.RuntimeConfig) *ServiceError {
+	if cfg.AlertUsageRatio <= 0 || cfg.AlertUsageRatio > 1 {
+		return invalidArg("alert_usage_ratio: must be greater than 0 and at most 1")
+	}
+	if cfg.AlertWindowMinutes < 1 {
+		return invalidArg("alert_window_minutes: must be at least 1")
+	}
+	if cfg.AlertRetentionDays < 1 {
+		return invalidArg("alert_retention_days: must be at least 1")
 	}
 	return nil
 }

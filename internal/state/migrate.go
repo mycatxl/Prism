@@ -37,7 +37,8 @@ const (
 	stateVersionDropExportProfiles               = 16
 	stateVersionTenant                           = 17
 	stateVersionInvites                          = 18
-	stateLatestVersion                           = stateVersionInvites
+	stateVersionAlerts                           = 19
+	stateLatestVersion                           = stateVersionAlerts
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	// Keep these version markers in sync with SQL files under migrations/cache/.

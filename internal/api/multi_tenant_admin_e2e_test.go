@@ -306,12 +306,92 @@ func TestMultiTenantAdmin_E2E_TenantLifecycle(t *testing.T) {
 		t.Fatalf("usage summary active_users: got %v, want the newly subscribed tenant", summary["active_users"])
 	}
 
+	// The per-plan view: the plan this tenant rides on must appear as a bucket
+	// with one subscriber, which is the number the console groups by.
+	rec = admin.do(http.MethodGet, "/api/v1/admin/usage/plans?days=30", nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	planRows := tenantItems(t, rec)
+	if len(planRows) == 0 {
+		t.Fatal("usage by plan: no rows for a deployment with one subscribed tenant")
+	}
+	var planSeen bool
+	for _, row := range planRows {
+		if row["plan_id"] != planID {
+			continue
+		}
+		planSeen = true
+		if subs, _ := row["subscribers"].(float64); subs < 1 {
+			t.Fatalf("usage by plan subscribers for %s: got %v, want at least 1", planID, row["subscribers"])
+		}
+	}
+	if !planSeen {
+		t.Fatalf("usage by plan: plan %s missing from %v", planID, planRows)
+	}
+
 	// The per-account usage window the user detail page charts.
 	rec = admin.do(http.MethodGet, "/api/v1/admin/users/"+userID+"/usage?days=30", nil)
 	tenantAssertStatus(t, rec, http.StatusOK)
 	if items := tenantItems(t, rec); len(items) == 0 {
 		t.Fatal("user usage window: an account on a plan must still answer with its daily series")
 	}
+
+	// Usage alerts, end to end: the detector reads the same usage tables the
+	// views do, so a bucket that crosses a third of the plan quota has to
+	// produce an alert the admin API can list and acknowledge - and that a
+	// tenant session cannot reach at all.
+	hourTS := (time.Now().UnixNano() / int64(time.Hour)) * int64(time.Hour)
+	if err := env.cp.Engine.UpsertUsageHourly([]model.UsageRow{{
+		KeyID:       firstKeyID,
+		UserID:      userID,
+		PlatformID:  "",
+		TSNs:        hourTS,
+		EgressBytes: int64(4) << 30,
+		Requests:    1,
+	}}); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+
+	stopAlerts := service.StartUsageAlertScanner(env.cp, 20*time.Millisecond, func(string, ...any) {})
+	defer stopAlerts()
+
+	var alertID string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline) && alertID == ""; {
+		rec = admin.do(http.MethodGet, "/api/v1/admin/alerts?unacknowledged=true", nil)
+		tenantAssertStatus(t, rec, http.StatusOK)
+		alerts := tenantItems(t, rec)
+		if len(alerts) == 0 {
+			time.Sleep(20 * time.Millisecond)
+			continue
+		}
+		first := alerts[0]
+		alertID = tenantField(t, first, "id")
+		if got := tenantField(t, first, "kind"); got != model.AlertKindUsageAnomaly {
+			t.Fatalf("alert kind: got %q, want %q", got, model.AlertKindUsageAnomaly)
+		}
+		if got := tenantField(t, first, "user_id"); got != userID {
+			t.Fatalf("alert user_id: got %q, want %q", got, userID)
+		}
+		if got := tenantField(t, first, "plan_id"); got != planID {
+			t.Fatalf("alert plan_id: got %q, want %q", got, planID)
+		}
+		if used, _ := first["used_bytes"].(float64); used < float64(int64(4)<<30) {
+			t.Fatalf("alert used_bytes: got %v, want at least the 4 GiB the scan summed", first["used_bytes"])
+		}
+	}
+	if alertID == "" {
+		t.Fatal("usage alerts: a bucket over a third of the plan quota produced no alert within 5s")
+	}
+
+	rec = admin.do(http.MethodPost, "/api/v1/admin/alerts/"+alertID+"/actions/acknowledge", nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	acked := decodeJSONMap(t, rec)
+	if at, _ := acked["acknowledged_at_ns"].(float64); at <= 0 {
+		t.Fatalf("acknowledged_at_ns: got %v, want a stamp", acked["acknowledged_at_ns"])
+	}
+	// Acknowledging twice is not an error to the operator who tapped twice, but
+	// the second call names a row that is no longer open.
+	rec = admin.do(http.MethodPost, "/api/v1/admin/alerts/"+alertID+"/actions/acknowledge", nil)
+	tenantAssertStatus(t, rec, http.StatusNotFound)
 
 	// A write without the double-submit token is refused even with a valid
 	// session: the cookie alone is not proof the console sent the request.
@@ -337,7 +417,7 @@ func TestMultiTenantAdmin_E2E_TenantLifecycle(t *testing.T) {
 	// The role gate: a tenant session reaches its own surface and nothing
 	// else, including the read-only management and instance endpoints the
 	// console's operator shell uses.
-	for _, path := range []string{"/api/v1/admin/plans", "/api/v1/admin/users", "/api/v1/admin/usage/summary", "/api/v1/system/info"} {
+	for _, path := range []string{"/api/v1/admin/plans", "/api/v1/admin/users", "/api/v1/admin/usage/summary", "/api/v1/admin/alerts", "/api/v1/system/info"} {
 		rec = tenant.do(http.MethodGet, path, nil)
 		tenantAssertStatus(t, rec, http.StatusForbidden)
 		assertErrorCode(t, rec, "FORBIDDEN")

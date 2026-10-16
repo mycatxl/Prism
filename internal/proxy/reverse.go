@@ -46,6 +46,12 @@ type ReverseProxyConfig struct {
 	// PRISM_DIRECT_DENY_PRIVATE switch and defaults to false, which keeps the
 	// upstream Resin behaviour.
 	DirectDenyPrivate bool
+
+	// BlockedDestinationPorts lists the destination ports the same guard
+	// refuses on every local dial path (PRISM_BLOCKED_DESTINATION_PORTS). It is
+	// independent of DirectDenyPrivate: clearing that switch never reopens a
+	// blocked port.
+	BlockedDestinationPorts []int
 	// AuthGuard optionally rate limits failed proxy authentications. A nil
 	// guard keeps the upstream Resin behaviour (PRISM_PROXY_AUTH_FAIL_LIMIT
 	// defaults to 0, which disables it).
@@ -104,7 +110,7 @@ func NewReverseProxy(cfg ReverseProxyConfig) *ReverseProxy {
 		transportConfig: transportCfg,
 		transportPool:   transportPool,
 		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
-		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate),
+		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
 		authGuard:       cfg.AuthGuard,
 		metering:        cfg.Metering,
 		quota:           cfg.Quota,

@@ -277,6 +277,9 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/admin/usage/users", HandleAdminUsageUsers(cp))
 		authed.Handle("GET /api/v1/admin/usage/daily", HandleAdminUsageDaily(cp))
 		authed.Handle("GET /api/v1/admin/usage/platforms", HandleAdminUsagePlatforms(cp))
+		authed.Handle("GET /api/v1/admin/usage/plans", HandleAdminUsagePlans(cp))
+		authed.Handle("GET /api/v1/admin/alerts", HandleAdminListAlerts(cp))
+		authed.Handle("POST /api/v1/admin/alerts/{id}/actions/acknowledge", HandleAdminAcknowledgeAlert(cp))
 
 		// The user's own panel. Every handler keys off the session's actor, so
 		// there is no id in these paths to point at somebody else.
