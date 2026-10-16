@@ -31,11 +31,6 @@ func testIdentityWithLimiter(credential string, limiter *AuthFailureLimiter) *Id
 	}
 }
 
-func withTestAdminKey(req *http.Request) *http.Request {
-	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
-	return req
-}
-
 func testIdentityMiddleware(credential string, limiter *AuthFailureLimiter, next http.Handler) http.Handler {
 	return testIdentityWithLimiter(credential, limiter).Middleware(next)
 }

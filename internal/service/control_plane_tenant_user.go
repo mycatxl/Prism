@@ -63,13 +63,6 @@ type TenantUserFilter struct {
 	Offset int
 }
 
-// userPatchAllowedFields are the fields PATCH accepts on a user.
-var userPatchAllowedFields = map[string]bool{
-	"status":   true,
-	"role":     true,
-	"password": true,
-}
-
 // ListTenantUsers returns users with their subscription, plus the total before
 // paging.
 func (s *ControlPlaneService) ListTenantUsers(filter TenantUserFilter) ([]AdminUserView, int, error) {
@@ -434,28 +427,4 @@ func asServiceError(err error) *ServiceError {
 		return svcErr
 	}
 	return nil
-}
-
-// usageDayFromRows is a small helper shared by the usage endpoints: it folds a
-// set of rows into day buckets without filling the gaps.
-func usageDayFromRows(rows []model.UsageRow) []UsageDay {
-	const nsPerDay = int64(24 * time.Hour)
-	buckets := make(map[int64]*UsageDay)
-	for _, row := range rows {
-		day := (row.TSNs / nsPerDay) * nsPerDay
-		bucket, ok := buckets[day]
-		if !ok {
-			bucket = &UsageDay{DayNs: day}
-			buckets[day] = bucket
-		}
-		bucket.IngressBytes += row.IngressBytes
-		bucket.EgressBytes += row.EgressBytes
-	}
-	days := make([]UsageDay, 0, len(buckets))
-	for _, bucket := range buckets {
-		bucket.TotalBytes = bucket.IngressBytes + bucket.EgressBytes
-		days = append(days, *bucket)
-	}
-	sort.Slice(days, func(i, j int) bool { return days[i].DayNs < days[j].DayNs })
-	return days
 }

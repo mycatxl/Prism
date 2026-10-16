@@ -128,8 +128,8 @@ jobs:
           done
           echo "container did not become healthy after restart"; exit 1
 
-      # The full 23-check smoke suite against the binary shipped in the image
-      # (static, CGO_ENABLED=0), so the image's own build is what gets exercised.
+      # The full smoke suite against the binary shipped in the image (static,
+      # CGO_ENABLED=0), so the image's own build is what gets exercised.
       - name: Smoke test (image binary)
         run: |
           docker cp prism-ci:/usr/local/bin/prism ./prism-image

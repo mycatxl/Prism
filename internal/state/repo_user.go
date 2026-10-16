@@ -905,7 +905,6 @@ func (r *StateRepo) DeleteSessionsByUser(userID string) (int64, error) {
 	return n, nil
 }
 
-// PruneSessions removes sessions that expired before nowNs.
 // TouchSession pushes a session's expiry back.
 //
 // It is a targeted UPDATE rather than a read-modify-write: sliding expiry runs
@@ -928,6 +927,7 @@ func (r *StateRepo) TouchSession(idHash string, expiresAtNs int64) error {
 	return nil
 }
 
+// PruneSessions removes sessions that expired before nowNs.
 func (r *StateRepo) PruneSessions(nowNs int64) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
