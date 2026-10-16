@@ -170,9 +170,7 @@ jobs:
 
       # Checksums for the archives, so a downloaded release can be verified
       # before it is put in front of traffic. The file is written into build/,
-      # which the upload step below globs, and it has to go up in the same
-      # draft: this repository publishes immutable releases, so nothing can be
-      # attached after publication.
+      # which the upload step below globs, so it goes up in the same draft.
       - name: Write checksums
         run: |
           set -euo pipefail
@@ -189,14 +187,19 @@ jobs:
             echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Upload the archives while the release is still a draft.
-      #
-      # This repository has immutable releases enabled, and GitHub only accepts
-      # asset uploads before a release is published. For a normal release the
-      # action uploads first and publishes after, but a prerelease is published
-      # immediately -- which produced a release with zero assets on the first
-      # tagged run. A draft is writable, so the assets go up first and the next
-      # step publishes the finished release in one move.
+      - name: Stage the release notes from the tag annotation
+        run: |
+          set -euo pipefail
+          # Outside build/, so the upload glob below does not treat it as an asset.
+          git for-each-ref --format='%(contents)' "refs/tags/$GITHUB_REF_NAME" \
+            > "$RUNNER_TEMP/release-notes.md"
+          wc -c "$RUNNER_TEMP/release-notes.md"
+
+      # Upload the archives while the release is still a draft: the action
+      # publishes a normal release after uploading, but a prerelease is published
+      # immediately, which is how the first tagged run produced a zero-asset
+      # release. A draft is writable, so the assets go up first and the next step
+      # publishes the finished release in one move.
       - name: Create Draft Release and Upload Assets
         id: draft_release
         uses: softprops/action-gh-release@v3
@@ -205,6 +208,7 @@ jobs:
           fail_on_unmatched_files: true
           overwrite_files: true
           generate_release_notes: true
+          body_path: ${{ runner.temp }}/release-notes.md
           draft: true
           prerelease: ${{ steps.check_prerelease.outputs.is_prerelease == 'true' }}
 
