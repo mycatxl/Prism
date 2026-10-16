@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -182,42 +183,133 @@ func TestConnRegistry_EmptySetIsDropped(t *testing.T) {
 	}
 }
 
-// Registration happens once per connection, but closing happens concurrently
-// with new requests, so the two must not lose each other.
-func TestConnRegistry_ConcurrentTrackAndClose(t *testing.T) {
+// recordingConn records that the registry closed it. The registry only ever
+// calls Close, so this is the whole of the evidence a test needs.
+type recordingConn struct {
+	name   string
+	closed atomic.Bool
+}
+
+func (c *recordingConn) Close() error {
+	c.closed.Store(true)
+	return nil
+}
+
+func (c *recordingConn) wasClosed() bool { return c.closed.Load() }
+
+// TestConnRegistry_TrackIsNeverLost is the regression test for the interleaving
+// that let a connection escape the registry for the rest of the process's life.
+//
+// The registry used to read a key's set and then add to it under a second lock
+// acquisition. Untrack (when it removed the last connection) and CloseKey could
+// remove that set from the map in between, so the connection was written into a
+// set nothing could reach again: CloseKey never closed it, CloseAll never
+// walked it, Count never saw it. That is exactly the connection the registry
+// exists to hang up on when a quota is exhausted or a key is revoked - the
+// executor only ever calls CloseKey - and it is also a connection missing from
+// the concurrency count.
+//
+// The test states the invariant the fix has to restore rather than the
+// mechanism: every connection handed to Track that its own caller did not
+// retire must be closed by a later CloseKey/CloseAll. The storm keeps Track,
+// Untrack, CloseKey, CloseAll and Count on the same keys at once, which is what
+// opens the window. It is repeated so a single unlucky schedule is not the only
+// chance to catch a lost connection.
+func TestConnRegistry_TrackIsNeverLost(t *testing.T) {
+	const (
+		workers = 16
+		keys    = 4
+		rounds  = 400
+		closers = 4
+		readers = 2
+	)
+
 	registry := NewConnRegistry()
 
-	const goroutines = 32
-	const perGoroutine = 100
+	var keptMu sync.Mutex
+	kept := make([]*recordingConn, 0, workers*rounds)
+	retired := 0
 
 	var wg sync.WaitGroup
-	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
-		go func() {
+	start := make(chan struct{})
+
+	for w := 0; w < workers; w++ {
+		key := fmt.Sprintf("k-%d", w%keys)
+		wg.Add(1)
+		go func(key string, seed int) {
 			defer wg.Done()
-			for j := 0; j < perGoroutine; j++ {
-				conn := &fakeConn{}
-				registry.Track("k-1", conn)
-				registry.Untrack("k-1", conn)
+			<-start
+			for r := 0; r < rounds; r++ {
+				conn := &recordingConn{name: fmt.Sprintf("%s-%d", key, r)}
+				registry.Track(key, conn)
+				if (r+seed)%2 == 0 {
+					// Retired by the caller that opened it: nothing is owed
+					// for this connection, and the Untrack is the same-key
+					// churn that races the other workers' Tracks.
+					registry.Untrack(key, conn)
+					keptMu.Lock()
+					retired++
+					keptMu.Unlock()
+					continue
+				}
+				keptMu.Lock()
+				kept = append(kept, conn)
+				keptMu.Unlock()
 			}
-		}()
+		}(key, w)
 	}
 
-	// A closer runs alongside: it must never panic and must always leave the
-	// registry consistent.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 100; i++ {
-			registry.CloseKey("k-1")
-		}
-	}()
+	// CloseKey is what the quota enforcer calls; CloseAll is the shutdown path.
+	for c := 0; c < closers; c++ {
+		key := fmt.Sprintf("k-%d", c%keys)
+		wg.Add(1)
+		go func(key string, id int) {
+			defer wg.Done()
+			<-start
+			for r := 0; r < rounds; r++ {
+				if id%2 == 0 {
+					registry.CloseKey(key)
+					continue
+				}
+				registry.CloseAll()
+			}
+		}(key, c)
+	}
 
+	// Count is read on every request for the concurrency limit, so it runs
+	// against the same churn.
+	for r := 0; r < readers; r++ {
+		key := fmt.Sprintf("k-%d", r%keys)
+		wg.Add(1)
+		go func(key string) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < rounds; i++ {
+				registry.Count(key)
+			}
+		}(key)
+	}
+
+	close(start)
 	wg.Wait()
 
-	// Everything was untracked or closed, so nothing is left.
-	if got := registry.Count("k-1"); got != 0 {
-		t.Fatalf("k-1 holds %d connections, want 0", got)
+	// The shutdown path must reach everything still tracked.
+	registry.CloseAll()
+
+	if retired == 0 || len(kept) == 0 {
+		t.Fatalf("the storm retired %d connections and kept %d, want both non-zero", retired, len(kept))
+	}
+	lost := 0
+	for _, conn := range kept {
+		if !conn.wasClosed() {
+			if lost < 5 {
+				t.Errorf("%s was tracked and never closed", conn.name)
+			}
+			lost++
+		}
+	}
+	if lost > 0 {
+		t.Fatalf("%d of %d tracked connections were never closed: Track published them into a set that is no longer in the map, so CloseKey and CloseAll cannot reach them", lost, len(kept))
 	}
 }
 

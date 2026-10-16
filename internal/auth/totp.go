@@ -107,6 +107,56 @@ func VerifyTOTP(secret, code string, at time.Time) bool {
 	return match == 1
 }
 
+// VerifyTOTPStep reports whether code is valid for secret at the given time and,
+// when it is, the start of the step the code belonged to.
+//
+// The step is the identity of the code - TOTPCode is a pure function of the
+// secret and the step - which is what makes a code single-use: a caller can spend
+// the step it matched (a compare-and-set against the account's
+// totp_last_used_ns) so the same code cannot authorise a second login while it is
+// still inside the accepted tolerance.
+//
+// The step returned is the newest match. Every offset is still checked after one
+// matches, exactly as VerifyTOTP does, so the work done does not depend on which
+// step matched, and the selection between them is arithmetic rather than a
+// branch.
+func VerifyTOTPStep(secret, code string, at time.Time) (int64, bool) {
+	code = strings.TrimSpace(code)
+	if len(code) != totpDigits {
+		return 0, false
+	}
+	var matchedStep int64
+	match := 0
+	for offset := -totpSkew; offset <= totpSkew; offset++ {
+		moment := at.Add(time.Duration(offset) * totpStep)
+		candidate, err := TOTPCode(secret, moment)
+		if err != nil {
+			return 0, false
+		}
+		hit := subtle.ConstantTimeCompare([]byte(candidate), []byte(code))
+		match |= hit
+		// Last match wins, without branching on the comparison: hit is 0 or 1,
+		// so the second term is zero for every step that did not match.
+		matchedStep = matchedStep*(1-int64(hit)) + totpStepStartNs(moment)*int64(hit)
+	}
+	if match != 1 {
+		return 0, false
+	}
+	return matchedStep, true
+}
+
+// totpStepStartNs returns the Unix nanoseconds at which the step containing
+// moment began, which is the value a spent step is recorded as.
+//
+// It is derived from the whole second: TOTP counts steps of thirty seconds from
+// the epoch, so a time truncated to the second lands in the same step as the
+// sub-second part around it. The division truncates towards zero, and only
+// pre-epoch times would feel that.
+func totpStepStartNs(moment time.Time) int64 {
+	const stepSeconds = int64(totpStep / time.Second)
+	return moment.Unix() / stepSeconds * stepSeconds * int64(time.Second)
+}
+
 // TOTPURI renders the otpauth:// URI an authenticator app scans.
 //
 // The issuer and account are parameters rather than being read from

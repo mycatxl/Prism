@@ -29,6 +29,15 @@ type Actor struct {
 	// have a second factor and this account has none: refusing the login
 	// outright would leave no way to enrol.
 	MustEnrolTOTP bool
+	// HasTOTP reports whether the account behind this actor has a second factor.
+	//
+	// It is read from the account, not from the session, and it is what
+	// /ui/session.json reports as has_totp. The console's security page decides
+	// from that answer whether to show the factor as enabled or to push the user
+	// into enrolling, so a wrong answer hides a protection or claims one that is
+	// not there. An admin key has no account behind it in this sense and leaves
+	// the field false.
+	HasTOTP bool
 }
 
 // IsAdmin reports whether the caller may use the administrator surface.
@@ -88,8 +97,11 @@ type Identity struct {
 	// AdminKeys resolves automation credentials. Nil disables that path.
 	AdminKeys AdminKeyResolver
 	// FailureLimiter blocks and counts failed management authentication attempts.
-	// Login failures are counted by the session service itself; this limiter covers
-	// invalid or missing admin access keys and stale session cookies.
+	// Login failures are counted by the session service itself; this limiter
+	// covers credentials that were actually presented and did not resolve. A
+	// request that presents none is an anonymous visitor, not a failed
+	// authentication, so it is not counted - otherwise any page on the internet
+	// could spend an operator's failure budget and lock them out of the console.
 	FailureLimiter *AuthFailureLimiter
 	// RequireAdminTOTP makes a second factor mandatory for administrators. An
 	// administrator without one is let in only far enough to enrol.
@@ -143,7 +155,13 @@ func (i *Identity) Middleware(next http.Handler) http.Handler {
 
 		actor, ok := i.resolve(r)
 		if !ok {
-			if i != nil && i.FailureLimiter != nil {
+			// Only a request that presented a bearer credential counts as a
+			// failed authentication. A request with no credential at all, or
+			// with nothing but an invalid or expired session cookie, is not an
+			// attempt to authenticate: a session id is 256 bits of randomness,
+			// so guessing one is pointless, and a browser left holding a stale
+			// cookie would otherwise lock itself out by polling.
+			if _, presented := bearerCredential(r); presented && i != nil && i.FailureLimiter != nil {
 				i.FailureLimiter.RecordFailure(clientIP)
 			}
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
@@ -209,6 +227,7 @@ func (i *Identity) resolveSession(r *http.Request) (Actor, bool) {
 		Username:   user.Username,
 		Role:       user.Role,
 		ViaSession: true,
+		HasTOTP:    len(user.TOTPSecretEnc) > 0,
 	}
 	// An administrator without a second factor is held at the enrolment
 	// endpoints when the policy requires one. Letting them in and asking later
@@ -291,12 +310,17 @@ func (i *Identity) sessionInfo(r *http.Request) sessionInfoForWebUI {
 	if !ok {
 		return sessionInfoForWebUI{Authenticated: false}
 	}
+	// has_totp is filled from the account the session resolved to, which is the
+	// same answer the login response and GET /api/v1/auth/session give. Without
+	// it the console's security page would show a second factor as not enrolled
+	// immediately after a reload, and offer to enrol one that is already there.
 	return sessionInfoForWebUI{
 		Authenticated: true,
 		User: &sessionUser{
 			ID:       actor.UserID,
 			Username: actor.Username,
 			Role:     actor.Role,
+			HasTOTP:  actor.HasTOTP,
 		},
 		MustEnrolTOTP: actor.MustEnrolTOTP,
 	}

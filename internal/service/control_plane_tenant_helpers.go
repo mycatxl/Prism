@@ -56,6 +56,34 @@ func newInviteCode() (string, error) {
 	return out.String(), nil
 }
 
+// validInviteCodeShape reports whether a string could be a code this service
+// minted, without asking the database.
+//
+// The shape is fixed: eight symbols from inviteCodeAlphabet in two groups of
+// four. Nothing outside that set can have come from newInviteCode, so it is
+// refused before any lookup - and, on the registration path, before a password is
+// hashed: hashing is deliberately expensive (argon2id, megabytes of memory per
+// call) and spending it on a request that cannot succeed is exactly what an
+// unauthenticated caller would like Prism to do.
+func validInviteCodeShape(code string) bool {
+	const groups, groupLen = 2, 4
+	if len(code) != groups*groupLen+(groups-1) {
+		return false
+	}
+	for i := 0; i < len(code); i++ {
+		if i%(groupLen+1) == groupLen {
+			if code[i] != '-' {
+				return false
+			}
+			continue
+		}
+		if strings.IndexByte(inviteCodeAlphabet, code[i]) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // planSnapshotJSON encodes a plan the way a subscription stores it.
 func planSnapshotJSON(plan model.Plan) (string, error) {
 	return keys.MarshalPlanSnapshot(plan)
@@ -119,6 +147,59 @@ func mapUserWriteError(err error) *ServiceError {
 		return notFound("user not found")
 	}
 	return internal("write user", err)
+}
+
+// mapAccountWriteError maps a failed account write onto the client's answer.
+//
+// CreateAccount, SetAccountPassword, SetAccountStatus and SetAccountRole are the
+// older half of the service and return bare errors, so without this a write a
+// console user could simply correct - a duplicate name, a short password, a role
+// that is not a role - would be reported as a server fault, and the audit trail
+// would record it as one. It is the same reading the self-service path already
+// applies (mapUserWriteError), kept in one place so both doors answer the same
+// mistake with the same code.
+//
+// operation names the step being attempted; it only reaches the client when the
+// failure really is a server fault.
+func mapAccountWriteError(operation string, err error) *ServiceError {
+	if svcErr := asServiceError(err); svcErr != nil {
+		return svcErr
+	}
+	switch {
+	case errors.Is(err, state.ErrConflict):
+		return conflict("a user with that username already exists")
+	case errors.Is(err, state.ErrNotFound), errors.Is(err, ErrAccountNotFound):
+		return notFound("user not found")
+	case errors.Is(err, ErrPasswordTooShort),
+		errors.Is(err, ErrUsernameRequired),
+		errors.Is(err, ErrUnknownRole),
+		errors.Is(err, ErrUnknownStatus):
+		return invalidArg(err.Error())
+	case errors.Is(err, ErrLastAdmin):
+		return forbidden(err.Error())
+	default:
+		return internal(operation, err)
+	}
+}
+
+// mapSubscriptionWriteError maps a failed subscription write onto the answer a
+// client gets.
+//
+// The conflict is the case worth naming, and it is not a server fault: the
+// partial unique index on user_subscriptions refuses a write that would leave its
+// user with two active rows at once, which is what stops two activations that
+// arrive together from both being stored. Without this mapping that refusal would
+// reach the console as a 500, which sends the operator looking for a bug in Prism
+// instead of telling them the change did not apply. The operation name only
+// reaches the client when the failure really is a fault.
+func mapSubscriptionWriteError(operation string, err error) *ServiceError {
+	if errors.Is(err, state.ErrConflict) {
+		return conflict("the user already has an active subscription")
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return notFound("subscription not found")
+	}
+	return internal(operation, err)
 }
 
 // mapSubscriptionLookupError maps a failed subscription read onto the answer.

@@ -46,8 +46,12 @@ type RuntimeConfig struct {
 	// deployment one.
 	//
 	// AuditRetentionDays and UsageRetentionDays of 0 mean "use the shipped
-	// window", which is what a config persisted before they existed decodes
-	// to.
+	// window" (90 and 400 days), which is what a config persisted before they
+	// existed decodes to. They are not a switch for "keep everything": a
+	// negative or zero value is answered with the shipped window by
+	// RetentionDays and by the audit pruner, and a deployment that wants a
+	// longer window writes a larger number (the audit table keeps at most
+	// 100000 rows regardless).
 	AuditRetentionDays int         `json:"audit_retention_days"`
 	UsageRetentionDays int         `json:"usage_retention_days"`
 	PurityBands        PurityBands `json:"purity_bands"`
@@ -58,7 +62,11 @@ type RuntimeConfig struct {
 	// long such a report is kept.
 	//
 	// A zero in any of them means "use the shipped setting", which is what a
-	// config persisted before they existed decodes to.
+	// config persisted before they existed decodes to. Unlike the two windows
+	// above, a patch is refused outright for a value that cannot be acted on -
+	// ratio outside (0, 1], window or retention below 1 day/minute - so a
+	// persisted zero can only come from an older state.db and is filled in at
+	// startup (cmd/prism, loadRuntimeConfig).
 	AlertUsageRatio    float64 `json:"alert_usage_ratio"`
 	AlertWindowMinutes int     `json:"alert_window_minutes"`
 	AlertRetentionDays int     `json:"alert_retention_days"`

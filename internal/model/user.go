@@ -41,7 +41,10 @@ const (
 // PasswordHash holds an argon2id hash in PHC string form and is never
 // serialized. TOTPSecretEnc is the AES-GCM ciphertext of an optional TOTP
 // secret, keyed by a subkey derived from the key pepper; it is empty when the
-// account has no second factor.
+// account has no second factor. TOTPLastUsedNs is the start of the step whose
+// code that factor last spent, and is 0 for an account that has never used one:
+// it is what makes a code single-use, and the login path advances it with a
+// compare and set rather than writing back a row it read.
 type User struct {
 	ID            string `json:"id"`
 	Username      string `json:"username"`
@@ -52,6 +55,9 @@ type User struct {
 	CreatedAtNs   int64  `json:"created_at_ns"`
 	UpdatedAtNs   int64  `json:"updated_at_ns"`
 	LastLoginNs   int64  `json:"last_login_ns"`
+	// TOTPLastUsedNs is not part of a user write. AdvanceTOTPLastUsed is the
+	// only writer, and it moves the value forward only.
+	TOTPLastUsedNs int64 `json:"-"`
 }
 
 // Plan is an admin-defined template: which platforms and IP tiers a user may

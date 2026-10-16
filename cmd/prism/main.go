@@ -146,8 +146,17 @@ const (
 // alertSettingSet reports whether an environment variable pins its alert
 // setting for this start. An absent variable, and one set to the empty string,
 // both leave the persisted value alone.
+//
+// The lookup goes through config.EnvSettingSet instead of os.Getenv because the
+// alert settings are the one group of variables with two readers: the loader
+// resolves and validates them (PRISM_<X> first, the deprecated RESIN_<X>
+// spelling as the fallback), and this function decides whether the validated
+// value is applied. Reading the raw environment here made a deployment that
+// pins them through RESIN_ALERT_* pass validation and then keep the persisted
+// value: accepted, and silently ignored. One resolution for both readers is
+// what keeps "validated" and "applied" the same set of variables.
 func alertSettingSet(name string) bool {
-	return strings.TrimSpace(os.Getenv(name)) != ""
+	return config.EnvSettingSet(name)
 }
 
 func newDirectDownloader(

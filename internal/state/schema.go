@@ -67,8 +67,24 @@ func HardenDBFiles(path string) error {
 	return nil
 }
 
+// sqliteConnectionPragmas is appended to the database path handed to sql.Open.
+//
+// modernc.org/sqlite runs every "_pragma" parameter of the DSN on each
+// connection it opens, which is what the settings below need: foreign_keys,
+// synchronous and busy_timeout are all connection-scoped, and database/sql does
+// close and reopen connections (it discards one after a driver error, for
+// instance). A one-off Exec after sql.Open reaches the first connection only,
+// so a replacement would come back with foreign keys off and no busy timeout:
+// the ON DELETE CASCADE and SET NULL clauses the tenant schema relies on would
+// silently stop firing and a second writer would fail with SQLITE_BUSY instead
+// of waiting. journal_mode is deliberately absent from the list: it is recorded
+// in the database file itself, so setting it once is enough.
+const sqliteConnectionPragmas = "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(1)"
+
 // OpenDB opens (or creates) a SQLite database at path with recommended pragmas:
 // WAL journal mode, synchronous=NORMAL, foreign_keys=ON, busy_timeout=5000.
+// Every connection the pool opens carries them, not just the first one (see
+// sqliteConnectionPragmas).
 //
 // The database is private by construction: the containing directory is created
 // 0700 and the database file plus its WAL side files are forced to 0600 both
@@ -77,7 +93,7 @@ func OpenDB(path string) (*sql.DB, error) {
 	if err := HardenDBFiles(path); err != nil {
 		return nil, fmt.Errorf("harden db %s: %w", path, err)
 	}
-	db, err := sql.Open("sqlite", path)
+	db, err := sql.Open("sqlite", path+sqliteConnectionPragmas)
 	if err != nil {
 		return nil, fmt.Errorf("open db %s: %w", path, err)
 	}
@@ -85,17 +101,12 @@ func OpenDB(path string) (*sql.DB, error) {
 	// Single-writer: only one connection needed.
 	db.SetMaxOpenConns(1)
 
-	pragmas := []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA foreign_keys=ON",
-		"PRAGMA busy_timeout=5000",
-	}
-	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("exec %q on %s: %w", p, path, err)
-		}
+	// journal_mode belongs to the file rather than to the connection. Running
+	// it also opens the first connection, so a path that cannot be opened still
+	// fails here instead of at the first query.
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("exec journal_mode=WAL on %s: %w", path, err)
 	}
 
 	// journal_mode=WAL may have created the side files just now.

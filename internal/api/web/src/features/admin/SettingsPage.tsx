@@ -76,15 +76,23 @@ export function SettingsPage() {
 
   const config = configQuery.data ?? {
     audit_retention_days: 90,
-    usage_retention_days: 180,
-    purity_bands: { excellent: 90, clean: 70, fair: 50, mixed: 30, poor: 30 },
+    // The shipped window: 90 days for audit logs, 400 for usage (internal/config).
+    usage_retention_days: 400,
+    purity_bands: { excellent: 90, clean: 70, fair: 50, mixed: 30 },
   };
 
+  /*
+   * The form is keyed on the *content* of the config, not on when it was last
+   * fetched. `dataUpdatedAt` changes on every background refetch — and the query
+   * client refetches on window focus — so keying on it remounted this form and
+   * threw away whatever the operator had typed without saving.
+   */
+  const configSignature = JSON.stringify(config);
   const defaultConfig = defaultQuery.data ?? config;
 
   return (
     <SettingsFormContent
-      key={configQuery.dataUpdatedAt}
+      key={configSignature}
       config={config}
       defaultConfig={defaultConfig}
       onRefetch={() => {
@@ -113,13 +121,13 @@ function SettingsFormContent({
   const excellentFieldId = useId();
   const cleanFieldId = useId();
   const fairFieldId = useId();
-  const poorFieldId = useId();
+  const mixedFieldId = useId();
 
   const [auditRetention, setAuditRetention] = useState(
     String(config.audit_retention_days ?? 90),
   );
   const [usageRetention, setUsageRetention] = useState(
-    String(config.usage_retention_days ?? 180),
+    String(config.usage_retention_days ?? 400),
   );
   const [purityExcellent, setPurityExcellent] = useState(
     String(config.purity_bands?.excellent ?? 90),
@@ -130,8 +138,8 @@ function SettingsFormContent({
   const [purityFair, setPurityFair] = useState(
     String(config.purity_bands?.fair ?? 50),
   );
-  const [purityPoor, setPurityPoor] = useState(
-    String(config.purity_bands?.poor ?? config.purity_bands?.mixed ?? 30),
+  const [purityMixed, setPurityMixed] = useState(
+    String(config.purity_bands?.mixed ?? 30),
   );
 
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -156,12 +164,13 @@ function SettingsFormContent({
     const patch: AdminSystemConfigPatch = {
       audit_retention_days: Number(auditRetention) || 0,
       usage_retention_days: Number(usageRetention) || 0,
+      // Only the four keys the server decodes; it rejects unknown fields whole,
+      // so an extra `poor` here failed every save with a 400.
       purity_bands: {
         excellent: Number(purityExcellent) || 0,
         clean: Number(purityClean) || 0,
         fair: Number(purityFair) || 0,
-        mixed: Number(purityPoor) || 0,
-        poor: Number(purityPoor) || 0,
+        mixed: Number(purityMixed) || 0,
       },
     };
     updateMutation.mutate(patch);
@@ -194,8 +203,7 @@ function SettingsFormContent({
     (Number(purityExcellent) !== defaultConfig.purity_bands.excellent ||
       Number(purityClean) !== defaultConfig.purity_bands.clean ||
       Number(purityFair) !== defaultConfig.purity_bands.fair ||
-      Number(purityPoor) !==
-        (defaultConfig.purity_bands.poor ?? defaultConfig.purity_bands.mixed));
+      Number(purityMixed) !== defaultConfig.purity_bands.mixed);
 
   return (
     <div className="space-y-6">
@@ -249,7 +257,7 @@ function SettingsFormContent({
       <Panel>
         <PanelHeader
           title={t("数据保留周期")}
-          description={t("设置审计日志与用量统计数据的自动清理周期，0 为永久保留。")}
+          description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口：审计 90 天、用量 400 天。")}
           meta={
             (isAuditModified || isUsageModified) ? (
               <Badge tone="accent">{t("已修改")}</Badge>
@@ -296,7 +304,7 @@ function SettingsFormContent({
                   step="1"
                   value={usageRetention}
                   onChange={(e) => setUsageRetention(e.target.value)}
-                  placeholder="180"
+                  placeholder="400"
                 />
               </div>
               {defaultConfig.usage_retention_days != null && (
@@ -391,27 +399,23 @@ function SettingsFormContent({
             </Fieldset>
 
             <Fieldset
-              label={t("较差阈值 (Poor)")}
-              hint={t("纯净度分值大于等于该值评为较差。")}
-              htmlFor={poorFieldId}
+              label={t("混合阈值 (Mixed)")}
+              hint={t("纯净度分值大于等于该值评为混合等级。")}
+              htmlFor={mixedFieldId}
             >
               <Input
-                id={poorFieldId}
+                id={mixedFieldId}
                 type="number"
                 min="0"
                 max="100"
                 step="1"
-                value={purityPoor}
-                onChange={(e) => setPurityPoor(e.target.value)}
+                value={purityMixed}
+                onChange={(e) => setPurityMixed(e.target.value)}
                 placeholder="30"
               />
-              {defaultConfig.purity_bands?.poor != null && (
+              {defaultConfig.purity_bands?.mixed != null && (
                 <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}}", {
-                    val:
-                      defaultConfig.purity_bands.poor ??
-                      defaultConfig.purity_bands.mixed,
-                  })}
+                  {t("默认值: {{val}}", { val: defaultConfig.purity_bands.mixed })}
                 </p>
               )}
             </Fieldset>

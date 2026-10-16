@@ -42,7 +42,7 @@ function updateUserSession(session: SessionInfo, hasTotp: boolean): void {
 export function AccountSecurityPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const session = useAuthStore((state) => state.session);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -54,17 +54,28 @@ export function AccountSecurityPage() {
   const [totpError, setTotpError] = useState("");
   const [totpMessage, setTotpMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [enrolPromptSpent, setEnrolPromptSpent] = useState(false);
 
   const user = session.user;
   const hasTotp = user?.has_totp === true;
 
+  /*
+   * The `?enrol=1` flag is a one-shot prompt (RequireAuth sends a user whose
+   * account still owes a TOTP enrolment here). It must be spent exactly once:
+   * when this effect keyed off `enrolment` and the cancel button only cleared
+   * that state, the URL still said `enrol=1`, the condition came straight back
+   * and every cancel issued another POST /auth/totp/enrol — leaving a trail of
+   * pending secrets on the server. `enrolPromptSpent` consumes the flag, and
+   * cancelling also drops the flag from the URL so the panel stays closed.
+   */
   useEffect(() => {
-    if (searchParams.get("enrol") === "1" && !hasTotp && !enrolment) {
-      void startEnrolment();
-    }
-  // The URL flag is an explicit one-shot prompt; local enrolment state controls repeat calls.
+    if (searchParams.get("enrol") !== "1" || hasTotp || enrolPromptSpent) return;
+    setEnrolPromptSpent(true);
+    void startEnrolment();
+  // `startEnrolment` is redefined every render; the guard above is what makes the
+  // call once-only, not the dependency list.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, hasTotp, enrolment]);
+  }, [searchParams, hasTotp, enrolPromptSpent]);
 
   async function startEnrolment() {
     setTotpError("");
@@ -78,6 +89,22 @@ export function AccountSecurityPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  /** Drops the one-shot `?enrol=1` prompt so the effect above cannot fire again. */
+  function clearEnrolFlag() {
+    if (searchParams.get("enrol") === null) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("enrol");
+    setSearchParams(next, { replace: true });
+  }
+
+  /** Closes the panel for good: no new pending secret, no surviving URL flag. */
+  function cancelEnrolment() {
+    setEnrolment(null);
+    setTotpCode("");
+    setTotpError("");
+    clearEnrolFlag();
   }
 
   async function confirmEnrolment() {
@@ -96,6 +123,7 @@ export function AccountSecurityPage() {
       const next = await fetchSession();
       updateUserSession(next, true);
       setEnrolment(null);
+      clearEnrolFlag();
       setTotpCode("");
       setTotpMessage(t("双因素认证已启用。"));
     } catch (error) {
@@ -217,7 +245,7 @@ export function AccountSecurityPage() {
                       <Button variant="primary" onClick={() => void confirmEnrolment()} disabled={busy || !totpCode}>
                         {t("确认并启用")}
                       </Button>
-                      <Button variant="ghost" onClick={() => setEnrolment(null)} disabled={busy}>
+                      <Button variant="ghost" onClick={cancelEnrolment} disabled={busy}>
                         {t("取消")}
                       </Button>
                     </div>

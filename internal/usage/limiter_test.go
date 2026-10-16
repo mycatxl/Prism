@@ -92,6 +92,56 @@ func TestLimiter_TrafficIsCountedPerUserAcrossKeys(t *testing.T) {
 	}
 }
 
+// A period rollover zeroes the user's aggregate and deliberately leaves the
+// per-key counters holding the previous period's bytes, which the flush has not
+// written to the usage tables yet. Reading that zero as "no aggregate" made the
+// check fall back to the key's own counter, so the previous period's leftovers
+// were compared against the new period's allowance: a user who had just been
+// granted a fresh period was refused outright, for as long as the flush was
+// behind (ten seconds by default, longer when a write is retried), and the
+// traffic dimension has no grace to soften it.
+func TestLimiter_RolloverDoesNotReadThePreviousPeriodsBytes(t *testing.T) {
+	counters := NewCounters()
+	limiter := NewLimiter(counters)
+	key := quotaKey(t, "u-1", keys.PlanSnapshot{
+		TrafficBytes: 1000,
+		Status:       model.SubscriptionStatusActive,
+	})
+
+	// The old period: over the limit, with the per-key bucket still undrained.
+	counters.Add(CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}, Delta{IngressBytes: 1200})
+	if got := limiter.Check(key, 0); got.Allowed {
+		t.Fatalf("a key past its traffic limit was allowed: %+v", got)
+	}
+
+	// The rollover clears the aggregate for the new period, and nothing else.
+	counters.ResetUser("u-1")
+
+	got := limiter.Check(key, 0)
+	if !got.Allowed {
+		t.Fatalf("the first request of a new period was refused with %q: the previous period's undrained bucket was read as the new period's usage", got.Reason)
+	}
+	if used := limiter.usedBytes(key); used != 0 {
+		t.Fatalf("the new period reports %d bytes used, want 0", used)
+	}
+	// Exceeded reads the same total, so a live connection must not be cut off
+	// by a period it no longer belongs to.
+	if limiter.Exceeded(key, DefaultGracePercent) {
+		t.Fatal("a live connection was treated as over the new period's limit")
+	}
+	// The per-key bucket is untouched on purpose: it is the record of what
+	// actually moved, and the next flush still has to write it.
+	if total := counters.KeyTotal("k-1"); total != 1200 {
+		t.Fatalf("the per-key total is %d, want the previous period's 1200", total)
+	}
+
+	// Traffic moved in the new period counts against the new period.
+	counters.Add(CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}, Delta{IngressBytes: 1000})
+	if got := limiter.Check(key, 0); got.Allowed {
+		t.Fatal("traffic moved in the new period did not count towards its limit")
+	}
+}
+
 // A key with no owner falls back to its own counter, which is the single-tenant
 // path: there is no user aggregate to read.
 func TestLimiter_FallsBackToTheKeyCounterWithoutAnOwner(t *testing.T) {

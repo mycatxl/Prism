@@ -1040,3 +1040,413 @@ func TestStateRepo_SessionCleanup(t *testing.T) {
 		t.Errorf("deleted %d sessions, want 1", count)
 	}
 }
+
+// --- usage summary in one step (000020-era fix) ---
+
+// The summary has to be atomic, not only correct: the three-call sequence it
+// replaces could leave the daily row written while the hourly rows survived, and
+// the next pass would add the same traffic to the same day a second time. This
+// test pins the outcome of the one-call version: the day is right after the
+// first call and still right after a second one.
+func TestStateRepo_SummarizeUsageHourlyBeforeIsAtomic(t *testing.T) {
+	repo := newTestStateRepo(t)
+	const (
+		hour = int64(time.Hour)
+		day  = int64(24 * time.Hour)
+	)
+
+	// Two hours of day 0 for one key, one hour of day 0 for another, one hour of
+	// day 1, and one hour that is younger than the cutoff.
+	if err := repo.UpsertUsageHourly([]model.UsageRow{
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0,
+			IngressBytes: 10, EgressBytes: 1, Requests: 1, Errors: 1},
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: day - hour,
+			IngressBytes: 20, EgressBytes: 2, Requests: 2},
+		{KeyID: "k-2", UserID: "u-2", PlatformID: "p-1", TSNs: 0,
+			IngressBytes: 5, EgressBytes: 5, Requests: 1},
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: day,
+			IngressBytes: 40, EgressBytes: 4, Requests: 4},
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: day + hour,
+			IngressBytes: 100, EgressBytes: 100, Requests: 10},
+	}); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+
+	// Everything strictly older than this is summarized; the last row stays.
+	cutoff := day + hour
+
+	removed, err := repo.SummarizeUsageHourlyBefore(cutoff)
+	if err != nil {
+		t.Fatalf("SummarizeUsageHourlyBefore: %v", err)
+	}
+	if removed != 4 {
+		t.Errorf("summarized %d hourly rows, want 4", removed)
+	}
+
+	var hourlyLeft int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&hourlyLeft); err != nil {
+		t.Fatalf("count hourly rows: %v", err)
+	}
+	if hourlyLeft != 1 {
+		t.Errorf("hourly rows left: got %d, want 1 (the one inside the window)", hourlyLeft)
+	}
+
+	readDay := func(keyID string, dayTs int64) (ingress, requests int64) {
+		t.Helper()
+		if err := repo.db.QueryRow(`
+			SELECT ingress_bytes, requests FROM usage_daily
+			WHERE key_id = ? AND platform_id = 'p-1' AND day_ts_ns = ?
+		`, keyID, dayTs).Scan(&ingress, &requests); err != nil {
+			t.Fatalf("read daily row %s/%d: %v", keyID, dayTs, err)
+		}
+		return ingress, requests
+	}
+
+	if ingress, requests := readDay("k-1", 0); ingress != 30 || requests != 3 {
+		t.Errorf("k-1 day 0: ingress=%d requests=%d, want 30/3", ingress, requests)
+	}
+	if ingress, requests := readDay("k-2", 0); ingress != 5 || requests != 1 {
+		t.Errorf("k-2 day 0: ingress=%d requests=%d, want 5/1", ingress, requests)
+	}
+	if ingress, requests := readDay("k-1", day); ingress != 40 || requests != 4 {
+		t.Errorf("k-1 day 1: ingress=%d requests=%d, want 40/4", ingress, requests)
+	}
+
+	// A second run must find nothing to fold, and in particular must not add the
+	// same traffic to the same day again: the rows it summarized are gone.
+	removed, err = repo.SummarizeUsageHourlyBefore(cutoff)
+	if err != nil {
+		t.Fatalf("SummarizeUsageHourlyBefore (second call): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("second run summarized %d rows, want 0", removed)
+	}
+	if ingress, requests := readDay("k-1", 0); ingress != 30 || requests != 3 {
+		t.Errorf("k-1 day 0 after two runs: ingress=%d requests=%d, want 30/3 (no doubling)",
+			ingress, requests)
+	}
+	if ingress, requests := readDay("k-1", day); ingress != 40 || requests != 4 {
+		t.Errorf("k-1 day 1 after two runs: ingress=%d requests=%d, want 40/4", ingress, requests)
+	}
+
+	var dailyRows int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_daily`).Scan(&dailyRows); err != nil {
+		t.Fatalf("count daily rows: %v", err)
+	}
+	if dailyRows != 3 {
+		t.Errorf("daily rows: got %d, want 3", dailyRows)
+	}
+}
+
+// --- subscription terms without the usage counter ---
+
+func TestStateRepo_UpdateUserSubscriptionTermsKeepsUsageCounters(t *testing.T) {
+	repo := newTestStateRepo(t)
+	mustInsertUser(t, repo, "u-1", "alice")
+
+	const (
+		periodStart = int64(1700000000_000000000)
+		usedBytes   = int64(4096)
+	)
+	sub := model.UserSubscription{
+		ID:               "us-1",
+		UserID:           "u-1",
+		PlanSnapshotJSON: `{"traffic_bytes":100}`,
+		StartsAtNs:       periodStart,
+		ExpiresAtNs:      periodStart + int64(30*24*time.Hour),
+		PeriodStartNs:    periodStart,
+		PeriodUsedBytes:  usedBytes,
+		Status:           model.SubscriptionStatusActive,
+	}
+	if err := repo.UpsertUserSubscription(sub); err != nil {
+		t.Fatalf("UpsertUserSubscription: %v", err)
+	}
+
+	terms := sub
+	terms.Status = model.SubscriptionStatusSuspended
+	if err := repo.UpdateUserSubscriptionTerms(terms); err != nil {
+		t.Fatalf("UpdateUserSubscriptionTerms: %v", err)
+	}
+
+	got, err := repo.GetUserSubscription("us-1")
+	if err != nil {
+		t.Fatalf("GetUserSubscription: %v", err)
+	}
+	if got.Status != model.SubscriptionStatusSuspended {
+		t.Errorf("status: got %q, want %q", got.Status, model.SubscriptionStatusSuspended)
+	}
+	if got.PeriodUsedBytes != usedBytes {
+		t.Errorf("period_used_bytes: got %d, want %d", got.PeriodUsedBytes, usedBytes)
+	}
+	if got.PeriodStartNs != periodStart {
+		t.Errorf("period_start_ns: got %d, want %d", got.PeriodStartNs, periodStart)
+	}
+
+	if err := repo.UpdateUserSubscriptionTerms(model.UserSubscription{ID: "missing"}); !errors.Is(err, ErrNotFound) {
+		t.Errorf("terms of a missing subscription: got %v, want ErrNotFound", err)
+	}
+}
+
+// An operator's PATCH reads the row, the flush worker adds to the counter, and
+// the PATCH writes the terms. UpsertUserSubscription would write the counter from
+// the read - an admin edit would silently refund the bytes that landed in
+// between - so the terms update must leave the column alone.
+func TestStateRepo_UpdateUserSubscriptionTermsDoesNotClobberIncrement(t *testing.T) {
+	repo := newTestStateRepo(t)
+	mustInsertUser(t, repo, "u-1", "alice")
+
+	sub := model.UserSubscription{
+		ID:               "us-1",
+		UserID:           "u-1",
+		PlanSnapshotJSON: `{}`,
+		StartsAtNs:       1,
+		ExpiresAtNs:      2,
+		PeriodStartNs:    1,
+		PeriodUsedBytes:  100,
+		Status:           model.SubscriptionStatusActive,
+	}
+	if err := repo.UpsertUserSubscription(sub); err != nil {
+		t.Fatalf("UpsertUserSubscription: %v", err)
+	}
+
+	// What the operator read: the counter as it was before the flush landed.
+	stale := sub
+
+	if err := repo.AddSubscriptionUsedBytes("us-1", 900); err != nil {
+		t.Fatalf("AddSubscriptionUsedBytes: %v", err)
+	}
+
+	stale.Status = model.SubscriptionStatusExpired
+	if err := repo.UpdateUserSubscriptionTerms(stale); err != nil {
+		t.Fatalf("UpdateUserSubscriptionTerms: %v", err)
+	}
+
+	got, err := repo.GetUserSubscription("us-1")
+	if err != nil {
+		t.Fatalf("GetUserSubscription: %v", err)
+	}
+	if got.PeriodUsedBytes != 1000 {
+		t.Errorf("period_used_bytes: got %d, want 1000 (the increment must survive the edit)",
+			got.PeriodUsedBytes)
+	}
+	if got.Status != model.SubscriptionStatusExpired {
+		t.Errorf("status: got %q, want %q", got.Status, model.SubscriptionStatusExpired)
+	}
+}
+
+// --- usage windows ---
+
+// The alert scanner asks for the last few minutes while the rows it reads cover
+// whole hours: a bucket whose hour overlaps the window has to count, even though
+// its bucket start lies before the window.
+func TestStateRepo_ListUsageDailyRangeCountsTheHourTheWindowIsIn(t *testing.T) {
+	repo := newTestStateRepo(t)
+	const (
+		hour   = int64(time.Hour)
+		minute = int64(time.Minute)
+	)
+
+	// A fixed clock, half past the hour: the previous hour bucket and the current
+	// one are both real, and neither depends on when the test runs.
+	now := time.Date(2026, 1, 2, 10, 30, 0, 0, time.UTC).UnixNano()
+	thisHour := now - 30*minute
+	lastHour := thisHour - hour
+
+	if err := repo.UpsertUsageHourly([]model.UsageRow{
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: lastHour,
+			IngressBytes: 10, Requests: 1},
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: thisHour,
+			IngressBytes: 20, Requests: 2},
+	}); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+
+	// A one-hour window that starts inside the previous hour: both hours are part
+	// of it, so both count.
+	rows, err := repo.ListUsageDailyRange(now-60*minute, now)
+	if err != nil {
+		t.Fatalf("ListUsageDailyRange(one hour): %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("one-hour window returned %d rows, want 1 (both hours are in one day)", len(rows))
+	}
+	if rows[0].IngressBytes != 30 || rows[0].Requests != 3 {
+		t.Errorf("one-hour window: ingress=%d requests=%d, want 30/3",
+			rows[0].IngressBytes, rows[0].Requests)
+	}
+
+	// A window shorter than a bucket must not read as empty.
+	rows, err = repo.ListUsageDailyRange(now-10*minute, now)
+	if err != nil {
+		t.Fatalf("ListUsageDailyRange(ten minutes): %v", err)
+	}
+	if len(rows) != 1 || rows[0].IngressBytes != 20 {
+		t.Errorf("ten-minute window: got %+v, want the current hour bucket with 20 bytes", rows)
+	}
+
+	// The upper bound still keeps out everything at or after the window: both
+	// hour buckets end before this one starts.
+	rows, err = repo.ListUsageDailyRange(now+hour, now+2*hour)
+	if err != nil {
+		t.Fatalf("ListUsageDailyRange(after the rows): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Errorf("window after the rows returned %+v, want nothing", rows)
+	}
+}
+
+// --- batched retention deletes ---
+
+// stateDeleteBatch is shrunk here so the loop has to run more than once: with a
+// single statement, deleting five rows while the limit is two could only ever
+// report two.
+func TestStateRepo_DeleteUsageBeforeBatches(t *testing.T) {
+	repo := newTestStateRepo(t)
+	original := stateDeleteBatch
+	stateDeleteBatch = 2
+	t.Cleanup(func() { stateDeleteBatch = original })
+
+	const hour = int64(time.Hour)
+	cutoff := 10 * hour
+
+	hourly := []model.UsageRow{}
+	for i := int64(0); i < 5; i++ {
+		hourly = append(hourly, model.UsageRow{
+			KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: i * hour, IngressBytes: 1,
+		})
+	}
+	// One row inside the retention window: it must survive the delete.
+	hourly = append(hourly, model.UsageRow{
+		KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 11 * hour, IngressBytes: 1,
+	})
+	if err := repo.UpsertUsageHourly(hourly); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+	if err := repo.UpsertUsageDaily([]model.UsageRow{
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0, IngressBytes: 1},
+		{KeyID: "k-2", UserID: "u-2", PlatformID: "p-1", TSNs: hour, IngressBytes: 1},
+		{KeyID: "k-3", UserID: "u-3", PlatformID: "p-1", TSNs: 2 * hour, IngressBytes: 1},
+		{KeyID: "k-4", UserID: "u-4", PlatformID: "p-1", TSNs: 11 * hour, IngressBytes: 1},
+	}); err != nil {
+		t.Fatalf("UpsertUsageDaily: %v", err)
+	}
+
+	removed, err := repo.DeleteUsageHourlyBefore(cutoff)
+	if err != nil {
+		t.Fatalf("DeleteUsageHourlyBefore: %v", err)
+	}
+	if removed != 5 {
+		t.Errorf("hourly rows removed: got %d, want 5 (several batches)", removed)
+	}
+	removed, err = repo.DeleteUsageDailyBefore(cutoff)
+	if err != nil {
+		t.Fatalf("DeleteUsageDailyBefore: %v", err)
+	}
+	if removed != 3 {
+		t.Errorf("daily rows removed: got %d, want 3 (several batches)", removed)
+	}
+
+	// The rows inside the window stay, and a second call has nothing left to do.
+	var hourlyLeft, dailyLeft int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&hourlyLeft); err != nil {
+		t.Fatalf("count hourly rows: %v", err)
+	}
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_daily`).Scan(&dailyLeft); err != nil {
+		t.Fatalf("count daily rows: %v", err)
+	}
+	if hourlyLeft != 1 || dailyLeft != 1 {
+		t.Errorf("rows left: hourly=%d daily=%d, want 1/1", hourlyLeft, dailyLeft)
+	}
+	removed, err = repo.DeleteUsageHourlyBefore(cutoff)
+	if err != nil {
+		t.Fatalf("DeleteUsageHourlyBefore (second call): %v", err)
+	}
+	if removed != 0 {
+		t.Errorf("second call removed %d rows, want 0", removed)
+	}
+}
+
+// More rows than one batch of the production size, pruned by one call.
+func TestStateRepo_DeleteUsageHourlyBeforeRemovesMoreThanOneBatch(t *testing.T) {
+	repo := newTestStateRepo(t)
+
+	total := int(stateDeleteBatch) + 7
+	rows := make([]model.UsageRow, 0, total)
+	for i := 0; i < total; i++ {
+		rows = append(rows, model.UsageRow{
+			KeyID: "k-1", UserID: "u-1", PlatformID: "p-1",
+			TSNs: int64(i), IngressBytes: 1,
+		})
+	}
+	if err := repo.UpsertUsageHourly(rows); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+
+	removed, err := repo.DeleteUsageHourlyBefore(int64(total))
+	if err != nil {
+		t.Fatalf("DeleteUsageHourlyBefore: %v", err)
+	}
+	if int(removed) != total {
+		t.Errorf("removed %d rows, want %d (more than one batch of %d)",
+			removed, total, stateDeleteBatch)
+	}
+
+	var left int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&left); err != nil {
+		t.Fatalf("count hourly rows: %v", err)
+	}
+	if left != 0 {
+		t.Errorf("hourly rows left: got %d, want 0", left)
+	}
+}
+
+// A batch that fails must not throw away what the earlier batches already
+// removed. That partial progress is the reason the tail is not deleted in one
+// statement: a single statement is all-or-nothing, so a failure deep inside it
+// would leave every old row behind and the next pass would start over.
+//
+// The trigger pins the failure to the number of rows still in the table, so the
+// test does not depend on timing.
+func TestStateRepo_DeleteUsageBeforeKeepsPartialProgressWhenABatchFails(t *testing.T) {
+	repo := newTestStateRepo(t)
+	original := stateDeleteBatch
+	stateDeleteBatch = 2
+	t.Cleanup(func() { stateDeleteBatch = original })
+
+	const hour = int64(time.Hour)
+	cutoff := 10 * hour
+	rows := make([]model.UsageRow, 0, 5)
+	for i := int64(0); i < 5; i++ {
+		rows = append(rows, model.UsageRow{
+			KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: i * hour, IngressBytes: 1,
+		})
+	}
+	if err := repo.UpsertUsageHourly(rows); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+
+	// Abort a delete that would have to go below three rows: the first batch of
+	// two succeeds, the second one fails.
+	if _, err := repo.db.Exec(`CREATE TRIGGER test_abort_deep_batch
+		BEFORE DELETE ON usage_hourly
+		WHEN (SELECT COUNT(*) FROM usage_hourly) <= 3
+		BEGIN SELECT RAISE(ABORT, 'test: batch too deep'); END`); err != nil {
+		t.Fatalf("create trigger: %v", err)
+	}
+
+	removed, err := repo.DeleteUsageHourlyBefore(cutoff)
+	if err == nil {
+		t.Fatalf("DeleteUsageHourlyBefore: want the aborted batch to fail, got nil (removed %d)", removed)
+	}
+	if removed != 2 {
+		t.Errorf("removed before the failure: got %d, want 2 (the first batch)", removed)
+	}
+
+	var left int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&left); err != nil {
+		t.Fatalf("count hourly rows: %v", err)
+	}
+	if left != 3 {
+		t.Errorf("hourly rows left after the failed batch: got %d, want 3 (one statement would have restored all 5)", left)
+	}
+}

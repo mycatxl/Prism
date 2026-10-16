@@ -5,14 +5,22 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"prism/internal/auth"
 	"prism/internal/config"
+	"prism/internal/model"
 	"prism/internal/service"
 )
+
+// failedLoginAuditAction is the action of the audit row a refused login writes.
+// It is deliberately not the bare route pattern: the action itself is what tells
+// a login that succeeded from one that did not when the log is read back.
+const failedLoginAuditAction = "POST /api/v1/auth/login <failed>"
 
 // AccountService is the account operations the console's own security endpoints
 // need. *service.ControlPlaneService satisfies it.
@@ -42,6 +50,25 @@ type AuthHandlers struct {
 	// failures are not counted, which is what a deployment without a limiter
 	// gets.
 	ClientKey func(*http.Request) string
+	// FailureLimiter counts a refused authentication. Logins are counted by the
+	// session service, which holds the same limiter; this is the same instance,
+	// and it is what lets the sign-up endpoint count its refusals too. That
+	// route is public and does real work before it can refuse - one indexed read
+	// of the invite code, then a password hash - so leaving it out of the budget
+	// would leave the one unauthenticated way to make Prism work. Nil counts
+	// nothing, which is what a deployment without a limiter gets.
+	FailureLimiter auth.Blocklist
+	// SecureTransport reports whether a request reached the console over HTTPS
+	// as far as the end user is concerned: the connection is TLS, or a trusted
+	// proxy in front of Prism terminated it and said so. Nil means the
+	// connection's own TLS state is the only evidence, which is the behaviour of
+	// a deployment that trusts no forwarded header.
+	SecureTransport func(*http.Request) bool
+	// AuditLog records a failed login. It is the one management write the audit
+	// middleware never sees, because that middleware only records the
+	// successful ones and a failure would otherwise leave no trace at all. Nil
+	// disables the row.
+	AuditLog AuditLogStore
 	// Logf receives authentication failures. Nil silences them. It never
 	// receives a password, a session id or a second-factor secret.
 	Logf func(format string, args ...any)
@@ -69,6 +96,54 @@ func (h *AuthHandlers) clientKey(r *http.Request) string {
 	return h.ClientKey(r)
 }
 
+// secureTransport reports whether the request is HTTPS for the end user. A
+// handler that was never given a transport policy falls back to the connection
+// itself, which is the same "trust nothing forwarded" default the failure
+// limiter has.
+func (h *AuthHandlers) secureTransport(r *http.Request) bool {
+	if h == nil || h.SecureTransport == nil {
+		return r != nil && r.TLS != nil
+	}
+	return h.SecureTransport(r)
+}
+
+// auditFailedLogin appends the audit row for a refused login.
+//
+// It records the route and the address it came from, and nothing else: no
+// username, no password and no second factor, because the audit log is read back
+// through the console and a stored credential would be handed to whoever can
+// list it.
+func (h *AuthHandlers) auditFailedLogin(r *http.Request) {
+	if h == nil || h.AuditLog == nil || r == nil {
+		return
+	}
+	entry := model.AuditEntry{
+		AtNs:       h.nowNs(),
+		Action:     failedLoginAuditAction,
+		RemoteAddr: r.RemoteAddr,
+	}
+	if err := h.AuditLog.AppendAudit(entry); err != nil {
+		h.logf("api: could not record a failed login: %v", err)
+	}
+}
+
+// requireSessionActor refuses a caller that authenticated with an access key from
+// the endpoints that manage credentials.
+//
+// An admin key is an automation credential: it may drive the management API, but
+// it may not change a password or touch a second factor, because a key that can
+// do that is a key that can outlive its revocation. The rule is enforced here
+// rather than by the role gate, because both kinds of caller carry the
+// administrator role and only one of them is a person at a console.
+func requireSessionActor(w http.ResponseWriter, actor Actor) bool {
+	if actor.ViaSession {
+		return true
+	}
+	WriteError(w, http.StatusForbidden, "CREDENTIAL_MANAGEMENT_REQUIRES_SESSION",
+		"credential management must come from a console session")
+	return false
+}
+
 // loginRequest is the login body.
 type loginRequest struct {
 	Username string `json:"username"`
@@ -84,6 +159,50 @@ type sessionUser struct {
 	HasTOTP  bool   `json:"has_totp"`
 }
 
+// originAllowed reports whether a sign-in or sign-up write may be served.
+//
+// Login and sign-up are the two management writes a browser can make without a
+// CSRF token, because they are the requests that obtain one. A page on another
+// site can therefore post a form here and sign a visitor in as the attacker's
+// own account - login CSRF - and the visitor only notices once they act on
+// somebody else's data.
+//
+// Browsers label such a request: Origin carries the posting site and modern ones
+// also send Sec-Fetch-Site. Either is enough to refuse. A caller that sends
+// neither - curl, the smoke test, a CI script - is let through, because a client
+// that is not a browser carries no ambient credential to abuse and refusing it
+// would break every scripted deployment check.
+func originAllowed(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		// "null", a malformed value, and anything else that does not name a
+		// host is not this site, so it is refused.
+		return false
+	}
+	return hostWithoutPort(parsed.Host) == hostWithoutPort(r.Host)
+}
+
+// hostWithoutPort lowercases a host and drops its port. The comparison is
+// site-level on purpose: the request has already arrived at this host, so what
+// has to match is which site it came from, not which port that site used.
+func hostWithoutPort(host string) string {
+	name := strings.TrimSpace(host)
+	if h, _, err := net.SplitHostPort(name); err == nil {
+		name = h
+	}
+	return strings.ToLower(strings.Trim(name, "[]"))
+}
+
 // HandleLogin authenticates a console user and issues a session.
 //
 // It is the one management route reachable without an identity, because it is
@@ -95,6 +214,11 @@ func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 			return
 		}
 
+		if !originAllowed(r) {
+			WriteError(w, http.StatusForbidden, "ORIGIN_REJECTED",
+				"a request from another site may not sign in or sign up")
+			return
+		}
 		var req loginRequest
 		if !decodeJSONBody(w, r, &req) {
 			return
@@ -109,7 +233,7 @@ func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 		// deployment serving the console over plain HTTP to a real host refuses
 		// the login instead of handing out a cookie anyone on the path can
 		// read.
-		policy, err := auth.NewCookiePolicy(r.TLS != nil, r.Host)
+		policy, err := auth.NewCookiePolicy(h.secureTransport(r), r.Host)
 		if err != nil {
 			WriteError(w, http.StatusBadRequest, "HTTPS_REQUIRED",
 				"the console must be reached over HTTPS, or over plain HTTP on loopback")
@@ -121,10 +245,14 @@ func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 			h.clientKey(r), sessionSourceIP(r), r.UserAgent(),
 		)
 		if err != nil {
-			h.writeLoginError(w, err)
+			h.writeLoginError(w, r, err)
 			return
 		}
 
+		// The audit middleware runs before this handler, but the login route is
+		// public, so nothing has named an actor yet: without this the one login
+		// that succeeded is recorded as coming from nobody.
+		setAuditActor(r, result.User.ID, result.User.ID)
 		writeSessionCookies(w, policy, result.SessionID, result.CSRFToken, result.ExpiresAtNs)
 		WriteJSON(w, http.StatusOK, map[string]any{
 			"authenticated": true,
@@ -143,22 +271,36 @@ func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 //
 // The codes are distinct so the console can react - prompt for a code, back off,
 // or say the credentials are wrong - without the message ever saying which half
-// of a credential was wrong.
-func (h *AuthHandlers) writeLoginError(w http.ResponseWriter, err error) {
+// of a credential was wrong. Every refusal also leaves an audit row, except the
+// missing second factor: that is the ordinary first step of a two-step login
+// rather than a failure, and recording it would fill the log with a row per
+// correct password.
+func (h *AuthHandlers) writeLoginError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, auth.ErrTOTPRequired):
 		WriteError(w, http.StatusUnauthorized, "TOTP_REQUIRED", "a second factor is required")
 	case errors.Is(err, auth.ErrTOTPInvalid):
+		h.auditFailedLogin(r)
 		WriteError(w, http.StatusUnauthorized, "TOTP_INVALID", "the second factor is invalid")
+	case errors.Is(err, auth.ErrTOTPAlreadyUsed):
+		// The code was right and had already been spent. A one-time password
+		// replayed inside its own tolerance window is a credential failure, not
+		// a server fault, and it is audited like one.
+		h.auditFailedLogin(r)
+		WriteError(w, http.StatusUnauthorized, "TOTP_ALREADY_USED",
+			"that second-factor code has already been used; wait for the next one")
 	case errors.Is(err, auth.ErrTooManyAttempts):
+		h.auditFailedLogin(r)
 		w.Header().Set("Retry-After", "60")
 		WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many failed attempts; retry later")
 	case errors.Is(err, auth.ErrInvalidCredentials):
+		h.auditFailedLogin(r)
 		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid credentials")
 	default:
 		// Anything else - a store error, an unopenable second factor - is a
 		// server-side problem, and saying so is better than reporting it as a
 		// credential failure the user would retry forever.
+		h.auditFailedLogin(r)
 		h.logf("api: login failed: %v", err)
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete the login")
 	}
@@ -174,7 +316,7 @@ func (h *AuthHandlers) HandleLogout() http.HandlerFunc {
 				}
 			}
 		}
-		clearSessionCookies(w, r)
+		clearSessionCookies(w, r, h.secureTransport(r))
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -232,6 +374,9 @@ func (h *AuthHandlers) HandleChangePassword() http.HandlerFunc {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 			return
 		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		if h == nil || h.Accounts == nil || h.Sessions == nil {
 			WriteError(w, http.StatusServiceUnavailable, "ACCOUNTS_UNAVAILABLE", "account management is not configured")
 			return
@@ -269,7 +414,7 @@ func (h *AuthHandlers) HandleChangePassword() http.HandlerFunc {
 		if _, err := h.Sessions.RevokeUserSessions(actor.UserID); err != nil {
 			h.logf("api: could not revoke the sessions of user %s after a password change: %v", actor.UserID, err)
 		}
-		clearSessionCookies(w, r)
+		clearSessionCookies(w, r, h.secureTransport(r))
 		h.logf("api: user %s changed their password; every session was ended", actor.UserID)
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -285,6 +430,9 @@ func (h *AuthHandlers) HandleStartTOTPEnrolment(issuer string) http.HandlerFunc 
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+			return
+		}
+		if !requireSessionActor(w, actor) {
 			return
 		}
 		if h == nil || h.Accounts == nil {
@@ -319,6 +467,9 @@ func (h *AuthHandlers) HandleConfirmTOTPEnrolment() http.HandlerFunc {
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+			return
+		}
+		if !requireSessionActor(w, actor) {
 			return
 		}
 		if h == nil || h.Accounts == nil {
@@ -366,6 +517,9 @@ func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 			return
 		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		if h == nil || h.Accounts == nil {
 			WriteError(w, http.StatusServiceUnavailable, "ACCOUNTS_UNAVAILABLE", "account management is not configured")
 			return
@@ -388,7 +542,7 @@ func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 		if _, err := h.Sessions.RevokeUserSessions(actor.UserID); err != nil {
 			h.logf("api: could not revoke the sessions of user %s after removing a second factor: %v", actor.UserID, err)
 		}
-		clearSessionCookies(w, r)
+		clearSessionCookies(w, r, h.secureTransport(r))
 		h.logf("api: user %s removed their second factor; every session was ended", actor.UserID)
 		WriteJSON(w, http.StatusOK, map[string]any{"has_totp": false})
 	}
@@ -428,13 +582,15 @@ func writeSessionCookies(w http.ResponseWriter, policy auth.CookiePolicy, sessio
 	})
 }
 
-// clearSessionCookies removes both cookies.
-func clearSessionCookies(w http.ResponseWriter, r *http.Request) {
-	policy, err := auth.NewCookiePolicy(r.TLS != nil, r.Host)
+// clearSessionCookies removes both cookies. secure is the transport decision the
+// handler already made (see secureTransport), passed in rather than re-derived
+// so the clearing cookie carries the same Secure attribute as the one it clears.
+func clearSessionCookies(w http.ResponseWriter, r *http.Request, secure bool) {
+	policy, err := auth.NewCookiePolicy(secure, r.Host)
 	if err != nil {
 		// The request could not have carried a usable cookie anyway, but the
 		// clearing still has to happen so a stale cookie is not left behind.
-		policy = auth.CookiePolicy{Secure: r.TLS != nil}
+		policy = auth.CookiePolicy{Secure: secure}
 	}
 	for _, name := range []string{auth.SessionCookieName, auth.CSRFCookieName} {
 		http.SetCookie(w, &http.Cookie{

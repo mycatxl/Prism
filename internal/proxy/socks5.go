@@ -66,9 +66,19 @@ type Socks5InboundConfig struct {
 	Metering MeteringSink
 	// Quota decides whether a request may proceed. Nil allows everything.
 	Quota QuotaGate
+	// QuotaGracePercent is the tolerance a live tunnel gets before it is cut
+	// for running past the key's allowance, in percent of the limit. Zero
+	// applies DefaultStreamGracePercent; a negative value means no tolerance
+	// at all.
+	QuotaGracePercent int
 	// Sessions holds this inbound's live sessions per key, so a revoked key's
 	// sessions can be ended. Nil leaves revocation to the next request.
 	Sessions SessionTracker
+	// QuotaLogf reports a session the gate refused. A refusal happens before a
+	// request log entry exists, so it would otherwise leave no trace at all;
+	// the line names the key id and the reason and nothing else. Nil keeps a
+	// refusal silent, which is what a deployment without plans gets.
+	QuotaLogf func(format string, args ...any)
 }
 
 // Socks5Inbound implements SOCKS5 CONNECT over a raw TCP connection.
@@ -78,7 +88,10 @@ type Socks5Inbound struct {
 	tunnel     tunnelDeps
 	events     EventEmitter
 	quota      QuotaGate
-	sessions   SessionTracker
+	// quotaGracePercent is QuotaGracePercent, resolved once at construction.
+	quotaGracePercent int
+	quotaLogf         func(format string, args ...any)
+	sessions          SessionTracker
 }
 
 type socks5HandshakeResult struct {
@@ -108,9 +121,11 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
 			dialTimeout: cfg.DialTimeout,
 		},
-		events:   ev,
-		quota:    cfg.Quota,
-		sessions: cfg.Sessions,
+		events:            ev,
+		quota:             cfg.Quota,
+		quotaGracePercent: normalizeQuotaGracePercent(cfg.QuotaGracePercent),
+		quotaLogf:         cfg.QuotaLogf,
+		sessions:          cfg.Sessions,
 	}
 }
 
@@ -156,22 +171,25 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 	lifecycle.setAccount(handshake.account)
 	defer lifecycle.finish()
 
-	// The allowance is checked before anything is dialled. The concurrency
-	// limit counts this key's live sessions.
-	if quotaErr := checkQuota(s.quota, handshake.key, sessionCount(s.sessions, handshake.key)); quotaErr != nil {
+	// The allowance is checked before anything is dialled, and the check
+	// reserves the session it is about to admit: a session that is being
+	// established already holds its place, so a burst cannot all pass the check,
+	// and a revocation can end it while it dials. The accepted connection is
+	// attached to the reservation once the tunnel is announced.
+	tunnelCtx, cancelTunnel := context.WithCancel(baseCtx)
+	defer cancelTunnel()
+	pending := newPendingSession(cancelTunnel)
+	quotaErr, reservation := reserveSession(s.quota, s.sessions, handshake.key, pending, s.quotaLogf)
+	if quotaErr != nil {
 		_ = writeSocks5Reply(conn, socks5ReplyForProxyError(quotaErr), nil)
 		lifecycle.setProxyError(quotaErr)
 		lifecycle.setNetOK(false)
 		return
 	}
-
-	// Register the session so a revoked key can be hung up on rather than only
-	// being refused the next request.
-	untrack := trackSession(s.sessions, handshake.key, conn)
-	defer untrack()
+	defer reservation.Release()
 
 	prepare := prepareConnectTunnel(
-		baseCtx,
+		tunnelCtx,
 		s.tunnel,
 		handshake.platformName,
 		handshake.account,
@@ -203,8 +221,16 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 		return
 	}
 
+	// The tunnel is announced: the accepted connection is attached to the
+	// reservation that was registered before the dial, so the key's count never
+	// dipped while the session was being established, and a revoked key still
+	// ends it by closing the connection the client holds.
+	pending.attach(conn)
 	relay := pumpPreparedTunnel(conn, reader, prepare.session, tunnelPumpOptions{
 		onFirstIngressByte: lifecycle.markFirstByteReceived,
+		quotaGate:          s.quota,
+		quotaKey:           handshake.key,
+		quotaGracePercent:  s.quotaGracePercent,
 	})
 	lifecycle.addIngressBytes(relay.ingressBytes)
 	lifecycle.addEgressBytes(relay.egressBytes)
@@ -213,7 +239,11 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 		lifecycle.setUpstreamError(relay.upstreamStage, relay.upstreamErr)
 	}
 	lifecycle.setNetOK(relay.netOK)
-	prepare.session.recordResult(relay.netOK)
+	// A relay the allowance cut short is not a node failure: the node carried
+	// the bytes it was given, so it keeps its health record.
+	if !relay.quotaAborted {
+		prepare.session.recordResult(relay.netOK)
+	}
 }
 
 // socks5ReplyForProxyError maps a proxy error onto the closest SOCKS5 reply

@@ -50,10 +50,20 @@ type ForwardProxyConfig struct {
 	// Quota decides whether a request may proceed. Nil allows everything,
 	// which is what a deployment without plans gets.
 	Quota QuotaGate
+	// QuotaGracePercent is the tolerance a live stream gets before it is cut
+	// for running past the key's allowance, in percent of the limit. Zero
+	// applies DefaultStreamGracePercent; a negative value means no tolerance at
+	// all.
+	QuotaGracePercent int
 	// Sessions holds this proxy's live tunnels per key, so a revoked key's
 	// tunnels can be ended. Nil disables that, leaving revocation to take
 	// effect on the next request.
 	Sessions SessionTracker
+	// QuotaLogf reports a request the gate refused. A refusal happens before
+	// the request lifecycle exists, so it leaves no trace in the request log;
+	// the line names the key id and the reason and nothing else. Nil keeps a
+	// refusal silent, which is what a deployment without plans gets.
+	QuotaLogf func(format string, args ...any)
 }
 
 // ForwardProxy implements an HTTP forward proxy with Proxy-Authorization
@@ -76,6 +86,9 @@ type ForwardProxy struct {
 	authGuard         AuthFailureGuard
 	metering          MeteringSink
 	quota             QuotaGate
+	// quotaGracePercent is QuotaGracePercent, resolved once at construction.
+	quotaGracePercent int
+	quotaLogf         func(format string, args ...any)
 	sessions          SessionTracker
 }
 
@@ -91,21 +104,23 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 		transportPool = NewOutboundTransportPool(transportCfg)
 	}
 	return &ForwardProxy{
-		token:           cfg.ProxyToken,
-		accessKeys:      cfg.AccessKeys,
-		router:          cfg.Router,
-		pool:            cfg.Pool,
-		health:          cfg.Health,
-		events:          ev,
-		metricsSink:     cfg.MetricsSink,
-		transportConfig: transportCfg,
-		transportPool:   transportPool,
-		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
-		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
-		authGuard:       cfg.AuthGuard,
-		metering:        cfg.Metering,
-		quota:           cfg.Quota,
-		sessions:        cfg.Sessions,
+		token:             cfg.ProxyToken,
+		accessKeys:        cfg.AccessKeys,
+		router:            cfg.Router,
+		pool:              cfg.Pool,
+		health:            cfg.Health,
+		events:            ev,
+		metricsSink:       cfg.MetricsSink,
+		transportConfig:   transportCfg,
+		transportPool:     transportPool,
+		bypass:            NewTargetBypassMatcher(cfg.ProxyBypassRules),
+		directGuard:       NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
+		authGuard:         cfg.AuthGuard,
+		metering:          cfg.Metering,
+		quota:             cfg.Quota,
+		quotaGracePercent: normalizeQuotaGracePercent(cfg.QuotaGracePercent),
+		quotaLogf:         cfg.QuotaLogf,
+		sessions:          cfg.Sessions,
 	}
 }
 
@@ -279,13 +294,30 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	platName, account := identity.PlatformName, identity.Account
 
+	// One context ends the whole request: a quota cut cancels it, and so does
+	// the session registry when the key is revoked while the request is in
+	// flight.
+	streamCtx, cancelStream := context.WithCancel(r.Context())
+	defer cancelStream()
+
 	// The allowance is checked before the lifecycle exists, so a refused request
 	// never reaches the routing layer and never opens an upstream connection.
-	if quotaErr := checkQuota(p.quota, identity.Key, 0); quotaErr != nil {
+	// The check reserves the session it is about to admit: the count, the
+	// decision and the registration are one step, so a key at its concurrency
+	// limit cannot admit a burst of requests that all read the count before any
+	// of them had registered.
+	quotaErr, reservation := reserveSession(p.quota, p.sessions, identity.Key, newRequestSession(cancelStream), p.quotaLogf)
+	if quotaErr != nil {
 		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, quotaErr)
 		return
 	}
+	// An HTTP request is a session of this key exactly as a tunnel is, and it is
+	// registered under the same key id: a revocation, a disable or an exhausted
+	// allowance must end a request that is already running rather than only
+	// refusing the next one. The unregister is deferred, so every exit path from
+	// here on releases the count.
+	defer reservation.Release()
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, false)
 	lifecycle.setTarget(r.Host, r.URL.String())
@@ -325,21 +357,50 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		transport = p.outboundHTTPTransport(routed)
 	}
-	outReq := prepareForwardOutboundRequest(r)
+	// The upstream request carries the stream's context, so cancelling it ends
+	// both the round trip and anything still copying.
+	outReq := prepareForwardOutboundRequest(r.WithContext(streamCtx))
 	upstreamTrace := newUpstreamRequestTrace(lifecycle.markFirstByteReceived)
 	outReq = outReq.WithContext(httptrace.WithClientTrace(outReq.Context(), upstreamTrace.clientTrace()))
 	pendingEgressHeaderBytes := headerWireLen(outReq.Header)
 	var egressBodyCounter *countingReadCloser
+
+	// The allowance is enforced on the stream itself: a transfer that crosses
+	// the limit is cut while it is still running rather than when it ends. The
+	// bytes are handed to the key's sink as they flow, so the counters the check
+	// reads keep moving; the request log takes its totals from the same stream
+	// through addEgressBytesLive and addIngressBytesLive, since the sink has
+	// already been told about every byte.
+	quota := newStreamQuota(p.quota, identity.Key, p.quotaGracePercent, cancelStream)
+	if quota != nil {
+		ingressReport, egressReport := lifecycle.liveReporter()
+		quota.withLiveReports(ingressReport, egressReport)
+	}
+	// The tail of a partial report step is flushed on every exit path.
+	defer quota.flushReports()
+
 	if outReq.Body != nil && outReq.Body != http.NoBody {
 		egressBodyCounter = newCountingReadCloser(outReq.Body)
-		outReq.Body = egressBodyCounter
+		var body io.ReadCloser = egressBodyCounter
+		if quota != nil {
+			body = newQuotaReadCloser(body, quota)
+		}
+		outReq.Body = body
 	}
 
 	// Forward the request.
 	resp, err := transport.RoundTrip(outReq)
+	// The header bytes count as sent only once the request reached upstream. The
+	// body's bytes are committed either way: they left the client and were
+	// consumed here, and dropping them would make a failed or aborted upload
+	// free.
 	if upstreamTrace.shouldCommitEgress() {
 		lifecycle.addEgressBytes(pendingEgressHeaderBytes)
-		if egressBodyCounter != nil {
+	}
+	if egressBodyCounter != nil {
+		if quota != nil {
+			lifecycle.addEgressBytesLive(egressBodyCounter.Total())
+		} else {
 			lifecycle.addEgressBytes(egressBodyCounter.Total())
 		}
 	}
@@ -369,9 +430,27 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// Copy end-to-end response headers and body.
 	lifecycle.addIngressBytes(copyEndToEndHeaders(w.Header(), resp.Header))
 	w.WriteHeader(resp.StatusCode)
-	copiedBytes, copyErr := io.Copy(w, resp.Body)
-	lifecycle.addIngressBytes(copiedBytes)
+	var bodyWriter io.Writer = w
+	if quota != nil {
+		bodyWriter = &quotaResponseWriter{ResponseWriter: w, quota: quota}
+	}
+	copiedBytes, copyErr := io.Copy(bodyWriter, resp.Body)
+	if quota != nil {
+		// The bytes reached the sink as they were written; only the request log
+		// needs the total now.
+		lifecycle.addIngressBytesLive(copiedBytes)
+	} else {
+		lifecycle.addIngressBytes(copiedBytes)
+	}
 	if copyErr != nil {
+		if quota.Exceeded() {
+			// The response was cut on purpose: the key ran out of allowance.
+			// The node carried what it was given, so it is not marked failed.
+			lifecycle.setProxyError(ErrQuotaExceeded)
+			lifecycle.setUpstreamError("forward_stream_quota", copyErr)
+			lifecycle.setNetOK(true)
+			return
+		}
 		if shouldRecordForwardCopyFailure(r, copyErr) {
 			lifecycle.setProxyError(ErrUpstreamRequestFailed)
 			lifecycle.setUpstreamError("forward_upstream_to_client_copy", copyErr)
@@ -403,12 +482,21 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	platName, account := identity.PlatformName, identity.Account
 
 	// The concurrency limit counts this key's live tunnels, which is why the
-	// session registry is consulted here rather than at authentication.
-	if quotaErr := checkQuota(p.quota, identity.Key, sessionCount(p.sessions, identity.Key)); quotaErr != nil {
+	// session registry is consulted here rather than at authentication. The
+	// reservation is registered before anything is dialled: a tunnel that is
+	// being established already holds its place, so a burst cannot all pass the
+	// check, and a revocation can end it while it dials. The client connection
+	// is attached to the reservation once it is hijacked.
+	tunnelCtx, cancelTunnel := context.WithCancel(r.Context())
+	defer cancelTunnel()
+	pending := newPendingSession(cancelTunnel)
+	quotaErr, reservation := reserveSession(p.quota, p.sessions, identity.Key, pending, p.quotaLogf)
+	if quotaErr != nil {
 		recordProxyAuthFailure(p.authGuard, r)
 		writeProxyError(w, quotaErr)
 		return
 	}
+	defer reservation.Release()
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, true)
 	lifecycle.setTarget(target, "")
@@ -420,7 +508,7 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	lifecycle.setAccount(account)
 
 	prepare := prepareConnectTunnel(
-		r.Context(),
+		tunnelCtx,
 		tunnelDeps{
 			router:      p.router,
 			pool:        p.pool,
@@ -491,16 +579,18 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		lifecycle.setNetOK(false)
 		return
 	}
-	// The tunnel is established: register it so a revoked key can be hung up on
-	// rather than only being refused the next request. The client connection is
-	// what gets closed - closing the upstream one would leave the client
-	// waiting on a socket nobody is reading.
-	untrack := trackSession(p.sessions, identity.Key, clientConn)
-	defer untrack()
-
+	// The tunnel is established: the client connection is attached to the
+	// reservation that was registered before the dial, so the key's count never
+	// dipped while the tunnel was being established, and a revoked key still
+	// ends the session by closing the client connection - closing the upstream
+	// one would leave the client waiting on a socket nobody is reading.
+	pending.attach(clientConn)
 	lifecycle.setHTTPStatus(http.StatusOK)
 	relay := pumpPreparedTunnel(clientConn, clientBuf.Reader, prepare.session, tunnelPumpOptions{
 		onFirstIngressByte: lifecycle.markFirstByteReceived,
+		quotaGate:          p.quota,
+		quotaKey:           identity.Key,
+		quotaGracePercent:  p.quotaGracePercent,
 	})
 	lifecycle.addIngressBytes(relay.ingressBytes)
 	lifecycle.addEgressBytes(relay.egressBytes)
@@ -509,7 +599,11 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		lifecycle.setUpstreamError(relay.upstreamStage, relay.upstreamErr)
 	}
 	lifecycle.setNetOK(relay.netOK)
-	prepare.session.recordResult(relay.netOK)
+	// A relay the allowance cut short is not a node failure: the node carried
+	// the bytes it was given, so it keeps its health record.
+	if !relay.quotaAborted {
+		prepare.session.recordResult(relay.netOK)
+	}
 }
 
 // shouldRecordForwardCopyFailure decides whether an HTTP response body copy

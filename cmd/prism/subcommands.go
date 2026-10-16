@@ -405,8 +405,29 @@ func runCheckConfigCommand(args []string, stdout, stderr io.Writer) error {
 	return nil
 }
 
+// checkConfigRow is one line of the check-config report: the variable an
+// operator would set, the value in force, and where that value came from. An
+// empty source asks config.EnvSourceOf, which answers for every variable the
+// loader resolved during the load this report describes; a row the loader does
+// not read states its own source instead.
+type checkConfigRow struct {
+	name   string
+	value  string
+	source string
+}
+
 // printEnvConfig prints the effective environment configuration with every
-// secret masked. Tokens and provider keys never reach stdout.
+// secret masked: tokens and provider keys never reach stdout.
+//
+// The table is exhaustive rather than curated. check-config answers "why does
+// this deployment behave this way", and a missing row reads as "this build has
+// no such setting" instead of "it is at its default", so every PRISM_*
+// variable the loader reads (internal/config/env.go and quality.go) has a row
+// and the last column says where the value came from: env (process environment
+// or ./.env), legacy (the deprecated RESIN_ spelling), empty (set but empty,
+// so the shipped default applies) or default. An omission is a defect:
+// TestCheckConfigCoversEveryLoaderVariable scans the loader for PRISM_
+// literals and fails when one of them is missing here or from .env.example.
 func printEnvConfig(w io.Writer, cfg *config.EnvConfig) {
 	if cfg == nil {
 		return
@@ -415,34 +436,115 @@ func printEnvConfig(w io.Writer, cfg *config.EnvConfig) {
 	if adminListen == "" {
 		adminListen = "(disabled)"
 	}
-	rows := [][2]string{
-		{"PRISM_AUTH_VERSION", string(cfg.AuthVersion)},
-		{"PRISM_LISTEN_ADDRESS", cfg.ListenAddress},
-		{"PRISM_PORT", strconv.Itoa(cfg.ProxyPort)},
-		{"PRISM_ADMIN_LISTEN", adminListen},
-		{"PRISM_STATE_DIR", cfg.StateDir},
-		{"PRISM_CACHE_DIR", cfg.CacheDir},
-		{"PRISM_LOG_DIR", cfg.LogDir},
-		{"PRISM_API_MAX_BODY_BYTES", strconv.Itoa(cfg.APIMaxBodyBytes)},
-		{"PRISM_PROBE_CONCURRENCY", strconv.Itoa(cfg.ProbeConcurrency)},
-		{"PRISM_PROBE_TIMEOUT", cfg.ProbeTimeout.String()},
-		{"PRISM_MAX_LATENCY_TABLE_ENTRIES", strconv.Itoa(cfg.MaxLatencyTableEntries)},
-		{"PRISM_DEFAULT_PLATFORM_STICKY_TTL", cfg.DefaultPlatformStickyTTL.String()},
-		{"PRISM_GEOIP_UPDATE_SCHEDULE", cfg.GeoIPUpdateSchedule},
-		{"PRISM_PROXY_BYPASS", strings.Join(cfg.ProxyBypassRules, ",")},
-		{"PRISM_BLOCKED_DESTINATION_PORTS", formatPortList(cfg.BlockedDestinationPorts)},
-		{"PRISM_ALERT_USAGE_RATIO", strconv.FormatFloat(cfg.AlertUsageRatio, 'g', -1, 64)},
-		{"PRISM_ALERT_WINDOW_MINUTES", strconv.Itoa(cfg.AlertWindowMinutes)},
-		{"PRISM_ALERT_RETENTION_DAYS", strconv.Itoa(cfg.AlertRetentionDays)},
-		{"PRISM_PROXY_TOKEN", maskSecret(cfg.ProxyToken)},
-		{"PRISM_QUALITY_ENABLED", strconv.FormatBool(cfg.Quality.Enabled)},
-		{"PRISM_QUALITY_API_KEY", maskSecret(cfg.Quality.APIKey)},
-		{"PRISM_ABUSEIPDB_API_KEY", maskSecret(cfg.Quality.AbuseAPIKey)},
+	rows := []checkConfigRow{
+		{name: "# --- paths ---"},
+		{name: "PRISM_CACHE_DIR", value: formatStringValue(cfg.CacheDir)},
+		{name: "PRISM_STATE_DIR", value: formatStringValue(cfg.StateDir)},
+		{name: "PRISM_LOG_DIR", value: formatStringValue(cfg.LogDir)},
+		{name: "# --- listener ---"},
+		{name: "PRISM_LISTEN_ADDRESS", value: formatStringValue(cfg.ListenAddress)},
+		{name: "PRISM_PORT", value: strconv.Itoa(cfg.ProxyPort)},
+		{name: "PRISM_ADMIN_LISTEN", value: adminListen},
+		{name: "PRISM_API_MAX_BODY_BYTES", value: strconv.Itoa(cfg.APIMaxBodyBytes)},
+		{name: "# --- authentication and security switches ---"},
+		{name: "PRISM_AUTH_VERSION", value: string(cfg.AuthVersion)},
+		{name: "PRISM_PROXY_TOKEN", value: maskSecret(cfg.ProxyToken)},
+		pepperRow(),
+		{name: "PRISM_ENFORCE_STRONG_TOKENS", value: strconv.FormatBool(cfg.EnforceStrongTokens)},
+		{name: "PRISM_ALLOW_EMPTY_PROXY_TOKEN", value: strconv.FormatBool(cfg.AllowEmptyProxyToken)},
+		{name: "PRISM_ALLOW_INSECURE_LISTEN", value: strconv.FormatBool(cfg.AllowInsecureListen)},
+		{name: "PRISM_REQUIRE_ADMIN_TOTP", value: strconv.FormatBool(cfg.RequireAdminTOTP)},
+		{name: "PRISM_PROXY_AUTH_FAIL_LIMIT", value: strconv.Itoa(cfg.ProxyAuthFailLimit)},
+		{name: "PRISM_TRUSTED_PROXIES", value: formatListValue(cfg.TrustedProxies)},
+		{name: "PRISM_DIRECT_DENY_PRIVATE", value: strconv.FormatBool(cfg.DirectDenyPrivate)},
+		{name: "PRISM_BLOCKED_DESTINATION_PORTS", value: formatPortList(cfg.BlockedDestinationPorts)},
+		{name: "PRISM_DENY_PRIVATE_NODES", value: strconv.FormatBool(cfg.DenyPrivateNodes)},
+		{name: "# --- multi-tenant registration ---"},
+		{name: "PRISM_REGISTRATION", value: string(cfg.Registration)},
+		{name: "# --- usage alerts ---"},
+		{name: "PRISM_ALERT_USAGE_RATIO", value: strconv.FormatFloat(cfg.AlertUsageRatio, 'g', -1, 64)},
+		{name: "PRISM_ALERT_WINDOW_MINUTES", value: strconv.Itoa(cfg.AlertWindowMinutes)},
+		{name: "PRISM_ALERT_RETENTION_DAYS", value: strconv.Itoa(cfg.AlertRetentionDays)},
+		{name: "# --- probes and platform defaults ---"},
+		{name: "PRISM_PROBE_CONCURRENCY", value: strconv.Itoa(cfg.ProbeConcurrency)},
+		{name: "PRISM_PROBE_TIMEOUT", value: cfg.ProbeTimeout.String()},
+		{name: "PRISM_MAX_LATENCY_TABLE_ENTRIES", value: strconv.Itoa(cfg.MaxLatencyTableEntries)},
+		{name: "PRISM_GEOIP_UPDATE_SCHEDULE", value: formatStringValue(cfg.GeoIPUpdateSchedule)},
+		{name: "PRISM_EGRESS_TRACE_URL", value: formatStringValue(cfg.EgressTraceURL)},
+		{name: "PRISM_RESOURCE_FETCH_TIMEOUT", value: cfg.ResourceFetchTimeout.String()},
+		{name: "PRISM_RESOURCE_FETCH_ALLOW_PRIVATE", value: strconv.FormatBool(cfg.ResourceFetchAllowPrivate)},
+		{name: "PRISM_RESOURCE_FETCH_MAX_BYTES", value: strconv.Itoa(cfg.ResourceFetchMaxBytes)},
+		{name: "PRISM_NODE_DNS_UPSTREAMS", value: formatListValue(cfg.NodeDNSUpstreams)},
+		{name: "PRISM_DEFAULT_PLATFORM_STICKY_TTL", value: cfg.DefaultPlatformStickyTTL.String()},
+		{name: "PRISM_DEFAULT_PLATFORM_REGEX_FILTERS", value: formatListValue(cfg.DefaultPlatformRegexFilters)},
+		{name: "PRISM_DEFAULT_PLATFORM_REGION_FILTERS", value: formatListValue(cfg.DefaultPlatformRegionFilters)},
+		{name: "PRISM_DEFAULT_PLATFORM_REVERSE_PROXY_MISS_ACTION", value: formatStringValue(cfg.DefaultPlatformReverseProxyMissAction)},
+		{name: "PRISM_DEFAULT_PLATFORM_REVERSE_PROXY_EMPTY_ACCOUNT_BEHAVIOR", value: formatStringValue(cfg.DefaultPlatformReverseProxyEmptyAccountBehavior)},
+		{name: "PRISM_DEFAULT_PLATFORM_REVERSE_PROXY_FIXED_ACCOUNT_HEADER", value: formatStringValue(cfg.DefaultPlatformReverseProxyFixedAccountHeader)},
+		{name: "PRISM_DEFAULT_PLATFORM_ALLOCATION_POLICY", value: formatStringValue(cfg.DefaultPlatformAllocationPolicy)},
+		{name: "PRISM_PROXY_BYPASS", value: formatListValue(cfg.ProxyBypassRules)},
+		{name: "# --- outbound transport ---"},
+		{name: "PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS", value: strconv.Itoa(cfg.ProxyTransportMaxIdleConns)},
+		{name: "PRISM_PROXY_TRANSPORT_MAX_IDLE_CONNS_PER_HOST", value: strconv.Itoa(cfg.ProxyTransportMaxIdleConnsPerHost)},
+		{name: "PRISM_PROXY_TRANSPORT_IDLE_CONN_TIMEOUT", value: cfg.ProxyTransportIdleConnTimeout.String()},
+		{name: "PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT", value: cfg.ProxyTransportResponseHeaderTimeout.String()},
+		{name: "PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT", value: cfg.ProxyTransportTLSHandshakeTimeout.String()},
+		{name: "PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT", value: cfg.ProxyTransportDialTimeout.String()},
+		{name: "# --- request log ---"},
+		{name: "PRISM_REQUEST_LOG_QUEUE_SIZE", value: strconv.Itoa(cfg.RequestLogQueueSize)},
+		{name: "PRISM_REQUEST_LOG_QUEUE_FLUSH_BATCH_SIZE", value: strconv.Itoa(cfg.RequestLogQueueFlushBatchSize)},
+		{name: "PRISM_REQUEST_LOG_QUEUE_FLUSH_INTERVAL", value: cfg.RequestLogQueueFlushInterval.String()},
+		{name: "PRISM_REQUEST_LOG_DB_MAX_MB", value: strconv.Itoa(cfg.RequestLogDBMaxMB)},
+		{name: "PRISM_REQUEST_LOG_DB_RETAIN_COUNT", value: strconv.Itoa(cfg.RequestLogDBRetainCount)},
+		{name: "# --- metrics ---"},
+		{name: "PRISM_METRIC_THROUGHPUT_INTERVAL_SECONDS", value: strconv.Itoa(cfg.MetricThroughputIntervalSeconds)},
+		{name: "PRISM_METRIC_THROUGHPUT_RETENTION_SECONDS", value: strconv.Itoa(cfg.MetricThroughputRetentionSeconds)},
+		{name: "PRISM_METRIC_BUCKET_SECONDS", value: strconv.Itoa(cfg.MetricBucketSeconds)},
+		{name: "PRISM_METRIC_CONNECTIONS_INTERVAL_SECONDS", value: strconv.Itoa(cfg.MetricConnectionsIntervalSeconds)},
+		{name: "PRISM_METRIC_CONNECTIONS_RETENTION_SECONDS", value: strconv.Itoa(cfg.MetricConnectionsRetentionSeconds)},
+		{name: "PRISM_METRIC_LEASES_INTERVAL_SECONDS", value: strconv.Itoa(cfg.MetricLeasesIntervalSeconds)},
+		{name: "PRISM_METRIC_LEASES_RETENTION_SECONDS", value: strconv.Itoa(cfg.MetricLeasesRetentionSeconds)},
+		{name: "PRISM_METRIC_LATENCY_BIN_WIDTH_MS", value: strconv.Itoa(cfg.MetricLatencyBinWidthMS)},
+		{name: "PRISM_METRIC_LATENCY_BIN_OVERFLOW_MS", value: strconv.Itoa(cfg.MetricLatencyBinOverflowMS)},
+		{name: "# --- exit quality ---"},
+		{name: "PRISM_QUALITY_ENABLED", value: strconv.FormatBool(cfg.Quality.Enabled)},
+		{name: "PRISM_QUALITY_API_KEY", value: maskSecret(cfg.Quality.APIKey)},
+		{name: "PRISM_QUALITY_DAILY_LIMIT", value: strconv.Itoa(cfg.Quality.DailyLimit)},
+		{name: "PRISM_QUALITY_WORKERS", value: strconv.Itoa(cfg.Quality.Workers)},
+		{name: "PRISM_ABUSEIPDB_API_KEY", value: maskSecret(cfg.Quality.AbuseAPIKey)},
+		{name: "PRISM_QUALITY_QUEUE_SIZE", value: "(deprecated, ignored)"},
 	}
 	fmt.Fprintln(w, "# Prism effective configuration (secrets masked)")
+	fmt.Fprintln(w, "# source: env = process environment or ./.env, legacy = deprecated RESIN_ spelling,")
+	fmt.Fprintln(w, "#         empty = set but empty (the shipped default applies), default = not set")
 	for _, row := range rows {
-		fmt.Fprintf(w, "%s=%s\n", row[0], row[1])
+		if strings.HasPrefix(row.name, "#") {
+			fmt.Fprintln(w, row.name)
+			continue
+		}
+		source := row.source
+		if source == "" {
+			source = string(config.EnvSourceOf(row.name))
+		}
+		fmt.Fprintf(w, "%s=%s\t[%s]\n", row.name, row.value, source)
 	}
+}
+
+// pepperRow is the PRISM_KEY_PEPPER line of the report. The configuration
+// loader does not read this variable; the authentication layer does
+// (internal/auth/pepper.go), PRISM_ spelling only, and it falls back to the
+// pepper file in the state directory. Its source is therefore stated here
+// instead of being asked of the loader's origin record.
+func pepperRow() checkConfigRow {
+	row := checkConfigRow{
+		name:   auth.PepperEnvVar,
+		value:  maskSecret(os.Getenv(auth.PepperEnvVar)),
+		source: string(config.EnvSourceDefault),
+	}
+	if strings.TrimSpace(os.Getenv(auth.PepperEnvVar)) != "" {
+		row.source = string(config.EnvSourceEnv)
+	}
+	return row
 }
 
 // maskSecret reports whether a secret is configured without disclosing it.
@@ -465,6 +567,24 @@ func formatPortList(ports []int) string {
 		parts = append(parts, strconv.Itoa(port))
 	}
 	return strings.Join(parts, ",")
+}
+
+// formatStringValue renders an empty string setting as "(empty)" so a blank
+// value is never mistaken for a missing row or for the shipped default.
+func formatStringValue(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "(empty)"
+	}
+	return value
+}
+
+// formatListValue renders a list setting the way an operator writes it back:
+// comma separated, and "(none)" when nothing is configured.
+func formatListValue(values []string) string {
+	if len(values) == 0 {
+		return "(none)"
+	}
+	return strings.Join(values, ",")
 }
 
 // --- backup ---

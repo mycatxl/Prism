@@ -21,15 +21,15 @@ type QualityConfig struct {
 
 func LoadQualityConfig() (QualityConfig, error) {
 	cfg := QualityConfig{
-		Enabled: true, APIKey: strings.TrimSpace(os.Getenv("PRISM_QUALITY_API_KEY")),
-		AbuseAPIKey: strings.TrimSpace(os.Getenv("PRISM_ABUSEIPDB_API_KEY")),
+		Enabled: true, APIKey: strings.TrimSpace(qualityEnv("PRISM_QUALITY_API_KEY")),
+		AbuseAPIKey: strings.TrimSpace(qualityEnv("PRISM_ABUSEIPDB_API_KEY")),
 		DailyLimit:  80, Workers: 2, QueueSize: 4096,
 		Timeout: 10 * time.Second, CacheTTL: 24 * time.Hour,
 	}
 	if cfg.APIKey != "" {
 		cfg.DailyLimit = 900
 	}
-	if value := os.Getenv("PRISM_QUALITY_ENABLED"); value != "" {
+	if value := qualityEnv("PRISM_QUALITY_ENABLED"); value != "" {
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
 			return cfg, fmt.Errorf("PRISM_QUALITY_ENABLED must be a boolean")
@@ -44,7 +44,7 @@ func LoadQualityConfig() (QualityConfig, error) {
 		{"PRISM_QUALITY_DAILY_LIMIT", &cfg.DailyLimit, 1, 900},
 		{"PRISM_QUALITY_WORKERS", &cfg.Workers, 1, 8},
 	} {
-		if raw := os.Getenv(setting.name); raw != "" {
+		if raw := qualityEnv(setting.name); raw != "" {
 			value, err := strconv.Atoi(raw)
 			if err != nil || value < setting.min || value > setting.max {
 				return cfg, fmt.Errorf("%s must be between %d and %d", setting.name, setting.min, setting.max)
@@ -64,4 +64,21 @@ func LoadQualityConfig() (QualityConfig, error) {
 		return cfg, fmt.Errorf("PRISM_QUALITY_DAILY_LIMIT cannot exceed 80 without PRISM_QUALITY_API_KEY")
 	}
 	return cfg, nil
+}
+
+// qualityEnv reads a Prism-only quality setting.
+//
+// These variables have no RESIN_ fallback - they only exist in Prism - so the
+// read stays on the raw environment. The origin is recorded all the same,
+// because `prism check-config` prints a source for every row it shows.
+func qualityEnv(name string) string {
+	value, set := os.LookupEnv(name)
+	// Unset is the shipped default and "set but empty" is a line that carries
+	// nothing; the two are recorded as the different answers they are.
+	if set {
+		recordEnvOrigin(name, envSourceForValue(value, false))
+	} else {
+		recordEnvOrigin(name, EnvSourceDefault)
+	}
+	return value
 }

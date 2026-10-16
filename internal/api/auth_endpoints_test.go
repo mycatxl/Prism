@@ -642,6 +642,7 @@ func TestHandleLogin_ErrorMapping(t *testing.T) {
 		{"bad credentials", auth.ErrInvalidCredentials, http.StatusUnauthorized, "UNAUTHORIZED"},
 		{"second factor required", auth.ErrTOTPRequired, http.StatusUnauthorized, "TOTP_REQUIRED"},
 		{"bad second factor", auth.ErrTOTPInvalid, http.StatusUnauthorized, "TOTP_INVALID"},
+		{"spent second factor", auth.ErrTOTPAlreadyUsed, http.StatusUnauthorized, "TOTP_ALREADY_USED"},
 		{"rate limited", auth.ErrTooManyAttempts, http.StatusTooManyRequests, "RATE_LIMITED"},
 		{"a server fault", errors.New("the database is gone"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}

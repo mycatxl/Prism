@@ -22,13 +22,18 @@ type fakeStore struct {
 		userID string
 		atNs   int64
 	}
+	// totpSteps is the spent-step record AdvanceTOTPLastUsed compares against,
+	// and totpStepErr makes that call fail for the fail-closed test.
+	totpSteps   map[string]int64
+	totpStepErr error
 }
 
 func newFakeStore() *fakeStore {
 	return &fakeStore{
-		users:    make(map[string]*model.User),
-		byName:   make(map[string]string),
-		sessions: make(map[string]model.Session),
+		users:     make(map[string]*model.User),
+		byName:    make(map[string]string),
+		sessions:  make(map[string]model.Session),
+		totpSteps: make(map[string]int64),
 	}
 }
 
@@ -136,6 +141,21 @@ func (s *fakeStore) MarkUserLogin(userID string, atNs int64) error {
 	return nil
 }
 
+// AdvanceTOTPLastUsed is the compare-and-set the real repository performs: the
+// step is accepted only when it is newer than the one already recorded.
+func (s *fakeStore) AdvanceTOTPLastUsed(userID string, stepNs int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.totpStepErr != nil {
+		return false, s.totpStepErr
+	}
+	if last, ok := s.totpSteps[userID]; ok && stepNs <= last {
+		return false, nil
+	}
+	s.totpSteps[userID] = stepNs
+	return true, nil
+}
+
 func (s *fakeStore) sessionCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -166,6 +186,13 @@ func (b *fakeBlocklist) failureCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return len(b.failures)
+}
+
+// failureKeys returns the keys the failures were recorded against, in order.
+func (b *fakeBlocklist) failureKeys() []string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]string(nil), b.failures...)
 }
 
 func newLoginService(t *testing.T, store Store) *Service {
@@ -404,7 +431,9 @@ func TestService_LoginRefusesABlockedAddress(t *testing.T) {
 	}
 }
 
-// Failures are recorded against the address, so the limiter can act.
+// Failures are recorded against the address, so the limiter can act, and against
+// the account as well: an attempt that sends one guess per address never fills an
+// address bucket, so the account bucket is the one that stops it.
 func TestService_LoginRecordsFailuresAgainstTheAddress(t *testing.T) {
 	store := newFakeStore()
 	store.addUser(t, "admin", "the-right-password")
@@ -415,8 +444,12 @@ func TestService_LoginRecordsFailuresAgainstTheAddress(t *testing.T) {
 	_, _ = svc.Login("admin", "wrong", "", "203.0.113.9", "", "")
 	_, _ = svc.Login("nobody", "wrong", "", "203.0.113.9", "", "")
 
-	if got := block.failureCount(); got != 2 {
-		t.Fatalf("recorded %d failures, want 2", got)
+	// The known account's failure counts twice - once for the address and once
+	// for the account - while an unknown username has no account to count
+	// against.
+	const want = "203.0.113.9,user:u-admin,203.0.113.9"
+	if got := strings.Join(block.failureKeys(), ","); got != want {
+		t.Fatalf("recorded failures %q, want %q", got, want)
 	}
 }
 
@@ -616,5 +649,106 @@ func TestService_WithoutAStoreIsInert(t *testing.T) {
 	}
 	if _, err := svc.RevokeUserSessions("u-1"); err != nil {
 		t.Fatalf("RevokeUserSessions without a store: %v", err)
+	}
+}
+
+// A TOTP code is a one-time password. The step it matched is spent before the
+// login is allowed to continue, so the same code cannot open a second session
+// while it is still inside the accepted tolerance, and the ledger only moves
+// forward, so an older code of the same window cannot be replayed either.
+func TestService_SecondFactorIsSingleUse(t *testing.T) {
+	store := newFakeStore()
+	user := store.addUser(t, "admin", "the-right-password")
+	svc := newLoginService(t, store)
+
+	// Pinned to a step boundary, so "the same step" and "the next step" are the
+	// same thing on any machine.
+	clock := (1_750_000_000 / int64(totpStep.Seconds())) * int64(totpStep.Seconds()) * int64(time.Second)
+	svc.Now = func() int64 { return clock }
+
+	secret := enrolTOTP(t, store, svc, user.ID)
+	current, err := TOTPCode(secret, time.Unix(0, clock))
+	if err != nil {
+		t.Fatalf("TOTPCode: %v", err)
+	}
+
+	result, err := svc.Login("admin", "the-right-password", current, "", "", "")
+	if err != nil {
+		t.Fatalf("the first login with the code: %v", err)
+	}
+	if result.SessionID == "" {
+		t.Fatal("no session was issued")
+	}
+	if got := store.sessionCount(); got != 1 {
+		t.Fatalf("%d sessions were issued, want 1", got)
+	}
+	// What is recorded is the code's own step, not the wall clock it was
+	// verified at: that is what makes two attempts comparable.
+	if got := store.totpSteps[user.ID]; got != clock {
+		t.Fatalf("the spent step was recorded as %d, want %d", got, clock)
+	}
+
+	// The same code again, a few seconds later but still inside its step.
+	clock += int64(10 * time.Second)
+	if _, err := svc.Login("admin", "the-right-password", current, "", "", ""); !errors.Is(err, ErrTOTPAlreadyUsed) {
+		t.Fatalf("the replay of the same code: got %v, want ErrTOTPAlreadyUsed", err)
+	}
+	if got := store.sessionCount(); got != 1 {
+		t.Fatalf("%d sessions were issued after the replay, want 1", got)
+	}
+
+	// The previous step's code is still inside the tolerance, and its step is
+	// behind the ledger: it cannot be spent either.
+	previous, err := TOTPCode(secret, time.Unix(0, clock-int64(totpStep)))
+	if err != nil {
+		t.Fatalf("TOTPCode(previous): %v", err)
+	}
+	if _, err := svc.Login("admin", "the-right-password", previous, "", "", ""); !errors.Is(err, ErrTOTPAlreadyUsed) {
+		t.Fatalf("the previous step's code: got %v, want ErrTOTPAlreadyUsed", err)
+	}
+	if got := store.sessionCount(); got != 1 {
+		t.Fatalf("%d sessions were issued after the previous step's code, want 1", got)
+	}
+
+	// The next step's code is a new code: it is accepted.
+	clock += int64(totpStep)
+	next, err := TOTPCode(secret, time.Unix(0, clock))
+	if err != nil {
+		t.Fatalf("TOTPCode(next): %v", err)
+	}
+	if _, err := svc.Login("admin", "the-right-password", next, "", "", ""); err != nil {
+		t.Fatalf("the next step's code must be accepted: %v", err)
+	}
+	if got := store.sessionCount(); got != 2 {
+		t.Fatalf("%d sessions were issued, want 2", got)
+	}
+}
+
+// A ledger that cannot be written must refuse the login. The spend is the point
+// where the code stops being reusable, so an unknown answer from it is a
+// refusal, not a reason to skip the spend.
+func TestService_SecondFactorRefusesWhenTheLedgerFails(t *testing.T) {
+	store := newFakeStore()
+	user := store.addUser(t, "admin", "the-right-password")
+	svc := newLoginService(t, store)
+
+	secret := enrolTOTP(t, store, svc, user.ID)
+	code, err := TOTPCode(secret, time.Unix(0, svc.nowNs()))
+	if err != nil {
+		t.Fatalf("TOTPCode: %v", err)
+	}
+
+	store.mu.Lock()
+	store.totpStepErr = errors.New("the database is unreachable")
+	store.mu.Unlock()
+
+	if _, err := svc.Login("admin", "the-right-password", code, "", "", ""); err == nil {
+		t.Fatal("a login succeeded although the code's step could not be spent")
+	}
+	if got := store.sessionCount(); got != 0 {
+		t.Fatalf("%d sessions were issued, want 0", got)
+	}
+	if got := store.totpSteps[user.ID]; got != 0 {
+		t.Fatalf("a step was recorded although the write failed: %d", got)
 	}
 }

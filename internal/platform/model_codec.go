@@ -3,6 +3,7 @@ package platform
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"prism/internal/model"
@@ -76,17 +77,28 @@ var (
 	}
 )
 
+// supportedValues renders a validation vocabulary in a stable order, so a caller
+// who typed a value outside it is told what the API does accept.
+func supportedValues(vocabulary map[string]bool) string {
+	values := make([]string, 0, len(vocabulary))
+	for value := range vocabulary {
+		values = append(values, value)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ", ")
+}
+
 // ValidateNodeCriteria validates the explicit node-selection criteria lists.
 // An empty list is always valid: it means "do not restrict on this criterion".
 func ValidateNodeCriteria(ipTypes, purityBands, subscriptionIDs, protocols []string) error {
 	for i, value := range ipTypes {
 		if !nodeIPTypes[strings.ToLower(strings.TrimSpace(value))] {
-			return fmt.Errorf("ip_types[%d]: unsupported network type %q", i, value)
+			return fmt.Errorf("ip_types[%d]: unsupported network type %q (supported: %s)", i, value, supportedValues(nodeIPTypes))
 		}
 	}
 	for i, value := range purityBands {
 		if !nodePurityBands[strings.ToLower(strings.TrimSpace(value))] {
-			return fmt.Errorf("purity_bands[%d]: unsupported band %q", i, value)
+			return fmt.Errorf("purity_bands[%d]: unsupported band %q (supported: %s)", i, value, supportedValues(nodePurityBands))
 		}
 	}
 	for i, value := range subscriptionIDs {

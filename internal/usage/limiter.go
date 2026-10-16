@@ -108,29 +108,40 @@ func (l *Limiter) Check(key *keys.KeyState, concurrent int) Decision {
 //
 // The user aggregate is the authority, not the per-key counter: a subscription
 // grants its traffic to the user, and a user with several keys must not get the
-// whole allowance once per key. The key's own counter is added only when the
-// user aggregate is unavailable, which happens when a key has no owner (the
+// whole allowance once per key. The key's own counter is read only when the user
+// has no aggregate at all, which happens when a key has no owner (the
 // single-tenant path) and when the process started after the usage was
 // persisted but before the aggregate was restored.
+//
+// Whether the aggregate exists is the question, not whether it is non-zero. A
+// period rollover sets it back to zero while deliberately leaving the per-key
+// counters holding the previous period's bytes - they are the record of what
+// moved and are still waiting to be written to the usage tables - so treating a
+// zero total as "no aggregate" read the old period's leftovers as the new
+// period's usage and refused requests of users who had just been given a fresh
+// allowance, for as long as the flush was behind.
 func (l *Limiter) usedBytes(key *keys.KeyState) int64 {
 	if l == nil || l.counters == nil {
 		return 0
 	}
 	if key.UserID != "" {
-		if total := l.counters.UserBytes(key.UserID); total > 0 {
+		if total, ok := l.counters.UserBytesPresent(key.UserID); ok {
 			return total
 		}
 	}
-	// Sum every platform bucket of this key: the allowance is per user, and a
-	// key may reach several platforms.
-	var total int64
-	for _, counterKey := range l.counters.Keys() {
-		if counterKey.KeyID != key.KeyID {
-			continue
-		}
-		total += l.counters.KeyBytes(counterKey).Total()
-	}
-	return total
+	// The fallback reads the key's running total, which every bucket of that
+	// key feeds as the bytes arrive and which a drain reduces by exactly what
+	// it removed. Walking the buckets here would return the same number and
+	// cost one iteration per bucket in the process, on the path that is
+	// supposed to answer "may this request proceed" before anything is
+	// dialled.
+	//
+	// Like the walk it replaces, the total covers the buckets that have not
+	// been flushed yet: traffic the flusher has already written to the usage
+	// tables is out of it. That is the same answer the walk gave, and for the
+	// paths that reach here - a key with no owner, and the window before a
+	// restart's aggregate is restored - there is no better source.
+	return l.counters.KeyTotal(key.KeyID)
 }
 
 // Exceeded reports whether the key has already used more than its allowance,

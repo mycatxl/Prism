@@ -24,13 +24,25 @@ LDFLAGS := -s -w \
 
 .PHONY: build web backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix coverage coverage-gate verify smoke init start clean
 
-build: web backend
+# The Go binary embeds the console bundle (internal/api/webui.go is
+# //go:embed all:web/dist), so the frontend has to exist before ./cmd/prism is
+# compiled. `backend: web` states that as a real dependency: without it
+# `make -j build` may run the two prerequisites of `build` at the same time and
+# produce a binary that embeds an empty dist. Serial `make build` and a bare
+# `make backend` are correct for the same reason.
+#
+# The cost is that a caller who already ran `make web` in an earlier make
+# invocation (CI runs `make web` and then `make backend`) builds the frontend
+# again. That is deliberate: a phony `web` cannot be remembered across
+# invocations, and the alternative - depending on dist/ instead - would silently
+# embed a stale bundle after a frontend edit.
+build: backend
 
 web:
 	$(NPM) --prefix $(WEB_DIR) ci
 	$(NPM) --prefix $(WEB_DIR) run build
 
-backend:
+backend: web
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/prism ./cmd/prism
 

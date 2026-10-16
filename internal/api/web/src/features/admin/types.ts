@@ -204,12 +204,13 @@ export type AdminUsageAlertsResponse = {
   items: AdminUsageAlertItem[];
 };
 
+// The four thresholds the server accepts (internal/config/runtime.go PurityBands).
+// Anything below `mixed` is the `poor` *result* band; it is not configurable.
 export type PurityBands = {
   excellent: number;
   clean: number;
   fair: number;
   mixed: number;
-  poor?: number;
 };
 
 export type AdminSystemConfig = {

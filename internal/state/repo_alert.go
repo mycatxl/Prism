@@ -124,19 +124,17 @@ func (r *StateRepo) AcknowledgeAlert(id string, nowNs int64) (model.Alert, error
 // Retention is age-based on the detection time, not the acknowledgement time: an
 // alert nobody ever read still ages out, which is what keeps the table bounded
 // in a deployment where the console is rarely opened.
+//
+// The delete runs in batches of stateDeleteBatch rows, like the usage tables:
+// the alerts table is on the same single write connection as logins and the
+// flush worker, and one statement over an unbounded tail would hold it for the
+// length of that tail.
 func (r *StateRepo) DeleteAlertsBefore(cutoffNs int64) (int, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec("DELETE FROM alerts WHERE detected_at_ns < ?", cutoffNs)
+	removed, err := r.deleteBeforeBatched("alerts", "detected_at_ns", cutoffNs)
 	if err != nil {
-		return 0, fmt.Errorf("delete alerts: %w", err)
+		return int(removed), fmt.Errorf("delete alerts: %w", err)
 	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("delete alerts: %w", err)
-	}
-	return int(n), nil
+	return int(removed), nil
 }
 
 func scanAlert(row interface{ Scan(...any) error }) (model.Alert, error) {

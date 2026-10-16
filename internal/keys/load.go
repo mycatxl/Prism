@@ -27,9 +27,12 @@ type StateReader interface {
 // behaviour a deployment that has not been migrated yet must keep. The caller
 // reports that degradation; this function only reports what it could not read.
 //
-// The subscription snapshot is taken per user from their active subscription.
-// A user with no active subscription gets the zero snapshot, which means "no
-// plan": no platform restriction beyond the key's own, no quota, no expiry.
+// The subscription snapshot is taken per user from the subscription that
+// decides that user's access (DecidingSubscription): the active one if there is
+// one, otherwise the newest of the ended ones. A suspended or expired
+// subscription is carried as such and refuses the key; only a user with no
+// subscription row at all gets the zero snapshot, which means "no plan": no
+// platform restriction beyond the key's own, no quota, no expiry.
 func LoadFromState(reader StateReader, logf func(format string, args ...any)) (*Store, error) {
 	if reader == nil {
 		return nil, fmt.Errorf("keys: nil state reader")
@@ -67,54 +70,94 @@ func LoadFromState(reader StateReader, logf func(format string, args ...any)) (*
 // the subscription was opened, and it is what stays computable after the plan
 // is edited or deleted.
 //
-// Only an active subscription is carried: a suspended or expired one must not
-// grant anything, and the key state's own check would refuse it anyway, but
-// leaving it out here means the data plane never even holds the numbers. When a
-// user somehow has several active rows the newest expiry wins, which is the
-// reading that cannot lock a user out of a subscription they just renewed.
+// Which row decides a user's access is settled by DecidingSubscription, whose
+// rule is stated there. The snapshot is then built by the same function the
+// console publishes with (SnapshotForPlan), so a restart and a change made in
+// the console cannot disagree about whether a user may connect; Usable() refuses
+// a subscription whose status is not active. A row whose snapshot cannot be
+// decoded is skipped and reported rather than guessed at, and only a user with
+// no readable row at all keeps the zero snapshot.
 func planSnapshots(subscriptions []model.UserSubscription, logf func(format string, args ...any)) map[string]PlanSnapshot {
-	snapshots := make(map[string]PlanSnapshot)
-	expiry := make(map[string]int64)
-
+	plans := make(map[string]model.Plan, len(subscriptions))
+	byUser := make(map[string][]model.UserSubscription, len(subscriptions))
 	for _, sub := range subscriptions {
-		if sub.Status != model.SubscriptionStatusActive {
-			continue
-		}
-		if previous, ok := expiry[sub.UserID]; ok && previous >= sub.ExpiresAtNs {
-			continue
-		}
-
 		var plan model.Plan
-		raw := strings.TrimSpace(sub.PlanSnapshotJSON)
-		if raw == "" {
-			// A subscription without a snapshot still grants what the row
-			// itself carries: the window. The quota is then unknown, which is
-			// the zero value, and zero means unlimited.
-			plan = model.Plan{}
-		} else if err := json.Unmarshal([]byte(raw), &plan); err != nil {
-			// A snapshot that cannot be read must not silently become an
-			// unlimited plan, so the subscription is skipped and reported.
-			// The user keeps the global-token path, which is unrestricted but
-			// also not what a paying user should silently get.
-			if logf != nil {
-				logf("Access keys: subscription %s has an unreadable plan snapshot, skipped: %v", sub.ID, err)
+		if raw := strings.TrimSpace(sub.PlanSnapshotJSON); raw != "" {
+			if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+				// A snapshot that cannot be read must not silently become an
+				// unlimited plan, so the row is skipped and reported. The user
+				// keeps the global-token path, which is unrestricted but also
+				// not what a paying user should silently get.
+				if logf != nil {
+					logf("Access keys: subscription %s has an unreadable plan snapshot, skipped: %v", sub.ID, err)
+				}
+				continue
+			}
+		}
+		plans[sub.ID] = plan
+		byUser[sub.UserID] = append(byUser[sub.UserID], sub)
+	}
+
+	snapshots := make(map[string]PlanSnapshot, len(byUser))
+	for userID, rows := range byUser {
+		sub := DecidingSubscription(rows)
+		if sub == nil {
+			continue
+		}
+		plan := plans[sub.ID]
+		snapshots[userID] = SnapshotForPlan(sub, &plan)
+	}
+	return snapshots
+}
+
+// DecidingSubscription returns the row that decides a user's access out of that
+// user's subscription rows, or nil when there are none.
+//
+// An active row decides first, whatever the others say: an active subscription
+// is what grants access, and a user who has just been put on a new plan must not
+// stay refused because an older, already-ended row happens to expire later. Only
+// when nothing is active do the ended rows decide, and then the newest expiry
+// wins - that is the subscription an operator last acted on, and carrying it
+// (with its own status) is what keeps a suspension or an expiry in force instead
+// of silently handing the user the zero snapshot.
+//
+// It is exported because the console (internal/service) must read the same rule:
+// a restart and a change made in the console cannot be allowed to disagree about
+// whether a user may connect.
+func DecidingSubscription(subs []model.UserSubscription) *model.UserSubscription {
+	var best *model.UserSubscription
+	for i := range subs {
+		candidate := &subs[i]
+		if best == nil {
+			best = candidate
+			continue
+		}
+		candidateActive := candidate.Status == model.SubscriptionStatusActive
+		bestActive := best.Status == model.SubscriptionStatusActive
+		if candidateActive != bestActive {
+			if candidateActive {
+				best = candidate
 			}
 			continue
 		}
-
-		snapshots[sub.UserID] = PlanSnapshot{
-			Platforms:       append([]string(nil), plan.Platforms...),
-			IPTiers:         append([]string(nil), plan.IPTiers...),
-			TrafficBytes:    plan.TrafficBytes,
-			MaxConcurrent:   plan.MaxConcurrent,
-			MaxRPS:          plan.MaxRPS,
-			MaxBandwidthBps: plan.MaxBandwidthBps,
-			ExpiresAtNs:     sub.ExpiresAtNs,
-			Status:          sub.Status,
+		if newerSubscription(candidate, best) {
+			best = candidate
 		}
-		expiry[sub.UserID] = sub.ExpiresAtNs
 	}
-	return snapshots
+	return best
+}
+
+// newerSubscription orders two subscriptions of the same standing: the newest
+// expiry wins, then the latest start, then the larger id, so the answer does not
+// depend on the order the rows came back in.
+func newerSubscription(a, b *model.UserSubscription) bool {
+	if a.ExpiresAtNs != b.ExpiresAtNs {
+		return a.ExpiresAtNs > b.ExpiresAtNs
+	}
+	if a.StartsAtNs != b.StartsAtNs {
+		return a.StartsAtNs > b.StartsAtNs
+	}
+	return a.ID > b.ID
 }
 
 // LogSummary reports what was published, so an operator can see at a glance

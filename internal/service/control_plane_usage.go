@@ -133,7 +133,12 @@ func (s *ControlPlaneService) UsageSummary(nowNs int64) (UsageSummary, error) {
 // A window of zero means the last thirty days. The limit caps the list because
 // this is a top-consumers view: an operator looks at the head of the
 // distribution, and a deployment with thousands of users does not need to send
-// thousands of rows to render that.
+// thousands of rows to render that. A limit of zero - or none at all, which is
+// what an omitted query parameter means - is the default page of
+// defaultUserUsageLimit rows, and no request can ask for more than
+// maxUserUsageLimit: the bound the comment promises is applied here rather than
+// left to the caller. The rows are the whole response, so the limit that was
+// actually used cannot be echoed back in the body.
 func (s *ControlPlaneService) UsageByUser(fromNs, toNs int64, limit int, nowNs int64) ([]UsageUserRow, error) {
 	if s == nil || s.Engine == nil {
 		return nil, internal("no state engine", nil)
@@ -206,7 +211,8 @@ func (s *ControlPlaneService) UsageByUser(fromNs, toNs int64, limit int, nowNs i
 		}
 		return result[i].UserID < result[j].UserID
 	})
-	if limit > 0 && limit < len(result) {
+	limit = clampUsageUserLimit(limit)
+	if limit < len(result) {
 		result = result[:limit]
 	}
 	return result, nil
@@ -349,4 +355,27 @@ func clampUsageDays(days int) int {
 		return maxUsageDays
 	}
 	return days
+}
+
+const (
+	// defaultUserUsageLimit is how many rows the top-consumers view returns
+	// when the caller does not ask for a particular number. It is a page an
+	// operator can read, not the whole deployment.
+	defaultUserUsageLimit = 50
+	// maxUserUsageLimit is the most rows one request may ask for. Without a
+	// ceiling, "limit" was only a suggestion and a single query could ask a
+	// deployment with thousands of accounts to render all of them.
+	maxUserUsageLimit = 1000
+)
+
+// clampUsageUserLimit applies the bounds UsageByUser documents: zero means the
+// default page, and nothing gets past the maximum.
+func clampUsageUserLimit(limit int) int {
+	if limit <= 0 {
+		return defaultUserUsageLimit
+	}
+	if limit > maxUserUsageLimit {
+		return maxUserUsageLimit
+	}
+	return limit
 }

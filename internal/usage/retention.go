@@ -2,10 +2,13 @@
 // summarizes hourly rows into daily rows once they age out of the hourly
 // window, and prunes rows past their retention.
 //
-// The summary and the prune happen in the same pass, in this order:
-// aggregate the aged hourly rows, add them to the daily table, then delete the
-// hourly rows that were aggregated. Doing the delete only after the daily write
-// succeeds is what keeps a crash from losing traffic.
+// The summary and the prune happen in the same pass: the store folds the aged
+// hourly rows into the daily table and deletes them in one transaction, in that
+// single call, and the pass then prunes the daily rows past their own window.
+// Folding and deleting together is what keeps a crash from double-counting:
+// there is no state in which the traffic is already in the daily table while
+// its hourly rows are still there to be summed a second time, and the daily
+// write adds rather than replaces, so such a state would never repair itself.
 package usage
 
 import (
@@ -13,8 +16,6 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	"prism/internal/model"
 )
 
 // Retention windows and the scheduling defaults.
@@ -34,14 +35,17 @@ const (
 // Store is the persistence surface the retention pass needs. *state.StateRepo
 // satisfies it.
 type Store interface {
-	// SumUsageHourlyBefore aggregates hourly rows older than cutoffNs into
-	// daily buckets.
-	SumUsageHourlyBefore(cutoffNs int64) ([]model.UsageRow, error)
-	// UpsertUsageDaily adds rows to the daily table, summing into existing
-	// buckets rather than replacing them.
-	UpsertUsageDaily(rows []model.UsageRow) error
-	// DeleteUsageHourlyBefore removes hourly rows older than cutoffNs.
-	DeleteUsageHourlyBefore(cutoffNs int64) (int64, error)
+	// SummarizeUsageHourlyBefore folds every hourly row older than cutoffNs
+	// into the daily table and deletes the rows it folded, in one
+	// transaction. The returned count is how many hourly rows were folded
+	// and removed.
+	//
+	// It is deliberately the only summary call this pass has. The three-call
+	// sequence it replaces - aggregate, write the daily rows, delete the
+	// hourly rows - can fail between the write and the delete, and because
+	// the daily write adds to the bucket instead of replacing it, the next
+	// pass would sum those same rows again and double-count the day for good.
+	SummarizeUsageHourlyBefore(cutoffNs int64) (int64, error)
 	// DeleteUsageDailyBefore removes daily rows older than cutoffNs.
 	DeleteUsageDailyBefore(cutoffNs int64) (int64, error)
 }
@@ -70,6 +74,13 @@ type Result struct {
 	// Summarized is how many hourly rows were folded into daily rows.
 	Summarized int64
 	// HourlyRemoved is how many hourly rows were deleted.
+	//
+	// It shares its source with Summarized: the store folds the hourly rows
+	// into the daily table and deletes them in the same transaction, so every
+	// row counted as summarized is also a row that went away, and there is no
+	// intermediate state in which one of the two happened without the other.
+	// The two fields are kept apart because callers and log lines read them
+	// separately.
 	HourlyRemoved int64
 	// DailyRemoved is how many daily rows were pruned.
 	DailyRemoved int64
@@ -109,9 +120,12 @@ func (r *Retention) logf(format string, args ...any) {
 
 // RunOnce summarizes and prunes relative to nowNs.
 //
-// The order matters: aggregate, write the daily rows, then delete the hourly
-// rows that were aggregated. A failure before the delete leaves the hourly rows
-// in place, so the next pass retries them instead of losing the traffic.
+// The summary is one call into the store, which folds the aged hourly rows into
+// the daily table and deletes them in a single transaction: the hourly buckets
+// are folded and removed together, so there is no intermediate state in which
+// the traffic sits in the daily table while its hourly rows are still there.
+// A failure inside the call leaves both tables untouched and the next pass
+// retries the same rows.
 func (r *Retention) RunOnce(nowNs int64) (Result, error) {
 	var result Result
 	if r.Store == nil {
@@ -123,28 +137,17 @@ func (r *Retention) RunOnce(nowNs int64) (Result, error) {
 
 	hourlyCutoff := nowNs - int64(r.hourlyKeep())
 
-	// 1. Aggregate the aged hourly rows.
-	aggregated, err := r.Store.SumUsageHourlyBefore(hourlyCutoff)
+	// 1. Fold the aged hourly rows into the daily table and drop them, in one
+	// transaction inside the store. The count is therefore both the number of
+	// rows summarized and the number removed.
+	summarized, err := r.Store.SummarizeUsageHourlyBefore(hourlyCutoff)
 	if err != nil {
 		return result, fmt.Errorf("summarize usage: %w", err)
 	}
+	result.Summarized = summarized
+	result.HourlyRemoved = summarized
 
-	// 2. Add them to the daily table before removing the source rows.
-	if len(aggregated) > 0 {
-		if err := r.Store.UpsertUsageDaily(aggregated); err != nil {
-			return result, fmt.Errorf("write daily usage: %w", err)
-		}
-	}
-
-	// 3. Only now is it safe to drop the hourly rows.
-	hourlyRemoved, err := r.Store.DeleteUsageHourlyBefore(hourlyCutoff)
-	if err != nil {
-		return result, fmt.Errorf("delete hourly usage: %w", err)
-	}
-	result.HourlyRemoved = hourlyRemoved
-	result.Summarized = int64(len(aggregated))
-
-	// 4. Prune the daily rows that are past their own window.
+	// 2. Prune the daily rows that are past their own window.
 	dailyCutoff := nowNs - int64(r.dailyKeep())
 	dailyRemoved, err := r.Store.DeleteUsageDailyBefore(dailyCutoff)
 	if err != nil {
@@ -173,8 +176,9 @@ func (r *Retention) Start() func() {
 			case <-ticker.C:
 				result, err := r.RunOnce(time.Now().UnixNano())
 				if err != nil {
-					// A pass that fails is retried on the next tick: the hourly
-					// rows are still there because the delete is last.
+					// A pass that fails is retried on the next tick: the
+					// summary is one transaction, so a failure left the hourly
+					// rows where they were with nothing folded from them.
 					r.logf("usage: retention pass failed: %v", err)
 					continue
 				}

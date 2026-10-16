@@ -38,6 +38,7 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
+import { copyToClipboard } from "../../lib/clipboard";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { createKey, deleteKey, getKeys, getOverview } from "./api";
 import type { AccessKeyInput, AccessKeyView, CreateKeyResponse } from "./types";
@@ -643,10 +644,19 @@ function SecretOnceDialog({
 }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
 
   const handleCopy = () => {
     if (!data?.credential) return;
-    void navigator.clipboard.writeText(data.credential).then(() => {
+    // A missing `navigator.clipboard` (plain-HTTP page) must not throw before the
+    // operator is told the copy did not happen.
+    void copyToClipboard(data.credential).then((ok) => {
+      if (!ok) {
+        setCopied(false);
+        setCopyError(t("复制失败，请手动选择复制"));
+        return;
+      }
+      setCopyError("");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -693,6 +703,7 @@ function SecretOnceDialog({
                 <span>{copied ? t("已复制") : t("复制")}</span>
               </Button>
             </div>
+            {copyError ? <ErrorState message={copyError} className="mt-2" /> : null}
           </div>
 
           <div className="mt-6 flex items-center justify-end">

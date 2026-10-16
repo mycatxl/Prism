@@ -144,6 +144,56 @@ func (l *requestLifecycle) addEgressBytes(n int64) {
 	}
 }
 
+// addIngressBytesLive records bytes that the stream itself reported to the
+// key's sink as they flowed. Only the request log is updated here: reporting
+// them to the sink again would bill the same byte twice.
+func (l *requestLifecycle) addIngressBytesLive(n int64) {
+	if l == nil || n <= 0 {
+		return
+	}
+	l.log.IngressBytes += n
+}
+
+// addEgressBytesLive is the egress counterpart of addIngressBytesLive.
+func (l *requestLifecycle) addEgressBytesLive(n int64) {
+	if l == nil || n <= 0 {
+		return
+	}
+	l.log.EgressBytes += n
+}
+
+// liveReporter returns the functions a stream calls with the bytes it moves, or
+// two nils when there is nothing to report to.
+//
+// It exists for the streams the request lifecycle does not copy itself: a
+// request body is read by net/http's transport write loop, a reverse proxy's
+// response is copied inside httputil, and a tunnel is relayed by its own
+// goroutines. Committing those bytes only at the end of the request would leave
+// the counters a live quota reads frozen for the whole transfer, so a limit
+// crossed halfway through a large upload or download would be noticed only once
+// the transfer was over - the exact window the mid-stream check exists to
+// close. The stream reports every few kilobytes instead, and the request log
+// still gets its exact total at the end through addIngressBytesLive and
+// addEgressBytesLive.
+//
+// The identity is captured here, once, rather than read from the lifecycle on
+// every call: the reporting happens on the goroutine that moves the bytes, and
+// the lifecycle is otherwise owned by the handler's own goroutine.
+func (l *requestLifecycle) liveReporter() (ingress, egress func(int64)) {
+	if l == nil || l.meter == nil || l.meter.bytesAtConn || l.meter.sink == nil {
+		return nil, nil
+	}
+	sink := l.meter.sink
+	keyID := l.meter.keyID
+	userID := l.meter.userID
+	platformID := l.platformForMetering()
+	return func(n int64) {
+			sink.OnKeyTrafficDelta(keyID, userID, platformID, n, 0)
+		}, func(n int64) {
+			sink.OnKeyTrafficDelta(keyID, userID, platformID, 0, n)
+		}
+}
+
 func (l *requestLifecycle) setNetOK(ok bool) {
 	l.finished.NetOK = ok
 	l.log.NetOK = ok

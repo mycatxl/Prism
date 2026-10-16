@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Ta
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
+import { copyToClipboard } from "../../lib/clipboard";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { getOverview } from "./api";
 
@@ -25,18 +26,19 @@ export function GuidePage() {
   });
 
   const copyText = (key: string, text: string, successMsg: string) => {
-    navigator.clipboard
-      .writeText(text)
-      .then(() => {
-        setCopiedKey(key);
-        showToast("success", successMsg);
-        setTimeout(() => {
-          setCopiedKey((prev) => (prev === key ? null : prev));
-        }, 2000);
-      })
-      .catch(() => {
+    // `copyToClipboard` resolves false instead of throwing when the page is not a
+    // secure context, which is the only way this notice can appear there.
+    void copyToClipboard(text).then((copied) => {
+      if (!copied) {
         showToast("error", t("复制失败，请手动选择复制"));
-      });
+        return;
+      }
+      setCopiedKey(key);
+      showToast("success", successMsg);
+      setTimeout(() => {
+        setCopiedKey((prev) => (prev === key ? null : prev));
+      }, 2000);
+    });
   };
 
   const platforms = overviewQuery.data?.platforms ?? [];

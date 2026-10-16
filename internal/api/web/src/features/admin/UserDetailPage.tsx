@@ -32,6 +32,7 @@ import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
+import { copyToClipboard } from "../../lib/clipboard";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import {
@@ -643,26 +644,43 @@ function AssignPlanDialog({
   const planIdField = useId();
   const durationField = useId();
 
-  const [planId, setPlanId] = useState(plans[0]?.id || "");
+  /*
+   * `plans` arrives from its own query, so the first render can see an empty list.
+   * Seeding `planId` from `plans[0]` at mount time therefore left it as "" while the
+   * native select displayed its first option regardless — submitting then answered
+   * "请选择套餐" with a plan visibly selected. The selection is derived instead, so
+   * `planId` holds nothing but an explicit choice: until the operator picks one, the
+   * first plan that has arrived is both what the select shows and what the form
+   * submits, and the two can never disagree. Deriving it also keeps a `setState` out
+   * of an effect, which would only have bought a cascading render.
+   */
+  const [planId, setPlanId] = useState("");
   const [durationDays, setDurationDays] = useState("30");
   const [errorMsg, setErrorMsg] = useState("");
+  const effectivePlanId = planId || plans[0]?.id || "";
 
   const mutation = useMutation({
     mutationFn: async () => {
       const days = Number(durationDays) || 30;
       if (currentSubId) {
         return updateSubscription(currentSubId, {
-          plan_id: planId,
+          plan_id: effectivePlanId,
           duration_days: days,
         });
       }
       return createSubscription({
         user_id: userId,
-        plan_id: planId,
+        plan_id: effectivePlanId,
         duration_days: days,
       });
     },
-    onSuccess,
+    onSuccess: () => {
+      // The dialog closes on success; the next open starts from a clean slate.
+      setPlanId("");
+      setDurationDays("30");
+      setErrorMsg("");
+      onSuccess();
+    },
     onError: (err) => setErrorMsg(formatApiErrorMessage(err, t)),
   });
 
@@ -678,7 +696,7 @@ function AssignPlanDialog({
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (!planId) {
+              if (!effectivePlanId) {
                 setErrorMsg(t("请选择套餐"));
                 return;
               }
@@ -699,9 +717,10 @@ function AssignPlanDialog({
               </label>
               <Select
                 id={planIdField}
-                value={planId}
+                value={effectivePlanId}
                 onChange={(e) => setPlanId(e.target.value)}
               >
+                <option value="">{t("请选择套餐")}</option>
                 {plans.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name} ({p.period}) - {formatBytes(p.traffic_bytes)}
@@ -993,10 +1012,19 @@ function SecretOnceDialog({
 }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState("");
 
   const handleCopy = () => {
     if (!data?.credential) return;
-    navigator.clipboard.writeText(data.credential).then(() => {
+    // `navigator.clipboard` is absent on a plain-HTTP page; calling it there threw
+    // before any failure notice could render.
+    void copyToClipboard(data.credential).then((ok) => {
+      if (!ok) {
+        setCopied(false);
+        setCopyError(t("复制失败，请手动选择复制"));
+        return;
+      }
+      setCopyError("");
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -1028,6 +1056,7 @@ function SecretOnceDialog({
                 <span>{copied ? t("已复制") : t("复制")}</span>
               </Button>
             </div>
+            {copyError ? <ErrorState message={copyError} className="mt-2" /> : null}
           </div>
 
           <div className="mt-6 flex items-center justify-end">

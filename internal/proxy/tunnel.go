@@ -46,9 +46,13 @@ type tunnelPrepareResult struct {
 }
 
 type tunnelRelayResult struct {
-	ingressBytes  int64
-	egressBytes   int64
-	netOK         bool
+	ingressBytes int64
+	egressBytes  int64
+	netOK        bool
+	// quotaAborted says the relay was ended on purpose because the key's
+	// allowance ran out. It is not a node failure, so the caller must not
+	// record a health result for it.
+	quotaAborted  bool
 	proxyErr      *ProxyError
 	upstreamStage string
 	upstreamErr   error
@@ -56,6 +60,14 @@ type tunnelRelayResult struct {
 
 type tunnelPumpOptions struct {
 	onFirstIngressByte func()
+	// quotaGate, quotaKey and quotaGracePercent enable the mid-stream
+	// allowance check: a tunnel that carries more than the key may move is
+	// closed by both ends rather than allowed to finish. A nil gate, or a
+	// session with no key, leaves the relay unenforced, exactly as it was
+	// before quotas existed.
+	quotaGate         QuotaGate
+	quotaKey          *keys.KeyState
+	quotaGracePercent int
 }
 
 type firstByteReader struct {
@@ -260,10 +272,20 @@ func pumpPreparedTunnelReader(
 			_ = session.upstreamConn.Close()
 		})
 	}
+	// The allowance is enforced from inside the relay. Both directions count
+	// against the same allowance, which is why one quota covers the two copies,
+	// and the abort closes both ends - a cut that left one of them open would
+	// leave the peer waiting on a socket nobody reads.
+	quota := newStreamQuota(opts.quotaGate, opts.quotaKey, opts.quotaGracePercent, closeBoth)
+
 	ingressBytesCh := make(chan copyResult, 1)
 	egressBytesCh := make(chan copyResult, 1)
 	go func() {
-		n, copyErr := io.Copy(session.upstreamConn, clientToUpstream)
+		clientReader := io.Reader(clientToUpstream)
+		if quota != nil {
+			clientReader = &quotaReader{reader: clientToUpstream, quota: quota}
+		}
+		n, copyErr := io.Copy(session.upstreamConn, clientReader)
 		if !isBenignTunnelCopyError(copyErr) || !closeWriteConn(session.upstreamConn) {
 			closeBoth()
 		}
@@ -271,9 +293,12 @@ func pumpPreparedTunnelReader(
 	}()
 	go func() {
 		var upstreamReader io.Reader = session.upstreamConn
+		if quota != nil {
+			upstreamReader = &quotaReader{reader: upstreamReader, quota: quota, ingress: true}
+		}
 		if opts.onFirstIngressByte != nil {
 			// 隧道首字耗时以目标站点返回的第一批字节为准，而不是 CONNECT/SOCKS 握手完成。
-			upstreamReader = &firstByteReader{reader: session.upstreamConn, onFirstByte: opts.onFirstIngressByte}
+			upstreamReader = &firstByteReader{reader: upstreamReader, onFirstByte: opts.onFirstIngressByte}
 		}
 		n, copyErr := io.Copy(clientConn, upstreamReader)
 		if !isBenignTunnelCopyError(copyErr) || !closeWriteConn(clientConn) {
@@ -286,6 +311,19 @@ func pumpPreparedTunnelReader(
 	egressResult := <-egressBytesCh
 	closeBoth()
 
+	// A relay cut for the key's allowance is not a network failure: the tunnel
+	// was ended on purpose, and blaming the node would take a healthy one out of
+	// rotation because a user ran out of traffic.
+	if quota.Exceeded() {
+		return tunnelRelayResult{
+			ingressBytes: ingressResult.n,
+			egressBytes:  egressResult.n,
+			netOK:        true,
+			quotaAborted: true,
+			proxyErr:     ErrQuotaExceeded,
+		}
+	}
+
 	ingressErrBenign := isBenignTunnelCopyError(ingressResult.err)
 	egressErrBenign := isBenignTunnelCopyError(egressResult.err)
 	// A client-side TCP reset after the upstream response has already started is
@@ -294,7 +332,6 @@ func pumpPreparedTunnelReader(
 	if !egressErrBenign && ingressResult.n > 0 && isClientReadResetError(egressResult.err) {
 		egressErrBenign = true
 	}
-
 	result := tunnelRelayResult{
 		ingressBytes: ingressResult.n,
 		egressBytes:  egressResult.n,

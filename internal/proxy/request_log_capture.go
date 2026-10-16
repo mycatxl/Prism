@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"sync"
 	"sync/atomic"
 )
 
@@ -43,6 +44,15 @@ func captureHeadersWithLimit(header http.Header, maxBytes int, accountHeaders ..
 type payloadCaptureReadCloser struct {
 	rc       io.ReadCloser
 	maxBytes int
+
+	// mu guards payload and totalLen. The wrapper is the inner half of a body
+	// net/http reads from a goroutine the handler does not own: the transport's
+	// write loop keeps reading a request body after the round trip returned, and
+	// httputil copies a response body while the handler unwinds. The handler
+	// reads the capture in requestLifecycle.finish on exactly that path, so an
+	// unsynchronised buffer and counter race with the reader - the same reason
+	// the sibling wrappers below count with atomics.
+	mu       sync.Mutex
 	payload  bytes.Buffer
 	totalLen int
 }
@@ -57,6 +67,10 @@ func newPayloadCaptureReadCloser(rc io.ReadCloser, maxBytes int) *payloadCapture
 func (c *payloadCaptureReadCloser) Read(p []byte) (int, error) {
 	n, err := c.rc.Read(p)
 	if n > 0 {
+		// The counter and the captured bytes move under one lock, so a reader
+		// that sees a total never sees a payload that is behind it: the two
+		// cannot contradict each other in the request log.
+		c.mu.Lock()
 		c.totalLen += n
 		if c.maxBytes < 0 {
 			_, _ = c.payload.Write(p[:n])
@@ -70,6 +84,7 @@ func (c *payloadCaptureReadCloser) Read(p []byte) (int, error) {
 				}
 			}
 		}
+		c.mu.Unlock()
 	}
 	return n, err
 }
@@ -78,22 +93,40 @@ func (c *payloadCaptureReadCloser) Close() error {
 	return c.rc.Close()
 }
 
+// Payload returns the captured bytes so far, as a copy.
+//
+// A copy rather than the internal slice: the reader may append to it after this
+// returns, and the request log must not hold a buffer that is still being
+// written to. The total is a snapshot for the same reason - the body may still
+// be moving when the handler finishes.
 func (c *payloadCaptureReadCloser) Payload() []byte {
-	return c.payload.Bytes()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.payload.Bytes()...)
 }
 
 func (c *payloadCaptureReadCloser) TotalLen() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.totalLen
 }
 
 func (c *payloadCaptureReadCloser) Truncated() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.totalLen > c.payload.Len()
 }
 
 // countingReadCloser wraps a body stream and records total read bytes.
+//
+// The counter is atomic because the transport reads a request body from its own
+// write loop, which can still be running when the handler reads the total after
+// the round trip returned (a response that arrives before the upload finishes).
+// A plain int64 there is a data race, and a torn read would report a byte count
+// that never existed.
 type countingReadCloser struct {
 	rc    io.ReadCloser
-	total int64
+	total atomic.Int64
 }
 
 func newCountingReadCloser(rc io.ReadCloser) *countingReadCloser {
@@ -103,7 +136,7 @@ func newCountingReadCloser(rc io.ReadCloser) *countingReadCloser {
 func (c *countingReadCloser) Read(p []byte) (int, error) {
 	n, err := c.rc.Read(p)
 	if n > 0 {
-		c.total += int64(n)
+		c.total.Add(int64(n))
 	}
 	return n, err
 }
@@ -112,8 +145,10 @@ func (c *countingReadCloser) Close() error {
 	return c.rc.Close()
 }
 
+// Total returns the bytes read so far. It is a snapshot: the reader may still
+// be in use by another goroutine, so a caller sees what has moved up to now.
 func (c *countingReadCloser) Total() int64 {
-	return c.total
+	return c.total.Load()
 }
 
 // countingReadWriteCloser wraps a bidirectional stream and records

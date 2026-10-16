@@ -24,6 +24,11 @@ var (
 	ErrTOTPRequired = errors.New("auth: a second factor is required")
 	// ErrTOTPInvalid is a supplied second factor that did not verify.
 	ErrTOTPInvalid = errors.New("auth: the second factor is invalid")
+	// ErrTOTPAlreadyUsed is a code that verified but whose step had already
+	// been spent. It is a refusal, not a server fault: a TOTP code is a
+	// one-time password, and a replay inside its own tolerance window is
+	// exactly what the spent-step record exists to catch.
+	ErrTOTPAlreadyUsed = errors.New("auth: the second factor has already been used")
 	// ErrTooManyAttempts is returned while an address is blocked after too many
 	// failures.
 	ErrTooManyAttempts = errors.New("auth: too many failed attempts")
@@ -57,6 +62,14 @@ type Store interface {
 	DeleteSessionsByUser(userID string) (int64, error)
 	// MarkUserLogin records a successful login.
 	MarkUserLogin(userID string, atNs int64) error
+	// AdvanceTOTPLastUsed spends the TOTP step a code belonged to, and reports
+	// whether this call is the one that spent it.
+	//
+	// It is a compare-and-set: the step must be newer than the last one the
+	// account spent, so of two logins arriving with the same code exactly one
+	// is accepted. An error is not "not spent" - it means the state of the
+	// factor is unknown, and the caller refuses in that case too.
+	AdvanceTOTPLastUsed(userID string, stepNs int64) (bool, error)
 }
 
 // Blocklist decides whether an address has failed too often.
@@ -69,6 +82,19 @@ type Blocklist interface {
 	Blocked(key string) (bool, time.Duration)
 	// RecordFailure counts one failed attempt for key.
 	RecordFailure(key string)
+}
+
+// BlocklistResetter is the optional half of Blocklist: clearing what has been
+// counted for a key.
+//
+// It is optional because a blocklist is useful without it and because the
+// service accepts any implementation. A blocklist that cannot clear still works;
+// what is lost is the reset that follows a successful login, so an account whose
+// failures were someone else's keeps its owner waiting out a block that other
+// people caused.
+type BlocklistResetter interface {
+	// Reset clears the failures and any block recorded for key.
+	Reset(key string)
 }
 
 // Service authenticates console users and manages their sessions.
@@ -152,8 +178,20 @@ func (s *Service) Login(username, password, totpCode, clientKey, ip, userAgent s
 		return result, ErrInvalidCredentials
 	}
 
+	// A distributed attempt sends one guess per address, so the address bucket
+	// never fills; the account bucket is the one it fills. It is checked before
+	// the password work for the same reason the address bucket is: a blocked
+	// account must not keep the server busy, and being blocked means blocked,
+	// not "blocked for guesses".
+	if s.Blocklist != nil {
+		if blocked, retryAfter := s.Blocklist.Blocked(accountFailureKey(user.ID)); blocked {
+			s.logf("auth: login for account %s refused, blocked for another %s", user.ID, retryAfter.Round(time.Second))
+			return result, ErrTooManyAttempts
+		}
+	}
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
 		s.recordFailure(clientKey)
+		s.recordAccountFailure(user.ID)
 		s.logf("auth: login refused for user %s, wrong password", user.ID)
 		return result, ErrInvalidCredentials
 	}
@@ -168,6 +206,14 @@ func (s *Service) Login(username, password, totpCode, clientKey, ip, userAgent s
 
 	if err := s.verifySecondFactor(user, totpCode); err != nil {
 		s.recordFailure(clientKey)
+		// A missing code is the ordinary first step of a two-step login rather
+		// than a failure, so it is not counted against the account: an account
+		// that is blocked refuses even a correct password, and counting the
+		// first step would lock every second-factor user out of their own
+		// console. The address bucket keeps counting it, as it always has.
+		if !errors.Is(err, ErrTOTPRequired) {
+			s.recordAccountFailure(user.ID)
+		}
 		return result, err
 	}
 
@@ -203,6 +249,11 @@ func (s *Service) Login(username, password, totpCode, clientKey, ip, userAgent s
 		s.logf("auth: could not record the login time for user %s: %v", user.ID, err)
 	}
 
+	// The credential was right, so the failures the account bucket was counting
+	// are not this caller's doing. Clearing them is what keeps a distributed
+	// attempt from locking the owner out of their own console.
+	s.clearAccountFailures(user.ID)
+
 	s.logf("auth: user %s logged in from %s", user.ID, ip)
 	return LoginResult{
 		SessionID:   sessionID,
@@ -237,10 +288,56 @@ func (s *Service) verifySecondFactor(user *model.User, code string) error {
 	if code == "" {
 		return ErrTOTPRequired
 	}
-	if !VerifyTOTP(secret, code, time.Unix(0, s.nowNs())) {
+	stepNs, ok := VerifyTOTPStep(secret, code, time.Unix(0, s.nowNs()))
+	if !ok {
 		return ErrTOTPInvalid
 	}
+	// The step is spent before the login is allowed to continue. A TOTP code
+	// is a one-time password: without this, the same code would open a second
+	// session for as long as it stays inside the accepted tolerance, and a code
+	// observed once - over a shoulder, in a screenshot, in a proxy log - would
+	// be a second credential. The compare-and-set is what makes "one code, one
+	// login" true of two attempts arriving at once as well as of two arriving
+	// in sequence, and an error is a refusal too: an unknown state must not be
+	// the state that lets a replay through.
+	spent, err := s.Store.AdvanceTOTPLastUsed(user.ID, stepNs)
+	if err != nil {
+		return fmt.Errorf("auth: spend the second factor step of user %s: %w", user.ID, err)
+	}
+	if !spent {
+		return ErrTOTPAlreadyUsed
+	}
 	return nil
+}
+
+// accountFailureKey names the account-dimension bucket of the blocklist.
+//
+// An address bucket alone caps how fast one machine may guess, and an attempt
+// that sends one guess per address never fills it. The account bucket is what
+// that attempt does fill: it counts the failures of an account wherever they
+// came from. The key is namespaced so it can share the limiter - and with it the
+// threshold, the window and the block - with the address bucket.
+func accountFailureKey(userID string) string {
+	return "user:" + userID
+}
+
+// recordAccountFailure counts one failure against the account itself.
+func (s *Service) recordAccountFailure(userID string) {
+	if s.Blocklist == nil || userID == "" {
+		return
+	}
+	s.Blocklist.RecordFailure(accountFailureKey(userID))
+}
+
+// clearAccountFailures clears the account-dimension bucket after a login that
+// succeeded. A blocklist that cannot clear is left alone: the credential is
+// correct either way, and refusing it would be worse than a stale counter.
+func (s *Service) clearAccountFailures(userID string) {
+	resetter, ok := s.Blocklist.(BlocklistResetter)
+	if !ok || userID == "" {
+		return
+	}
+	resetter.Reset(accountFailureKey(userID))
 }
 
 func (s *Service) recordFailure(clientKey string) {

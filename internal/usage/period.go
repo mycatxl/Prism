@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -69,6 +70,11 @@ type PeriodReset struct {
 	// mu serializes passes: two overlapping passes could both read the same
 	// period start and race the guarded write, which is survivable but wasteful.
 	mu sync.Mutex
+	// warned remembers, per subscription id, the period value that was already
+	// reported as unrecognized. A pass runs every minute, and a plan whose
+	// period is a typo would otherwise log a warning forever. It is only
+	// touched from RunOnce, which holds mu.
+	warned map[string]string
 }
 
 // PeriodResetResult reports what one pass did.
@@ -133,12 +139,19 @@ func (p *PeriodReset) RunOnce(nowNs int64) (PeriodResetResult, error) {
 		}
 
 		period := p.periodFor(sub)
-		if period == PeriodOnce {
+		if normalizePeriod(period) == PeriodOnce {
 			continue // a one-time grant never comes back
 		}
 
 		next, rolled := advancePeriod(sub.PeriodStartNs, nowNs, period)
 		if !rolled {
+			if !periodRecognized(period) {
+				// Nothing will ever advance this subscription. That used to be
+				// silent: the plan looked healthy, the allowance never came
+				// back, and the first sign of trouble was a user who could not
+				// connect.
+				p.warnUnknownPeriod(sub.ID, period)
+			}
 			continue
 		}
 
@@ -162,11 +175,21 @@ func (p *PeriodReset) RunOnce(nowNs int64) (PeriodResetResult, error) {
 
 // periodFor resolves the rollover window of a subscription.
 //
-// The plan is looked up rather than read from the snapshot because the snapshot
-// carries the limits, not the period. A plan that has been deleted leaves the
-// subscription with the default: the alternative is refusing to roll over, which
-// would leave the user with no allowance at all.
+// The plan snapshot the subscription carries is read first: it is the plan as
+// it was sold, it is part of the subscription row itself, and it keeps rolling
+// the subscription over on the period it was bought under even after the plan
+// has been edited or deleted. Only when the snapshot carries no usable period
+// is the live plan consulted, and only when that fails too does the default
+// apply - an unknown period must not silently become "30 days", because the
+// rollover it drives would then reset usage on a boundary nobody agreed to.
+//
+// What is returned is canonical, because every decision the rollover makes is a
+// comparison against the constants in this file and the period arrives from the
+// database as free text.
 func (p *PeriodReset) periodFor(sub model.UserSubscription) string {
+	if period := periodFromSnapshot(sub.PlanSnapshotJSON); period != "" {
+		return normalizePeriod(period)
+	}
 	if sub.PlanID == "" {
 		return DefaultPeriod
 	}
@@ -174,7 +197,64 @@ func (p *PeriodReset) periodFor(sub model.UserSubscription) string {
 	if err != nil || plan == nil || plan.Period == "" {
 		return DefaultPeriod
 	}
-	return plan.Period
+	return normalizePeriod(plan.Period)
+}
+
+// normalizePeriod is the canonical form of a period name. Plan periods are free
+// text in the database - the management API trims whitespace and stores whatever
+// else it is given - so "Month" and " month " reach this package as often as
+// "month" does. Comparing the raw value against the constants meant those
+// variants matched neither the calendar-month branch nor the length parser:
+// advancePeriod answered "no rollover" and the subscription kept the allowance
+// it had spent, permanently and without a word in the log.
+func normalizePeriod(period string) string {
+	return strings.ToLower(strings.TrimSpace(period))
+}
+
+// periodRecognized reports whether a rollover can be computed for a period.
+//
+// It answers for exactly the values advancePeriod acts on, and exists so the
+// values it does not act on are reported instead of being indistinguishable
+// from a period that simply has not elapsed.
+func periodRecognized(period string) bool {
+	if normalizePeriod(period) == PeriodMonth {
+		return true
+	}
+	length, ok := periodLength(period)
+	return ok && length > 0
+}
+
+// warnUnknownPeriod reports a period the rollover cannot act on.
+//
+// A plan with a typo in its period is invisible otherwise: the subscription is
+// listed, the quota is enforced, and the allowance never comes back. The warning
+// is emitted once per value rather than once per pass - the check runs every
+// minute, and filling the log is not more observable.
+func (p *PeriodReset) warnUnknownPeriod(subID, period string) {
+	if p.warned == nil {
+		p.warned = make(map[string]string)
+	}
+	if last, ok := p.warned[subID]; ok && last == period {
+		return
+	}
+	p.warned[subID] = period
+	p.logf("usage: subscription %s has an unrecognized period %q, so its allowance will never roll over; use %q, %q, %q or a duration such as %q",
+		subID, period, PeriodDay, PeriodWeek, PeriodMonth, DefaultPeriod)
+}
+
+// periodFromSnapshot reads the billing period out of the plan snapshot the
+// subscription was opened with. An unreadable or period-less snapshot answers
+// an empty string, which leaves the caller to try the live plan.
+func periodFromSnapshot(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var plan model.Plan
+	if err := json.Unmarshal([]byte(raw), &plan); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(plan.Period)
 }
 
 // advancePeriod moves currentStartNs forward in whole periods until the window
@@ -185,7 +265,7 @@ func advancePeriod(currentStartNs, nowNs int64, period string) (int64, bool) {
 		return currentStartNs, false
 	}
 
-	if period == PeriodMonth {
+	if normalizePeriod(period) == PeriodMonth {
 		return advanceByCalendarMonth(currentStartNs, nowNs)
 	}
 
@@ -260,7 +340,8 @@ func addMonthsClamped(t time.Time, months int) time.Time {
 // becomes "no rollover" rather than "unknown length": refusing to roll over is
 // recoverable by fixing the plan, while inventing a length is not.
 func periodLength(period string) (time.Duration, bool) {
-	switch strings.ToLower(strings.TrimSpace(period)) {
+	normalized := normalizePeriod(period)
+	switch normalized {
 	case PeriodDay, "1d":
 		return 24 * time.Hour, true
 	case PeriodWeek, "7d":
@@ -270,7 +351,7 @@ func periodLength(period string) (time.Duration, bool) {
 	}
 
 	// A plain "<n>d" form, which is what the plan default uses.
-	trimmed := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(period)), "d")
+	trimmed := strings.TrimSuffix(normalized, "d")
 	days := 0
 	if trimmed == "" {
 		return 0, false

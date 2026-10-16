@@ -20,6 +20,7 @@ import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
+import { copyToClipboard } from "../../lib/clipboard";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { createInvite, deleteInvite, listInvites, listPlans } from "./api";
 import type { AdminInvite, AdminPlan, CreateInviteInput } from "./types";
@@ -87,7 +88,13 @@ export function InvitesPage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const handleCopy = (code: string, id: string) => {
-    navigator.clipboard.writeText(code).then(() => {
+    // On a plain-HTTP page `navigator.clipboard` is undefined; the guard lives in
+    // `copyToClipboard`, so this reports the failure instead of throwing.
+    void copyToClipboard(code).then((ok) => {
+      if (!ok) {
+        showToast("error", t("复制失败，请手动选择复制"));
+        return;
+      }
       setCopiedId(id);
       showToast("success", t("邀请码已复制到剪贴板"));
       setTimeout(() => setCopiedId(null), 2000);
@@ -175,15 +182,21 @@ export function InvitesPage() {
                     let badgeTone: "live" | "warn" | "alert" = "live";
                     let badgeLabel = t("有效");
 
-                    if (isDisabled) {
-                      badgeTone = "alert";
-                      badgeLabel = t("已停用");
-                    } else if (isExpired) {
+                    /*
+                     * Expiry and exhaustion are checked before the status flag,
+                     * because the server also marks an expanded-out invite
+                     * `disabled` — testing `isDisabled` first collapsed all three
+                     * states into "已停用" and the two other labels were dead code.
+                     */
+                    if (isExpired) {
                       badgeTone = "alert";
                       badgeLabel = t("已过期");
                     } else if (isExhausted) {
                       badgeTone = "warn";
                       badgeLabel = t("已用尽");
+                    } else if (isDisabled) {
+                      badgeTone = "alert";
+                      badgeLabel = t("已停用");
                     }
 
                     return (
@@ -348,10 +361,28 @@ function CreateInviteDialog({
   const { t } = useI18n();
   const { toasts, showToast, dismissToast } = useToast();
 
+  /*
+   * The dialog stays mounted (it is rendered by the page, not created per open),
+   * so state initialised once survived every close: the next "create" dialog
+   * opened pre-filled with the previous note, plan, uses and expiry.
+   */
   const [planId, setPlanId] = useState("");
   const [maxUses, setMaxUses] = useState("1");
   const [expiresInDays, setExpiresInDays] = useState("7");
   const [note, setNote] = useState("");
+
+  const resetForm = () => {
+    setPlanId("");
+    setMaxUses("1");
+    setExpiresInDays("7");
+    setNote("");
+  };
+
+  /** Closing by any route (cancel, Esc, backdrop) resets the form. */
+  const handleOpenChange = (next: boolean) => {
+    if (!next) resetForm();
+    onOpenChange(next);
+  };
 
   const activePlans = plans.filter((p) => p.status === "active");
 
@@ -370,6 +401,7 @@ function CreateInviteDialog({
       return createInvite(payload);
     },
     onSuccess: () => {
+      resetForm();
       onSuccess();
     },
     onError: (err) => {
@@ -378,7 +410,7 @@ function CreateInviteDialog({
   });
 
   return (
-    <DialogRoot open={open} onOpenChange={onOpenChange}>
+    <DialogRoot open={open} onOpenChange={handleOpenChange}>
       <DialogPortal>
         <DialogOverlay />
         <DialogContent className="w-full max-w-md p-6">
@@ -455,7 +487,7 @@ function CreateInviteDialog({
           <div className="mt-6 flex items-center justify-end gap-3">
             <Button
               variant="secondary"
-              onClick={() => onOpenChange(false)}
+              onClick={() => handleOpenChange(false)}
               disabled={createMutation.isPending}
             >
               {t("取消")}

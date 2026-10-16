@@ -587,17 +587,46 @@ func TestSubscription_LifecycleAndWindow(t *testing.T) {
 		t.Fatalf("expected status suspended, got %s", suspended.Status)
 	}
 
-	// 5. DeleteTenantSubscription removes the row
+	// 5. DeleteTenantSubscription revokes the row instead of removing it.
+	//
+	// A user with no subscription row at all is the state the loader and the
+	// publish path read as the zero snapshot: no quota, no expiry, no key limit.
+	// Deleting the last row of an account would therefore hand it more access
+	// than it had, so the delete has to leave a row behind, in a status the
+	// loader and the key allowance both refuse.
+	if err := cp.Engine.AddSubscriptionUsedBytes(sub2.ID, 4096); err != nil {
+		t.Fatalf("AddSubscriptionUsedBytes: %v", err)
+	}
+	beforeDelete, err := cp.Engine.GetUserSubscription(sub2.ID)
+	if err != nil {
+		t.Fatalf("GetUserSubscription before delete: %v", err)
+	}
+
 	if err := cp.DeleteTenantSubscription(sub2.ID); err != nil {
 		t.Fatalf("DeleteTenantSubscription: %v", err)
 	}
-	_, err = cp.GetTenantSubscription(sub2.ID)
-	if err == nil {
-		t.Fatal("expected not found getting deleted subscription, got nil")
+	revoked, err := cp.Engine.GetUserSubscription(sub2.ID)
+	if err != nil {
+		t.Fatalf("the subscription row must survive the delete: %v", err)
 	}
-	var svcErr *ServiceError
-	if !errors.As(err, &svcErr) || svcErr.Code != "NOT_FOUND" {
-		t.Fatalf("expected NOT_FOUND service error, got %v", err)
+	if revoked.Status != model.SubscriptionStatusSuspended {
+		t.Fatalf("expected revoked status %s, got %s", model.SubscriptionStatusSuspended, revoked.Status)
+	}
+	if revoked.PeriodUsedBytes != beforeDelete.PeriodUsedBytes {
+		t.Fatalf("expected revocation to leave the usage counters alone: got %d, want %d", revoked.PeriodUsedBytes, beforeDelete.PeriodUsedBytes)
+	}
+	if revoked.ExpiresAtNs != beforeDelete.ExpiresAtNs || revoked.StartsAtNs != beforeDelete.StartsAtNs {
+		t.Fatalf("expected revocation to leave the terms alone: %+v != %+v", revoked, beforeDelete)
+	}
+
+	// The service view still resolves the row - the delete is not a removal any
+	// more, and a caller asking about it afterwards must not be told NOT_FOUND.
+	view, err := cp.GetTenantSubscription(sub2.ID)
+	if err != nil {
+		t.Fatalf("GetTenantSubscription after delete: %v", err)
+	}
+	if view.Status != model.SubscriptionStatusSuspended {
+		t.Fatalf("expected the view to report status %s, got %s", model.SubscriptionStatusSuspended, view.Status)
 	}
 }
 

@@ -127,10 +127,9 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 		return AccessKeyView{}, "", invalidArg("expires_in_days: must not be negative")
 	}
 
-	if svcErr := s.checkKeyAllowance(user); svcErr != nil {
-		return AccessKeyView{}, "", svcErr
-	}
-
+	// The allowance is checked inside insertAccessKeyWithinAllowance, in the
+	// same critical section as the insert itself: reading the count here and
+	// inserting later would let two creations pass the same check.
 	id, secret, err := keys.GenerateCredential()
 	if err != nil {
 		return AccessKeyView{}, "", internal("generate credential", err)
@@ -151,8 +150,8 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 		row.ExpiresAtNs = nowNs + int64(in.ExpiresInDays)*int64(24*time.Hour)
 	}
 
-	if err := s.Engine.InsertAccessKey(row); err != nil {
-		return AccessKeyView{}, "", internal("insert access key", err)
+	if svcErr := s.insertAccessKeyWithinAllowance(*user, row); svcErr != nil {
+		return AccessKeyView{}, "", svcErr
 	}
 	if err := s.publishKey(row, *user); err != nil {
 		return AccessKeyView{}, "", err
@@ -285,15 +284,22 @@ func (s *ControlPlaneService) republishUserKeys(userID string) error {
 	return nil
 }
 
-// userPlanSnapshot returns the live plan snapshot for a user's active
-// subscription, or the zero snapshot when the user has none.
+// userPlanSnapshot returns the live plan snapshot for the subscription that
+// decides the user's access, or the zero snapshot when the user has no
+// subscription row at all.
+//
+// It is the decision a restart makes (keys.DecidingSubscription) and the one the
+// console makes everywhere else (currentSubscription), which is what keeps a
+// suspended or expired subscription from being minted a key that looks
+// unlimited: the subscription's status travels into the snapshot and Usable
+// refuses it, exactly as it does after a restart.
 func (s *ControlPlaneService) userPlanSnapshot(userID string) (keys.PlanSnapshot, error) {
-	sub, err := s.Engine.GetActiveUserSubscription(userID)
-	if errors.Is(err, state.ErrNotFound) {
-		return keys.PlanSnapshot{}, nil
+	sub, svcErr := s.currentSubscription(userID)
+	if svcErr != nil {
+		return keys.PlanSnapshot{}, svcErr
 	}
-	if err != nil {
-		return keys.PlanSnapshot{}, internal("read active subscription", err)
+	if sub == nil {
+		return keys.PlanSnapshot{}, nil
 	}
 	snapshot, err := keys.SnapshotFromSubscription(sub)
 	if err != nil {
@@ -338,7 +344,34 @@ func (s *ControlPlaneService) lookupUserKey(userID, keyID string) (model.AccessK
 	return *row, nil
 }
 
+// insertAccessKeyWithinAllowance mints a key for one account with the plan's
+// allowance check and the insert inside one critical section.
+//
+// The check reads the user's existing keys and the insert adds one; two requests
+// arriving together could otherwise both read the same count and both insert,
+// leaving the account over the limit its plan sets. Nothing below can refuse the
+// second row - the limit lives inside the subscription's plan snapshot, not in a
+// column a unique index could cover - so the pair is held together here.
+// keyCreateMu only covers this process; its comment names the repository
+// primitive that would make the limit hold across panels sharing one database.
+func (s *ControlPlaneService) insertAccessKeyWithinAllowance(user model.User, row model.AccessKey) *ServiceError {
+	s.keyCreateMu.Lock()
+	defer s.keyCreateMu.Unlock()
+
+	if svcErr := s.checkKeyAllowance(&user); svcErr != nil {
+		return svcErr
+	}
+	if err := s.Engine.InsertAccessKey(row); err != nil {
+		return internal("insert access key", err)
+	}
+	return nil
+}
+
 // checkKeyAllowance enforces the plan's key limit when it sets one.
+//
+// It is called from inside the key-creation critical section
+// (insertAccessKeyWithinAllowance), never on its own: the count it reads is only
+// meaningful while the insert that follows is held back.
 func (s *ControlPlaneService) checkKeyAllowance(user *model.User) *ServiceError {
 	if user == nil {
 		return notFound("user not found")
@@ -366,14 +399,33 @@ func (s *ControlPlaneService) checkKeyAllowance(user *model.User) *ServiceError 
 	return nil
 }
 
-// maxKeysForPlan reads the key limit out of the user's active subscription.
+// maxKeysForPlan reads the key limit out of the subscription that decides the
+// user's access, and refuses the creation when there is no usable one.
+//
+// Two absences used to be told apart here, and they do not mean the same thing -
+// but the answer is the same for both, and it has to be. An account whose
+// subscriptions have all ended, or have been suspended, is refused because its
+// snapshot is unusable on purpose. An account with no subscription row at all is
+// refused because that is the state that reads as unlimited: the loader and the
+// publish path fall back to the zero snapshot - no quota, no expiry, no key limit
+// - so a key minted here would be a key with no limit at all, which is exactly
+// the access the account is not paying for. "No plan in force" is a refusal to
+// mint, not a licence to mint without one.
+//
+// The accounts that were minted a key before they were on any plan are not cut
+// off by this: migration 000021 gives every user who already had a key and no
+// subscription row an active, unlimited "legacy-unlimited" subscription, so they
+// keep the access they had and arrive here with a row to read.
 func (s *ControlPlaneService) maxKeysForPlan(userID string) (int, *ServiceError) {
-	sub, err := s.Engine.GetActiveUserSubscription(userID)
-	if errors.Is(err, state.ErrNotFound) {
-		return 0, nil
+	sub, svcErr := s.currentSubscription(userID)
+	if svcErr != nil {
+		return 0, svcErr
 	}
-	if err != nil {
-		return 0, internal("read active subscription", err)
+	if sub == nil {
+		return 0, conflict("no plan is in force on the account, so a new key cannot be created")
+	}
+	if sub.Status != model.SubscriptionStatusActive {
+		return 0, conflict("the account has no subscription in force, so a new key cannot be created")
 	}
 	plan, err := planFromSnapshotJSON(sub.PlanSnapshotJSON)
 	if err != nil {

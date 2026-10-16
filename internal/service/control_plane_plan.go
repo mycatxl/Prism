@@ -15,11 +15,19 @@ import (
 // user may reach, the quotas that apply, and how long a subscription bought from
 // the plan lasts.
 //
-// Two rules shape everything here. A subscription carries a snapshot of the plan
-// it was sold under, so editing a plan never silently changes what an existing
-// user bought - unless the operator asks for that with apply_to_existing. And a
-// plan that is disabled stops the keys of the users on it, which is what makes
-// disabling a plan a way to stop abuse without deleting anything.
+// Two rules shape everything here, and one exception to the first.
+//
+// A subscription carries a snapshot of the plan it was sold under, so editing a
+// plan never silently changes what an existing user bought - unless the operator
+// asks for that with apply_to_existing, which rewrites the snapshot of every
+// active subscription on the plan and republishes its keys.
+//
+// The exception is the status. Disabling a plan is the emergency stop: it reaches
+// the users already on the plan immediately and unconditionally, because the data
+// plane decides from the snapshot inside each subscription and refusing to sell
+// the plan would leave everyone who already bought it running. That path rewrites
+// only the status - the other fields stay what each user bought - and re-enabling
+// the plan does not lift the stop by itself: only apply_to_existing does.
 
 // Plan statuses. They mirror model.Plan.Status and are validated at the edge so
 // an unknown value cannot be stored and then read back as "not active".
@@ -129,6 +137,12 @@ func (s *ControlPlaneService) CreatePlan(in PlanInput, nowNs int64) (PlanView, e
 // the change reaches the data plane on the next request rather than on the next
 // restart. It is a PATCH field rather than a query parameter so that "what I am
 // changing" and "who it reaches" travel together.
+//
+// status is the one field that does not wait for that switch. Setting it to
+// disabled kills the plan for its current users at once (stopSubscriptionsOnPlan),
+// which is what makes disabling a plan usable as an emergency stop; setting it
+// back to active does not undo those stops, because the users who were cut off
+// are the operator's decision to make again with apply_to_existing.
 func (s *ControlPlaneService) UpdatePlan(id string, patchJSON json.RawMessage, nowNs int64) (PlanView, error) {
 	if s == nil || s.Engine == nil {
 		return PlanView{}, internal("no state engine", nil)
@@ -173,7 +187,7 @@ func (s *ControlPlaneService) UpdatePlan(id string, patchJSON json.RawMessage, n
 	if value, ok, svcErr := patch.optionalString("period"); svcErr != nil {
 		return PlanView{}, svcErr
 	} else if ok {
-		updated.Period = value
+		updated.Period = normalizePlanPeriod(value)
 	}
 	if value, ok, svcErr := patch.optionalInt("max_concurrent"); svcErr != nil {
 		return PlanView{}, svcErr
@@ -225,15 +239,26 @@ func (s *ControlPlaneService) UpdatePlan(id string, patchJSON json.RawMessage, n
 	if err != nil {
 		return PlanView{}, err
 	}
-	if !applyToExisting {
-		return PlanView{Plan: updated, ActiveUserCount: counts[updated.ID]}, nil
-	}
 
-	touched, err := s.applyPlanToExisting(updated)
-	if err != nil {
-		return PlanView{}, err
+	// A plan that is left disabled stops the users already on it, whether or
+	// not apply_to_existing was asked for: disabling a plan is the emergency
+	// stop, not a statement about future sales. The check is on the resulting
+	// status rather than on the transition, so a stop interrupted half way - a
+	// write failed after the plan row was saved - is finished by sending the
+	// same PATCH again instead of being skipped as already done.
+	if updated.Status == planStatusDisabled {
+		if _, err := s.stopSubscriptionsOnPlan(updated); err != nil {
+			return PlanView{}, err
+		}
 	}
-	return PlanView{Plan: updated, ActiveUserCount: touched}, nil
+	if applyToExisting {
+		touched, err := s.applyPlanToExisting(updated)
+		if err != nil {
+			return PlanView{}, err
+		}
+		return PlanView{Plan: updated, ActiveUserCount: touched}, nil
+	}
+	return PlanView{Plan: updated, ActiveUserCount: counts[updated.ID]}, nil
 }
 
 // DeletePlan removes a plan. Subscriptions that were sold from it keep their
@@ -273,8 +298,8 @@ func (s *ControlPlaneService) applyPlanToExisting(plan model.Plan) (int, error) 
 		}
 		updated := sub
 		updated.PlanSnapshotJSON = snapshot
-		if err := s.Engine.UpsertUserSubscription(updated); err != nil {
-			return affected, internal("update subscription snapshot", err)
+		if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+			return affected, mapSubscriptionWriteError("update subscription snapshot", err)
 		}
 		if err := s.republishUserKeys(updated.UserID); err != nil {
 			return affected, err
@@ -282,6 +307,59 @@ func (s *ControlPlaneService) applyPlanToExisting(plan model.Plan) (int, error) 
 		affected++
 	}
 	return affected, nil
+}
+
+// stopSubscriptionsOnPlan forces the snapshots of the plan's active
+// subscriptions to status disabled, and republishes the keys of each affected
+// user. It returns how many subscriptions were stopped.
+//
+// Disabling a plan is the emergency stop, so this path does not ask for
+// apply_to_existing and does not touch anything else in the snapshot: the plan's
+// fields are still what each user bought, and it is only the status - which is
+// what Usable reads - that has to change everywhere at once. Re-enabling a plan
+// leaves these stopped snapshots alone, because lifting a stop is a decision
+// about the users it cut off, and that decision is apply_to_existing.
+func (s *ControlPlaneService) stopSubscriptionsOnPlan(plan model.Plan) (int, error) {
+	subs, err := s.Engine.ListActiveUserSubscriptions()
+	if err != nil {
+		return 0, internal("list active subscriptions", err)
+	}
+
+	stopped := 0
+	for _, sub := range subs {
+		if sub.PlanID != plan.ID {
+			continue
+		}
+		snapshot, err := disabledPlanSnapshot(sub.PlanSnapshotJSON, plan)
+		if err != nil {
+			return stopped, internal("encode plan snapshot", err)
+		}
+		updated := sub
+		updated.PlanSnapshotJSON = snapshot
+		if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+			return stopped, mapSubscriptionWriteError("stop subscription", err)
+		}
+		if err := s.republishUserKeys(updated.UserID); err != nil {
+			return stopped, err
+		}
+		stopped++
+	}
+	return stopped, nil
+}
+
+// disabledPlanSnapshot returns a stored subscription snapshot with its status
+// rewritten to disabled.
+//
+// A snapshot that cannot be decoded yields the plan as it stands with the status
+// disabled: a snapshot that never parsed has nothing left to preserve, and
+// leaving it in place would leave the subscription's keys running - which is the
+// one outcome this path exists to prevent.
+func disabledPlanSnapshot(raw string, plan model.Plan) (string, error) {
+	if stored, err := planFromSnapshotJSON(raw); err == nil {
+		plan = stored
+	}
+	plan.Status = planStatusDisabled
+	return planSnapshotJSON(plan)
 }
 
 // activeUserCounts counts the users holding an active subscription, per plan.
@@ -312,7 +390,7 @@ func planFromInput(in PlanInput, nowNs int64) (model.Plan, *ServiceError) {
 		Platforms:       normalizeStringList(in.Platforms),
 		IPTiers:         normalizeStringList(in.IPTiers),
 		TrafficBytes:    in.TrafficBytes,
-		Period:          strings.TrimSpace(in.Period),
+		Period:          normalizePlanPeriod(in.Period),
 		MaxConcurrent:   in.MaxConcurrent,
 		MaxRPS:          in.MaxRPS,
 		MaxBandwidthBps: in.MaxBandwidthBps,
@@ -351,6 +429,9 @@ func validatePlan(plan model.Plan) *ServiceError {
 	if plan.MaxConcurrent < 0 || plan.MaxRPS < 0 || plan.MaxKeys < 0 {
 		return invalidArg("max_concurrent, max_rps and max_keys: must not be negative")
 	}
+	if !validPlanPeriod(plan.Period) {
+		return invalidArg("period: must be month, week, day, once or a number of days such as 30d")
+	}
 	for i, tier := range plan.IPTiers {
 		ipType, band, ok := strings.Cut(tier, ":")
 		if !ok {
@@ -365,11 +446,46 @@ func validatePlan(plan model.Plan) *ServiceError {
 	return nil
 }
 
+// defaultPlanPeriod normalizes a plan's period and fills in the default.
+//
+// The canonical spelling is stored rather than the one typed: the rollover that
+// reads this field accepts "Month" and " month " as well as "month", so keeping
+// the variant in the table would leave two spellings of the same period in it,
+// and only one of them matches what the console offers.
 func defaultPlanPeriod(period string) string {
-	if period == "" {
+	normalized := normalizePlanPeriod(period)
+	if normalized == "" {
 		return "30d"
 	}
-	return period
+	return normalized
+}
+
+// normalizePlanPeriod trims and lower cases a period, matching internal/usage's
+// normalizePeriod so a plan written here is read back as the period it means.
+func normalizePlanPeriod(period string) string {
+	return strings.ToLower(strings.TrimSpace(period))
+}
+
+// validPlanPeriod reports whether a rollover can be computed for a period.
+//
+// The accepted values are the ones internal/usage acts on: the named periods
+// (month, week, day, once), the "<n>d" form its default uses, and the empty
+// string, which this package turns into "30d" rather than storing. Anything else
+// is refused at the API boundary: it would be stored happily, enforced as a
+// quota and never reset, which reads to the user as a plan that took their money
+// and their allowance with it.
+func validPlanPeriod(period string) bool {
+	normalized := normalizePlanPeriod(period)
+	switch normalized {
+	case "", "month", "day", "week", "once":
+		return true
+	}
+	digits := strings.TrimSuffix(normalized, "d")
+	if digits == "" || digits == normalized {
+		return false
+	}
+	days, err := strconv.Atoi(digits)
+	return err == nil && days > 0
 }
 
 func defaultPlanStatus(status string) string {

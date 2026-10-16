@@ -169,25 +169,38 @@ func TestIntelJobEvents_UnknownJobIsNotFound(t *testing.T) {
 
 // TestIntelJobEvents_FailedAuthsAreRateLimited pins the shared failure limiter
 // around the identity middleware.
+//
+// The attempts present a credential that does not resolve, because that is what
+// a failed authentication is: the middleware deliberately does not count a
+// request that presented nothing, so an anonymous page cannot spend an
+// operator's failure budget (see Identity.Middleware).
 func TestIntelJobEvents_FailedAuthsAreRateLimited(t *testing.T) {
 	limiter := NewAuthFailureLimiter(3, time.Minute, time.Minute, nil)
 	srv, jobID, _ := newIntelEventsServer(t, limiter)
 
-	for i := 0; i < 3; i++ {
-		resp, err := srv.Client().Get(eventsURL(srv, jobID, ""))
+	attempt := func() *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, eventsURL(srv, jobID, ""), nil)
 		if err != nil {
-			t.Fatalf("attempt %d: %v", i+1, err)
+			t.Fatalf("NewRequest: %v", err)
 		}
+		req.Header.Set("Authorization", "Bearer not-an-admin-key")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		return resp
+	}
+
+	for i := 0; i < 3; i++ {
+		resp := attempt()
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("attempt %d: status = %d, want 401", i+1, resp.StatusCode)
 		}
 	}
 
-	resp, err := srv.Client().Get(eventsURL(srv, jobID, ""))
-	if err != nil {
-		t.Fatalf("GET after the failure budget: %v", err)
-	}
+	resp := attempt()
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("after the failure budget: status = %d, want 429", resp.StatusCode)

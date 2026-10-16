@@ -35,6 +35,25 @@ type FlushStore interface {
 	AddSubscriptionUsedBytes(id string, delta int64) error
 }
 
+// PeriodGuardedFlushStore is the optional half of FlushStore: a store that can
+// charge a subscription's period only while that period is still the current
+// one.
+//
+// It exists because the two writes of a flush are not simultaneous with the
+// clock. Bytes are drained into memory, and by the time the subscription is
+// updated the rollover may have started a new period and reset the usage that
+// the drained bytes belong to. Charging the new period for the old one's
+// traffic bills a user for a period they had not started to use, so a store
+// that can express "only if the period still starts here" should say so. A
+// store that cannot is not left unprotected: FlushOnce re-reads the window and
+// refuses the add itself, which costs one extra read per user per pass.
+type PeriodGuardedFlushStore interface {
+	// AddSubscriptionUsedBytesInPeriod adds delta to a subscription's period
+	// usage, and does nothing when the period no longer starts at
+	// periodStartNs. It reports whether the bytes were charged.
+	AddSubscriptionUsedBytesInPeriod(id string, periodStartNs, delta int64) (bool, error)
+}
+
 // Flusher writes the in-memory counters to the usage tables.
 //
 // The data plane never touches the database: every byte is an in-memory atomic
@@ -88,6 +107,10 @@ type FlushResult struct {
 	Bytes int64
 	// Subscriptions is how many subscriptions had their period usage updated.
 	Subscriptions int
+	// RolledBytes is traffic whose period rolled over between the drain and the
+	// write. It is recorded in usage_hourly like everything else; it just
+	// counts against no allowance, because the period it was moved in is over.
+	RolledBytes int64
 	// UnclaimedBytes is traffic that belonged to a user with no active
 	// subscription. It is still recorded in usage_hourly - the operator can see
 	// it - but it counts against no allowance because there is none.
@@ -159,6 +182,14 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 	// failure either - the hourly rows are the record of what moved, and
 	// period_used_bytes is a derived running total the next pass will add to.
 	// Requeueing here would double-count against the allowance.
+	//
+	// The billing window is snapshotted first, at drain time, and the write
+	// below is guarded on that same snapshot. A rollover that lands in between
+	// must not charge the new period for the previous one's traffic: those
+	// bytes belong to a period that has already been closed and reset, and
+	// billing them to its successor would take allowance away from a period
+	// the user has not used yet.
+	windows := make(map[string]subscriptionWindow, len(perUser))
 	for userID, bytes := range perUser {
 		subscription, err := f.Store.GetActiveUserSubscription(userID)
 		if err != nil {
@@ -170,15 +201,72 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 			result.UnclaimedBytes += bytes
 			continue
 		}
-		if err := f.Store.AddSubscriptionUsedBytes(subscription.ID, bytes); err != nil {
-			f.logf("usage flush: add %d bytes to subscription %s: %v", bytes, subscription.ID, err)
-			result.UnclaimedBytes += bytes
-			continue
+		windows[userID] = subscriptionWindow{
+			id:            subscription.ID,
+			periodStartNs: subscription.PeriodStartNs,
 		}
-		result.Subscriptions++
+	}
+
+	for userID, bytes := range perUser {
+		window, ok := windows[userID]
+		if !ok {
+			continue // already counted as unclaimed above
+		}
+		charged, err := f.chargeSubscription(userID, window, bytes)
+		switch {
+		case err != nil:
+			f.logf("usage flush: add %d bytes to subscription %s: %v", bytes, window.id, err)
+			result.UnclaimedBytes += bytes
+		case !charged:
+			// A period boundary was crossed between the drain and the write.
+			// The hourly rows still record the traffic; the period it belonged
+			// to is gone.
+			f.logf("usage flush: %d bytes for subscription %s arrived after its period rolled over", bytes, window.id)
+			result.RolledBytes += bytes
+		default:
+			result.Subscriptions++
+		}
 	}
 
 	return result, nil
+}
+
+// subscriptionWindow identifies one billing period of one subscription. It is
+// the idempotency key of the period write: the same bytes are charged to the
+// period the bytes were counted in.
+type subscriptionWindow struct {
+	id            string
+	periodStartNs int64
+}
+
+// chargeSubscription adds bytes to a subscription's period usage, refusing to
+// do so once the period has moved on.
+//
+// A store that implements PeriodGuardedFlushStore decides this atomically with
+// the write. Any other store is guarded here, by re-reading the window and
+// comparing it with the snapshot the bytes were drained under. Both routes
+// answer the same question - "is this still the period these bytes belong to?"
+// - and both are safer than a blind add, whose failure mode is charging a new
+// period for the previous one's traffic.
+func (f *Flusher) chargeSubscription(userID string, window subscriptionWindow, bytes int64) (bool, error) {
+	if guarded, ok := f.Store.(PeriodGuardedFlushStore); ok {
+		return guarded.AddSubscriptionUsedBytesInPeriod(window.id, window.periodStartNs, bytes)
+	}
+
+	current, err := f.Store.GetActiveUserSubscription(userID)
+	if err != nil {
+		return false, err
+	}
+	if current == nil {
+		return false, nil
+	}
+	if current.ID != window.id || current.PeriodStartNs != window.periodStartNs {
+		return false, nil
+	}
+	if err := f.Store.AddSubscriptionUsedBytes(window.id, bytes); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // requeue puts drained amounts back after a failed write.
@@ -186,10 +274,14 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 // The bytes are added back to the same buckets they came from, so the next pass
 // writes them again. This is what keeps a database hiccup from silently
 // under-billing: the alternative is traffic that was moved and never recorded.
+//
+// It restores the buckets only. The user aggregate is a running total of what
+// arrived, not of what has been written out, and it was already incremented
+// when the bytes were counted; adding the batch to it again here would make the
+// next successful pass charge the subscription a second time for the same
+// traffic.
 func (f *Flusher) requeue(drained map[CounterKey]Delta) {
-	for key, delta := range drained {
-		f.Counters.Add(key, delta)
-	}
+	f.Counters.Requeue(drained)
 }
 
 // Start runs a pass every interval until ctx is cancelled.

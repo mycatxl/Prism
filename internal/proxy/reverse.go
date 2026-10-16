@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"crypto/subtle"
 	"io"
 	"net/http"
@@ -61,6 +62,21 @@ type ReverseProxyConfig struct {
 	Metering MeteringSink
 	// Quota decides whether a request may proceed. Nil allows everything.
 	Quota QuotaGate
+	// QuotaGracePercent is the tolerance a live stream gets before it is cut
+	// for running past the key's allowance, in percent of the limit. Zero
+	// applies DefaultStreamGracePercent; a negative value means no tolerance at
+	// all.
+	QuotaGracePercent int
+	// Sessions holds this proxy's live requests per key, so a revocation,
+	// a disable or an exhausted allowance ends a request that is already
+	// running rather than only the next one. Nil leaves that to the next
+	// request.
+	Sessions SessionTracker
+	// QuotaLogf reports a request the gate refused. A refusal happens before
+	// the request lifecycle exists, so it leaves no trace in the request log;
+	// the line names the key id and the reason and nothing else. Nil keeps a
+	// refusal silent, which is what a deployment without plans gets.
+	QuotaLogf func(format string, args ...any)
 }
 
 // ReverseProxy implements an HTTP reverse proxy.
@@ -84,6 +100,10 @@ type ReverseProxy struct {
 	authGuard         AuthFailureGuard
 	metering          MeteringSink
 	quota             QuotaGate
+	// quotaGracePercent is QuotaGracePercent, resolved once at construction.
+	quotaGracePercent int
+	quotaLogf         func(format string, args ...any)
+	sessions          SessionTracker
 }
 
 // NewReverseProxy creates a new reverse proxy handler.
@@ -98,22 +118,25 @@ func NewReverseProxy(cfg ReverseProxyConfig) *ReverseProxy {
 		transportPool = NewOutboundTransportPool(transportCfg)
 	}
 	return &ReverseProxy{
-		token:           cfg.ProxyToken,
-		accessKeys:      cfg.AccessKeys,
-		router:          cfg.Router,
-		pool:            cfg.Pool,
-		platLook:        cfg.PlatformLookup,
-		health:          cfg.Health,
-		matcher:         cfg.Matcher,
-		events:          ev,
-		metricsSink:     cfg.MetricsSink,
-		transportConfig: transportCfg,
-		transportPool:   transportPool,
-		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
-		directGuard:     NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
-		authGuard:       cfg.AuthGuard,
-		metering:        cfg.Metering,
-		quota:           cfg.Quota,
+		token:             cfg.ProxyToken,
+		accessKeys:        cfg.AccessKeys,
+		router:            cfg.Router,
+		pool:              cfg.Pool,
+		platLook:          cfg.PlatformLookup,
+		health:            cfg.Health,
+		matcher:           cfg.Matcher,
+		events:            ev,
+		metricsSink:       cfg.MetricsSink,
+		transportConfig:   transportCfg,
+		transportPool:     transportPool,
+		bypass:            NewTargetBypassMatcher(cfg.ProxyBypassRules),
+		directGuard:       NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
+		authGuard:         cfg.AuthGuard,
+		metering:          cfg.Metering,
+		quota:             cfg.Quota,
+		quotaGracePercent: normalizeQuotaGracePercent(cfg.QuotaGracePercent),
+		quotaLogf:         cfg.QuotaLogf,
+		sessions:          cfg.Sessions,
 	}
 }
 
@@ -310,11 +333,28 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The allowance is checked before anything is dialled.
-	if quotaErr := checkQuota(p.quota, parsed.Key, 0); quotaErr != nil {
+	// One context ends the whole request: a quota cut cancels it, and so does
+	// the session registry when the key is revoked while the request is in
+	// flight.
+	streamCtx, cancelStream := context.WithCancel(r.Context())
+	defer cancelStream()
+	r = r.WithContext(streamCtx)
+
+	// The allowance is checked before anything is dialled, and the check
+	// reserves the session it is about to admit. The concurrency limit counts
+	// the requests this key already holds, which is what the registry answers;
+	// reading that count and registering afterwards let a burst of requests all
+	// see a count of zero.
+	quotaErr, reservation := reserveSession(p.quota, p.sessions, parsed.Key, newRequestSession(cancelStream), p.quotaLogf)
+	if quotaErr != nil {
 		writeProxyError(w, quotaErr)
 		return
 	}
+	// An HTTP request is a session of this key exactly as a tunnel is: a
+	// revocation, a disable or an exhausted allowance must end a request that is
+	// already running rather than only refusing the next one. The unregister is
+	// deferred, so every exit path from here on releases the count.
+	defer reservation.Release()
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeReverse, false)
 	lifecycle.setTarget(parsed.Host, "")
@@ -327,6 +367,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var egressBodyCounter *countingReadCloser
 	var ingressBodyCounter *countingReadCloser
 	var upgradedStreamCounter *countingReadWriteCloser
+	var upgradedStreamQuota *quotaReadWriteCloser
 	behaviorPlatform := p.resolvePlatformForAccountBehavior(parsed.PlatformName)
 	// Share one rule snapshot between extraction and capture, including during
 	// account-rule hot reloads.
@@ -412,6 +453,26 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		transport = p.outboundHTTPTransport(routed)
 	}
 
+	// The allowance is enforced on the stream itself: a transfer that crosses
+	// the limit is cut while it is still running rather than when it ends. The
+	// bytes are handed to the key's sink as they flow, because the copies that
+	// move them belong to net/http's transport write loop and to httputil, not
+	// to this handler: committing them only at the end would leave the counters
+	// the check reads frozen for the whole transfer. The request log still takes
+	// its exact totals from the same counters through addIngressBytesLive and
+	// addEgressBytesLive, since the sink has already been told about every byte.
+	quota := newStreamQuota(p.quota, parsed.Key, p.quotaGracePercent, cancelStream)
+	if quota != nil {
+		ingressReport, egressReport := lifecycle.liveReporter()
+		quota.withLiveReports(ingressReport, egressReport)
+	}
+	// The tail of a partial report step is flushed on every exit path, including
+	// the one that unwinds through httputil's ErrAbortHandler panic.
+	defer quota.flushReports()
+	if egressBodyCounter != nil && quota != nil {
+		r.Body = newQuotaReadCloser(egressBodyCounter, quota)
+	}
+
 	proxy := &httputil.ReverseProxy{
 		// Rewrite, not the deprecated Director: it runs after the hop-by-hop
 		// headers and the client-supplied forwarding headers are gone, and it
@@ -467,10 +528,21 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// net/http/httputil.ReverseProxy.
 				//
 				// We can still account upgrade-session traffic by wrapping with a
-				// read-write counter that preserves io.ReadWriteCloser semantics.
+				// read-write counter that preserves io.ReadWriteCloser semantics,
+				// and enforce the key's allowance on it: httputil copies both
+				// directions through this body, so a wrapper that reports the
+				// bytes as they flow and refuses to continue once the allowance
+				// is gone is what keeps an upgraded connection inside the same
+				// budget as every other transfer. Wrapping with a read-only
+				// wrapper would break websocket/h2c upgrade tunnelling.
 				if rwc, ok := resp.Body.(io.ReadWriteCloser); ok {
 					upgradedStreamCounter = newCountingReadWriteCloser(rwc)
-					resp.Body = upgradedStreamCounter
+					if quota != nil {
+						upgradedStreamQuota = newQuotaReadWriteCloser(upgradedStreamCounter, quota)
+						resp.Body = upgradedStreamQuota
+					} else {
+						resp.Body = upgradedStreamCounter
+					}
 				}
 				if detailCfg.Enabled {
 					respHeaders, respHeadersLen, respHeadersTruncated := captureHeadersWithLimit(resp.Header, detailCfg.RespHeadersMaxBytes, accountHeaders...)
@@ -492,7 +564,14 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					lifecycle.setRespBodyCapture(respBodyCapture)
 				}
 				ingressBodyCounter = newCountingReadCloser(body)
-				resp.Body = ingressBodyCounter
+				if quota != nil {
+					// The body read by httputil's copy loop is the only place
+					// this handler sees the response bytes, so it is where the
+					// ingress half is counted and checked.
+					resp.Body = newQuotaReadCloserDir(ingressBodyCounter, quota, true)
+				} else {
+					resp.Body = ingressBodyCounter
+				}
 			} else if detailCfg.Enabled {
 				respHeaders, respHeadersLen, respHeadersTruncated := captureHeadersWithLimit(resp.Header, detailCfg.RespHeadersMaxBytes, accountHeaders...)
 				lifecycle.setRespHeadersCaptured(respHeaders, respHeadersLen, respHeadersTruncated)
@@ -510,26 +589,59 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	proxy.ServeHTTP(w, r)
-	if upstreamTrace.shouldCommitEgress() {
-		lifecycle.addEgressBytes(pendingEgressHeaderBytes)
-		if egressBodyCounter != nil {
-			lifecycle.addEgressBytes(egressBodyCounter.Total())
+	// The accounting is deferred rather than written after the call: a copy that
+	// fails makes httputil panic with http.ErrAbortHandler, and that panic is a
+	// normal end for a transfer the allowance cut short. Deferred, the totals
+	// still reach the request log on that path, and the bytes that did move are
+	// neither lost nor billed twice.
+	defer func() {
+		if upstreamTrace.shouldCommitEgress() {
+			lifecycle.addEgressBytes(pendingEgressHeaderBytes)
+			if egressBodyCounter != nil {
+				if quota != nil {
+					// The stream already reported these bytes to the sink.
+					lifecycle.addEgressBytesLive(egressBodyCounter.Total())
+				} else {
+					lifecycle.addEgressBytes(egressBodyCounter.Total())
+				}
+			}
 		}
-	}
-	if ingressBodyCounter != nil {
-		lifecycle.addIngressBytes(ingressBodyCounter.Total())
-	}
-	// Upgrade-session traffic. The counters are atomic, so reading them here is
-	// race-free even though httputil's copy goroutines own the writes: in the
-	// clean path handleUpgradeResponse only returns after both directions sent
-	// on its error channel (i.e. both copies finished), while an error path can
-	// return after the first one — there the read is simply a partial snapshot,
-	// which is a statistics-precision limit, not a race.
-	if upgradedStreamCounter != nil {
-		lifecycle.addIngressBytes(upgradedStreamCounter.TotalRead())
-		lifecycle.addEgressBytes(upgradedStreamCounter.TotalWrite())
-	}
+		if ingressBodyCounter != nil {
+			if quota != nil {
+				lifecycle.addIngressBytesLive(ingressBodyCounter.Total())
+			} else {
+				lifecycle.addIngressBytes(ingressBodyCounter.Total())
+			}
+		}
+		// Upgrade-session traffic. The counters are atomic, so reading them here
+		// is race-free even though httputil's copy goroutines own the writes: in
+		// the clean path handleUpgradeResponse only returns after both directions
+		// sent on its error channel (i.e. both copies finished), while an error
+		// path can return after the first one — there the read is simply a
+		// partial snapshot, which is a statistics-precision limit, not a race.
+		// When the upgraded stream carried the quota wrapper it reported every
+		// step to the sink as it flowed, so only the request log takes these
+		// totals; committing them the ordinary way as well would bill the same
+		// byte twice.
+		if upgradedStreamCounter != nil {
+			if upgradedStreamQuota != nil {
+				lifecycle.addIngressBytesLive(upgradedStreamCounter.TotalRead())
+				lifecycle.addEgressBytesLive(upgradedStreamCounter.TotalWrite())
+			} else {
+				lifecycle.addIngressBytes(upgradedStreamCounter.TotalRead())
+				lifecycle.addEgressBytes(upgradedStreamCounter.TotalWrite())
+			}
+		}
+		if quota.Exceeded() {
+			// The transfer was cut on purpose: the key ran out of allowance.
+			// The upstream carried what it was given, so it is not marked
+			// failed, and the cut is visible in the request log.
+			lifecycle.setProxyError(ErrQuotaExceeded)
+			lifecycle.setNetOK(true)
+		}
+	}()
+
+	proxy.ServeHTTP(w, r)
 }
 
 // resolveDefaultPlatform looks up the default platform for reverse-proxy

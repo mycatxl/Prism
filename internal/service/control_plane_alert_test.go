@@ -446,8 +446,13 @@ func TestUsageAlertScanner_StopIsIdempotent(t *testing.T) {
 
 	sub, _ := alertTestSubscription(t, cp, nowNs, "alert_scanner", alertGiB)
 	// The scanner reads the wall clock, so the crossing has to sit inside the
-	// last hour of the wall clock, not next to the fixture's fixed now.
-	seedAlertUsage(t, cp, sub.UserID, "plt_alert", time.Now().UnixNano()-int64(5*time.Minute), 320<<20)
+	// window the scanner actually sums, not next to the fixture's fixed now.
+	// Usage is selected by the bucket a row belongs to (an hourly row by its
+	// hour), so the seed goes to the start of the current hour: that bucket is
+	// inside the last 60 minutes at every instant of the hour, while a row
+	// planted five minutes ago falls out of the window during the first five
+	// minutes of an hour and made this test fail there.
+	seedAlertUsage(t, cp, sub.UserID, "plt_alert", time.Now().Truncate(time.Hour).UnixNano(), 320<<20)
 
 	// alertCount is the size of the log.
 	alertCount := func() int {

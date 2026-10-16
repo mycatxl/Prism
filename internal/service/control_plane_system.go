@@ -37,7 +37,7 @@ type GeoIPService interface {
 
 // ServiceError wraps an error with a code for API response mapping.
 type ServiceError struct {
-	Code    string // INVALID_ARGUMENT, NOT_FOUND, CONFLICT, INTERNAL
+	Code    string // INVALID_ARGUMENT, NOT_FOUND, CONFLICT, FORBIDDEN, INTERNAL
 	Message string
 	Err     error
 }
@@ -55,6 +55,14 @@ func notFound(msg string) *ServiceError {
 
 func conflict(msg string) *ServiceError {
 	return &ServiceError{Code: "CONFLICT", Message: msg}
+}
+
+// forbidden reports a valid, authenticated caller that may not perform this
+// action. It is distinct from NOT_FOUND so a console can tell "you are not
+// allowed" from "it is not there", and from INVALID_ARGUMENT so it cannot be
+// fixed by editing the request.
+func forbidden(msg string) *ServiceError {
+	return &ServiceError{Code: "FORBIDDEN", Message: msg}
 }
 
 func internal(msg string, err error) *ServiceError {
@@ -96,10 +104,68 @@ type ControlPlaneService struct {
 	configMu      sync.Mutex
 	configVersion int
 	endpointMu    sync.RWMutex
+	// keyCreateMu serialises the "read the key count, then insert" pair in
+	// CreateAccessKey. The check and the insert are two statements, so two
+	// creations arriving together can both pass the check and then both
+	// insert, leaving the user over the plan's allowance. Nothing in the
+	// access_keys table can refuse the second one - a plan limit is a value
+	// inside a subscription's snapshot, not a column a unique index could
+	// cover - so the mutual exclusion has to be here.
+	//
+	// TODO(state): this only guards the console's own process. Two panels
+	// sharing one database could still exceed the limit; the honest fix is a
+	// repository primitive that counts and inserts under the repository's
+	// write lock, either StateRepo.InsertAccessKeyWithinLimit(key
+	// model.AccessKey, limit int) or a StateRepo.WithWriteLock(fn func()
+	// error) exposing the existing mutex. Until then this is the boundary of
+	// what the service layer can promise.
+	keyCreateMu sync.Mutex
+	// userWriteMu serialises the read-decide-write sequences that touch a
+	// users row: the console's status, role and password writers, second
+	// factor enrolment and removal, the account PATCH and the account delete.
+	// Two writers that read the same row must not both decide against it, or
+	// the second write records a decision made about a row that no longer has
+	// the shape the decision was made on. The last-administrator check is
+	// exactly that sequence: it reads the row, counts the other active
+	// administrators and then writes, so two concurrent demotions can each
+	// see the other and leave no active administrator at all - a state the
+	// product cannot recover from on its own (refuseIfLastAdmin, above
+	// SetAccountStatus). The access-key allowance has the same shape and its
+	// own mutex (keyCreateMu) for the same reason.
+	//
+	// It is deliberately NOT taken by RegisterTenantUser or the login path:
+	// those do not read a row in order to write it back (registration inserts
+	// a new one), and holding a process-wide lock across an argon2id hash on
+	// a public endpoint would let anyone stall every console write with
+	// registration traffic. setPassword does hash inside the lock, but only
+	// for an already-authenticated caller and only against one row; the cost
+	// is a bounded delay on that one account's writes.
+	//
+	// TODO(state): a process-level mutex only covers a deployment with one
+	// writer. Two console processes sharing one database can still interleave
+	// their reads and writes; that needs a database-level constraint (or a
+	// repository primitive that holds its write lock across the check and
+	// the write), which is beyond what the service layer can promise.
+	userWriteMu sync.Mutex
 	// Pepper seals and opens account secrets. It is nil when no pepper is
 	// configured, which means access keys cannot be verified and a second
 	// factor cannot be enrolled - but the console still works with passwords.
 	Pepper *auth.Pepper
+	// HashPassword is the password hasher every account write goes through.
+	// It is a field rather than a direct call to auth.HashPassword so a test
+	// can count (or hold up) the hashes one request costs without replacing
+	// argon2id itself; nil means the real hasher. The service never changes
+	// its behaviour based on it beyond calling it.
+	HashPassword func(password string) (string, error)
+}
+
+// hashPassword runs the configured hasher, or the real one when a deployment
+// (or a test) has not installed its own.
+func (s *ControlPlaneService) hashPassword(password string) (string, error) {
+	if s != nil && s.HashPassword != nil {
+		return s.HashPassword(password)
+	}
+	return auth.HashPassword(password)
 }
 
 // ------------------------------------------------------------------

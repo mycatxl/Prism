@@ -33,6 +33,11 @@ type Counters struct {
 	// users is keyed by user id. It exists so a quota check does not have to
 	// find every key the user holds.
 	users *xsync.Map[string, *atomic.Int64]
+	// keyBytes is keyed by key id and holds the bytes of every one of that
+	// key's buckets which has not been drained yet. It exists so the fallback
+	// a quota check makes - "this key has moved N bytes" - is a single atomic
+	// load rather than a walk over every bucket in the process.
+	keyBytes *xsync.Map[string, *atomic.Int64]
 }
 
 // CounterKey identifies one metering bucket: one key on one platform.
@@ -57,6 +62,11 @@ type keyCounter struct {
 	egress   atomic.Int64
 	requests atomic.Int64
 	errors   atomic.Int64
+	// bytes is the key-wide accumulator shared by every bucket of the same key
+	// id, so the per-key total is maintained as the bytes arrive instead of
+	// being re-derived on each check. It is nil for traffic with no key id,
+	// which is counted in its bucket and in no aggregate.
+	bytes *atomic.Int64
 }
 
 // Delta is one reported amount of traffic.
@@ -75,9 +85,23 @@ func (d Delta) Total() int64 { return d.IngressBytes + d.EgressBytes }
 // NewCounters returns an empty counter set.
 func NewCounters() *Counters {
 	return &Counters{
-		entries: xsync.NewMap[CounterKey, *keyCounter](),
-		users:   xsync.NewMap[string, *atomic.Int64](),
+		entries:  xsync.NewMap[CounterKey, *keyCounter](),
+		users:    xsync.NewMap[string, *atomic.Int64](),
+		keyBytes: xsync.NewMap[string, *atomic.Int64](),
 	}
+}
+
+// keyTotalFor returns the shared byte accumulator of one key id, creating it on
+// first use. An empty key id has none: traffic that belongs to no key is still
+// counted in its bucket, and attributed to no aggregate.
+func (c *Counters) keyTotalFor(keyID string) *atomic.Int64 {
+	if c == nil || c.keyBytes == nil || keyID == "" {
+		return nil
+	}
+	total, _ := c.keyBytes.LoadOrCompute(keyID, func() (*atomic.Int64, bool) {
+		return new(atomic.Int64), false
+	})
+	return total
 }
 
 // Add records a delta for one key on one platform.
@@ -91,23 +115,14 @@ func NewCounters() *Counters {
 // nobody will ever read again. Doing the arithmetic under the same critical
 // section that owns the bucket is what makes "every byte is either drained or
 // still counted" true.
+//
+// The key-wide total is updated in that same section, so it stays the exact sum
+// of the buckets that are still present.
 func (c *Counters) Add(key CounterKey, delta Delta) {
 	if c == nil || c.entries == nil || delta == (Delta{}) {
 		return
 	}
-	// The empty-delta case is handled above, but Compute's return value must
-	// still be used to satisfy the API: the counter is mutated in place and
-	// returned unchanged.
-	_, _ = c.entries.Compute(key, func(counter *keyCounter, _ bool) (*keyCounter, xsync.ComputeOp) {
-		if counter == nil {
-			counter = &keyCounter{}
-		}
-		counter.ingress.Add(delta.IngressBytes)
-		counter.egress.Add(delta.EgressBytes)
-		counter.requests.Add(delta.Requests)
-		counter.errors.Add(delta.Errors)
-		return counter, xsync.UpdateOp
-	})
+	c.addToBuckets(key, delta)
 
 	// The user aggregate counts bytes only: request counts belong to a key, and
 	// adding them here would double-count a user's requests once per key. It is
@@ -118,6 +133,63 @@ func (c *Counters) Add(key CounterKey, delta Delta) {
 		})
 		userTotal.Add(total)
 	}
+}
+
+// Requeue puts a drained batch back into its buckets after a failed write,
+// without touching the user aggregate.
+//
+// The two levels are restored differently on purpose. The buckets are what the
+// next pass writes to the hourly table, so they have to come back. The user
+// aggregate was already incremented when the bytes arrived and is never
+// drained, so adding the batch to it again would charge the subscription twice
+// for traffic that moved once: a requeue is a retry of a write, not a second
+// sighting of the traffic.
+func (c *Counters) Requeue(drained map[CounterKey]Delta) {
+	if c == nil || c.entries == nil || len(drained) == 0 {
+		return
+	}
+	for key, delta := range drained {
+		if delta == (Delta{}) {
+			continue
+		}
+		c.addToBuckets(key, delta)
+	}
+}
+
+// addToBuckets adds a delta to one bucket and to that key's byte total.
+//
+// Both updates run inside the same critical section, the one that owns the
+// bucket, so the key total is exactly the sum of the buckets still present at
+// every instant - which is what lets a quota check read it instead of walking
+// the buckets itself.
+func (c *Counters) addToBuckets(key CounterKey, delta Delta) {
+	_, _ = c.entries.Compute(key, func(counter *keyCounter, _ bool) (*keyCounter, xsync.ComputeOp) {
+		if counter == nil {
+			counter = &keyCounter{bytes: c.keyTotalFor(key.KeyID)}
+		}
+		counter.ingress.Add(delta.IngressBytes)
+		counter.egress.Add(delta.EgressBytes)
+		counter.requests.Add(delta.Requests)
+		counter.errors.Add(delta.Errors)
+		if total := delta.Total(); total != 0 && counter.bytes != nil {
+			counter.bytes.Add(total)
+		}
+		return counter, xsync.UpdateOp
+	})
+}
+
+// KeyTotal returns the bytes counted for one key id across every bucket of that
+// key which has not been drained yet. It is the per-key fallback a quota check
+// uses when the owning user's aggregate is unavailable.
+func (c *Counters) KeyTotal(keyID string) int64 {
+	if c == nil || c.keyBytes == nil || keyID == "" {
+		return 0
+	}
+	total, ok := c.keyBytes.Load(keyID)
+	if !ok || total == nil {
+		return 0
+	}
+	return total.Load()
 }
 
 // KeyBytes returns the bytes counted for one key on one platform.
@@ -149,37 +221,77 @@ func (c *Counters) UserBytes(userID string) int64 {
 	return total.Load()
 }
 
+// UserBytesPresent returns a user's running total and reports whether the user
+// has an aggregate at all.
+//
+// The distinction between "no aggregate" and "an aggregate of zero" is what a
+// quota check needs: a period rollover sets the total back to zero without
+// dropping the entry, and reading that zero as "no aggregate" made the check
+// fall back to the key's own counter - which a rollover deliberately leaves
+// holding the previous period's bytes. The result was a user whose new period
+// had just begun being refused for traffic they had not moved yet.
+func (c *Counters) UserBytesPresent(userID string) (int64, bool) {
+	if c == nil || userID == "" {
+		return 0, false
+	}
+	total, ok := c.users.Load(userID)
+	if !ok || total == nil {
+		return 0, false
+	}
+	return total.Load(), true
+}
+
 // Drain removes and returns the counters for the given keys.
 //
 // It is how the flusher takes a consistent snapshot to persist: taking the
 // values without removing them would either lose the bytes added between the
 // read and the write, or count them twice. Removing first means a byte added
 // during the flush lands in the next one.
-//
 // The user aggregate is deliberately not drained here. It is the running total
 // a quota is checked against, and a flush that reset it would hand the user
 // their whole allowance back every ten seconds.
+//
+// The key's own byte total is reduced by exactly what was removed: it tracks
+// the buckets that are still present, so it must fall with them.
 func (c *Counters) Drain(keys []CounterKey) map[CounterKey]Delta {
 	drained := make(map[CounterKey]Delta, len(keys))
 	if c == nil || c.entries == nil {
 		return drained
 	}
 	for _, key := range keys {
-		counter, ok := c.entries.LoadAndDelete(key)
-		if !ok || counter == nil {
-			continue
-		}
-		delta := Delta{
-			IngressBytes: counter.ingress.Load(),
-			EgressBytes:  counter.egress.Load(),
-			Requests:     counter.requests.Load(),
-			Errors:       counter.errors.Load(),
-		}
+		delta := c.drainOne(key)
 		if delta != (Delta{}) {
 			drained[key] = delta
 		}
 	}
 	return drained
+}
+
+// drainOne removes one bucket and returns what it held.
+//
+// The read, the removal and the subtraction from the key's byte total share one
+// critical section. Splitting them would let a concurrent Add slip its bytes
+// into the total after the removal: the bucket would be gone, so nothing would
+// ever subtract them, and the key's running total would drift upwards for the
+// rest of the process.
+func (c *Counters) drainOne(key CounterKey) Delta {
+	var delta Delta
+	_, _ = c.entries.Compute(key, func(counter *keyCounter, loaded bool) (*keyCounter, xsync.ComputeOp) {
+		if !loaded || counter == nil {
+			return nil, xsync.CancelOp
+		}
+		delta = Delta{
+			IngressBytes: counter.ingress.Load(),
+			EgressBytes:  counter.egress.Load(),
+			Requests:     counter.requests.Load(),
+			Errors:       counter.errors.Load(),
+		}
+		if counter.bytes != nil {
+			counter.bytes.Add(-delta.Total())
+		}
+		return nil, xsync.DeleteOp
+	})
+	return delta
 }
 
 // Keys returns the keys that currently hold a counter.

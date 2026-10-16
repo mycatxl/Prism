@@ -119,6 +119,18 @@ type EnvConfig struct {
 	// enough to enrol one, which is the only way to satisfy the requirement from
 	// inside the product.
 	RequireAdminTOTP bool
+	// The three startup-policy switches of the authentication layer. They are
+	// kept on the config even though the loader is their only reader, so
+	// `prism check-config` can print the value that is in force: "the
+	// deployment looks configured" and "the deployment still refuses weak
+	// tokens" are different statements, and the report has to make both.
+	//
+	// They are not part of the environment snapshot the console reads
+	// (/api/v1/system/config/env): that response is built field by field, and
+	// these three are deployment policy, not console state.
+	EnforceStrongTokens  bool `json:"-"`
+	AllowEmptyProxyToken bool `json:"-"`
+	AllowInsecureListen  bool `json:"-"`
 	// Usage alerts. These three decide when the console reports a single
 	// account as having run ahead of its plan, and how long that report is kept
 	// (PRISM_ALERT_USAGE_RATIO, PRISM_ALERT_WINDOW_MINUTES,
@@ -174,6 +186,10 @@ func DefaultNodeDNSUpstreams() []string {
 func LoadEnvConfig() (*EnvConfig, error) {
 	cfg := &EnvConfig{}
 	var errs []string
+	// The origin record (origins.go) is what `prism check-config` prints next to
+	// each value. It is cleared here, before the first read, so a second load in
+	// the same process reports this environment and not the earlier one.
+	resetEnvOrigins()
 	qualityConfig, qualityErr := LoadQualityConfig()
 	if qualityErr != nil {
 		errs = append(errs, qualityErr.Error())
@@ -248,7 +264,10 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	// from "not set" (unset gets the shipped SMTP denylist, empty means
 	// "block no port").
 	rawBlockedPorts, blockedPortsSet := os.LookupEnv(blockedDestinationPortsEnv)
-	if !blockedPortsSet {
+	if blockedPortsSet {
+		recordEnvOrigin(blockedDestinationPortsEnv, envSourceForValue(rawBlockedPorts, false))
+	} else {
+		recordEnvOrigin(blockedDestinationPortsEnv, EnvSourceDefault)
 		rawBlockedPorts = defaultBlockedDestinationPortsRaw
 	}
 	blockedPorts, blockedPortsErr := parseBlockedDestinationPorts(rawBlockedPorts)
@@ -308,6 +327,11 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	enforceStrongTokens := envBool("PRISM_ENFORCE_STRONG_TOKENS", true, &errs)
 	allowEmptyProxyToken := envBool("PRISM_ALLOW_EMPTY_PROXY_TOKEN", false, &errs)
 	allowInsecureListen := envBool("PRISM_ALLOW_INSECURE_LISTEN", false, &errs)
+	// Kept on the config so `prism check-config` reports the policy the process
+	// is actually running with; nothing else reads them back.
+	cfg.EnforceStrongTokens = enforceStrongTokens
+	cfg.AllowEmptyProxyToken = allowEmptyProxyToken
+	cfg.AllowInsecureListen = allowInsecureListen
 	// --- Metrics ---
 	cfg.MetricThroughputIntervalSeconds = envInt("PRISM_METRIC_THROUGHPUT_INTERVAL_SECONDS", 2, &errs)
 	cfg.MetricThroughputRetentionSeconds = envInt("PRISM_METRIC_THROUGHPUT_RETENTION_SECONDS", 3600, &errs)
@@ -566,19 +590,28 @@ var (
 //
 // PRISM_QUALITY_* deliberately has no fallback: those variables only exist in
 // Prism.
+//
+// Every read is recorded (see origins.go), which is what `prism check-config`
+// prints next to the effective value: the report is built from the same
+// resolution the value came from, not from a second reading of the
+// environment.
 func lookupEnv(name string) (string, bool) {
 	if value, ok := os.LookupEnv(name); ok {
+		recordEnvOrigin(name, envSourceForValue(value, false))
 		return value, true
 	}
 	legacy := legacyEnvName(name)
 	if legacy == "" {
+		recordEnvOrigin(name, EnvSourceDefault)
 		return "", false
 	}
 	value, ok := os.LookupEnv(legacy)
 	if !ok {
+		recordEnvOrigin(name, EnvSourceDefault)
 		return "", false
 	}
 	warnLegacyEnv(legacy, name)
+	recordEnvOrigin(name, envSourceForValue(value, true))
 	return value, true
 }
 
@@ -609,7 +642,19 @@ func warnLegacyEnv(legacy, name string) {
 	logf("config: %s is deprecated, use %s", legacy, name)
 }
 func envBool(key string, defaultVal bool, errs *[]string) bool {
-	v := strings.TrimSpace(os.Getenv(key))
+	raw, set := os.LookupEnv(key)
+	v := strings.TrimSpace(raw)
+	// The switch is Prism-only, so it is read straight from the environment;
+	// the origin is still recorded so check-config can report it like any
+	// other setting. Unset is the shipped default and "set but empty" is a
+	// line that carries nothing - two different answers to "why does this
+	// deployment behave this way" - so the record distinguishes them the way
+	// lookupEnv does.
+	if set {
+		recordEnvOrigin(key, envSourceForValue(v, false))
+	} else {
+		recordEnvOrigin(key, EnvSourceDefault)
+	}
 	if v == "" {
 		return defaultVal
 	}
@@ -784,10 +829,20 @@ func containsDotDotSegment(path string) bool {
 }
 
 // validateTrustedProxy accepts an IP literal or CIDR list entry.
+//
+// A zero-length prefix is refused: 0.0.0.0/0 and ::/0 name every source address
+// there is, so listing one turns a deployment that looks configured into one that
+// trusts anything a client writes in X-Forwarded-For or X-Forwarded-Proto - the
+// failure limiter would key on a header the client chooses and be bypassed by
+// rotating it.
 func validateTrustedProxy(value string) error {
 	if strings.Contains(value, "/") {
-		if _, err := netip.ParsePrefix(value); err != nil {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
 			return fmt.Errorf("must be an IP address or CIDR, got %q", value)
+		}
+		if prefix.Bits() == 0 {
+			return fmt.Errorf("must not trust every source address: %q covers all of them", value)
 		}
 		return nil
 	}

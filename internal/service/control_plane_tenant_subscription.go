@@ -2,22 +2,25 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
 	"strings"
 
+	"prism/internal/keys"
 	"prism/internal/model"
-	"prism/internal/state"
 )
 
 // A subscription is what actually grants access: it binds one user to one plan
 // and carries the snapshot of that plan as it was sold.
 //
-// Two rules that are easy to get wrong, and are therefore stated once here. A
-// user has at most one active subscription, so assigning a new one expires the
-// previous one instead of stacking windows. And a subscription keeps the plan
+// Three rules that are easy to get wrong, and are therefore stated once here. A
+// user has at most one active subscription - "last activation wins" - so
+// assigning a new one, or patching an old one back to active, expires whatever
+// else was running instead of stacking windows. A subscription keeps the plan
 // snapshot it was created with, so editing a plan does not silently change what
 // an existing user bought - only the plan's own "apply to existing" switch does
-// that.
+// that. And "the subscription a user is on" always means the one
+// currentSubscription returns: the active row if there is one, otherwise the
+// newest of the ended ones (keys.DecidingSubscription), which is the same read
+// the restart loader and the key publish path make.
 
 // SubscriptionView is a subscription as the console sees it, with the names of
 // the user and the plan resolved so a table needs no second request.
@@ -57,8 +60,18 @@ var tenantSubscriptionPatchAllowedFields = map[string]bool{
 // had.
 //
 // durationDays of 0 takes the plan's own duration. The previous active
-// subscription is expired rather than deleted, because the history of who was on
-// what is worth keeping.
+// subscription is expired rather than deleted, because the history of who was
+// on what is worth keeping.
+//
+// A plan_id is required, and an empty one is refused here rather than turned
+// into a subscription. The row this used to write carried the zero snapshot -
+// no status, no quotas, no platform list - and a zero snapshot is not a smaller
+// subscription on the read side, it is the largest one there is: keys.Store
+// only refuses a snapshot whose status is set, and a traffic quota of zero
+// means unlimited (planFromSnapshotJSON, maxKeysForPlan, checkKeyAllowance). An
+// active row "on nothing" would therefore grant unlimited keys with no plan
+// limit at all, which is the exact state an account with no plan is supposed to
+// be refused in (control_plane_accesskey.go).
 func (s *ControlPlaneService) AssignSubscription(userID, planID string, durationDays int, nowNs int64) (SubscriptionView, error) {
 	if s == nil || s.Engine == nil {
 		return SubscriptionView{}, internal("no state engine", nil)
@@ -66,20 +79,20 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 	if durationDays < 0 {
 		return SubscriptionView{}, invalidArg("duration_days: must not be negative")
 	}
+	planID = strings.TrimSpace(planID)
+	if planID == "" {
+		return SubscriptionView{}, invalidArg("plan_id: required")
+	}
 	if _, err := s.Engine.GetUser(userID); err != nil {
 		return SubscriptionView{}, mapUserLookupError(err)
 	}
 
-	var plan model.Plan
-	if strings.TrimSpace(planID) != "" {
-		row, err := s.Engine.GetPlan(planID)
-		if err != nil {
-			return SubscriptionView{}, mapPlanLookupError(err)
-		}
-		plan = *row
-		if plan.Status == planStatusDisabled {
-			return SubscriptionView{}, invalidArg("plan_id: the plan is disabled")
-		}
+	plan, err := s.Engine.GetPlan(planID)
+	if err != nil {
+		return SubscriptionView{}, mapPlanLookupError(err)
+	}
+	if plan.Status == planStatusDisabled {
+		return SubscriptionView{}, invalidArg("plan_id: the plan is disabled")
 	}
 
 	days := durationDays
@@ -90,7 +103,7 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 		return SubscriptionView{}, invalidArg("duration_days: a plan without a duration must be given one")
 	}
 
-	snapshot, err := planSnapshotJSON(plan)
+	snapshot, err := planSnapshotJSON(*plan)
 	if err != nil {
 		return SubscriptionView{}, internal("encode plan snapshot", err)
 	}
@@ -115,7 +128,11 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 		Status:           model.SubscriptionStatusActive,
 	}
 	if err := s.Engine.UpsertUserSubscription(row); err != nil {
-		return SubscriptionView{}, internal("write subscription", err)
+		// The insert itself can lose the race the unique index guards: a
+		// concurrent assign that slips in behind the expire above trips
+		// ux_user_subscriptions_active, and that is a conflict to report, not a
+		// server fault.
+		return SubscriptionView{}, mapSubscriptionWriteError("write subscription", err)
 	}
 	// The new plan is in force from the next request, not from the next
 	// restart: the keys of this user are republished with the new snapshot.
@@ -184,6 +201,17 @@ func (s *ControlPlaneService) GetTenantSubscription(id string) (SubscriptionView
 // extending an expired subscription restarts it from today rather than from a
 // date in the past. Setting status to suspended or expired stops the user's keys
 // on their next request.
+//
+// Patching a subscription back to active is an activation, not an edit of a
+// window: whatever else the user had running is expired first, because two
+// active rows would leave "which plan am I on" to table order. The same rule
+// AssignSubscription follows.
+//
+// The write is a terms write (UpdateUserSubscriptionTerms), not a whole-row one:
+// period_used_bytes has a concurrent writer - the usage flush worker adds to it -
+// and writing the row back as it looked when it was read would silently give away
+// every byte counted in between, permanently, because nothing recomputes the
+// counter from the usage tables.
 func (s *ControlPlaneService) UpdateTenantSubscription(id string, patchJSON json.RawMessage, nowNs int64) (SubscriptionView, error) {
 	if s == nil || s.Engine == nil {
 		return SubscriptionView{}, internal("no state engine", nil)
@@ -234,9 +262,18 @@ func (s *ControlPlaneService) UpdateTenantSubscription(id string, patchJSON json
 		}
 		updated.ExpiresAtNs = int64(value)
 	}
+	// Bring the row back to active only after ending whatever else is running.
+	// Doing it the other way round would leave two active rows whenever the
+	// patch itself arrived second.
+	reactivating := updated.Status == model.SubscriptionStatusActive && row.Status != model.SubscriptionStatusActive
+	if reactivating {
+		if err := s.expireActiveSubscriptions(updated.UserID, nowNs); err != nil {
+			return SubscriptionView{}, err
+		}
+	}
 
-	if err := s.Engine.UpsertUserSubscription(updated); err != nil {
-		return SubscriptionView{}, internal("write subscription", err)
+	if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+		return SubscriptionView{}, mapSubscriptionWriteError("write subscription", err)
 	}
 	if err := s.republishUserKeys(updated.UserID); err != nil {
 		return SubscriptionView{}, err
@@ -249,9 +286,15 @@ func (s *ControlPlaneService) UpdateTenantSubscription(id string, patchJSON json
 	return views[0], nil
 }
 
-// DeleteTenantSubscription removes a subscription row. The user's keys are
-// republished afterwards, so access ends with the row rather than with the next
-// restart.
+// DeleteTenantSubscription ends a subscription: DELETE /admin/subscriptions/{id}.
+//
+// It no longer deletes the row. A user with no subscription row at all is the
+// state the loader and the publish path read as the zero snapshot, which means no
+// quota, no expiry and no restriction - unlimited. Removing the last row of an
+// account would therefore have handed it more access than it had, not less, and a
+// key minted afterwards looked like a key on no plan at all. The row is revoked
+// instead (state.RevokeUserSubscription) and the user's keys are republished, so
+// access ends with the decision rather than with the next restart.
 func (s *ControlPlaneService) DeleteTenantSubscription(id string) error {
 	if s == nil || s.Engine == nil {
 		return internal("no state engine", nil)
@@ -260,8 +303,8 @@ func (s *ControlPlaneService) DeleteTenantSubscription(id string) error {
 	if err != nil {
 		return mapSubscriptionLookupError(err)
 	}
-	if err := s.Engine.DeleteUserSubscription(id); err != nil {
-		return mapSubscriptionLookupError(err)
+	if err := s.Engine.RevokeUserSubscription(row.ID); err != nil {
+		return mapSubscriptionWriteError("revoke subscription", err)
 	}
 	return s.republishUserKeys(row.UserID)
 }
@@ -278,8 +321,8 @@ func (s *ControlPlaneService) expireActiveSubscriptions(userID string, nowNs int
 		}
 		updated := row
 		updated.Status = model.SubscriptionStatusExpired
-		if err := s.Engine.UpsertUserSubscription(updated); err != nil {
-			return internal("expire previous subscription", err)
+		if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+			return mapSubscriptionWriteError("expire previous subscription", err)
 		}
 	}
 	return nil
@@ -358,16 +401,45 @@ func (s *ControlPlaneService) planDirectory() (map[string]model.Plan, error) {
 	return directory, nil
 }
 
-// activeSubscriptionFor returns the user's active subscription, or nil.
+// currentSubscription returns the row that decides a user's access, or nil when
+// the user has no subscription row at all.
+//
+// It applies the same rule a restart does (keys.DecidingSubscription): the active
+// subscription if there is one, otherwise the newest of the ended ones. Reading
+// it in one place is what keeps the console, the key publish path and the
+// startup loader from disagreeing about a user's plan - and it is why a
+// suspended or expired subscription refuses the user's keys instead of
+// vanishing and leaving them on the zero snapshot.
+//
+// The error is a ServiceError because every caller hands it straight to a client.
+func (s *ControlPlaneService) currentSubscription(userID string) (*model.UserSubscription, *ServiceError) {
+	rows, err := s.Engine.ListUserSubscriptions()
+	if err != nil {
+		return nil, internal("list subscriptions", err)
+	}
+	mine := make([]model.UserSubscription, 0, len(rows))
+	for _, row := range rows {
+		if row.UserID == userID {
+			mine = append(mine, row)
+		}
+	}
+	return keys.DecidingSubscription(mine), nil
+}
+
+// activeSubscriptionFor returns the user's active subscription, or nil when the
+// row that decides their access is not active (or they have none). It is the
+// deciding row that is tested, so "is this user subscribed" has one answer
+// everywhere, and a user whose newest row is suspended is not reported as
+// holding a subscription they cannot use.
 func (s *ControlPlaneService) activeSubscriptionFor(userID string) (*model.UserSubscription, error) {
-	row, err := s.Engine.GetActiveUserSubscription(userID)
-	if errors.Is(err, state.ErrNotFound) {
+	sub, err := s.currentSubscription(userID)
+	if err != nil {
+		return nil, err
+	}
+	if sub == nil || sub.Status != model.SubscriptionStatusActive {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, internal("read active subscription", err)
-	}
-	return row, nil
+	return sub, nil
 }
 
 // pageSlice applies limit and offset to an in-memory list. A limit of 0 means

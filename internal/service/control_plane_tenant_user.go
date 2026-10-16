@@ -56,9 +56,17 @@ type AdminUserDetail struct {
 // TenantUserFilter narrows the user list. Query is a case-insensitive substring
 // of the username, because an operator searching for a customer types a
 // fragment, not an id.
+//
+// Role is part of the filter rather than something a caller applies afterwards
+// because the list is paged: filtering a page after it has been cut is how a
+// "show me the administrators" request returns a page of users with the
+// administrators missing. It is passed through unchecked - an unknown role matches
+// nothing, which is the honest answer - because the console offers it as a
+// selection, not as a search field.
 type TenantUserFilter struct {
 	Query  string
 	Status string
+	Role   string
 	Limit  int
 	Offset int
 }
@@ -85,6 +93,9 @@ func (s *ControlPlaneService) ListTenantUsers(filter TenantUserFilter) ([]AdminU
 			continue
 		}
 		if filter.Status != "" && view.Status != filter.Status {
+			continue
+		}
+		if filter.Role != "" && view.Role != filter.Role {
 			continue
 		}
 		matched = append(matched, view)
@@ -139,10 +150,7 @@ func (s *ControlPlaneService) CreateTenantUser(in TenantUserInput, nowNs int64) 
 
 	account, err := s.CreateAccount(in.Username, in.Password, tenantUserRole(in.Role), nowNs)
 	if err != nil {
-		if svcErr := asServiceError(err); svcErr != nil {
-			return AdminUserDetail{}, svcErr
-		}
-		return AdminUserDetail{}, internal("create account", err)
+		return AdminUserDetail{}, mapAccountWriteError("create account", err)
 	}
 
 	if planID := strings.TrimSpace(in.PlanID); planID != "" {
@@ -167,10 +175,7 @@ func (s *ControlPlaneService) SetTenantUserStatus(id, status string, nowNs int64
 		return AdminUserView{}, invalidArg("status: must be active or disabled")
 	}
 	if err := s.SetAccountStatus(id, status, nowNs); err != nil {
-		if svcErr := asServiceError(err); svcErr != nil {
-			return AdminUserView{}, svcErr
-		}
-		return AdminUserView{}, internal("set account status", err)
+		return AdminUserView{}, mapAccountWriteError("set account status", err)
 	}
 	if status == model.UserStatusDisabled {
 		if _, err := s.Engine.DeleteSessionsByUser(id); err != nil {
@@ -191,10 +196,7 @@ func (s *ControlPlaneService) SetTenantUserRole(id, role string, nowNs int64) (A
 		return AdminUserView{}, internal("no state engine", nil)
 	}
 	if err := s.SetAccountRole(id, role, nowNs); err != nil {
-		if svcErr := asServiceError(err); svcErr != nil {
-			return AdminUserView{}, svcErr
-		}
-		return AdminUserView{}, internal("set account role", err)
+		return AdminUserView{}, mapAccountWriteError("set account role", err)
 	}
 	if err := s.republishUserKeys(id); err != nil {
 		return AdminUserView{}, err
@@ -212,10 +214,7 @@ func (s *ControlPlaneService) SetTenantUserPassword(id, password string, nowNs i
 		return internal("no state engine", nil)
 	}
 	if err := s.SetAccountPassword(id, password, nowNs); err != nil {
-		if svcErr := asServiceError(err); svcErr != nil {
-			return svcErr
-		}
-		return internal("set account password", err)
+		return mapAccountWriteError("set account password", err)
 	}
 	if _, err := s.Engine.DeleteSessionsByUser(id); err != nil {
 		return internal("end account sessions", err)
@@ -228,12 +227,26 @@ func (s *ControlPlaneService) SetTenantUserPassword(id, password string, nowNs i
 // Its keys leave the live store first: the rows cascade, but the data plane
 // holds its own copy and would otherwise keep honouring a deleted key until the
 // next restart.
+//
+// Deleting the last active administrator is refused for the same reason
+// disabling or demoting one is (refuseIfLastAdmin): the account that would be
+// gone is the only one that could put things right afterwards, so the console
+// would be locked with no way back in. The count and the delete are one locked
+// operation (userWriteMu), so two concurrent deletes - or a delete and a
+// demotion - cannot each pass the check from the other side.
 func (s *ControlPlaneService) DeleteTenantUser(id string) error {
 	if s == nil || s.Engine == nil {
 		return internal("no state engine", nil)
 	}
-	if _, err := s.Engine.GetUser(id); err != nil {
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
+
+	user, err := s.Engine.GetUser(id)
+	if err != nil {
 		return mapUserLookupError(err)
+	}
+	if err := s.refuseIfLastAdmin(user); err != nil {
+		return mapAccountWriteError("delete account", err)
 	}
 	if s.Keys != nil {
 		rows, err := s.Engine.ListAccessKeysByUser(id)
@@ -246,6 +259,147 @@ func (s *ControlPlaneService) DeleteTenantUser(id string) error {
 	}
 	if err := s.Engine.DeleteUser(id); err != nil {
 		return mapUserLookupError(err)
+	}
+	return nil
+}
+
+// TenantUserPatch is one request's worth of account changes: the body of PATCH
+// /admin/users/{id}. Pointers, so a field left out is not the same as a field
+// set to "" - and so a request that changes nothing can be refused before
+// anything is written.
+type TenantUserPatch struct {
+	Status   *string `json:"status"`
+	Role     *string `json:"role"`
+	Password *string `json:"password"`
+}
+
+// UpdateTenantUser applies status, role and password as one operation.
+//
+// The three fields used to be three independent calls, which meant a request
+// carrying both a status change and a role change could commit the first and
+// then be refused for the second: a half-applied patch, with nothing in the
+// answer telling the caller which half was stored. Here every field is validated
+// against the account before anything is written, and the whole
+// validate-then-write sequence runs under one lock (userWriteMu), so a refusal
+// can say that no field was changed and be telling the truth - including a
+// refusal produced in the middle of the writes by the last-administrator check,
+// because no other writer can change a role or a status while this one holds the
+// lock. The password is hashed before the first write for the same reason: the
+// hash is the one step that can fail on its own, and it must not leave the
+// status and the role committed behind it. The single-field setters remain for
+// the callers that only ever change one thing.
+func (s *ControlPlaneService) UpdateTenantUser(id string, patch TenantUserPatch, nowNs int64) (AdminUserView, error) {
+	if s == nil || s.Engine == nil {
+		return AdminUserView{}, internal("no state engine", nil)
+	}
+	if patch.Status == nil && patch.Role == nil && patch.Password == nil {
+		return AdminUserView{}, invalidArg("at least one of status, role or password is required")
+	}
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
+
+	user, err := s.Engine.GetUser(id)
+	if err != nil {
+		return AdminUserView{}, mapUserLookupError(err)
+	}
+	if svcErr := s.validateTenantUserPatch(user, patch); svcErr != nil {
+		return AdminUserView{}, svcErr
+	}
+
+	// The one step that can fail on its own is the password hash, and it runs
+	// before the first write: a patch whose password cannot be hashed leaves
+	// the status and the role unapplied rather than committing them and then
+	// failing. It stays inside the lock (argon2id, the only slow step held
+	// here, and bounded by a single hash): the hash belongs to this account's
+	// transition, and the lock is what keeps the whole patch one operation.
+	var passwordHash string
+	if patch.Password != nil {
+		passwordHash, err = s.hashPassword(*patch.Password)
+		if err != nil {
+			return AdminUserView{}, mapAccountWriteError("hash account password", err)
+		}
+	}
+
+	// Every write below is a single-column write - the locked variants of the
+	// account setters, which assume the lock this method holds. Nothing may
+	// write the row back whole: a column this patch does not name, such as the
+	// password hash it read before the argon2id step, would be restored to the
+	// value it held then.
+	disableAccount := false
+	if patch.Status != nil {
+		if err := s.setAccountStatusLocked(id, *patch.Status, nowNs); err != nil {
+			return AdminUserView{}, mapAccountWriteError("set account status", err)
+		}
+		disableAccount = *patch.Status == model.UserStatusDisabled
+	}
+	if patch.Role != nil {
+		if err := s.setAccountRoleLocked(id, *patch.Role, nowNs); err != nil {
+			return AdminUserView{}, mapAccountWriteError("set account role", err)
+		}
+	}
+	if patch.Password != nil {
+		// The hash computed above, written as a single column.
+		if err := s.Engine.UpdateUserPassword(id, passwordHash, nowNs); err != nil {
+			return AdminUserView{}, mapAccountWriteError("set account password", err)
+		}
+	}
+
+	// A disabled account must not keep a usable session, and a reset password
+	// must evict whoever held the old one: one delete covers both when they
+	// arrive in the same request.
+	if disableAccount || patch.Password != nil {
+		if _, err := s.Engine.DeleteSessionsByUser(id); err != nil {
+			return AdminUserView{}, internal("end account sessions", err)
+		}
+	}
+	// The data plane reads the account status and the plan out of key state, so
+	// the write is not complete until the user's keys have been republished.
+	if err := s.republishUserKeys(id); err != nil {
+		return AdminUserView{}, err
+	}
+	return s.tenantUserView(id)
+}
+
+// validateTenantUserPatch checks every field of a patch against the account it
+// would be applied to, before any of it is written.
+//
+// The last-administrator rule is evaluated on the account as the whole patch
+// would leave it, not field by field: {status: disabled, role: user} on the only
+// administrator has to be refused as a request, even though neither half of it
+// would strand the console on its own. Every refusal says so explicitly, because
+// the caller's next question is always "was any of it applied", and the answer
+// is that nothing was.
+func (s *ControlPlaneService) validateTenantUserPatch(user *model.User, patch TenantUserPatch) *ServiceError {
+	status := user.Status
+	if patch.Status != nil {
+		status = *patch.Status
+		if status != model.UserStatusActive && status != model.UserStatusDisabled {
+			return invalidArg("no fields were changed: status: must be active or disabled")
+		}
+	}
+	role := user.Role
+	if patch.Role != nil {
+		role = *patch.Role
+		if role != model.UserRoleAdmin && role != model.UserRoleUser {
+			return invalidArg("no fields were changed: role: must be admin or user")
+		}
+	}
+	if patch.Password != nil {
+		if err := checkPasswordPolicy(*patch.Password); err != nil {
+			return invalidArg("no fields were changed: " + err.Error())
+		}
+	}
+
+	losesAdmin := user.Role == model.UserRoleAdmin && user.Status == model.UserStatusActive &&
+		(status != model.UserStatusActive || role != model.UserRoleAdmin)
+	if losesAdmin {
+		if err := s.refuseIfLastAdmin(user); err != nil {
+			svcErr := mapAccountWriteError("validate account patch", err)
+			if svcErr.Code == "FORBIDDEN" {
+				svcErr.Message = "no fields were changed: " + svcErr.Message
+			}
+			return svcErr
+		}
 	}
 	return nil
 }

@@ -57,16 +57,28 @@ func NewConnRegistry() *ConnRegistry {
 // A nil connection, or an empty key id, is ignored: the single-tenant path has
 // no key to attribute the connection to, and it is never force-closed by a
 // quota.
+//
+// Reading the key's set and adding to it happen under one map critical section.
+// Doing it in two steps lost connections: Untrack, having just removed the last
+// connection, and CloseKey both take the set out of the map, and a Track that
+// had already read it then wrote into a set nothing could reach again - never
+// closed by CloseKey or CloseAll and missing from Count. The invariant restored
+// here is the reason the registry exists: once Track returns, CloseKey(keyID)
+// and CloseAll can see the connection, unless a CloseKey that ran before it
+// already has it in the list it is closing.
 func (r *ConnRegistry) Track(keyID string, conn io.Closer) {
 	if r == nil || keyID == "" || conn == nil {
 		return
 	}
-	set, _ := r.conns.LoadOrCompute(keyID, func() (*connSet, bool) {
-		return &connSet{conns: make(map[io.Closer]struct{})}, false
+	r.conns.Compute(keyID, func(set *connSet, loaded bool) (*connSet, xsync.ComputeOp) {
+		if !loaded || set == nil {
+			set = &connSet{conns: make(map[io.Closer]struct{})}
+		}
+		set.mu.Lock()
+		set.conns[conn] = struct{}{}
+		set.mu.Unlock()
+		return set, xsync.UpdateOp
 	})
-	set.mu.Lock()
-	set.conns[conn] = struct{}{}
-	set.mu.Unlock()
 }
 
 // Untrack removes one connection. It is safe to call for a connection that was
@@ -75,31 +87,25 @@ func (r *ConnRegistry) Untrack(keyID string, conn io.Closer) {
 	if r == nil || keyID == "" || conn == nil {
 		return
 	}
-	set, ok := r.conns.Load(keyID)
-	if !ok || set == nil {
-		return
-	}
-	set.mu.Lock()
-	delete(set.conns, conn)
-	empty := len(set.conns) == 0
-	set.mu.Unlock()
-	if empty {
+	r.conns.Compute(keyID, func(set *connSet, loaded bool) (*connSet, xsync.ComputeOp) {
+		if !loaded || set == nil {
+			return nil, xsync.CancelOp
+		}
+		set.mu.Lock()
+		delete(set.conns, conn)
+		empty := len(set.conns) == 0
+		set.mu.Unlock()
+		if !empty {
+			return set, xsync.UpdateOp
+		}
 		// Drop the empty set so a key that stops being used does not leave an
-		// entry behind for the life of the process. Compute with a predicate
-		// keeps a concurrent Track from being lost: if the set gained a
-		// connection in between, the delete is cancelled.
-		r.conns.Compute(keyID, func(current *connSet, loaded bool) (*connSet, xsync.ComputeOp) {
-			if !loaded || current == nil {
-				return nil, xsync.CancelOp
-			}
-			current.mu.Lock()
-			defer current.mu.Unlock()
-			if len(current.conns) > 0 {
-				return current, xsync.CancelOp
-			}
-			return nil, xsync.DeleteOp
-		})
-	}
+		// entry behind for the life of the process. The emptiness test and the
+		// delete run in the same critical section that Track inserts under, so
+		// a concurrent Track either got this set before the delete and cancels
+		// it, or gets a fresh set after it - it is never written into a set
+		// that has already left the map.
+		return nil, xsync.DeleteOp
+	})
 }
 
 // Count reports how many connections one key currently holds.
@@ -118,25 +124,32 @@ func (r *ConnRegistry) Count(keyID string) int {
 
 // CloseKey closes every connection of one key and returns how many were closed.
 //
-// The set is detached from the map before the connections are closed, so a
-// concurrent Track cannot be closed by this call after it registered: the new
-// connection belongs to a request that has not yet been told the key is over
-// its limit, and closing it here would race the caller's own check.
+// The set is detached from the map in the same critical section that Track
+// inserts under, and the connections are closed outside it. A Track that has
+// not returned yet either got there first - in which case its connection is in
+// the list below and is closed here - or gets a fresh set after the detach that
+// the next CloseKey will see. The new connection belongs to a request that has
+// not yet been told the key is over its limit, so closing it here would race
+// the caller's own check; leaving it tracked is what lets the next check find
+// it.
 func (r *ConnRegistry) CloseKey(keyID string) int {
 	if r == nil || keyID == "" {
 		return 0
 	}
-	set, ok := r.conns.LoadAndDelete(keyID)
-	if !ok || set == nil {
-		return 0
-	}
-	set.mu.Lock()
-	conns := make([]io.Closer, 0, len(set.conns))
-	for conn := range set.conns {
-		conns = append(conns, conn)
-	}
-	set.conns = make(map[io.Closer]struct{})
-	set.mu.Unlock()
+	var conns []io.Closer
+	r.conns.Compute(keyID, func(set *connSet, loaded bool) (*connSet, xsync.ComputeOp) {
+		if !loaded || set == nil {
+			return nil, xsync.CancelOp
+		}
+		set.mu.Lock()
+		conns = make([]io.Closer, 0, len(set.conns))
+		for conn := range set.conns {
+			conns = append(conns, conn)
+		}
+		set.conns = make(map[io.Closer]struct{})
+		set.mu.Unlock()
+		return nil, xsync.DeleteOp
+	})
 
 	for _, conn := range conns {
 		_ = r.closeFn(conn)

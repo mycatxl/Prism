@@ -170,6 +170,7 @@ func HandleAdminListUsers(cp *service.ControlPlaneService) http.HandlerFunc {
 		views, total, err := cp.ListTenantUsers(service.TenantUserFilter{
 			Query:  r.URL.Query().Get("q"),
 			Status: r.URL.Query().Get("status"),
+			Role:   r.URL.Query().Get("role"),
 			Limit:  pagination.Limit,
 			Offset: pagination.Offset,
 		})
@@ -242,30 +243,25 @@ func HandleAdminUpdateUser(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeDecodeBodyError(w, err)
 			return
 		}
-		if patch.Status == nil && patch.Role == nil && patch.Password == nil {
-			writeInvalidArgument(w, "at least one of status, role or password is required")
-			return
-		}
+
+		// A patch that names no field is refused by the service, with the same
+		// message and before it reads the account, so there is nothing to
+		// pre-check here.
 
 		id := PathParam(r, "id")
 		nowNs := adminNowNs()
-		if patch.Status != nil {
-			if _, err := cp.SetTenantUserStatus(id, *patch.Status, nowNs); err != nil {
-				writeServiceError(w, err)
-				return
-			}
-		}
-		if patch.Role != nil {
-			if _, err := cp.SetTenantUserRole(id, *patch.Role, nowNs); err != nil {
-				writeServiceError(w, err)
-				return
-			}
-		}
-		if patch.Password != nil {
-			if err := cp.SetTenantUserPassword(id, *patch.Password, nowNs); err != nil {
-				writeServiceError(w, err)
-				return
-			}
+		// One call, so the three fields are one decision: the service validates
+		// all of them against the account before writing any, which is what lets
+		// a refusal promise that nothing was applied. Done as three calls, a
+		// request carrying a status change and a role change could commit the
+		// first and be refused for the second.
+		if _, err := cp.UpdateTenantUser(id, service.TenantUserPatch{
+			Status:   patch.Status,
+			Role:     patch.Role,
+			Password: patch.Password,
+		}, nowNs); err != nil {
+			writeServiceError(w, err)
+			return
 		}
 
 		detail, err := cp.GetTenantUser(id, nowNs)

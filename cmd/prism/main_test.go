@@ -1120,6 +1120,51 @@ func TestLoadRuntimeConfig_UsageAlertSettings(t *testing.T) {
 	}
 }
 
+// TestLoadRuntimeConfig_UsageAlertSettingsLegacySpelling pins the compatibility
+// path of the three alert variables. They are the one group with two readers -
+// the loader resolves and validates them, loadRuntimeConfig decides whether the
+// validated value is applied - so both have to resolve the deprecated RESIN_
+// spelling. When the apply side read the raw environment instead, a deployment
+// that pinned the settings through RESIN_ALERT_* passed validation and then
+// kept the persisted value: accepted, and silently ignored.
+func TestLoadRuntimeConfig_UsageAlertSettingsLegacySpelling(t *testing.T) {
+	root := t.TempDir()
+	engine, closer, err := state.PersistenceBootstrap(filepath.Join(root, "state"), filepath.Join(root, "cache"))
+	if err != nil {
+		t.Fatalf("PersistenceBootstrap: %v", err)
+	}
+	t.Cleanup(func() { _ = closer.Close() })
+
+	// Only the legacy spelling is set, so a reader that resolves it via
+	// config.EnvSettingSet sees it and a reader on the PRISM_ spelling alone
+	// does not.
+	for _, name := range []string{alertUsageRatioEnv, alertWindowMinutesEnv, alertRetentionDaysEnv} {
+		unsetEnvForDotenvTest(t, name)
+	}
+	t.Setenv("RESIN_ALERT_USAGE_RATIO", "0.5")
+	t.Setenv("RESIN_ALERT_WINDOW_MINUTES", "15")
+	t.Setenv("RESIN_ALERT_RETENTION_DAYS", "7")
+
+	for _, name := range []string{alertUsageRatioEnv, alertWindowMinutesEnv, alertRetentionDaysEnv} {
+		if !alertSettingSet(name) {
+			t.Fatalf("%s is pinned through the deprecated RESIN_ spelling and must count as set", name)
+		}
+	}
+
+	if err := engine.SaveSystemConfig(config.NewDefaultRuntimeConfig(), 1, time.Now().UnixNano()); err != nil {
+		t.Fatalf("SaveSystemConfig(persisted): %v", err)
+	}
+	cfg := loadRuntimeConfig(engine, &config.EnvConfig{
+		AlertUsageRatio:    0.5,
+		AlertWindowMinutes: 15,
+		AlertRetentionDays: 7,
+	})
+	if cfg.AlertUsageRatio != 0.5 || cfg.AlertWindowMinutes != 15 || cfg.AlertRetentionDays != 7 {
+		t.Fatalf("legacy env alert settings: got %g/%d/%d, want 0.5/15/7",
+			cfg.AlertUsageRatio, cfg.AlertWindowMinutes, cfg.AlertRetentionDays)
+	}
+}
+
 // TestBootstrapNodes_RestoredEgressIPEntersTheReverseIndex pins
 // : a node whose egress IP is restored from nodes_dynamic must be
 // resolvable through the pool's egress index, otherwise NotifyEgressIPDirty

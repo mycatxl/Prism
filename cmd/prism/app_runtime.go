@@ -27,6 +27,7 @@ import (
 	"prism/internal/intel/store"
 	"prism/internal/keys"
 	"prism/internal/metrics"
+	"prism/internal/model"
 	"prism/internal/netutil"
 	"prism/internal/node"
 	"prism/internal/proxy"
@@ -82,6 +83,9 @@ type prismApp struct {
 	usageSessions *usage.ConnRegistry
 	// stopUsageAccounting cancels the flusher and the enforcer.
 	stopUsageAccounting func()
+	// stopSessionPruner stops the sweep that deletes expired console
+	// sessions from state.db.
+	stopSessionPruner func()
 }
 
 // run assembles and runs the Prism service.
@@ -708,17 +712,41 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	usageQuota := &usage.Gate{Limiter: usageLimiter}
 	usageMetering := &usage.Sink{Counters: a.usageCounters}
 
-	// The allowance is a running total and the counters start empty, so the
-	// persisted usage is loaded back before anything can be served. Without
-	// this a restart would hand every user their whole allowance again.
-	if subs, err := engine.ListUserSubscriptions(); err != nil {
-		log.Printf("Usage accounting: cannot read subscriptions to restore usage: %v", err)
-	} else if seeded := a.usageCounters.SeedFromSubscriptions(subs, time.Now().UnixNano()); seeded > 0 {
-		log.Printf("Usage accounting: restored period usage for %d subscription(s)", seeded)
+	// A refused request never reaches the request lifecycle, so it would
+	// otherwise leave no trace at all: neither the request log nor the server
+	// log would say which limit stopped which key. The data plane reports the
+	// refusal here, with the key id and the reason only - no credential and
+	// nothing that identifies the account behind the key.
+	quotaRefusalLogf := func(format string, args ...any) {
+		log.Printf(format, args...)
 	}
 
 	accountingCtx, cancelAccounting := context.WithCancel(context.Background())
 	a.stopUsageAccounting = cancelAccounting
+
+	// The allowance is a running total and the counters start empty, so the
+	// persisted usage is loaded back before anything can be served. Without
+	// this a restart would hand every user their whole allowance again, while
+	// the disk rows the flusher keeps adding to would keep the old usage:
+	// memory and disk would disagree for as long as the process lived.
+	//
+	// The read is retried, because a state.db that is momentarily busy must
+	// not cost every user a second allowance. Serving from zero is the only
+	// remaining option - refusing service would be worse - so the process does
+	// that, says so loudly, and keeps trying in the background until the
+	// persisted totals are back in memory.
+	seedRetry := usageSeedRetry{attempts: 4, backoff: 250 * time.Millisecond}
+	seeded, seedErr := seedUsage(a.usageCounters, engine, seedRetry, usage.DefaultLogf)
+	if seedErr != nil {
+		usage.DefaultLogf(
+			"Usage accounting: cannot read subscriptions to restore usage after %d attempts: %v; "+
+				"period usage is counted from zero for now, which hands every user a second allowance "+
+				"until a re-seed succeeds - the process keeps trying every %s",
+			seedRetry.attempts, seedErr, usage.DefaultFlushInterval)
+		go reseedUsageUntilApplied(accountingCtx, a.usageCounters, engine, usage.DefaultFlushInterval, usage.DefaultLogf)
+	} else if seeded > 0 {
+		usage.DefaultLogf("Usage accounting: restored period usage for %d subscription(s)", seeded)
+	}
 
 	go (&usage.Flusher{
 		Counters: a.usageCounters,
@@ -757,6 +785,17 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		}).Start(accountingCtx)
 	}
 	log.Println("Usage accounting started")
+
+	// Expired console sessions are swept on a slow loop of their own. Nothing
+	// else ever deletes them: a login writes a row, and once the row's own
+	// expiry has passed it would stay in state.db forever, which is what turns
+	// a deleted user's credentials into permanent rows. The sweep belongs with
+	// the accounting loops: same database, same process-owned timer.
+	a.stopSessionPruner = (&usage.SessionPruner{
+		Store: engine,
+		Logf:  usage.DefaultLogf,
+	}).Start()
+	log.Println("Session pruner started")
 
 	// Console authentication. One session service is shared by the identity
 	// middleware and the auth handlers, so a login writes the row that the very
@@ -873,6 +912,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Metering:                usageMetering,
 		Quota:                   usageQuota,
 		Sessions:                a.usageSessions,
+		QuotaLogf:               quotaRefusalLogf,
 	})
 
 	reverseProxy := proxy.NewReverseProxy(proxy.ReverseProxyConfig{
@@ -893,6 +933,8 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		AuthGuard:               proxyAuthGuard,
 		Metering:                usageMetering,
 		Quota:                   usageQuota,
+		Sessions:                a.usageSessions,
+		QuotaLogf:               quotaRefusalLogf,
 	})
 	socks5Inbound := proxy.NewSocks5Inbound(proxy.Socks5InboundConfig{
 		ProxyToken:              a.envCfg.ProxyToken,
@@ -909,6 +951,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Metering:                usageMetering,
 		Quota:                   usageQuota,
 		Sessions:                a.usageSessions,
+		QuotaLogf:               quotaRefusalLogf,
 	})
 	// the SOCKS5 username/password check happens on a raw TCP
 	// session, so the mux cannot meter it with an http.ResponseWriter; the
@@ -943,6 +986,158 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.endpointManager = endpointManager
 
 	return nil
+}
+
+// usageSeedRetry bounds the startup seed: how many times the persisted
+// subscriptions are re-read, and how long the process waits between attempts.
+type usageSeedRetry struct {
+	attempts int
+	backoff  time.Duration
+}
+
+// usageSeedSource is the read the startup seed needs: the stored subscriptions,
+// whose period totals are the allowance a restart must not hand out again. A
+// *state.StateEngine satisfies it; the interface exists so the startup path can
+// be tested without a database.
+type usageSeedSource interface {
+	ListUserSubscriptions() ([]model.UserSubscription, error)
+}
+
+// seedUsage restores the persisted period usage into the running counters.
+//
+// It answers how many subscriptions were seeded and, if every attempt failed,
+// the error of the read it could not complete. The caller decides what a
+// process that has to serve without the persisted totals says about itself; the
+// retry exists because a state.db that is momentarily busy must not cost every
+// user a second allowance.
+func seedUsage(
+	counters *usage.Counters,
+	source usageSeedSource,
+	retry usageSeedRetry,
+	logf func(format string, args ...any),
+) (int, error) {
+	if counters == nil || source == nil {
+		return 0, nil
+	}
+	attempts := retry.attempts
+	if attempts < 1 {
+		attempts = 1
+	}
+	backoff := retry.backoff
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		subs, err := source.ListUserSubscriptions()
+		if err == nil {
+			return counters.SeedFromSubscriptions(subs, time.Now().UnixNano()), nil
+		}
+		lastErr = err
+		if attempt == attempts {
+			break
+		}
+		if logf != nil {
+			logf("Usage accounting: cannot read subscriptions to restore usage (attempt %d/%d): %v; retrying in %s",
+				attempt, attempts, err, backoff)
+		}
+		if backoff > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+	return 0, lastErr
+}
+
+// pendingUsageSeed reports the subscriptions whose period totals are missing
+// from the running counters.
+//
+// "Missing" is the aggregate entry, not a zero total: the counters have no
+// aggregate for a user that has never been seen, and have one - possibly at
+// zero - for a user whose period has rolled over. Only the first case means the
+// persisted total was never loaded, which is exactly what a failed startup seed
+// leaves behind.
+//
+// A user who moved traffic between the failed seed and the re-seed already has
+// an aggregate built from that traffic alone, and the flusher has already
+// charged those same bytes to the persisted total - so seeding the persisted
+// total into that aggregate would bill them twice. Such a user is therefore
+// left out, and the gap is named in the report instead of being papered over
+// with a blind add.
+//
+// The filter is the one SeedFromSubscriptions applies, so a subscription it
+// would skip can never keep the re-seed loop running.
+func pendingUsageSeed(subs []model.UserSubscription, counters *usage.Counters, nowNs int64) []model.UserSubscription {
+	if counters == nil || len(subs) == 0 {
+		return nil
+	}
+	pending := make([]model.UserSubscription, 0, len(subs))
+	for _, sub := range subs {
+		if sub.UserID == "" || sub.PeriodUsedBytes <= 0 {
+			continue
+		}
+		// Only the usage of a subscription that is still the user's current
+		// one belongs in the aggregate.
+		if sub.Status != model.SubscriptionStatusActive {
+			continue
+		}
+		if sub.ExpiresAtNs > 0 && nowNs > 0 && sub.ExpiresAtNs < nowNs {
+			continue
+		}
+		if _, present := counters.UserBytesPresent(sub.UserID); present {
+			continue
+		}
+		pending = append(pending, sub)
+	}
+	return pending
+}
+
+// reseedUsageUntilApplied closes the gap a failed startup seed leaves open.
+//
+// It runs on the accounting context, so a shutdown stops it, and on the flush
+// cadence: a subscription the flusher is writing for is one the seed should
+// have covered. The loop ends as soon as nothing is missing, so it cannot fight
+// the flusher or the period reset for control of an aggregate that is already
+// live.
+func reseedUsageUntilApplied(
+	ctx context.Context,
+	counters *usage.Counters,
+	source usageSeedSource,
+	interval time.Duration,
+	logf func(format string, args ...any),
+) {
+	if counters == nil || source == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = usage.DefaultFlushInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		subs, err := source.ListUserSubscriptions()
+		if err != nil {
+			if logf != nil {
+				logf("Usage accounting: re-seed skipped, cannot read subscriptions: %v", err)
+			}
+			continue
+		}
+		pending := pendingUsageSeed(subs, counters, time.Now().UnixNano())
+		if len(pending) == 0 {
+			if logf != nil {
+				logf("Usage accounting: re-seed complete, the persisted period usage is live again")
+			}
+			return
+		}
+		seeded := counters.SeedFromSubscriptions(pending, time.Now().UnixNano())
+		if logf != nil {
+			logf("Usage accounting: re-seeded period usage for %d of %d subscription(s)", seeded, len(pending))
+		}
+	}
 }
 
 func restorePersistedEndpoints(engine *state.StateEngine, endpointManager *endpointRuntimeManager) error {
@@ -1054,6 +1249,15 @@ func (a *prismApp) shutdown() {
 		a.transportPool.CloseAll()
 		log.Println("Outbound transport pool closed")
 	}
+	// The listeners are gone, so no new session can be registered; the ones
+	// still open are hung up here rather than left to the process exit. A
+	// tunnel that outlives its listeners keeps its upstream connection - and
+	// the accounting that connection reports - alive until the OS reaps it.
+	if a.usageSessions != nil {
+		if closed := a.usageSessions.CloseAll(); closed > 0 {
+			log.Printf("Closed %d live proxy session(s)", closed)
+		}
+	}
 
 	// 2. Event sources: the scheduled rotator goes down with the router, before
 	// the lease cleaner, probes and the subscription scheduler.
@@ -1103,6 +1307,9 @@ func (a *prismApp) shutdown() {
 	}
 	if a.stopUsageRetention != nil {
 		a.stopUsageRetention()
+	}
+	if a.stopSessionPruner != nil {
+		a.stopSessionPruner()
 	}
 	if a.stopUsageAlerts != nil {
 		a.stopUsageAlerts()

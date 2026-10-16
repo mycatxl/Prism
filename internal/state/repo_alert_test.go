@@ -182,3 +182,40 @@ func TestAlertRepo_DeleteAlertsBefore(t *testing.T) {
 		t.Fatalf("expected an empty alert log, got %+v", remaining)
 	}
 }
+
+// The delete is batched, so with a batch of one row the loop has to run once per
+// row: reporting a single batch's worth is what a one-statement version would
+// do, and it would leave the rest of the old rows behind.
+func TestAlertRepo_DeleteAlertsBeforeBatches(t *testing.T) {
+	repo := newTestStateRepo(t)
+	original := stateDeleteBatch
+	stateDeleteBatch = 1
+	t.Cleanup(func() { stateDeleteBatch = original })
+
+	cutoff := int64(1700000000_000000000)
+	for i, id := range []string{"alrt-1", "alrt-2", "alrt-3"} {
+		if _, err := repo.InsertAlert(alertFixture(id, cutoff-int64(i)-1)); err != nil {
+			t.Fatalf("InsertAlert(%s): %v", id, err)
+		}
+	}
+	// Still inside the retention window; the delete must not reach it.
+	if _, err := repo.InsertAlert(alertFixture("alrt-keep", cutoff)); err != nil {
+		t.Fatalf("InsertAlert(alrt-keep): %v", err)
+	}
+
+	removed, err := repo.DeleteAlertsBefore(cutoff)
+	if err != nil {
+		t.Fatalf("DeleteAlertsBefore: %v", err)
+	}
+	if removed != 3 {
+		t.Errorf("removed %d alerts, want 3 (several batches)", removed)
+	}
+
+	remaining, err := repo.ListAlerts(0, 0, false)
+	if err != nil {
+		t.Fatalf("ListAlerts: %v", err)
+	}
+	if len(remaining) != 1 || remaining[0].ID != "alrt-keep" {
+		t.Fatalf("rows left: %+v, want only alrt-keep", remaining)
+	}
+}

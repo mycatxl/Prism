@@ -23,10 +23,13 @@ import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { createPlan, deletePlan, listPlans, updatePlan } from "./api";
+import {
+  BITS_PER_MBPS,
+  BYTES_PER_GB,
+  exactUnitsText,
+  unitsToBase,
+} from "./plan-units";
 import type { AdminPlan, PlanPatch, PlanStatus, PlanWrite } from "./types";
-
-const BYTES_PER_GB = 1024 * 1024 * 1024;
-const BITS_PER_MBPS = 1_000_000;
 
 export function PlansPage() {
   const { t } = useI18n();
@@ -311,20 +314,27 @@ function PlanFormContent({
   const [ipTiersRaw, setIpTiersRaw] = useState(
     initialPlan?.ip_tiers?.join(", ") ?? "",
   );
-  const [trafficGB, setTrafficGB] = useState(
-    initialPlan && initialPlan.traffic_bytes > 0
-      ? String(Math.round(initialPlan.traffic_bytes / BYTES_PER_GB))
-      : "0",
+  const [trafficGB, setTrafficGB] = useState(() =>
+    exactUnitsText(initialPlan?.traffic_bytes ?? 0, BYTES_PER_GB),
+  );
+  /*
+   * The stored byte count, kept until the operator edits the field. Without it the
+   * form only ever had the rounded GB text, so saving a *name* change rewrote the
+   * quota: 1.5 GiB was displayed as "2" and multiplied back into 2 GiB.
+   */
+  const [trafficBytesExact, setTrafficBytesExact] = useState<number | null>(
+    initialPlan ? initialPlan.traffic_bytes : null,
   );
   const [period, setPeriod] = useState(initialPlan?.period || "month");
   const [maxConcurrent, setMaxConcurrent] = useState(
     String(initialPlan?.max_concurrent ?? 0),
   );
   const [maxRps, setMaxRps] = useState(String(initialPlan?.max_rps ?? 0));
-  const [maxBandwidthMbps, setMaxBandwidthMbps] = useState(
-    initialPlan && initialPlan.max_bandwidth_bps > 0
-      ? String(Math.round(initialPlan.max_bandwidth_bps / BITS_PER_MBPS))
-      : "0",
+  const [maxBandwidthMbps, setMaxBandwidthMbps] = useState(() =>
+    exactUnitsText(initialPlan?.max_bandwidth_bps ?? 0, BITS_PER_MBPS),
+  );
+  const [bandwidthBpsExact, setBandwidthBpsExact] = useState<number | null>(
+    initialPlan ? initialPlan.max_bandwidth_bps : null,
   );
   const [maxKeys, setMaxKeys] = useState(String(initialPlan?.max_keys ?? 5));
   const [durationDays, setDurationDays] = useState(
@@ -352,11 +362,12 @@ function PlanFormContent({
         .map((s) => s.trim())
         .filter(Boolean);
 
-      const parsedTrafficGB = Number(trafficGB) || 0;
-      const trafficBytes = parsedTrafficGB > 0 ? parsedTrafficGB * BYTES_PER_GB : 0;
-
-      const parsedMbps = Number(maxBandwidthMbps) || 0;
-      const bandwidthBps = parsedMbps > 0 ? parsedMbps * BITS_PER_MBPS : 0;
+      // An untouched field submits the exact stored number; an edited one is the
+      // operator's own figure, converted once.
+      const trafficBytes =
+        trafficBytesExact ?? unitsToBase(trafficGB, BYTES_PER_GB);
+      const bandwidthBps =
+        bandwidthBpsExact ?? unitsToBase(maxBandwidthMbps, BITS_PER_MBPS);
 
       const payload: PlanWrite = {
         name: trimmedName,
@@ -472,7 +483,11 @@ function PlanFormContent({
                   type="number"
                   min="0"
                   value={trafficGB}
-                  onChange={(e) => setTrafficGB(e.target.value)}
+                  onChange={(e) => {
+                    // The field now owns the number: the stored one no longer applies.
+                    setTrafficGB(e.target.value);
+                    setTrafficBytesExact(null);
+                  }}
                 />
               </Fieldset>
 
@@ -545,7 +560,10 @@ function PlanFormContent({
                 type="number"
                 min="0"
                 value={maxBandwidthMbps}
-                onChange={(e) => setMaxBandwidthMbps(e.target.value)}
+                onChange={(e) => {
+                  setMaxBandwidthMbps(e.target.value);
+                  setBandwidthBpsExact(null);
+                }}
               />
             </Fieldset>
 

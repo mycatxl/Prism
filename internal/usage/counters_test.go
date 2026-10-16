@@ -263,3 +263,34 @@ func TestCounters_NilIsSafe(t *testing.T) {
 		t.Fatalf("nil counters drained %+v", got)
 	}
 }
+
+// "No aggregate" and "an aggregate of zero" are different answers, and the
+// quota check has to be able to tell them apart: a period rollover zeroes the
+// total while keeping the entry, and the key's own counter still holds the
+// previous period's bytes until the flush writes them.
+func TestCounters_UserBytesPresentDistinguishesZeroFromAbsent(t *testing.T) {
+	counters := NewCounters()
+
+	if total, ok := counters.UserBytesPresent("u-1"); ok || total != 0 {
+		t.Fatalf("an unknown user reported (%d, %v), want (0, false)", total, ok)
+	}
+	// The empty user id has no aggregate by definition, and neither has a nil
+	// counter set.
+	if _, ok := counters.UserBytesPresent(""); ok {
+		t.Fatal("the empty user id reported an aggregate")
+	}
+	var none *Counters
+	if total, ok := none.UserBytesPresent("u-1"); ok || total != 0 {
+		t.Fatalf("a nil counter set reported (%d, %v)", total, ok)
+	}
+
+	counters.Add(CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}, Delta{IngressBytes: 400})
+	if total, ok := counters.UserBytesPresent("u-1"); !ok || total != 400 {
+		t.Fatalf("after 400 bytes the user reported (%d, %v), want (400, true)", total, ok)
+	}
+
+	counters.ResetUser("u-1")
+	if total, ok := counters.UserBytesPresent("u-1"); !ok || total != 0 {
+		t.Fatalf("after a rollover the user reported (%d, %v), want (0, true): the entry has to survive the reset", total, ok)
+	}
+}

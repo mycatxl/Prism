@@ -111,6 +111,50 @@ func (l *AuthFailureLimiter) ClientIP(r *http.Request) string {
 	return remote
 }
 
+// IsSecureRequest reports whether a request reached the server over HTTPS as far
+// as the end user is concerned.
+//
+// Prism does not terminate TLS itself - TLS is terminated in front of it - so
+// r.TLS is nil on every request a production deployment serves and the only
+// other evidence is a forwarded header any client can write. That header is
+// therefore believed only when the request arrived directly from a configured
+// trusted proxy, which keeps a deployment that sets no PRISM_TRUSTED_PROXIES on
+// exactly the answer the connection itself gives.
+//
+// The last entry of X-Forwarded-Proto is the one read, for the same reason
+// lastUntrustedForwardedIP takes the rightmost address: a proxy configured the
+// way this list requires appends what it saw, so the entries to its left may be
+// client-supplied.
+func (l *AuthFailureLimiter) IsSecureRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil {
+		return true
+	}
+	// isTrustedAddress is nil-safe: a server without a limiter trusts nothing.
+	if !l.isTrustedAddress(hostOnly(r.RemoteAddr)) {
+		return false
+	}
+	return forwardedProtoIsHTTPS(r)
+}
+
+// forwardedProtoIsHTTPS reports whether the nearest trusted hop said the request
+// was made over HTTPS. A missing header, "http", or a chain ending in "http"
+// all answer no.
+func forwardedProtoIsHTTPS(r *http.Request) bool {
+	scheme := ""
+	for _, value := range r.Header.Values("X-Forwarded-Proto") {
+		for _, part := range strings.Split(value, ",") {
+			trimmed := strings.TrimSpace(part)
+			if trimmed != "" {
+				scheme = trimmed
+			}
+		}
+	}
+	return strings.EqualFold(scheme, "https")
+}
+
 // Blocked reports whether ip is currently blocked and, if so, for how long.
 func (l *AuthFailureLimiter) Blocked(ip string) (bool, time.Duration) {
 	if !l.Enabled() || ip == "" {
@@ -157,6 +201,24 @@ func (l *AuthFailureLimiter) RecordFailure(ip string) {
 	entry.failures++
 	if entry.failures >= l.maxFailures {
 		entry.blockedUntil = now.Add(l.blockFor)
+	}
+}
+
+// Reset clears the failure count and any block recorded for key.
+//
+// It exists for the account-dimension bucket the session service keeps beside
+// the address one: a login that succeeds proves the caller is the account's
+// owner, so failures counted against that account must not keep counting towards
+// a lockout the owner would then have to sit out. It is a no-op for an unknown
+// key, so clearing is idempotent.
+func (l *AuthFailureLimiter) Reset(key string) {
+	if l == nil || key == "" {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if entry, ok := l.entries[key]; ok {
+		l.remove(entry)
 	}
 }
 

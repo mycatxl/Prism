@@ -368,3 +368,70 @@ func TestTOTPURI(t *testing.T) {
 		t.Errorf("the bare URI is %q", bare)
 	}
 }
+
+// VerifyTOTPStep is the primitive the single-use rule is built on: it answers
+// with the step the code belonged to, which is the only stable identity a code
+// has. Two attempts a few seconds apart must report the same step, and an older
+// code inside the tolerance must report the older step rather than the one it is
+// being verified at.
+func TestVerifyTOTPStep_ReportsTheStepTheCodeBelongedTo(t *testing.T) {
+	secret, err := GenerateTOTPSecret()
+	if err != nil {
+		t.Fatalf("GenerateTOTPSecret: %v", err)
+	}
+	// Aligned to a step boundary so "the previous step" is exactly one step.
+	base := time.Unix((1_700_000_000/int64(totpStep.Seconds()))*int64(totpStep.Seconds()), 0)
+	want := base.Unix() * int64(time.Second)
+
+	current, err := TOTPCode(secret, base)
+	if err != nil {
+		t.Fatalf("TOTPCode: %v", err)
+	}
+	stepNs, ok := VerifyTOTPStep(secret, current, base)
+	if !ok {
+		t.Fatal("the current code was refused")
+	}
+	if stepNs != want {
+		t.Fatalf("the step of the current code: got %d, want %d", stepNs, want)
+	}
+
+	// A few seconds later, still inside the same step, the same code reports
+	// the same step: this is what makes the ledger comparable across attempts.
+	later := base.Add(totpStep - time.Second)
+	if stepNs, ok := VerifyTOTPStep(secret, current, later); !ok || stepNs != want {
+		t.Fatalf("the step of the same code later in its window: got (%d, %v), want (%d, true)", stepNs, ok, want)
+	}
+
+	// The previous step's code is accepted inside the tolerance, and it names
+	// its own step.
+	previous, err := TOTPCode(secret, base.Add(-totpStep))
+	if err != nil {
+		t.Fatalf("TOTPCode(previous): %v", err)
+	}
+	twoOld, err := TOTPCode(secret, base.Add(-2*totpStep))
+	if err != nil {
+		t.Fatalf("TOTPCode(two steps old): %v", err)
+	}
+	if previous == current || previous == twoOld {
+		// A one-in-a-million collision between two steps of this secret; the
+		// newest match would win and the assertion below would be about that
+		// instead.
+		t.Log("two steps of this secret generated the same code; skipping the ordering check")
+	} else if stepNs, ok := VerifyTOTPStep(secret, previous, base); !ok || stepNs != want-int64(totpStep) {
+		t.Fatalf("the step of the previous code: got (%d, %v), want (%d, true)", stepNs, ok, want-int64(totpStep))
+	}
+
+	// Outside the tolerated window: refused, and no step is reported.
+	if stepNs, ok := VerifyTOTPStep(secret, twoOld, base); ok || stepNs != 0 {
+		t.Fatalf("a code two steps old reported (%d, %v), want (0, false)", stepNs, ok)
+	}
+
+	for _, code := range []string{"", "12345", current + "0", "abcdef", "      "} {
+		if stepNs, ok := VerifyTOTPStep(secret, code, base); ok {
+			t.Errorf("the malformed code %q reported the step %d", code, stepNs)
+		}
+	}
+	if _, ok := VerifyTOTPStep("not base32!!", current, base); ok {
+		t.Error("a code was accepted for an undecodable secret")
+	}
+}

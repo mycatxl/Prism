@@ -12,7 +12,7 @@ not depend on any of them.
 
 ```bash
 make build      # frontend bundle + ./bin/prism
-make backend    # Go binary only
+make backend    # ./bin/prism (embeds the frontend bundle it builds first)
 make verify     # vet + tests + race + protocol matrix + frontend checks
 make smoke      # end-to-end run of the built binary
 ```
@@ -36,8 +36,22 @@ every mihomo node still fails with `ENGINE_NOT_BUILT`.
 ./bin/prism
 ```
 
+`prism init` creates the administrator (`admin`; the password comes from
+`--admin-password`, or is generated and printed once), the password pepper in
+`PRISM_STATE_DIR` and a random proxy token. It refuses to run against a store
+that already holds a user, so an existing installation is never overwritten:
+starting over means backing up and removing the data directory. `--force`
+overwrites the generated `.env` only, moving the old one to
+`.env.bak.<timestamp>`. There is no `PRISM_ADMIN_TOKEN` - the console keeps its
+session in the `prism_session` HttpOnly cookie and echoes `prism_csrf` in
+`X-Prism-CSRF` on writes; automation uses an admin access key instead.
+
 The panel is served at `/ui/`. The example environment binds to `127.0.0.1` by
-default; terminate TLS in front of Prism, it has no TLS listener of its own.
+default. Prism has no TLS listener of its own: terminate TLS in a reverse proxy
+and list that proxy in `PRISM_TRUSTED_PROXIES`, which is what makes Prism read
+its `X-Forwarded-Proto: https`. Without that entry the request is plaintext HTTP
+from Prism's point of view, and the session cookie is issued only for a loopback
+plaintext request - a remote panel over a proxy that is not listed cannot log in.
 
 Container deployment uses `Dockerfile` and `docker-compose.yml.example`, which
 documents the volume layout, the container user and the health check.
@@ -45,8 +59,13 @@ documents the volume layout, the container user and the health check.
 ## Configuration
 
 Every setting is a `PRISM_*` variable; `.env.example` and
-`deploy/backend.env.example` list them with their defaults. `./bin/prism
-check-config` prints the effective configuration with every secret masked.
+`deploy/backend.env.example` document all of them with the value that applies
+when the line is absent. `./bin/prism check-config` prints the effective
+configuration with every secret masked, one row per setting, and the last column
+says where the value came from: `env` (process environment or `./.env`),
+`legacy` (the deprecated `RESIN_` spelling), `empty` (set but empty, so the
+default applies) or `default`. A test keeps that table and `.env.example` in
+step with the loader.
 
 Several switches are on by default: `PRISM_DENY_PRIVATE_NODES`,
 `PRISM_DIRECT_DENY_PRIVATE`, `PRISM_BLOCKED_DESTINATION_PORTS=25,465,587` and
@@ -68,7 +87,7 @@ The deployment is multi-tenant: an administrator keeps the nodes, plans and
 tenant accounts, while each tenant only sees its own subscription, keys and
 usage under `/api/v1/me/*`. Roles, registration modes, plan snapshots, key
 revocation and the retention windows are documented in
-[`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md). That guide also covers the abuse-protection defaults and the usage-anomaly alerts: an account that spends a third of its plan quota inside an hour is reported once (`PRISM_ALERT_USAGE_RATIO`, `PRISM_ALERT_WINDOW_MINUTES`, `PRISM_ALERT_RETENTION_DAYS`, all three hot-changeable in the console).
+[`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md). That guide also covers the abuse-protection defaults and the usage-anomaly alerts: an account that spends a third of its plan quota inside an hour is reported once (`PRISM_ALERT_USAGE_RATIO`, `PRISM_ALERT_WINDOW_MINUTES`, `PRISM_ALERT_RETENTION_DAYS`). The three are hot-changeable in the console, where a change is in force at the next scan - at most a minute later, not instantly.
 
 ## Layout
 

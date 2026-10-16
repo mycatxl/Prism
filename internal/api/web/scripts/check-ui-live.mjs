@@ -118,6 +118,14 @@ const ADMIN_USER = "admin";
 const DASHBOARD = "/ui/dashboard";
 const NODES = "/ui/nodes";
 
+/*
+ * The heading `src/components/ErrorBoundary.tsx` renders when a route throws.
+ * It is an `<main><h1>` exactly like every real page heading, so the selector
+ * "a heading is visible" was satisfied by a crashed page — which is how a
+ * broken route could report clean.
+ */
+const RENDER_FAILURE_TITLE = "界面渲染失败";
+
 // ---------------------------------------------------------------------------
 // Check registry
 // ---------------------------------------------------------------------------
@@ -355,7 +363,11 @@ check("every route renders without a page or console error", async ({ origin, pa
     errors.reset(path);
     await page.goto(origin + path);
     if (!(await rendered(page))) failures.push(`${path}: no page heading rendered`);
-    await page.waitForTimeout(150);
+    // `rendered` already rejects the boundary's heading; this names the crash in
+    // the report instead of leaving a route that merely "did not render".
+    const crashed = await crashReport(page);
+    if (crashed) failures.push(`${path}: the error boundary rendered 界面渲染失败 (${crashed})`);
+    await quiet(page);
     for (const message of errors.drain()) failures.push(`${path}: ${message.text}`);
   }
   assert.deepEqual(failures, [], "routes that did not render cleanly:\n  " + failures.join("\n  "));
@@ -604,7 +616,9 @@ check("a tenant session reaches the self-service panel and nothing else", async 
       tenantErrors.reset(path);
       await tenantPage.goto(origin + path);
       assert(await rendered(tenantPage), `${path}: no page heading rendered`);
-      await tenantPage.waitForTimeout(150);
+      const crashed = await crashReport(tenantPage);
+      assert.equal(crashed, null, `${path}: the error boundary rendered 界面渲染失败 (${crashed})`);
+      await quiet(tenantPage);
       const logged = tenantErrors.drain();
       assert.deepEqual(logged, [], `${path}: ${logged.map((entry) => entry.text).join("; ")}`);
     }
@@ -901,14 +915,51 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
 // Runner
 // ---------------------------------------------------------------------------
 
-/** Waits until the route has painted a page heading inside the shell's main region. */
+/**
+ * Waits until the route has painted a page heading inside the shell's main region.
+ *
+ * The presence of a heading is not enough: the error boundary renders
+ * `<main><h1>界面渲染失败</h1>`, which matches the very same selector. A crash
+ * therefore used to read as a clean render on every route but /ui/nodes (the one
+ * check that asserted the text). The heading's own text is the discriminator.
+ */
 async function rendered(page) {
   try {
-    await page.locator("main h1").first().waitFor({ state: "visible", timeout: 15000 });
-    return true;
+    const heading = page.locator("main h1").first();
+    await heading.waitFor({ state: "visible", timeout: 15000 });
+    return (await heading.innerText()).trim() !== RENDER_FAILURE_TITLE;
   } catch {
     return false;
   }
+}
+
+/**
+ * The first line of a crashed page, or null when the page rendered normally.
+ *
+ * Returned as text for the failure report: "no page heading rendered" alone does
+ * not say whether the route is broken or the boundary is.
+ */
+async function crashReport(page) {
+  try {
+    const text = await page.locator("main").first().innerText({ timeout: 2000 });
+    if (!text.includes(RENDER_FAILURE_TITLE)) return null;
+    return text.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 3).join(" / ");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Waits for the route to go quiet before its console output is judged.
+ *
+ * A fixed 150ms sleep was the old clock, and a render error that landed after it
+ * was thrown away by the next route's `errors.reset()` — charged to nobody.
+ * Pending requests are the clock that matters, because the tables are filled from
+ * effects. Bounded and swallowed: the dashboard polls on an interval, so "never
+ * idle" must cost a few seconds here, not hang the gate.
+ */
+async function quiet(page) {
+  await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
 }
 
 const root = await mkdtemp(join(tmpdir(), "prism-live-test-"));

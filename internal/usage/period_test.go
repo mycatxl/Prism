@@ -3,6 +3,8 @@ package usage
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -484,5 +486,124 @@ func TestPeriodReset_ConcurrentPassesDoNotDoubleReset(t *testing.T) {
 		if call.fromNs != start.UnixNano() {
 			t.Fatalf("a reset used period start %d, want %d", call.fromNs, start.UnixNano())
 		}
+	}
+}
+
+// A period name that arrives in another case or with padding around it is the
+// same period. The management API trims whitespace, fills in a default for an
+// empty value and validates nothing else, so "Month", "MONTH" and " month " are
+// what a plan row actually holds. The rollover used to compare the raw value
+// against the constants while the length parser normalized it, so those variants
+// matched neither branch: advancePeriod answered "no rollover" and the
+// subscription kept the allowance it had spent, permanently and unlogged.
+//
+// The table asserts the effect rather than the comparison: every variant of a
+// period has to advance exactly like the canonical spelling, and a value that is
+// genuinely not a period has to be reported.
+func TestPeriodReset_PeriodNamesAreNormalized(t *testing.T) {
+	monthStart := time.Date(2026, 1, 31, 12, 0, 0, 0, time.UTC)
+	monthNow := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	// The boundary clamps to February's real length: the calendar branch, not
+	// thirty days.
+	monthNext := time.Date(2026, 2, 28, 12, 0, 0, 0, time.UTC)
+
+	dayStart := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	dayNow := dayStart.AddDate(0, 0, 31)
+
+	cases := []struct {
+		name       string
+		period     string
+		start      time.Time
+		now        time.Time
+		wantRolled bool
+		wantNext   time.Time
+		wantWarned bool
+	}{
+		{name: "month", period: "month", start: monthStart, now: monthNow, wantRolled: true, wantNext: monthNext},
+		{name: "Month", period: "Month", start: monthStart, now: monthNow, wantRolled: true, wantNext: monthNext},
+		{name: "MONTH", period: "MONTH", start: monthStart, now: monthNow, wantRolled: true, wantNext: monthNext},
+		{name: "padded month", period: " month ", start: monthStart, now: monthNow, wantRolled: true, wantNext: monthNext},
+		{name: "30d", period: "30d", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayStart.AddDate(0, 0, 30)},
+		{name: "30D padded", period: " 30D ", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayStart.AddDate(0, 0, 30)},
+		{name: "7d", period: "7d", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayStart.AddDate(0, 0, 28)},
+		{name: "week", period: "week", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayStart.AddDate(0, 0, 28)},
+		{name: "Week padded", period: " Week ", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayStart.AddDate(0, 0, 28)},
+		{name: "day", period: "day", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayNow},
+		{name: "DAY", period: "DAY", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayNow},
+		{name: "empty falls back to the default", period: "", start: dayStart, now: dayNow, wantRolled: true, wantNext: dayStart.AddDate(0, 0, 30)},
+		{name: "once", period: "once", start: dayStart, now: dayNow},
+		{name: "Once", period: "Once", start: dayStart, now: dayNow},
+		{name: "ONCE padded", period: " ONCE ", start: dayStart, now: dayNow},
+		{name: "unknown period is reported", period: "monthly", start: dayStart, now: dayNow, wantWarned: true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakePeriodStore()
+			store.plans["p-1"] = &model.Plan{ID: "p-1", Period: tc.period}
+			store.subs = []model.UserSubscription{
+				activePeriodSub("s-1", "u-1", "p-1", tc.start.UnixNano()),
+			}
+
+			var logs []string
+			reset := &PeriodReset{
+				Store: store,
+				Logf: func(format string, args ...any) {
+					logs = append(logs, fmt.Sprintf(format, args...))
+				},
+			}
+
+			result, err := reset.RunOnce(tc.now.UnixNano())
+			if err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+			if result.Checked != 1 {
+				t.Fatalf("checked %d subscriptions, want 1", result.Checked)
+			}
+
+			resets := store.resets()
+			if !tc.wantRolled {
+				if result.Rolled != 0 || len(resets) != 0 {
+					t.Fatalf("period %q rolled over: %+v, resets %+v", tc.period, result, resets)
+				}
+			} else {
+				if result.Rolled != 1 || len(resets) != 1 {
+					t.Fatalf("period %q rolled %d times (%d resets), want 1: the variant did not behave like its canonical spelling", tc.period, result.Rolled, len(resets))
+				}
+				if got := time.Unix(0, resets[0].toNs).UTC(); !got.Equal(tc.wantNext) {
+					t.Fatalf("the new period starts %s, want %s", got, tc.wantNext)
+				}
+			}
+
+			// The rollover logs its success through the same hook, so a warning
+			// is counted by what it says, not by the hook being used.
+			warnings := 0
+			for _, line := range logs {
+				if strings.Contains(line, "unrecognized period") {
+					warnings++
+				}
+			}
+			if tc.wantWarned {
+				if warnings != 1 {
+					t.Fatalf("logged %v for period %q, want one warning", logs, tc.period)
+				}
+				if !strings.Contains(logs[0], tc.period) {
+					t.Fatalf("the warning does not name the period: %q", logs[0])
+				}
+			} else if warnings != 0 {
+				t.Fatalf("period %q was reported as unrecognized: %v", tc.period, logs)
+			}
+			if !tc.wantWarned {
+				return
+			}
+			// A permanently unparseable plan must not fill the log: the pass
+			// runs every minute.
+			if _, err := reset.RunOnce(tc.now.UnixNano()); err != nil {
+				t.Fatalf("RunOnce: %v", err)
+			}
+			if len(logs) != warnings {
+				t.Fatalf("the warning was emitted %d times, want once: %v", len(logs), logs)
+			}
+		})
 	}
 }

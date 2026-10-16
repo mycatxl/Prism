@@ -215,8 +215,10 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/quality/ip/{ip}", HandleQualityIP(cp))
 		authed.Handle("POST /api/v1/quality/ip/{ip}/actions/probe", HandleQualityProbeIP(cp))
 
-		// Intel store and batch jobs. The SSE stream is registered
-		// outside this mux so it can also accept ?access_token=.
+		// Intel store and batch jobs. The event stream is registered here with
+		// the rest of them: it is a management route like any other, and an
+		// EventSource sends the session cookie the way every other request does.
+		authed.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(cp))
 		authed.Handle("POST /api/v1/intel/jobs", HandleIntelCreateJob(cp))
 		authed.Handle("GET /api/v1/intel/jobs", HandleIntelListJobs(cp))
 		authed.Handle("GET /api/v1/intel/jobs/{id}", HandleIntelGetJob(cp))
@@ -354,7 +356,6 @@ func NewServerWithAddress(
 		// failed attempts" mean the same thing to both paths.
 		authLimiter = authDeps.Blocklist
 	}
-	mux.Handle("GET /api/v1/intel/jobs/{id}/events", HandleIntelJobEvents(cp))
 
 	// Authentication: the console's session routes, and the middleware that
 	// guards everything else.
@@ -369,6 +370,19 @@ func NewServerWithAddress(
 		// client after the fact. Without it a failed login would not count
 		// towards the block that the middleware enforces.
 		handlers.ClientKey = authLimiter.ClientIP
+		// Registration counts its failures against the same limiter, so an
+		// address that keeps being refused a sign-up is blocked by the
+		// middleware exactly like one that keeps failing a login.
+		handlers.FailureLimiter = authLimiter
+		// The same limiter owns the trusted-proxy list, so it also answers
+		// whether a request is HTTPS for the end user: behind the proxy that
+		// terminates TLS, the connection itself never says so.
+		handlers.SecureTransport = authLimiter.IsSecureRequest
+		if cp != nil && cp.Engine != nil {
+			// A refused login is the one management write the audit middleware
+			// never records, because it records only the successful ones.
+			handlers.AuditLog = cp.Engine
+		}
 		authed.Handle("POST /api/v1/auth/login", handlers.HandleLogin())
 		// Sign-up is the second route reachable without an identity. It is
 		// always registered: the handler refuses when the deployment has

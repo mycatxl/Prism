@@ -3,6 +3,7 @@ package state
 import (
 	"database/sql"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"prism/internal/model"
@@ -38,8 +39,23 @@ func (r *StateRepo) InsertUser(u model.User) error {
 	return err
 }
 
-// UpdateUser replaces the mutable fields of an existing user. Username is
-// unique, so renaming onto a taken name returns ErrConflict.
+// UpdateUser replaces every mutable column of a user row in one statement.
+// Username is unique, so renaming onto a taken name returns ErrConflict.
+//
+// A whole-row write is only safe for a caller that owns the row for the whole
+// read-modify-write - seeding a fixture, importing a row. A caller that read
+// the row, decided something, and is now writing it back must use one of the
+// single-column writers below instead (UpdateUserPassword, UpdateUserStatus,
+// UpdateUserRole, UpdateUserTOTPSecret). This statement also carries the columns
+// that caller's read copied, so any write that landed in between - the second
+// administrator disabling the account while this one resets a password - is
+// silently reverted, and the answer still reads as a success. The login path and
+// the subscription terms write made the same choice for the same reason
+// (MarkUserLogin, UpdateUserSubscriptionTerms).
+//
+// totp_last_used_ns is deliberately not one of these columns: it is the replay
+// ledger, it may only move forward (AdvanceTOTPLastUsed), and only a replaced
+// secret may clear it (ResetTOTPLastUsed).
 func (r *StateRepo) UpdateUser(u model.User) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -70,13 +86,13 @@ func (r *StateRepo) UpdateUser(u model.User) error {
 }
 
 const userColumns = `id, username, password_hash, role, status, totp_secret_enc,
-	created_at_ns, updated_at_ns, last_login_ns`
+	created_at_ns, updated_at_ns, last_login_ns, totp_last_used_ns`
 
 func scanUser(row interface{ Scan(...any) error }) (model.User, error) {
 	var u model.User
 	var totp []byte
 	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.Status, &totp,
-		&u.CreatedAtNs, &u.UpdatedAtNs, &u.LastLoginNs)
+		&u.CreatedAtNs, &u.UpdatedAtNs, &u.LastLoginNs, &u.TOTPLastUsedNs)
 	if err != nil {
 		return model.User{}, err
 	}
@@ -306,9 +322,169 @@ func (r *StateRepo) MarkUserLogin(id string, atNs int64) error {
 	return nil
 }
 
+// updateUserColumn writes one column of one user row and stamps updated_at_ns.
+//
+// The column name is a literal chosen by the callers below, never a value that
+// came from a request, which is what keeps the concatenated statement safe.
+//
+// Zero rows means the account is gone, and that is checked rather than inferred
+// from the count: a write that stores the value the row already holds is a
+// success, and how a driver counts one is not something a caller should have to
+// know (see userRowExists).
+func (r *StateRepo) updateUserColumn(id, column string, value any, atNs int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(
+		"UPDATE users SET "+column+" = ?, updated_at_ns = ? WHERE id = ?",
+		value, atNs, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		return r.userNotFoundIfAbsent(id)
+	}
+	return nil
+}
+
+// userRowExists reports whether a user row is still there. The caller holds the
+// write lock.
+func (r *StateRepo) userRowExists(id string) (bool, error) {
+	var exists int
+	if err := r.db.QueryRow("SELECT COUNT(1) FROM users WHERE id = ?", id).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists > 0, nil
+}
+
+// userNotFoundIfAbsent turns "an UPDATE matched nothing" into the answer it
+// stands for: ErrNotFound when the row is gone, and nil when it is there and the
+// statement simply had nothing to change.
+//
+// This connection's SQLite counts a row an UPDATE matched whether or not the
+// values it stores differ from the ones already in it: a write that stores the
+// terms a subscription already holds is a normal, successful write
+// (TestUpdateUserSubscriptionTerms_UnchangedTermsAreNotAMissingRow), and so is
+// clearing a replay ledger that already reads zero
+// (TestResetTOTPLastUsed_AlreadyZeroIsASuccess). The check is still made here
+// rather than assumed, because "unchanged" and "absent" have opposite answers
+// for a client and the difference is a driver detail - the same one
+// ResetSubscriptionPeriod and RevokeUserSubscription resolve with a COUNT.
+func (r *StateRepo) userNotFoundIfAbsent(id string) error {
+	exists, err := r.userRowExists(id)
+	if err != nil {
+		return fmt.Errorf("check user %s: %w", id, err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UpdateUserPassword writes the password hash of one account and nothing else.
+//
+// This is the write the console's password change and password reset use. The
+// caller read the row, checked or policed a password, and hashed the new one -
+// tens of milliseconds with argon2id - and every other column it copied belongs
+// to whoever wrote it after that read: writing the whole row back would revert a
+// concurrent status or role change silently, which is the one outcome a "my
+// password was leaked, change it" flow must not have.
+func (r *StateRepo) UpdateUserPassword(id, passwordHash string, atNs int64) error {
+	return r.updateUserColumn(id, "password_hash", passwordHash, atNs)
+}
+
+// UpdateUserStatus writes the status of one account and nothing else.
+func (r *StateRepo) UpdateUserStatus(id, status string, atNs int64) error {
+	return r.updateUserColumn(id, "status", status, atNs)
+}
+
+// UpdateUserRole writes the role of one account and nothing else.
+func (r *StateRepo) UpdateUserRole(id, role string, atNs int64) error {
+	return r.updateUserColumn(id, "role", role, atNs)
+}
+
+// UpdateUserTOTPSecret writes the sealed second factor of one account and
+// nothing else. A nil value clears it, which is how the factor is removed.
+func (r *StateRepo) UpdateUserTOTPSecret(id string, sealed []byte, atNs int64) error {
+	return r.updateUserColumn(id, "totp_secret_enc", sealed, atNs)
+}
+
+// ResetTOTPLastUsed clears the replay ledger of an account's second factor.
+//
+// The ledger is monotone by design, and this is the one place it moves backwards:
+// it is called when the secret the ledger belongs to is replaced or removed
+// (service.ConfirmTOTPEnrolment, service.DisableTOTP). A step spent by a code
+// computed from the old secret says nothing about the new one, and leaving it
+// behind would refuse a perfectly fresh code that happens to fall inside the same
+// thirty-second step - the account would be refused with TOTP_ALREADY_USED in
+// the one flow that exists to hand it a working second factor.
+//
+// AdvanceTOTPLastUsed is deliberately not reused for this: its guard is
+// totp_last_used_ns < ?, so it can only raise the value, and asking it for a
+// lower one is a no-op that reports the step as already spent.
+func (r *StateRepo) ResetTOTPLastUsed(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec("UPDATE users SET totp_last_used_ns = 0 WHERE id = ?", id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		// A ledger that already reads zero is the ordinary case - a factor
+		// enrolled on an account that never signed in with one - so this is
+		// the path that must not read "nothing changed" as "no such row".
+		return r.userNotFoundIfAbsent(id)
+	}
+	return nil
+}
+
+// AdvanceTOTPLastUsed spends the step a second factor's code belonged to, and
+// reports whether this call is the one that spent it.
+//
+// A compare and set, not a write: the step being spent must be newer than the
+// last one this account spent, so of two logins arriving with the same code
+// exactly one is accepted, and a code from an earlier step (still inside the
+// accepted tolerance) can never be replayed. The caller must treat false as a
+// refusal, and an error as a refusal too: the state of the factor is then
+// unknown, and letting an unknown state through is what this exists to prevent.
+func (r *StateRepo) AdvanceTOTPLastUsed(userID string, stepNs int64) (bool, error) {
+	if userID == "" {
+		return false, ErrNotFound
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE users SET totp_last_used_ns = ?
+		WHERE id = ? AND totp_last_used_ns < ?
+	`, stepNs, userID, stepNs)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := result.RowsAffected(); n > 0 {
+		return true, nil
+	}
+
+	// Nothing was updated: either the account does not exist or the step has
+	// already been spent. The caller refuses either way; telling the two apart
+	// is for the operator reading a log, not for the client.
+	var exists int
+	if err := r.db.QueryRow("SELECT COUNT(1) FROM users WHERE id = ?", userID).Scan(&exists); err != nil {
+		return false, err
+	}
+	if exists == 0 {
+		return false, ErrNotFound
+	}
+	return false, nil
+}
+
 // --- user_subscriptions ---
 
-// UpsertUserSubscription inserts or updates a subscription by ID.
+// UpsertUserSubscription inserts or updates a subscription by ID. A write that
+// would leave the user with a second active row is ErrConflict: 000020's
+// ux_user_subscriptions_active is the guard, and this is where its constraint
+// error becomes a conflict the caller can answer with instead of a fault.
 func (r *StateRepo) UpsertUserSubscription(s model.UserSubscription) error {
 	snapshot := strings.TrimSpace(s.PlanSnapshotJSON)
 	if snapshot == "" {
@@ -336,7 +512,90 @@ func (r *StateRepo) UpsertUserSubscription(s model.UserSubscription) error {
 			status             = excluded.status
 	`, s.ID, s.UserID, nullableString(s.PlanID), snapshot, s.StartsAtNs,
 		s.ExpiresAtNs, s.PeriodStartNs, s.PeriodUsedBytes, s.Status)
+	if isSQLiteUniqueConstraint(err) {
+		return fmt.Errorf("%w: the user already has an active subscription", ErrConflict)
+	}
 	return err
+}
+
+// UpdateUserSubscriptionTerms rewrites the terms of an existing subscription
+// and leaves the usage counters alone: period_used_bytes and period_start_ns
+// are never written here.
+//
+// The reason this method exists is that the counter has a concurrent writer.
+// The flush worker adds to period_used_bytes with an UPDATE of its own
+// (AddSubscriptionUsedBytes), while an operator's PATCH reads the row, changes
+// a term and writes it back. UpsertUserSubscription writes every column, so
+// that write-back carries the counter as it looked when the operator's read
+// happened: any increment in between is overwritten and the bytes it counted
+// are given away for free, permanently, because nothing recomputes the counter
+// from the usage tables. Writing only the terms removes the race: the terms are
+// not mutated behind the operator's back, only the counter is.
+//
+// The caller passes the complete terms (normally the row it read, with the
+// fields it is changing applied). A missing row is ErrNotFound, and a set of
+// terms that would leave a second active subscription behind is ErrConflict.
+//
+// Terms that change nothing are a write like any other: the console replaces a
+// status with the status it already holds whenever it PATCHes {"status":"active"}
+// on an active row, and that is a legal request. So zero rows affected is not
+// read as "no such row" on its own - the row is checked, which is also what the
+// other writers in this file do (ResetSubscriptionPeriod, RevokeUserSubscription,
+// userNotFoundIfAbsent).
+func (r *StateRepo) UpdateUserSubscriptionTerms(s model.UserSubscription) error {
+	snapshot := strings.TrimSpace(s.PlanSnapshotJSON)
+	if snapshot == "" {
+		snapshot = "{}"
+	}
+	if s.Status == "" {
+		s.Status = model.SubscriptionStatusActive
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE user_subscriptions SET
+			user_id            = ?,
+			plan_id            = ?,
+			plan_snapshot_json = ?,
+			starts_at_ns       = ?,
+			expires_at_ns      = ?,
+			status             = ?
+		WHERE id = ?
+	`, s.UserID, nullableString(s.PlanID), snapshot, s.StartsAtNs,
+		s.ExpiresAtNs, s.Status, s.ID)
+	if isSQLiteUniqueConstraint(err) {
+		return fmt.Errorf("%w: the user already has an active subscription", ErrConflict)
+	}
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		// Zero rows: the row is gone, or the write stored the terms it
+		// already held. The console's PATCH {"status":"active"} on an
+		// active row is exactly that second case and it is a legal
+		// request, so the two are told apart rather than assumed, the way
+		// ResetSubscriptionPeriod and RevokeUserSubscription do it.
+		exists, checkErr := r.subscriptionRowExists(s.ID)
+		if checkErr != nil {
+			return fmt.Errorf("check subscription %s: %w", s.ID, checkErr)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+	}
+	return nil
+}
+
+// subscriptionRowExists reports whether a subscription row is still there. The
+// caller holds the write lock.
+func (r *StateRepo) subscriptionRowExists(id string) (bool, error) {
+	var exists int
+	if err := r.db.QueryRow("SELECT COUNT(1) FROM user_subscriptions WHERE id = ?", id).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists > 0, nil
 }
 
 const userSubscriptionColumns = `id, user_id, plan_id, plan_snapshot_json, starts_at_ns,
@@ -455,11 +714,11 @@ func (r *StateRepo) ResetSubscriptionPeriod(id string, fromPeriodStartNs, toPeri
 	// Nothing was updated. Either the subscription is gone, or its period moved
 	// between the read and this write. The two are told apart so a caller can
 	// log a genuine missing row without logging every lost race.
-	var exists int
-	if err := r.db.QueryRow(`SELECT COUNT(*) FROM user_subscriptions WHERE id = ?`, id).Scan(&exists); err != nil {
+	exists, err := r.subscriptionRowExists(id)
+	if err != nil {
 		return fmt.Errorf("check subscription %s: %w", id, err)
 	}
-	if exists == 0 {
+	if !exists {
 		return ErrNotFound
 	}
 	return nil
@@ -728,32 +987,124 @@ func (r *StateRepo) SumUsageHourlyBefore(cutoffNs int64) ([]model.UsageRow, erro
 	return result, rows.Err()
 }
 
-// DeleteUsageHourlyBefore removes hourly rows older than cutoffNs and returns
-// how many were removed.
-func (r *StateRepo) DeleteUsageHourlyBefore(cutoffNs int64) (int64, error) {
+// SummarizeUsageHourlyBefore folds every hourly row older than cutoffNs into
+// the daily table and deletes the rows it folded, in one transaction. The
+// returned count is how many hourly rows were folded and removed.
+//
+// It is the whole summary in one statement pair, which is the point: the
+// SumUsageHourlyBefore + UpsertUsageDaily + DeleteUsageHourlyBefore sequence it
+// replaces takes the write lock three times, so a crash (or a failure of the
+// third call) after the second one committed leaves the hourly rows in place
+// while their traffic is already in the daily table. The next pass would sum
+// those same rows again, and UpsertUsageDaily adds rather than replaces, so the
+// day would read double forever: every usage page and every alert built on it
+// would be wrong and nothing would repair itself. Both statements here run in
+// one transaction, so the daily rows and the hourly rows always agree: either
+// the traffic moved to the daily table and the hourly rows are gone, or nothing
+// happened at all.
+//
+// Aggregation is the same as SumUsageHourlyBefore: one row per key, platform
+// and UTC day, summed into whatever is already in the daily table.
+func (r *StateRepo) SummarizeUsageHourlyBefore(cutoffNs int64) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	result, err := r.db.Exec("DELETE FROM usage_hourly WHERE hour_ts_ns < ?", cutoffNs)
+	tx, err := r.db.Begin()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("begin usage summary: %w", err)
 	}
-	n, _ := result.RowsAffected()
-	return n, nil
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`
+		INSERT INTO usage_daily (key_id, user_id, platform_id, day_ts_ns,
+		                         ingress_bytes, egress_bytes, requests, errors)
+		SELECT key_id, user_id, platform_id,
+		       (hour_ts_ns / 86400000000000) * 86400000000000 AS day_ts_ns,
+		       SUM(ingress_bytes), SUM(egress_bytes), SUM(requests), SUM(errors)
+		FROM usage_hourly
+		WHERE hour_ts_ns < ?
+		GROUP BY key_id, user_id, platform_id, day_ts_ns
+		ON CONFLICT(key_id, platform_id, day_ts_ns) DO UPDATE SET
+			ingress_bytes = ingress_bytes + excluded.ingress_bytes,
+			egress_bytes  = egress_bytes  + excluded.egress_bytes,
+			requests      = requests      + excluded.requests,
+			errors        = errors        + excluded.errors
+	`, cutoffNs); err != nil {
+		return 0, fmt.Errorf("write summarized usage: %w", err)
+	}
+
+	result, err := tx.Exec("DELETE FROM usage_hourly WHERE hour_ts_ns < ?", cutoffNs)
+	if err != nil {
+		return 0, fmt.Errorf("delete summarized usage: %w", err)
+	}
+	removed, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count summarized usage: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit usage summary: %w", err)
+	}
+	return removed, nil
+}
+
+// stateDeleteBatch is how many rows one batched delete statement removes.
+//
+// A retention delete runs on the one connection every writer shares - logins,
+// the flush worker and the console all queue behind it - so removing a whole
+// table tail in a single statement would hold that connection for the length of
+// the tail and undo all of it if it failed. The loops below delete in bounded
+// batches instead, releasing the write lock between them.
+//
+// It is a var rather than a const so a test can shrink it and see that the loop
+// really repeats instead of relying on one statement.
+var stateDeleteBatch int64 = 5000
+
+// deleteBeforeBatched removes every row of table whose matchColumn is older
+// than cutoff and returns how many rows went away.
+//
+// The delete is split into batches of stateDeleteBatch rows: each batch is its
+// own statement, so the write lock is released in between and a caller waiting
+// for it only ever waits for one batch. Partial progress survives a failure
+// instead of rolling back with the whole tail; a retry picks up the rows that
+// are left, which is the only thing a retention delete promises. table and
+// matchColumn are constants written in this package, never caller input.
+func (r *StateRepo) deleteBeforeBatched(table, matchColumn string, cutoff int64) (int64, error) {
+	query := fmt.Sprintf(`DELETE FROM %s WHERE rowid IN (
+		SELECT rowid FROM %s WHERE %s < ? ORDER BY %s LIMIT ?)`, table, table, matchColumn, matchColumn)
+
+	var total int64
+	for {
+		r.mu.Lock()
+		result, err := r.db.Exec(query, cutoff, stateDeleteBatch)
+		r.mu.Unlock()
+		if err != nil {
+			return total, fmt.Errorf("delete %s before cutoff: %w", table, err)
+		}
+		removed, err := result.RowsAffected()
+		if err != nil {
+			return total, fmt.Errorf("count deleted %s rows: %w", table, err)
+		}
+		total += removed
+		if removed < stateDeleteBatch {
+			return total, nil
+		}
+		// A full batch means there is probably more: yield so a writer waiting
+		// on r.mu is not starved for the whole prune.
+		runtime.Gosched()
+	}
+}
+
+// DeleteUsageHourlyBefore removes hourly rows older than cutoffNs and returns
+// how many were removed. It deletes in batches, so the connection is available
+// to the other writers between them.
+func (r *StateRepo) DeleteUsageHourlyBefore(cutoffNs int64) (int64, error) {
+	return r.deleteBeforeBatched("usage_hourly", "hour_ts_ns", cutoffNs)
 }
 
 // DeleteUsageDailyBefore removes daily rows older than cutoffNs and returns how
-// many were removed.
+// many were removed. It deletes in batches, like DeleteUsageHourlyBefore.
 func (r *StateRepo) DeleteUsageDailyBefore(cutoffNs int64) (int64, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec("DELETE FROM usage_daily WHERE day_ts_ns < ?", cutoffNs)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := result.RowsAffected()
-	return n, nil
+	return r.deleteBeforeBatched("usage_daily", "day_ts_ns", cutoffNs)
 }
 
 // ListUsageByUser returns the user's usage summed per key, platform and UTC
@@ -1053,6 +1404,14 @@ func (r *StateRepo) ListActiveUserSubscriptions() ([]model.UserSubscription, err
 // the recent days are still hourly rows, the older ones have been summarized
 // into daily rows, and a given hour lives in exactly one of the two. The
 // console folds these rows into per-user, per-platform and per-day totals.
+//
+// The hourly side is filtered by overlap, not by bucket start: a row belongs to
+// the window when any part of its hour does. Callers pass minute-precision
+// windows (the alert scanner passes the last few minutes), and a row is a whole
+// hour, so comparing the bucket start against the window would drop the hour
+// the window is in and report nothing at all for windows shorter than an hour.
+// The price is that the hour the window starts in is counted whole: an hourly
+// row cannot say which minute of the hour it belongs to.
 func (r *StateRepo) ListUsageDailyRange(fromNs, toNs int64) ([]model.UsageRow, error) {
 	rows, err := r.db.Query(`
 		SELECT key_id, user_id, platform_id, day_ts_ns,
@@ -1067,7 +1426,7 @@ func (r *StateRepo) ListUsageDailyRange(fromNs, toNs int64) ([]model.UsageRow, e
 			       (hour_ts_ns / 86400000000000) * 86400000000000 AS day_ts_ns,
 			       ingress_bytes, egress_bytes, requests, errors
 			FROM usage_hourly
-			WHERE hour_ts_ns >= ? AND hour_ts_ns < ?
+			WHERE hour_ts_ns + 3600000000000 > ? AND hour_ts_ns < ?
 		)
 		GROUP BY key_id, user_id, platform_id, day_ts_ns
 		ORDER BY day_ts_ns DESC, user_id
@@ -1089,7 +1448,13 @@ func (r *StateRepo) ListUsageDailyRange(fromNs, toNs int64) ([]model.UsageRow, e
 	return result, rows.Err()
 }
 
-// DeleteUserSubscription removes one subscription row.
+// DeleteUserSubscription removes one subscription row for good.
+//
+// It is no longer how the console ends a user's access: that revokes the row
+// instead (RevokeUserSubscription), because an account left with no subscription
+// row at all is the state that reads as unlimited. This stays for the callers
+// that really want the row gone - a rollback, a test, a cleanup - and it is the
+// only function that can take the row out of existence.
 //
 // Usage is deliberately left alone: usage rows carry no foreign key to a
 // subscription, so the traffic a user already generated stays accountable after
@@ -1104,6 +1469,60 @@ func (r *StateRepo) DeleteUserSubscription(id string) error {
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// RevokeUserSubscription takes a subscription out of force without deleting it.
+//
+// Deleting the row was how the console ended a user's access, and it left
+// nothing behind: an account with no subscription row at all is the state the
+// loader and the publish path read as the zero snapshot, which means no quota,
+// no restriction and no expiry - unlimited. A user whose last subscription was
+// deleted could therefore mint keys with no limit, which is the opposite of what
+// deleting it was for.
+//
+// So the row stays and only its status moves to suspended, which is the status
+// that already means "not active, and refused": keys.Usable refuses any snapshot
+// whose status is not active. It is deliberately not a new status value and not
+// a new column - the schema's CHECK constraint allows active, expired and
+// suspended, and suspended is the one an operator can set and clear from the
+// console. The window (expires_at_ns) is left as it was: it is history, and what
+// ended the access was the decision, not the date.
+//
+// The decision row keeps deciding. A suspended row is still the newest of the
+// user's rows, so a restart reaches it and refuses the keys, instead of finding
+// no row at all and handing the zero snapshot back.
+//
+// A missing row is ErrNotFound. Re-revoking an already suspended row is not an
+// error: the status is written unconditionally, so the call is idempotent.
+func (r *StateRepo) RevokeUserSubscription(id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE user_subscriptions SET status = ?
+		WHERE id = ?
+	`, model.SubscriptionStatusSuspended, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		// Zero rows here is a row that is not there. It is not the same-value
+		// case: this connection's SQLite counts a row an UPDATE matched even
+		// when the write stores what the row already holds, which
+		// TestUpdateUserSubscriptionTerms_UnchangedTermsAreNotAMissingRow
+		// settles, so a second revoke affects one row and never arrives here.
+		// The check stays because the meaning of zero rows is worth stating
+		// rather than inheriting, and it is what makes "re-revoking is not an
+		// error" hold whatever a driver chooses to count.
+		exists, checkErr := r.subscriptionRowExists(id)
+		if checkErr != nil {
+			return checkErr
+		}
+		if !exists {
+			return ErrNotFound
+		}
 	}
 	return nil
 }
