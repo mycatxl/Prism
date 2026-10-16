@@ -1526,3 +1526,54 @@ func (r *StateRepo) RevokeUserSubscription(id string) error {
 	}
 	return nil
 }
+
+// ExpireStaleSubscriptions closes out every active subscription whose window has
+// closed before nowNs, and reports how many rows it moved to 'expired'.
+//
+// Nothing moved that status before now: expiry was decided by each reader as it
+// read the row (keys.Usable compares expires_at_ns with the clock, the publish
+// snapshot carries the window, the usage seed skips a subscription that is past
+// its expiry), and the stored status stayed 'active' for good. Access decisions
+// therefore never saw the difference, but two things that do not read the window
+// did: ListActiveUserSubscriptions selects on status alone, so an expired row
+// stays in "who is on a plan right now" and in the console's active /
+// about-to-expire counts; and the period worker reads the same active rows, so
+// it keeps rolling the period of a subscription that can no longer serve
+// traffic. This is the write that makes the stored status agree with the window,
+// once per sweep, instead of leaving the two to disagree until an operator
+// fixes it by hand.
+//
+// expires_at_ns > 0 is the "never expires" sentinel, not a past date:
+// 000021_subscription_backfill_and_totp_replay.up.sql hands accounts that
+// predate plans a row with expires_at_ns = 0 ("active, no expiry, no traffic
+// quota"), and 0 is 1970 to every other comparison, so a row that never expires
+// has to be excluded explicitly here. A window that ends exactly at nowNs is
+// expired: the readers use nowNs >= expires_at_ns.
+//
+// One statement, no read-modify-write. UpdateUserSubscriptionTerms and
+// ResetSubscriptionPeriod walk the same rows with this lock held, so a read here
+// followed by a write would open a lost-update window of its own; the predicate
+// re-tests status and the window inside the UPDATE, so a subscription that was
+// reactivated or had its window moved between the statement starting and the row
+// being visited is left alone. Two sweeps racing each other are harmless for the
+// same reason: the second one matches nothing and reports zero.
+//
+// The partial unique index ux_user_subscriptions_active (000020) keys on
+// user_id WHERE status = 'active'. This statement only ever takes a row out of
+// that partial index and never puts one in, so it cannot violate it - it can
+// only release the slot, which is what lets the console assign the user a new
+// subscription while the expired row stays behind as history.
+func (r *StateRepo) ExpireStaleSubscriptions(nowNs int64) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	result, err := r.db.Exec(`
+		UPDATE user_subscriptions SET status = ?
+		WHERE status = ? AND expires_at_ns > 0 AND expires_at_ns <= ?
+	`, model.SubscriptionStatusExpired, model.SubscriptionStatusActive, nowNs)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := result.RowsAffected()
+	return int(n), nil
+}

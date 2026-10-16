@@ -225,6 +225,11 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 			result.RolledBytes += bytes
 		default:
 			result.Subscriptions++
+			// Exactly what was charged, and only that: the water mark is what
+			// keeps a later seed of this subscription from adding the same
+			// bytes to the aggregate a second time. A refused or failed write
+			// is not on disk, so it must not move the mark.
+			f.Counters.MarkPersisted(userID, bytes)
 		}
 	}
 
@@ -345,7 +350,30 @@ func (f *Flusher) flushOnShutdown() {
 // monthly traffic again each time the service bounced - so the persisted total
 // is loaded back into the running aggregate the quota reads.
 //
-// It is called once at startup, before the data plane accepts traffic.
+// It runs at startup, before the data plane accepts traffic, and again from the
+// re-seed loop when that first call could not read the subscriptions. Both calls
+// compute the same value, so the second changes nothing: what is added is the
+// difference between the persisted total P and the water mark W, not P itself.
+// W is the part of the aggregate the flusher has already charged to P, and those
+// bytes are still in the aggregate (it is never drained), so adding the whole
+// total again would bill the user twice for traffic that moved once. The
+// difference is what is missing from memory, and after it is added the mark is
+// P, which is what makes a repeated seed a no-op.
+//
+// A persisted total below the mark is left alone rather than subtracted. The
+// bytes in the aggregate were counted by the data plane, and a disk total that
+// has fallen since the mark was set is the signature of something outside this
+// process: an operator resetting the period usage by hand, or a rollover whose
+// ResetUser has not been observed yet. Subtracting on that evidence would give
+// the user allowance back on the strength of a number that says nothing about
+// what they moved, so the aggregate is kept and the mark still moves to P - the
+// discrepancy is recorded, not re-examined on every pass. The rollover's own
+// ResetUser, which zeroes the aggregate and the mark together, is the path that
+// returns the allowance.
+//
+// It returns how many subscriptions had a restore applied, which is not how many
+// it examined: a subscription whose bytes the flusher has already charged is
+// examined and then restored by nothing.
 func (c *Counters) SeedFromSubscriptions(subs []model.UserSubscription, nowNs int64) int {
 	if c == nil || len(subs) == 0 {
 		return 0
@@ -364,11 +392,27 @@ func (c *Counters) SeedFromSubscriptions(subs []model.UserSubscription, nowNs in
 		if subscription.ExpiresAtNs > 0 && nowNs > 0 && subscription.ExpiresAtNs < nowNs {
 			continue
 		}
-		total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
-			return new(atomic.Int64), false
-		})
-		total.Add(subscription.PeriodUsedBytes)
-		seeded++
+		mark := c.persistedFor(subscription.UserID)
+		if mark == nil {
+			// No water mark to compare against. Only a counter set built by
+			// hand rather than by NewCounters gets here, and counting the
+			// total as unseeded is the conservative answer: it can make the
+			// aggregate too large, never too small.
+			total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
+				return new(atomic.Int64), false
+			})
+			total.Add(subscription.PeriodUsedBytes)
+			seeded++
+			continue
+		}
+		if restore := subscription.PeriodUsedBytes - mark.Load(); restore > 0 {
+			total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
+				return new(atomic.Int64), false
+			})
+			total.Add(restore)
+			seeded++
+		}
+		mark.Store(subscription.PeriodUsedBytes)
 	}
 	return seeded
 }

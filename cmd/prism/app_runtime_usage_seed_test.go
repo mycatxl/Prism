@@ -147,12 +147,17 @@ func TestReseedUsageUntilApplied_RestoresTheTotalsASeedWouldHaveLoaded(t *testin
 	}
 	// u-live moved traffic between the process starting and the re-seed, so it
 	// already has an aggregate of its own - and the flusher has already charged
-	// those same bytes to the persisted total. Seeding the persisted total into
-	// that aggregate would bill them twice, so this user must be left alone.
+	// those same bytes to the persisted total, which is what its water mark
+	// records. Seeding the persisted total into that aggregate would bill them
+	// twice, so this user must be left alone; a user whose bytes are in the
+	// aggregate but not in the persisted total is pending, and
+	// TestPendingUsageSeed_ReportsAUserWhoseDiskTotalIsNotCovered is the test
+	// for that case.
 	counters.Add(
 		usage.CounterKey{KeyID: "k-live", UserID: "u-live", PlatformID: "plat"},
 		usage.Delta{IngressBytes: 512, EgressBytes: 512},
 	)
+	counters.MarkPersisted("u-live", 1024)
 
 	logs := &seedLogRecorder{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -192,7 +197,7 @@ func TestReseedUsageUntilApplied_RestoresTheTotalsASeedWouldHaveLoaded(t *testin
 		t.Fatalf("u-1 holds %d bytes, want the persisted 4096 - the seed ran twice (%s)", got, logs.joined())
 	}
 	if got := counters.UserBytes("u-live"); got != 1024 {
-		t.Fatalf("a user with live traffic was seeded anyway: %d bytes, want its own 1024", got)
+		t.Fatalf("a user whose bytes are already charged was seeded anyway: %d bytes, want its own 1024", got)
 	}
 }
 
@@ -236,16 +241,35 @@ func TestReseedUsageUntilApplied_SurvivesAFailedRead(t *testing.T) {
 // The pending filter is what makes the re-seed idempotent, and it must agree
 // with the filter SeedFromSubscriptions applies - a subscription the seed would
 // skip could otherwise keep the loop running forever.
-func TestPendingUsageSeed_SelectsOnlySubscriptionsMissingFromMemory(t *testing.T) {
+//
+// "Pending" is measured against the water mark, so the cases are:
+func TestPendingUsageSeed_SelectsOnlyTotalsTheWaterMarkDoesNotCover(t *testing.T) {
 	nowNs := time.Now().UnixNano()
 	counters := usage.NewCounters()
-	// An aggregate that exists at zero: a period that has just rolled over. It
-	// is not a missing total.
+	// A period that has rolled over: the aggregate and the mark are both at
+	// zero (ResetUser), and so is the persisted total of its new period. Not
+	// pending.
 	counters.LoadUser("u-rolled", 0)
+	// A user whose flush has charged 900 bytes: the aggregate holds them and
+	// the mark says the persisted total covers them. Not pending, even though
+	// the aggregate exists.
+	counters.LoadUser("u-charged", 900)
+	// The disk is ahead of the mark for u-ahead: it moved 150 bytes since the
+	// process started, the flusher charged 100 of them, and the 800 that were
+	// already there before this process was never loaded into memory. The
+	// aggregate exists and the disk total is still not covered, which is
+	// exactly the case the loop has to keep working on.
+	counters.Add(
+		usage.CounterKey{KeyID: "k-ahead", UserID: "u-ahead", PlatformID: "plat"},
+		usage.Delta{IngressBytes: 50, EgressBytes: 100},
+	)
+	counters.MarkPersisted("u-ahead", 100)
 
 	subs := []model.UserSubscription{
 		activeSeedSubscription("u-missing", 5000),
-		activeSeedSubscription("u-rolled", 5000),
+		activeSeedSubscription("u-rolled", 0),
+		activeSeedSubscription("u-charged", 900),
+		activeSeedSubscription("u-ahead", 900),
 		{ID: "s-off", UserID: "u-off", PeriodUsedBytes: 5000, Status: model.SubscriptionStatusSuspended},
 		{ID: "s-exp", UserID: "u-exp", PeriodUsedBytes: 5000, Status: model.SubscriptionStatusActive, ExpiresAtNs: nowNs - int64(time.Hour)},
 		{ID: "s-zero", UserID: "u-zero", PeriodUsedBytes: 0, Status: model.SubscriptionStatusActive},
@@ -253,8 +277,17 @@ func TestPendingUsageSeed_SelectsOnlySubscriptionsMissingFromMemory(t *testing.T
 	}
 
 	pending := pendingUsageSeed(subs, counters, nowNs)
-	if len(pending) != 1 || pending[0].UserID != "u-missing" {
-		t.Fatalf("pending = %v, want only u-missing", pending)
+	if len(pending) != 2 || pending[0].UserID != "u-missing" || pending[1].UserID != "u-ahead" {
+		t.Fatalf("pending = %v, want u-missing and u-ahead: the totals the water mark does not cover", pending)
+	}
+
+	// A second pass over what was pending reports nothing once the seed has
+	// moved each mark to its total, which is what ends the re-seed loop.
+	if seeded := counters.SeedFromSubscriptions(pending, nowNs); seeded != 2 {
+		t.Fatalf("the seed restored %d subscription(s), want 2", seeded)
+	}
+	if again := pendingUsageSeed(pending, counters, nowNs); len(again) != 0 {
+		t.Fatalf("pending = %v after the seed, want nothing", again)
 	}
 }
 
@@ -294,4 +327,29 @@ func TestSeedUsage_HandlesMissingInputs(t *testing.T) {
 	}
 	// A loop with no source returns instead of spinning.
 	reseedUsageUntilApplied(context.Background(), counters, nil, time.Millisecond, nil)
+}
+
+// A user whose persisted total is not covered by the water mark is pending,
+// whatever the aggregate holds. This is the case a failed startup seed leaves
+// behind once the user's keys start serving: the aggregate is built from the
+// traffic that moved after the failed seed, and the disk total was never
+// loaded. Skipping such a user - the old "it already has an aggregate" rule -
+// leaves the quota reading a number smaller than the usage on disk, which is an
+// allowance handed out twice.
+func TestPendingUsageSeed_ReportsAUserWhoseDiskTotalIsNotCovered(t *testing.T) {
+	nowNs := time.Now().UnixNano()
+	counters := usage.NewCounters()
+
+	// The user moved 512 bytes after the process started: an aggregate exists,
+	// and none of it has been flushed yet.
+	counters.Add(
+		usage.CounterKey{KeyID: "k-live", UserID: "u-live", PlatformID: "plat"},
+		usage.Delta{IngressBytes: 512},
+	)
+
+	subs := []model.UserSubscription{activeSeedSubscription("u-live", 4096)}
+	pending := pendingUsageSeed(subs, counters, nowNs)
+	if len(pending) != 1 || pending[0].UserID != "u-live" {
+		t.Fatalf("pending = %v, want u-live: its persisted 4096 bytes were never loaded", pending)
+	}
 }

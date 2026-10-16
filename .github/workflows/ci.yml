@@ -11,7 +11,10 @@ concurrency:
 jobs:
   verify:
     name: Verify
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`: that label migrates to Ubuntu 26 on
+    # 2026-10-19, and a release pipeline should not change its own base image
+    # under a green build. Move this line deliberately, not by accident.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -30,7 +33,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Build WebUI
+      # The console bundle first: `make verify` runs Go cases that serve /ui/ from
+      # the embedded dist (internal/api/handler_test.go) and answer 503 without
+      # one, so the bundle has to exist before the checks. `make web` installs
+      # too, and the Makefile's install stamp keeps this job at a single npm ci.
+      - name: Build the WebUI
         run: make web
 
       # Pinned to the version .golangci.yml was written and verified against.
@@ -45,6 +52,8 @@ jobs:
       - name: Lint (golangci-lint, stricter set)
         run: make lint-go
 
+      # The self-contained build entry point: rebuilds the bundle (seconds) and
+      # compiles the binary that embeds it. It needs no second npm ci.
       - name: Build backend
         run: make backend
 
@@ -64,7 +73,8 @@ jobs:
 
   container:
     name: Container
-    runs-on: ubuntu-latest
+    # Same pin as the verify job: see the note there.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:

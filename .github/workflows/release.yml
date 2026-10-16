@@ -32,7 +32,10 @@ env:
 jobs:
   build-binaries:
     name: Build Binaries
-    runs-on: ubuntu-latest
+    # Pinned rather than `ubuntu-latest`, which migrates to Ubuntu 26 on
+    # 2026-10-19: a release artifact should be built on a base image that only
+    # changes when this line changes. Move it deliberately.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     strategy:
@@ -149,7 +152,8 @@ jobs:
     # Only a tag creates a release. A manual run stops once the artifacts are
     # built, so the path can be rehearsed without publishing anything.
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    # Same pin as the other jobs in this file: see the note at the top.
+    runs-on: ubuntu-24.04
     needs: build-binaries
     permissions:
       contents: write
@@ -234,7 +238,8 @@ jobs:
 
   docker:
     name: Build & Push Docker Image
-    runs-on: ubuntu-latest
+    # Same pin as the other jobs in this file: see the note at the top.
+    runs-on: ubuntu-24.04
     needs: build-binaries
     permissions:
       contents: read

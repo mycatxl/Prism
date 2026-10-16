@@ -61,6 +61,8 @@ type prismApp struct {
 	stopUsageRetention func()
 	//: the usage alert scanner over state.db.
 	stopUsageAlerts func()
+	//: the subscription expiry sweep over state.db.
+	stopSubscriptionSweeper func()
 	//: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
@@ -689,6 +691,17 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.stopUsageAlerts = service.StartUsageAlertScanner(cpService, service.UsageAlertScanInterval, log.Printf)
 	log.Println("Usage alerts started")
 
+	// A subscription is closed out of the stored status once its window has
+	// passed, which is the write the status-only reads need: the console's
+	// active counts and the period worker read "active" and nothing else, so a
+	// subscription that expired keeps being counted and keeps being rolled until
+	// something says otherwise. Access itself does not wait for the sweep - the
+	// key, snapshot and seed paths all compare expires_at_ns with the clock -
+	// which is why the sweep can be this slow. It writes state.db, so shutdown
+	// stops it while that database is still open.
+	a.stopSubscriptionSweeper = service.StartSubscriptionExpirySweeper(cpService, service.SubscriptionSweepInterval, log.Printf)
+	log.Println("Subscription expiry sweeper started")
+
 	// Accounting. One counter set and one session registry are shared by every
 	// inbound: a key's allowance spans the protocols it uses, and so does the
 	// set of tunnels that may need ending.
@@ -1046,21 +1059,26 @@ func seedUsage(
 	return 0, lastErr
 }
 
-// pendingUsageSeed reports the subscriptions whose period totals are missing
-// from the running counters.
+// pendingUsageSeed reports the subscriptions whose persisted period totals are
+// not covered by the running counters yet.
 //
-// "Missing" is the aggregate entry, not a zero total: the counters have no
-// aggregate for a user that has never been seen, and have one - possibly at
-// zero - for a user whose period has rolled over. Only the first case means the
-// persisted total was never loaded, which is exactly what a failed startup seed
-// leaves behind.
+// "Covered" is the water mark the flusher maintains, not the presence of an
+// aggregate. A user who moved traffic between a failed startup seed and the
+// re-seed already has an aggregate built from that traffic alone, while the
+// persisted total it should be measured against was never loaded; skipping such
+// a user - "it already has an aggregate" - leaves the quota reading less than
+// the disk records, which is an allowance handed out twice, and it is the exact
+// gap this loop exists to close.
 //
-// A user who moved traffic between the failed seed and the re-seed already has
-// an aggregate built from that traffic alone, and the flusher has already
-// charged those same bytes to the persisted total - so seeding the persisted
-// total into that aggregate would bill them twice. Such a user is therefore
-// left out, and the gap is named in the report instead of being papered over
-// with a blind add.
+// Comparing the persisted total against the mark is also what keeps the re-seed
+// from double counting. The bytes a flush charges to the subscription stay in
+// the aggregate (it is never drained) and are added to the mark in the same
+// pass, so a total that has been seeded leaves the two equal - and one that the
+// flusher has already charged leaves the mark ahead of the pending test, not
+// behind it. Traffic that arrives after the seed sits above the mark on both
+// sides. The loop therefore converges on "every user's persisted total is
+// covered", whatever the aggregate holds: seeding moves the mark to the total,
+// which is what makes a second pass report nothing.
 //
 // The filter is the one SeedFromSubscriptions applies, so a subscription it
 // would skip can never keep the re-seed loop running.
@@ -1081,7 +1099,10 @@ func pendingUsageSeed(subs []model.UserSubscription, counters *usage.Counters, n
 		if sub.ExpiresAtNs > 0 && nowNs > 0 && sub.ExpiresAtNs < nowNs {
 			continue
 		}
-		if _, present := counters.UserBytesPresent(sub.UserID); present {
+		// A missing mark stands for zero: nothing of this user's total has
+		// been charged by this process, so any persisted total is pending.
+		persisted, _ := counters.PersistedBytes(sub.UserID)
+		if sub.PeriodUsedBytes <= persisted {
 			continue
 		}
 		pending = append(pending, sub)
@@ -1313,6 +1334,11 @@ func (a *prismApp) shutdown() {
 	}
 	if a.stopUsageAlerts != nil {
 		a.stopUsageAlerts()
+	}
+	// The sweep only writes state.db, so it stops here, while that database is
+	// still open - the same reason the accounting is cancelled below.
+	if a.stopSubscriptionSweeper != nil {
+		a.stopSubscriptionSweeper()
 	}
 	// Cancelling the accounting runs the flusher's final pass, which writes to
 	// state.db - so it has to happen here, while that database is still open,

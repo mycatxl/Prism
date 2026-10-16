@@ -33,6 +33,23 @@ type Counters struct {
 	// users is keyed by user id. It exists so a quota check does not have to
 	// find every key the user holds.
 	users *xsync.Map[string, *atomic.Int64]
+	// persisted is keyed by user id and holds the water mark: the number of
+	// bytes of that user's running total which the persisted period usage
+	// (user_subscriptions.period_used_bytes) is known to cover.
+	//
+	// It exists because the flusher charges the subscription without draining
+	// the aggregate: after a flush the same bytes are in both, and a seed that
+	// reads the persisted total back cannot tell "this total was never loaded
+	// into memory" from "these bytes were already charged". Adding the whole
+	// total on the second reading bills the user twice for traffic that moved
+	// once; adding nothing on the first hands the allowance out twice. The water
+	// mark answers what the total alone cannot: only the part of it above the
+	// mark is missing from memory.
+	//
+	// The flusher is the only writer, and it advances the mark by the bytes it
+	// really charged to a subscription (MarkPersisted). The seed reads the mark
+	// and moves it to the total it restored against, so it can run again.
+	persisted *xsync.Map[string, *atomic.Int64]
 	// keyBytes is keyed by key id and holds the bytes of every one of that
 	// key's buckets which has not been drained yet. It exists so the fallback
 	// a quota check makes - "this key has moved N bytes" - is a single atomic
@@ -85,9 +102,10 @@ func (d Delta) Total() int64 { return d.IngressBytes + d.EgressBytes }
 // NewCounters returns an empty counter set.
 func NewCounters() *Counters {
 	return &Counters{
-		entries:  xsync.NewMap[CounterKey, *keyCounter](),
-		users:    xsync.NewMap[string, *atomic.Int64](),
-		keyBytes: xsync.NewMap[string, *atomic.Int64](),
+		entries:   xsync.NewMap[CounterKey, *keyCounter](),
+		users:     xsync.NewMap[string, *atomic.Int64](),
+		persisted: xsync.NewMap[string, *atomic.Int64](),
+		keyBytes:  xsync.NewMap[string, *atomic.Int64](),
 	}
 }
 
@@ -241,6 +259,56 @@ func (c *Counters) UserBytesPresent(userID string) (int64, bool) {
 	return total.Load(), true
 }
 
+// persistedFor returns the water mark of one user, creating it on first use.
+//
+// An entry that does not exist yet stands for zero: nothing of that user's
+// running total has been charged to the persisted period usage by this process.
+func (c *Counters) persistedFor(userID string) *atomic.Int64 {
+	if c == nil || c.persisted == nil || userID == "" {
+		return nil
+	}
+	mark, _ := c.persisted.LoadOrCompute(userID, func() (*atomic.Int64, bool) {
+		return new(atomic.Int64), false
+	})
+	return mark
+}
+
+// MarkPersisted records that the persisted period usage of one user now covers
+// bytes more of their running total.
+//
+// The flusher is the only caller, and it passes exactly what it charged to the
+// subscription: a delta the store refused because the period had rolled over, a
+// write that failed, and traffic that belongs to no subscription are all not on
+// disk, and reporting them as persisted would hide the bytes a later seed has to
+// restore - which is the difference between an allowance and two of them.
+func (c *Counters) MarkPersisted(userID string, bytes int64) {
+	if bytes == 0 {
+		return
+	}
+	mark := c.persistedFor(userID)
+	if mark == nil {
+		return
+	}
+	mark.Add(bytes)
+}
+
+// PersistedBytes returns a user's water mark and reports whether one exists,
+// in the shape UserBytesPresent uses for the aggregate.
+//
+// A missing mark is not a missing persisted total: it means nothing of that
+// user's running total has been charged by this process, so the caller compares
+// the persisted total against the zero it stands for.
+func (c *Counters) PersistedBytes(userID string) (int64, bool) {
+	if c == nil || c.persisted == nil || userID == "" {
+		return 0, false
+	}
+	mark, ok := c.persisted.Load(userID)
+	if !ok || mark == nil {
+		return 0, false
+	}
+	return mark.Load(), true
+}
+
 // Drain removes and returns the counters for the given keys.
 //
 // It is how the flusher takes a consistent snapshot to persist: taking the
@@ -316,13 +384,21 @@ func (c *Counters) Size() int {
 	return c.entries.Size()
 }
 
-// ResetUser returns a user's running total to zero.
+// ResetUser returns a user's running total to zero, and its water mark with it.
 //
 // It is what a period rollover does: the allowance belongs to a period, and a
 // new period starts with nothing used. Without it the persisted counter would
 // reset while the in-memory one kept the old total, and the quota would refuse
 // every request of a user whose new month had just begun - the failure mode of
 // a correct database and a stale cache.
+//
+// The water mark falls with it, for the same reason and at the same moment: the
+// rollover resets period_used_bytes on disk (ResetSubscriptionPeriod) as it
+// calls this, so neither the aggregate nor the mark has anything to do with the
+// period that just ended. A mark left at the old period's value would claim that
+// the new period's persisted total is already covered - the seed restores the
+// difference between the persisted total and the mark, and that difference
+// would be zero or negative for a period whose usage is just starting to grow.
 //
 // The per-key buckets are deliberately left alone. They are the record of what
 // actually moved and are destined for the usage tables; the aggregate is only
@@ -331,17 +407,30 @@ func (c *Counters) ResetUser(userID string) {
 	if c == nil || c.users == nil || userID == "" {
 		return
 	}
-	total, ok := c.users.Load(userID)
-	if !ok || total == nil {
-		return
+	if total, ok := c.users.Load(userID); ok && total != nil {
+		total.Store(0)
 	}
-	total.Store(0)
+	// The mark is dropped even when the aggregate is already missing: the two
+	// are written together everywhere else, and a stale mark left behind would
+	// suppress the next seed of this user's persisted total.
+	if c.persisted != nil {
+		if mark, ok := c.persisted.Load(userID); ok && mark != nil {
+			mark.Store(0)
+		}
+	}
 }
 
-// LoadUser overwrites a user's running total.
+// LoadUser overwrites a user's running total, and the water mark with it.
 //
 // It is how a restart restores the aggregate from the persisted period usage,
 // and how a period rollover sets it back to zero without dropping the entry.
+//
+// The mark follows the value, because both uses load a total the disk agrees
+// with: a restart loads exactly what period_used_bytes holds, and a rollover
+// loads the zero the row it just reset holds. Zeroing the mark instead - the
+// obvious alternative - would leave the next seed free to add the persisted
+// total on top of an aggregate that already carries it, which is the double
+// count the mark exists to prevent.
 func (c *Counters) LoadUser(userID string, bytes int64) {
 	if c == nil || c.users == nil || userID == "" {
 		return
@@ -350,4 +439,7 @@ func (c *Counters) LoadUser(userID string, bytes int64) {
 		return new(atomic.Int64), false
 	})
 	total.Store(bytes)
+	if mark := c.persistedFor(userID); mark != nil {
+		mark.Store(bytes)
+	}
 }

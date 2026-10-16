@@ -4,7 +4,8 @@ Prism is a single-port proxy router with a management interface. It keeps a pool
 of upstream nodes, hands them out through sticky per-account leases, and exposes
 HTTP, SOCKS5, reverse-proxy and subscription endpoints on one listener.
 
-This repository ships **code and this README only**. Design notes, plans, audits
+This repository ships **code, this README and the operator guide in
+[`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md)**. Design notes, plans, audits
 and research do not live here: `.gitignore` refuses them and the CI build does
 not depend on any of them.
 
@@ -54,7 +55,7 @@ from Prism's point of view, and the session cookie is issued only for a loopback
 plaintext request - a remote panel over a proxy that is not listed cannot log in.
 
 Container deployment uses `Dockerfile` and `docker-compose.yml.example`, which
-documents the volume layout, the container user and the health check.
+Container deployment uses `Dockerfile` and `docker-compose.yml.example`, which documents the volume layout, the container user and the health check. A tagged release publishes a multi-arch image to [`ghcr.io/mycatxl/prism`](https://github.com/mycatxl/Prism/pkgs/container/prism); `docker-compose.yml.example` pins the release it deploys.
 
 ## Configuration
 
@@ -126,7 +127,7 @@ Resin keeps its MIT notice (`LICENSES/Resin-MIT.txt`).
 1. Fork the repository.
 2. Create a feature branch.
 3. Run `make verify` and `bash scripts/smoke.sh` before opening a pull request.
-4. Keep it to code: this repository does not carry design notes, plans or audits.
+4. Keep it to code and the documentation under `docs/`: this repository does not carry design notes, plans or audits.
 
 ## Support
 

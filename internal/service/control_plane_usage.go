@@ -103,7 +103,14 @@ func (s *ControlPlaneService) UsageSummary(nowNs int64) (UsageSummary, error) {
 	for _, sub := range subs {
 		byUser[sub.UserID] = sub
 		periodBytes += sub.PeriodUsedBytes
-		if sub.ExpiresAtNs > 0 && sub.ExpiresAtNs <= nowNs+int64(expiringSoonDays)*int64(24*time.Hour) {
+		// Only a window that is still in force can be renewed, so the horizon
+		// is (nowNs, nowNs+expiringSoonDays]. A window that has already passed
+		// is not one: it is the lag between the expiry and the sweep that
+		// closes the row out (SubscriptionSweepInterval, five minutes at
+		// most), and counting it would report subscriptions that are already
+		// dead as "expiring soon". expires_at_ns = 0 is the "never expires"
+		// sentinel the backfill writes, not a window in 1970.
+		if sub.ExpiresAtNs > nowNs && sub.ExpiresAtNs <= nowNs+int64(expiringSoonDays)*int64(24*time.Hour) {
 			summary.ExpiringSoonUsers++
 		}
 	}

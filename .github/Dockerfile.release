@@ -25,5 +25,10 @@ ENV PRISM_CACHE_DIR=/var/cache/prism \
 EXPOSE 2260
 VOLUME ["/var/cache/prism", "/var/lib/prism", "/var/log/prism"]
 
+# The same probe Dockerfile and docker-compose.yml.example run, so an image
+# built either way reports the same health.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:${PRISM_PORT:-2260}/healthz" >/dev/null || exit 1
+
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/prism"]

@@ -17,7 +17,7 @@ services:
     # use it, and pin the release you intend (`latest` follows the newest
     # non-prerelease release). Bump this line with each release you deploy.
     # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
-    image: ghcr.io/mycatxl/prism:0.2.0
+    image: ghcr.io/mycatxl/prism:0.3.0
     container_name: prism
     restart: unless-stopped
     environment:
@@ -32,7 +32,10 @@ services:
       - prism_state:/var/lib/prism
       - prism_log:/var/log/prism
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2260/healthz >/dev/null || exit 1"]
+      # Same probe as the image's own HEALTHCHECK. $$ escapes the dollar so
+      # compose passes the default expression through to the container's shell
+      # instead of interpolating it here.
+      test: ['CMD-SHELL', 'wget -qO- "http://127.0.0.1:$${PRISM_PORT:-2260}/healthz" >/dev/null || exit 1']
       interval: 30s
       timeout: 5s
       retries: 3

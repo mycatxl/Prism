@@ -59,5 +59,12 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 EXPOSE 2260
 VOLUME ["/var/cache/prism", "/var/lib/prism", "/var/log/prism"]
 
+# The same probe docker-compose.yml.example runs, kept in the image as well so a
+# plain `docker run` reports a health status too. It reads PRISM_PORT the way the
+# compose file does, so a deployment that moves the port is not reported
+# unhealthy. busybox supplies wget here, so this needs no extra package.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD wget -qO- "http://127.0.0.1:${PRISM_PORT:-2260}/healthz" >/dev/null || exit 1
+
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["/usr/local/bin/prism"]

@@ -8,7 +8,11 @@ WEB_DIR := internal/api/web
 # deliberately not part of any build. sing-box is the only engine.
 TAGS := with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn with_openconnect http2legacy
 BUILD_TAGS ?= $(TAGS)
-VERSION ?= dev
+# The version a build stamps into internal/buildinfo. A caller passes VERSION to
+# pin it (the release workflow passes the tag name); left alone it comes from
+# the git tag the working tree is on, so a local build reports v0.3.0 rather
+# than "dev".
+VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -22,7 +26,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix coverage coverage-gate verify smoke init start clean
+.PHONY: build web web-deps backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix coverage coverage-gate verify smoke init start clean
 
 # The Go binary embeds the console bundle (internal/api/webui.go is
 # //go:embed all:web/dist), so the frontend has to exist before ./cmd/prism is
@@ -31,17 +35,28 @@ LDFLAGS := -s -w \
 # produce a binary that embeds an empty dist. Serial `make build` and a bare
 # `make backend` are correct for the same reason.
 #
-# The cost is that a caller who already ran `make web` in an earlier make
-# invocation (CI runs `make web` and then `make backend`) builds the frontend
-# again. That is deliberate: a phony `web` cannot be remembered across
-# invocations, and the alternative - depending on dist/ instead - would silently
-# embed a stale bundle after a frontend edit.
+# `web` is phony, so its bundle cannot be remembered across invocations. The
+# install is not phony: a stamp file remembers it, so the dependencies are
+# fetched once per lockfile change instead of once per make run. A caller that
+# builds twice - CI builds the bundle before `make verify`, whose Go cases serve
+# /ui/ from the embedded dist, and runs `make backend` after the checks -
+# therefore installs once, and a bare `make build` still installs and builds.
 build: backend
 
-web:
-	$(NPM) --prefix $(WEB_DIR) ci
-	$(NPM) --prefix $(WEB_DIR) run build
+# Frontend dependencies, installed once per package.json or package-lock.json
+# change. npm ci rewrites node_modules/.package-lock.json itself; the touch
+# keeps the stamp newer than the lockfile it was built from, so a later run
+# cannot read it as older and install a second time.
+WEB_STAMP := $(WEB_DIR)/node_modules/.package-lock.json
 
+$(WEB_STAMP): $(WEB_DIR)/package.json $(WEB_DIR)/package-lock.json
+	$(NPM) --prefix $(WEB_DIR) ci
+	@touch $@
+
+web-deps: $(WEB_STAMP)
+
+web: web-deps
+	$(NPM) --prefix $(WEB_DIR) run build
 backend: web
 	mkdir -p bin
 	CGO_ENABLED=0 $(GO) build -trimpath -tags '$(BUILD_TAGS)' -ldflags '$(LDFLAGS)' -o bin/prism ./cmd/prism
