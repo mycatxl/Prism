@@ -28,6 +28,15 @@ export function formatMicroWithUnit(micro: number): string {
 }
 
 /**
+ * formatMicroCompact renders an amount without trailing zeros, for an input the
+ * operator edits. The stored value keeps six decimals; this is only what the
+ * field shows, so "10.000000" does not come back as a number nobody typed.
+ */
+export function formatMicroCompact(micro: number): string {
+  return formatMicro(micro).replace(/\.?0+$/, "");
+}
+
+/**
  * parseAmountToMicro turns what a person typed into micro-units, or null when it
  * is not an amount.
  *

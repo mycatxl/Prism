@@ -13,7 +13,9 @@ const LoginPage = lazy(() => import("../features/auth/LoginPage").then((m) => ({
 const RegisterPage = lazy(() => import("../features/auth/RegisterPage").then((m) => ({ default: m.RegisterPage })));
 const MeGuidePage = lazy(() => import("../features/me/GuidePage").then((m) => ({ default: m.GuidePage })));
 const MeKeysPage = lazy(() => import("../features/me/KeysPage").then((m) => ({ default: m.KeysPage })));
+const MeLeasesPage = lazy(() => import("../features/me/LeasesPage").then((m) => ({ default: m.LeasesPage })));
 const MeOverviewPage = lazy(() => import("../features/me/OverviewPage").then((m) => ({ default: m.OverviewPage })));
+const MePlansPage = lazy(() => import("../features/me/PlansPage").then((m) => ({ default: m.PlansPage })));
 
 /** Landing route: the workbench for operators, the self-service surface for a tenant session. */
 function HomeRedirect() {
@@ -88,6 +90,8 @@ export function AppRoutes() {
         <Route path="/me" element={<Page><MeOverviewPage /></Page>} />
         <Route path="/me/keys" element={<Page><MeKeysPage /></Page>} />
         <Route path="/me/guide" element={<Page><MeGuidePage /></Page>} />
+        <Route path="/me/plans" element={<Page><MePlansPage /></Page>} />
+        <Route path="/me/leases" element={<Page><MeLeasesPage /></Page>} />
         <Route path="/account-security" element={<Page><AccountSecurityPage /></Page>} />
         <Route path="*" element={<AdminSurface />} />
       </Route>

@@ -112,8 +112,8 @@ func (r *StateRepo) CountUsers() (int, error) {
 	return count, nil
 }
 
-// DeleteUser removes a user. Subscriptions, access keys, sessions and orders
-// cascade; usage rows survive because they carry no foreign key.
+// DeleteUser removes a user. Subscriptions, access keys, sessions, balances and
+// ledger entries cascade; usage rows survive because they carry no foreign key.
 //
 // A whole-row write of a user is only safe for a caller that owns the row for
 // the whole read-modify-write - seeding a fixture, importing a row. A caller
@@ -170,8 +170,8 @@ func (r *StateRepo) UpsertPlan(p model.Plan) error {
 	_, err = r.db.Exec(`
 		INSERT INTO plans (id, name, platforms_json, ip_tiers_json, traffic_bytes, period,
 		                   max_concurrent, max_rps, max_bandwidth_bps, max_keys, duration_days,
-		                   status, created_at_ns, updated_at_ns)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   price_micro, status, created_at_ns, updated_at_ns)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name              = excluded.name,
 			platforms_json    = excluded.platforms_json,
@@ -183,11 +183,12 @@ func (r *StateRepo) UpsertPlan(p model.Plan) error {
 			max_bandwidth_bps = excluded.max_bandwidth_bps,
 			max_keys          = excluded.max_keys,
 			duration_days     = excluded.duration_days,
+			price_micro       = excluded.price_micro,
 			status            = excluded.status,
 			updated_at_ns     = excluded.updated_at_ns
 	`, p.ID, p.Name, platforms, ipTiers, p.TrafficBytes, p.Period,
 		p.MaxConcurrent, p.MaxRPS, p.MaxBandwidthBps, p.MaxKeys, p.DurationDays,
-		p.Status, p.CreatedAtNs, p.UpdatedAtNs)
+		p.PriceMicro, p.Status, p.CreatedAtNs, p.UpdatedAtNs)
 	if isSQLiteUniqueConstraint(err) {
 		return fmt.Errorf("%w: plan name already exists", ErrConflict)
 	}
@@ -196,7 +197,7 @@ func (r *StateRepo) UpsertPlan(p model.Plan) error {
 
 const planColumns = `id, name, platforms_json, ip_tiers_json, traffic_bytes, period,
 	max_concurrent, max_rps, max_bandwidth_bps, max_keys, duration_days,
-	status, created_at_ns, updated_at_ns`
+	price_micro, status, created_at_ns, updated_at_ns`
 
 func scanPlan(row interface{ Scan(...any) error }) (model.Plan, error) {
 	var p model.Plan
@@ -204,7 +205,7 @@ func scanPlan(row interface{ Scan(...any) error }) (model.Plan, error) {
 	var maxBandwidth sql.NullInt64
 	err := row.Scan(&p.ID, &p.Name, &platformsJSON, &ipTiersJSON, &p.TrafficBytes, &p.Period,
 		&p.MaxConcurrent, &p.MaxRPS, &maxBandwidth, &p.MaxKeys, &p.DurationDays,
-		&p.Status, &p.CreatedAtNs, &p.UpdatedAtNs)
+		&p.PriceMicro, &p.Status, &p.CreatedAtNs, &p.UpdatedAtNs)
 	if err != nil {
 		return model.Plan{}, err
 	}
@@ -468,8 +469,9 @@ func (r *StateRepo) UpsertUserSubscription(s model.UserSubscription) error {
 
 	_, err := r.db.Exec(`
 		INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot_json, starts_at_ns,
-		                                expires_at_ns, period_start_ns, period_used_bytes, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                                expires_at_ns, period_start_ns, period_used_bytes,
+		                                auto_renew, period_index, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			user_id            = excluded.user_id,
 			plan_id            = excluded.plan_id,
@@ -478,9 +480,11 @@ func (r *StateRepo) UpsertUserSubscription(s model.UserSubscription) error {
 			expires_at_ns      = excluded.expires_at_ns,
 			period_start_ns    = excluded.period_start_ns,
 			period_used_bytes  = excluded.period_used_bytes,
+			auto_renew         = excluded.auto_renew,
+			period_index       = excluded.period_index,
 			status             = excluded.status
 	`, s.ID, s.UserID, nullableString(s.PlanID), snapshot, s.StartsAtNs,
-		s.ExpiresAtNs, s.PeriodStartNs, s.PeriodUsedBytes, s.Status)
+		s.ExpiresAtNs, s.PeriodStartNs, s.PeriodUsedBytes, s.AutoRenew, s.PeriodIndex, s.Status)
 	if isSQLiteUniqueConstraint(err) {
 		return fmt.Errorf("%w: the user already has an active subscription", ErrConflict)
 	}
@@ -530,10 +534,12 @@ func (r *StateRepo) UpdateUserSubscriptionTerms(s model.UserSubscription) error 
 			plan_snapshot_json = ?,
 			starts_at_ns       = ?,
 			expires_at_ns      = ?,
+			auto_renew         = ?,
+			period_index       = ?,
 			status             = ?
 		WHERE id = ?
 	`, s.UserID, nullableString(s.PlanID), snapshot, s.StartsAtNs,
-		s.ExpiresAtNs, s.Status, s.ID)
+		s.ExpiresAtNs, s.AutoRenew, s.PeriodIndex, s.Status, s.ID)
 	if isSQLiteUniqueConstraint(err) {
 		return fmt.Errorf("%w: the user already has an active subscription", ErrConflict)
 	}
@@ -568,13 +574,14 @@ func (r *StateRepo) subscriptionRowExists(id string) (bool, error) {
 }
 
 const userSubscriptionColumns = `id, user_id, plan_id, plan_snapshot_json, starts_at_ns,
-	expires_at_ns, period_start_ns, period_used_bytes, status`
+	expires_at_ns, period_start_ns, period_used_bytes, auto_renew, period_index, status`
 
 func scanUserSubscription(row interface{ Scan(...any) error }) (model.UserSubscription, error) {
 	var s model.UserSubscription
 	var planID sql.NullString
 	err := row.Scan(&s.ID, &s.UserID, &planID, &s.PlanSnapshotJSON, &s.StartsAtNs,
-		&s.ExpiresAtNs, &s.PeriodStartNs, &s.PeriodUsedBytes, &s.Status)
+		&s.ExpiresAtNs, &s.PeriodStartNs, &s.PeriodUsedBytes, &s.AutoRenew, &s.PeriodIndex,
+		&s.Status)
 	if err != nil {
 		return model.UserSubscription{}, err
 	}

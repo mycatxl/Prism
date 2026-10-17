@@ -79,9 +79,13 @@ type Plan struct {
 	MaxBandwidthBps int64    `json:"max_bandwidth_bps"`
 	MaxKeys         int      `json:"max_keys"`
 	DurationDays    int      `json:"duration_days"`
-	Status          string   `json:"status"`
-	CreatedAtNs     int64    `json:"created_at_ns"`
-	UpdatedAtNs     int64    `json:"updated_at_ns"`
+	// PriceMicro is what the plan costs per period in micro-units of USDT.
+	// Zero means the plan is not for sale: it can only be granted by an
+	// operator, never bought self-service.
+	PriceMicro  int64  `json:"price_micro"`
+	Status      string `json:"status"`
+	CreatedAtNs int64  `json:"created_at_ns"`
+	UpdatedAtNs int64  `json:"updated_at_ns"`
 }
 
 // UserSubscription binds one user to one plan for a time window.
@@ -99,7 +103,12 @@ type UserSubscription struct {
 	ExpiresAtNs      int64  `json:"expires_at_ns"`
 	PeriodStartNs    int64  `json:"period_start_ns"`
 	PeriodUsedBytes  int64  `json:"period_used_bytes"`
-	Status           string `json:"status"`
+	// AutoRenew is the customer's own decision, so it lives here and not in
+	// the plan snapshot: rewriting the snapshot must not flip it.
+	AutoRenew bool `json:"auto_renew"`
+	// PeriodIndex counts periods elapsed and is the renewal idempotency key.
+	PeriodIndex int    `json:"period_index"`
+	Status      string `json:"status"`
 }
 
 // AccessKey is a proxy or admin credential.

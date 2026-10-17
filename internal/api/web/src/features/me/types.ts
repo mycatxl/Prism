@@ -16,6 +16,12 @@ export interface SubscriptionView {
   period_used_bytes: number;
   traffic_bytes: number;
   remaining_bytes: number | null;
+  /** The customer's own switch; it lives on the subscription, not in the snapshot. */
+  auto_renew: boolean;
+  /** How many periods this subscription has been extended for. */
+  period_index: number;
+  /** What one period costs — the snapshot's price, which is what a renewal charges. */
+  price_micro: number;
 }
 
 export interface UsageDay {
@@ -36,6 +42,40 @@ export interface SelfOverview {
   live_concurrent: number;
   usage_daily: UsageDay[];
   platforms: SelfPlatform[];
+}
+
+/** A plan a customer may buy: active and priced. */
+export interface PurchasablePlan {
+  id: string;
+  name: string;
+  platforms: string[] | null;
+  ip_tiers: string[] | null;
+  traffic_bytes: number;
+  period: string;
+  duration_days: number;
+  price_micro: number;
+}
+
+/**
+ * What a purchase answers with. `charged_micro` is zero on a replay, which is
+ * what makes "did I just get charged twice" answerable from the response.
+ */
+export interface PurchaseResult {
+  subscription: SubscriptionView;
+  balance_micro: number;
+  charged_micro: number;
+  replayed: boolean;
+}
+
+/** One sticky lease as its owner sees it. The node hash is deliberately absent. */
+export interface SelfLease {
+  platform_id: string;
+  platform_name: string;
+  account: string;
+  node_tag: string;
+  egress_ip: string;
+  expiry: string;
+  last_accessed: string;
 }
 
 export interface BalanceEntry {

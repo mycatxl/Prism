@@ -65,7 +65,14 @@ const RAIL_PATHS = [
 
 // What a tenant session gets instead: the self-service destinations, which an
 // operator never sees, plus the account surface both roles share.
-const TENANT_RAIL = ["/ui/me", "/ui/me/keys", "/ui/me/guide", "/ui/account-security"];
+const TENANT_RAIL = [
+  "/ui/me",
+  "/ui/me/keys",
+  "/ui/me/guide",
+  "/ui/me/plans",
+  "/ui/me/leases",
+  "/ui/account-security",
+];
 
 // Class tokens the redesign deleted. A trailing dash means "prefix". `card` is
 // matched as a whole token, because the kit's own utilities are named around it.

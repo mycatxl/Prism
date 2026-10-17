@@ -16,7 +16,6 @@ var tenantTables = []string{
 	"access_keys",
 	"usage_hourly",
 	"usage_daily",
-	"orders",
 	"sessions",
 }
 

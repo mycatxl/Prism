@@ -11,6 +11,8 @@ export type PlanWrite = {
   max_bandwidth_bps: number;
   max_keys: number;
   duration_days: number;
+  /** What one period costs, in micro-units of USDT. Zero means not for sale. */
+  price_micro: number;
   status: PlanStatus;
 };
 

@@ -36,6 +36,15 @@ type SubscriptionView struct {
 	PeriodStartNs   int64  `json:"period_start_ns"`
 	PeriodUsedBytes int64  `json:"period_used_bytes"`
 	TrafficBytes    int64  `json:"traffic_bytes"`
+	// AutoRenew is the customer's own switch. It is read from the subscription
+	// row rather than from the snapshot, so rewriting the snapshot does not
+	// change what it says.
+	AutoRenew bool `json:"auto_renew"`
+	// PeriodIndex counts the periods this subscription has been extended for,
+	// and PriceMicro is what one period costs - the snapshot's price, which is
+	// what a renewal charges.
+	PeriodIndex int   `json:"period_index"`
+	PriceMicro  int64 `json:"price_micro"`
 	// RemainingBytes is null when the plan does not limit traffic, which is a
 	// different answer from "no bytes left".
 	RemainingBytes *int64 `json:"remaining_bytes"`
@@ -364,6 +373,9 @@ func (s *ControlPlaneService) subscriptionViews(rows []model.UserSubscription) (
 			PeriodStartNs:   row.PeriodStartNs,
 			PeriodUsedBytes: row.PeriodUsedBytes,
 			TrafficBytes:    plan.TrafficBytes,
+			AutoRenew:       row.AutoRenew,
+			PeriodIndex:     row.PeriodIndex,
+			PriceMicro:      plan.PriceMicro,
 			RemainingBytes:  remainingBytes(plan.TrafficBytes, row.PeriodUsedBytes),
 		}
 		if user, ok := users[row.UserID]; ok {

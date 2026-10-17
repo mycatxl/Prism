@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, ShoppingCart } from "lucide-react";
+import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { PageHeader } from "../../components/ui/PageHeader";
@@ -7,6 +8,7 @@ import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout } from "../../components/ui/Readout";
 import { Sparkline } from "../../components/ui/Sparkline";
+import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TD, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
@@ -14,7 +16,8 @@ import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
-import { getOverview, getSessions, revokeSession } from "./api";
+import { formatMicro } from "../../lib/money";
+import { getOverview, getSessions, revokeSession, setAutoRenew } from "./api";
 import { BalancePanel } from "./BalancePanel";
 
 const NANOS_PER_MILLI = 1_000_000;
@@ -74,6 +77,18 @@ export function OverviewPage() {
     onSuccess: () => {
       showToast("success", t("会话已撤销"));
       void queryClient.invalidateQueries({ queryKey: ["me-sessions"] });
+    },
+    onError: (err) => {
+      showToast("error", formatApiErrorMessage(err, t));
+    },
+  });
+
+  const autoRenewMutation = useMutation({
+    mutationFn: (input: { subscriptionID: string; autoRenew: boolean }) =>
+      setAutoRenew(input.subscriptionID, input.autoRenew),
+    onSuccess: (_result, input) => {
+      showToast("success", input.autoRenew ? t("已开启自动续费") : t("已关闭自动续费"));
+      void queryClient.invalidateQueries({ queryKey: ["me-overview"] });
     },
     onError: (err) => {
       showToast("error", formatApiErrorMessage(err, t));
@@ -144,14 +159,30 @@ export function OverviewPage() {
                   </Badge>
                 ) : null
               }
+              actions={
+                <Button variant="secondary" size="sm" asChild>
+                  <Link to="/me/plans">
+                    <ShoppingCart size={14} />
+                    <span>{t("购买套餐")}</span>
+                  </Link>
+                </Button>
+              }
             />
             <PanelBody>
               {!overview?.subscription ? (
                 <EmptyState
                   title={t("暂无有效订阅")}
                   hint={t(
-                    "当前账号暂未分配套餐，套餐由平台运营人员统一分配与调整。",
+                    "当前账号暂未分配套餐。可以自己购买，也可以联系运营人员分配。",
                   )}
+                  action={
+                    <Button variant="primary" asChild>
+                      <Link to="/me/plans">
+                        <ShoppingCart size={14} />
+                        <span>{t("购买套餐")}</span>
+                      </Link>
+                    </Button>
+                  }
                   className="py-8"
                 />
               ) : (
@@ -267,6 +298,40 @@ export function OverviewPage() {
                         }
                       />
                     </div>
+                  </div>
+
+                  {/*
+                   * Renewal is the customer's own decision, so the switch lives
+                   * here rather than in the plan: rewriting a plan's snapshot
+                   * must not silently flip what somebody chose.
+                   */}
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-glass-edge bg-glass p-3">
+                    <div className="space-y-0.5">
+                      <span className="text-xs font-medium text-ink">
+                        {t("自动续费")}
+                      </span>
+                      <p className="text-xs text-ink-soft">
+                        {overview.subscription.price_micro > 0
+                          ? t(
+                              "到期前 7 天自动从余额扣 {{price}} USDT 续期一个周期，余额不足时不扣款。",
+                              { price: formatMicro(overview.subscription.price_micro) },
+                            )
+                          : t("该套餐未定价，无法自动续费，请联系运营人员。")}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={overview.subscription.auto_renew}
+                      disabled={
+                        autoRenewMutation.isPending ||
+                        overview.subscription.price_micro <= 0
+                      }
+                      onCheckedChange={(checked) =>
+                        autoRenewMutation.mutate({
+                          subscriptionID: overview.subscription!.id,
+                          autoRenew: checked,
+                        })
+                      }
+                    />
                   </div>
                 </div>
               )}

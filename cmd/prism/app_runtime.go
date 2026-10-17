@@ -63,6 +63,8 @@ type prismApp struct {
 	stopUsageAlerts func()
 	//: the subscription expiry sweep over state.db.
 	stopSubscriptionSweeper func()
+	//: the automatic renewal sweep over state.db.
+	stopRenewalSweeper func()
 	//: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
@@ -701,6 +703,17 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// stops it while that database is still open.
 	a.stopSubscriptionSweeper = service.StartSubscriptionExpirySweeper(cpService, service.SubscriptionSweepInterval, log.Printf)
 	log.Println("Subscription expiry sweeper started")
+
+	// Automatic renewal. It runs before the expiry sweep can close a window,
+	// because both look at the same rows: a subscription that opted in is
+	// charged and extended here, and one that did not is left for the sweep to
+	// close out. Order matters only in that the renewal sweep reads the lead
+	// time (7 days), which is far wider than either interval.
+	//
+	// It writes state.db and republishes keys, so shutdown stops it before the
+	// database is closed, in the same place as the sweep above.
+	a.stopRenewalSweeper = service.StartRenewalSweeper(cpService, 0, log.Printf)
+	log.Println("Subscription renewal sweeper started")
 
 	// Accounting. One counter set and one session registry are shared by every
 	// inbound: a key's allowance spans the protocols it uses, and so does the
@@ -1342,6 +1355,11 @@ func (a *prismApp) shutdown() {
 	// still open - the same reason the accounting is cancelled below.
 	if a.stopSubscriptionSweeper != nil {
 		a.stopSubscriptionSweeper()
+	}
+	// Same reason: the renewal sweep charges balances and republishes keys,
+	// both of which reach state.db.
+	if a.stopRenewalSweeper != nil {
+		a.stopRenewalSweeper()
 	}
 	// Cancelling the accounting runs the flusher's final pass, which writes to
 	// state.db - so it has to happen here, while that database is still open,

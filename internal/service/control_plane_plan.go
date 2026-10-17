@@ -48,6 +48,7 @@ type PlanInput struct {
 	MaxBandwidthBps int64    `json:"max_bandwidth_bps"`
 	MaxKeys         int      `json:"max_keys"`
 	DurationDays    int      `json:"duration_days"`
+	PriceMicro      int64    `json:"price_micro"`
 	Status          string   `json:"status"`
 }
 
@@ -72,6 +73,7 @@ var planPatchAllowedFields = map[string]bool{
 	"max_bandwidth_bps": true,
 	"max_keys":          true,
 	"duration_days":     true,
+	"price_micro":       true,
 	"status":            true,
 	"apply_to_existing": true,
 }
@@ -213,6 +215,11 @@ func (s *ControlPlaneService) UpdatePlan(id string, patchJSON json.RawMessage, n
 		return PlanView{}, svcErr
 	} else if ok {
 		updated.DurationDays = value
+	}
+	if value, ok, svcErr := patch.optionalInt("price_micro"); svcErr != nil {
+		return PlanView{}, svcErr
+	} else if ok {
+		updated.PriceMicro = int64(value)
 	}
 	if value, ok, svcErr := patch.optionalString("status"); svcErr != nil {
 		return PlanView{}, svcErr
@@ -396,6 +403,7 @@ func planFromInput(in PlanInput, nowNs int64) (model.Plan, *ServiceError) {
 		MaxBandwidthBps: in.MaxBandwidthBps,
 		MaxKeys:         in.MaxKeys,
 		DurationDays:    in.DurationDays,
+		PriceMicro:      in.PriceMicro,
 		Status:          strings.TrimSpace(in.Status),
 		CreatedAtNs:     nowNs,
 		UpdatedAtNs:     nowNs,
@@ -428,6 +436,15 @@ func validatePlan(plan model.Plan) *ServiceError {
 	}
 	if plan.MaxConcurrent < 0 || plan.MaxRPS < 0 || plan.MaxKeys < 0 {
 		return invalidArg("max_concurrent, max_rps and max_keys: must not be negative")
+	}
+	// A price of zero is legal and means the plan is not for sale. A negative
+	// one is not a price, and one above the balance cap is a typo that would
+	// otherwise be stored and then never be affordable.
+	if plan.PriceMicro < 0 {
+		return invalidArg("price_micro: must not be negative")
+	}
+	if plan.PriceMicro > maxBalanceMicro {
+		return invalidArg("price_micro: the amount is out of range")
 	}
 	if !validPlanPeriod(plan.Period) {
 		return invalidArg("period: must be month, week, day, once or a number of days such as 30d")

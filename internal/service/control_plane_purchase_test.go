@@ -1,0 +1,447 @@
+package service
+
+import (
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"prism/internal/model"
+)
+
+// Buying, renewing and the renewal switch.
+
+// newPurchaseTestUser creates a user and returns its id.
+func newPurchaseTestUser(t *testing.T, cp *ControlPlaneService, nowNs int64) string {
+	t.Helper()
+	account, err := cp.CreateAccount("buyer", "buyer-password-1234", model.UserRoleUser, nowNs)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	return account.ID
+}
+
+func creditUser(t *testing.T, cp *ControlPlaneService, userID string, amount int64, nowNs int64) {
+	t.Helper()
+	id, err := newID("bl_")
+	if err != nil {
+		t.Fatalf("ledger id: %v", err)
+	}
+	if _, err := cp.Engine.ApplyBalanceDelta(model.BalanceEntry{
+		ID: id, UserID: userID, DeltaMicro: amount,
+		Reason: model.BalanceReasonAdminAdjust, Note: "seed", Actor: "test",
+		CreatedAtNs: nowNs,
+	}); err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+}
+
+func mustPlan(t *testing.T, cp *ControlPlaneService, in PlanInput, nowNs int64) model.Plan {
+	t.Helper()
+	view, err := cp.CreatePlan(in, nowNs)
+	if err != nil {
+		t.Fatalf("create plan: %v", err)
+	}
+	return view.Plan
+}
+
+func pricedPlanInput(name string, priceMicro int64) PlanInput {
+	return PlanInput{
+		Name:         name,
+		TrafficBytes: 10 * 1024 * 1024,
+		Period:       "30d",
+		MaxKeys:      2,
+		DurationDays: 30,
+		PriceMicro:   priceMicro,
+	}
+}
+
+// A plan with no price is not for sale, and the difference between "free" and
+// "not for sale" is the whole reason the field is checked rather than assumed.
+func TestSelfPlans_ListsOnlyPricedActivePlans(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+
+	mustPlan(t, cp, pricedPlanInput("For sale", 5_000_000), nowNs)
+	mustPlan(t, cp, pricedPlanInput("Granted by hand", 0), nowNs)
+	disabled := pricedPlanInput("Switched off", 7_000_000)
+	disabled.Status = planStatusDisabled
+	mustPlan(t, cp, disabled, nowNs)
+
+	plans, err := cp.SelfPlans()
+	if err != nil {
+		t.Fatalf("SelfPlans: %v", err)
+	}
+	if len(plans) != 1 || plans[0].Name != "For sale" {
+		t.Fatalf("only the priced active plan should be listed: got %+v", plans)
+	}
+	if plans[0].PriceMicro != 5_000_000 {
+		t.Fatalf("price should be carried: got %d", plans[0].PriceMicro)
+	}
+}
+
+// The happy path: the balance goes down by exactly the price, the subscription
+// exists, and the ledger says what it was for.
+func TestSelfPurchase_ChargesAndPutsThePlanInForce(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 12_000_000, nowNs)
+
+	result, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if result.ChargedMicro != 5_000_000 {
+		t.Fatalf("charged: got %d, want 5000000", result.ChargedMicro)
+	}
+	if result.BalanceMicro != 7_000_000 {
+		t.Fatalf("balance: got %d, want 7000000", result.BalanceMicro)
+	}
+	if result.Replayed {
+		t.Fatal("a first purchase is not a replay")
+	}
+	if result.Subscription.PlanID != plan.ID {
+		t.Fatalf("subscription plan: got %q", result.Subscription.PlanID)
+	}
+	if result.Subscription.Status != model.SubscriptionStatusActive {
+		t.Fatalf("subscription status: got %q", result.Subscription.Status)
+	}
+
+	ledger, err := cp.Engine.ListBalanceLedger(userID, 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	var purchase *model.BalanceEntry
+	for i := range ledger {
+		if ledger[i].Reason == model.BalanceReasonPurchase {
+			purchase = &ledger[i]
+		}
+	}
+	if purchase == nil {
+		t.Fatal("a purchase row should be in the ledger")
+	}
+	if purchase.DeltaMicro != -5_000_000 || purchase.RefID != plan.ID || purchase.RequestID != "req-1" {
+		t.Fatalf("purchase row: %+v", purchase)
+	}
+}
+
+// The same request_id is answered, not charged twice. This is what a client
+// that retried a timed-out request gets.
+func TestSelfPurchase_ReplayChargesOnce(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 12_000_000, nowNs)
+
+	first, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("first purchase: %v", err)
+	}
+	second, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs+1)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+
+	if !second.Replayed {
+		t.Fatal("the second call should be reported as a replay")
+	}
+	if second.ChargedMicro != 0 {
+		t.Fatalf("a replay charges nothing: got %d", second.ChargedMicro)
+	}
+	if second.BalanceMicro != first.BalanceMicro {
+		t.Fatalf("balance moved on a replay: %d then %d", first.BalanceMicro, second.BalanceMicro)
+	}
+
+	// Only one subscription, and only one purchase row.
+	subs, err := cp.Engine.ListUserSubscriptions()
+	if err != nil {
+		t.Fatalf("list subscriptions: %v", err)
+	}
+	if len(subs) != 1 {
+		t.Fatalf("a replay must not open a second subscription: got %d", len(subs))
+	}
+	ledger, err := cp.Engine.ListBalanceLedger(userID, 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	purchases := 0
+	for _, entry := range ledger {
+		if entry.Reason == model.BalanceReasonPurchase {
+			purchases++
+		}
+	}
+	if purchases != 1 {
+		t.Fatalf("a replay must not write a second ledger row: got %d", purchases)
+	}
+}
+
+// Buying twice with different request_ids is two purchases, and the same plan
+// may be bought again: the ledger's deposit-only uniqueness must not get in the
+// way of an ordinary repeat.
+func TestSelfPurchase_SamePlanTwiceIsTwoCharges(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 12_000_000, nowNs)
+
+	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs); err != nil {
+		t.Fatalf("first purchase: %v", err)
+	}
+	second, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-2"}, nowNs+1)
+	if err != nil {
+		t.Fatalf("second purchase: %v", err)
+	}
+	if second.Replayed || second.ChargedMicro != 5_000_000 {
+		t.Fatalf("a second request_id is a second charge: %+v", second)
+	}
+	if second.BalanceMicro != 2_000_000 {
+		t.Fatalf("balance: got %d, want 2000000", second.BalanceMicro)
+	}
+
+	// The first subscription was ended, not stacked: one active row.
+	active := 0
+	subs, err := cp.Engine.ListUserSubscriptions()
+	if err != nil {
+		t.Fatalf("list subscriptions: %v", err)
+	}
+	for _, sub := range subs {
+		if sub.Status == model.SubscriptionStatusActive {
+			active++
+		}
+	}
+	if active != 1 {
+		t.Fatalf("exactly one subscription may be active: got %d", active)
+	}
+}
+
+// A purchase the balance cannot cover is refused and changes nothing.
+func TestSelfPurchase_RefusesWhenShortOfFunds(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 1_000_000, nowNs)
+
+	_, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs)
+	var svcErr *ServiceError
+	if !errors.As(err, &svcErr) || svcErr.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("expected INVALID_ARGUMENT, got %v", err)
+	}
+
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 1_000_000 {
+		t.Fatalf("balance must be untouched: got %d, %v", balance, err)
+	}
+	subs, err := cp.Engine.ListUserSubscriptions()
+	if err != nil {
+		t.Fatalf("list subscriptions: %v", err)
+	}
+	if len(subs) != 0 {
+		t.Fatalf("a refused purchase must not leave a subscription: got %d", len(subs))
+	}
+}
+
+// A plan that is not for sale cannot be bought, and the refusal is the same one
+// an operator's own assign would give for a disabled plan.
+func TestSelfPurchase_RefusesUnpricedAndDisabledPlans(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	creditUser(t, cp, userID, 100_000_000, nowNs)
+
+	free := mustPlan(t, cp, pricedPlanInput("Granted", 0), nowNs)
+	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: free.ID}, nowNs); err == nil {
+		t.Fatal("an unpriced plan must not be purchasable")
+	}
+
+	disabled := pricedPlanInput("Off", 5_000_000)
+	disabled.Status = planStatusDisabled
+	off := mustPlan(t, cp, disabled, nowNs)
+	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: off.ID}, nowNs); err == nil {
+		t.Fatal("a disabled plan must not be purchasable")
+	}
+}
+
+// The renewal switch is the customer's, and it survives a plan edit that
+// rewrites the snapshot - which is the reason it is not in the snapshot.
+func TestSetAutoRenew_SurvivesApplyToExisting(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 12_000_000, nowNs)
+
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	subID := purchased.Subscription.ID
+
+	view, err := cp.SetAutoRenew(userID, subID, true)
+	if err != nil {
+		t.Fatalf("set auto renew: %v", err)
+	}
+	if !view.AutoRenew {
+		t.Fatal("the view should report the switch as on")
+	}
+
+	// An operator pushes a new plan version onto everybody on it.
+	if _, err := cp.UpdatePlan(plan.ID, []byte(`{"traffic_bytes": 20000000, "apply_to_existing": true}`), nowNs+1); err != nil {
+		t.Fatalf("apply to existing: %v", err)
+	}
+
+	row, err := cp.Engine.GetUserSubscription(subID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	if !row.AutoRenew {
+		t.Fatal("apply_to_existing must not flip the customer's renewal switch")
+	}
+	if !strings.Contains(row.PlanSnapshotJSON, "20000000") {
+		t.Fatalf("the snapshot should have been rewritten: %s", row.PlanSnapshotJSON)
+	}
+}
+
+// Renewing charges the snapshot price and extends by the plan's duration, and a
+// second pass does not charge again because the period index moved.
+func TestRenewDueSubscriptions_ChargesOncePerPeriod(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 12_000_000, nowNs)
+
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if _, err := cp.SetAutoRenew(userID, purchased.Subscription.ID, true); err != nil {
+		t.Fatalf("set auto renew: %v", err)
+	}
+
+	// Not yet inside the lead time: nothing to do.
+	if result, err := cp.RenewDueSubscriptions(nowNs); err != nil {
+		t.Fatalf("sweep: %v", err)
+	} else if result.Renewed != 0 {
+		t.Fatalf("nothing should renew 30 days out: %+v", result)
+	}
+
+	// Inside the lead time: one charge, one extension.
+	dueAt := purchased.Subscription.ExpiresAtNs - int64(24*time.Hour)
+	result, err := cp.RenewDueSubscriptions(dueAt)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Renewed != 1 {
+		t.Fatalf("one subscription should renew: %+v", result)
+	}
+
+	row, err := cp.Engine.GetUserSubscription(purchased.Subscription.ID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	if row.PeriodIndex != 1 {
+		t.Fatalf("period index: got %d, want 1", row.PeriodIndex)
+	}
+	if row.ExpiresAtNs <= purchased.Subscription.ExpiresAtNs {
+		t.Fatalf("expiry should move forward: %d then %d", purchased.Subscription.ExpiresAtNs, row.ExpiresAtNs)
+	}
+	// 12 charged in, 5 spent on the purchase, 5 on the renewal.
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 2_000_000 {
+		t.Fatalf("one renewal is one charge: got %d, %v", balance, err)
+	}
+
+	// The same moment again: the index has moved, so nothing matches.
+	again, err := cp.RenewDueSubscriptions(dueAt)
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if again.Renewed != 0 {
+		t.Fatalf("a renewed subscription must not renew again: %+v", again)
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 2_000_000 {
+		t.Fatalf("no second charge: got %d, %v", balance, err)
+	}
+}
+
+// A subscription that opted in but cannot afford the next period is reported,
+// not silently skipped and not extended on credit.
+func TestRenewDueSubscriptions_ReportsShortOfFunds(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 5_000_000, nowNs)
+
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if _, err := cp.SetAutoRenew(userID, purchased.Subscription.ID, true); err != nil {
+		t.Fatalf("set auto renew: %v", err)
+	}
+
+	dueAt := purchased.Subscription.ExpiresAtNs - int64(time.Hour)
+	result, err := cp.RenewDueSubscriptions(dueAt)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Renewed != 0 || result.ShortOfFunds != 1 {
+		t.Fatalf("expected one shortfall and no renewal: %+v", result)
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 0 {
+		t.Fatalf("balance must be untouched: got %d, %v", balance, err)
+	}
+	row, err := cp.Engine.GetUserSubscription(purchased.Subscription.ID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	if row.PeriodIndex != 0 {
+		t.Fatalf("a refused renewal must not move the index: got %d", row.PeriodIndex)
+	}
+}
+
+// A snapshot with no price in it is the pre-000024 case: the live plan's price
+// applies once and is written back, so the next period is priced from the
+// snapshot like any other.
+func TestRenewDueSubscriptions_PricesAnUnpricedSnapshotOnce(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 12_000_000, nowNs)
+
+	// A subscription opened the way 000017 opened them: no price in the
+	// snapshot at all.
+	legacy := model.Plan{
+		ID: plan.ID, Name: plan.Name, TrafficBytes: plan.TrafficBytes,
+		Period: plan.Period, MaxKeys: plan.MaxKeys, DurationDays: plan.DurationDays,
+		Status: planStatusActive,
+	}
+	snapshot, err := planSnapshotJSON(legacy)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	sub := model.UserSubscription{
+		ID: "us-legacy", UserID: userID, PlanID: plan.ID, PlanSnapshotJSON: snapshot,
+		StartsAtNs: nowNs, ExpiresAtNs: expiryFromDays(30, nowNs),
+		PeriodStartNs: nowNs, AutoRenew: true,
+		Status: model.SubscriptionStatusActive,
+	}
+	if err := cp.Engine.UpsertUserSubscription(sub); err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+
+	dueAt := sub.ExpiresAtNs - int64(time.Hour)
+	result, err := cp.RenewDueSubscriptions(dueAt)
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if result.Renewed != 1 {
+		t.Fatalf("the legacy subscription should renew: %+v", result)
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 7_000_000 {
+		t.Fatalf("the live price should be charged: got %d, %v", balance, err)
+	}
+
+	row, err := cp.Engine.GetUserSubscription("us-legacy")
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	if !strings.Contains(row.PlanSnapshotJSON, "5000000") {
+		t.Fatalf("the price should have been written back: %s", row.PlanSnapshotJSON)
+	}
+}

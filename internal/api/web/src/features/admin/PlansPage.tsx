@@ -22,6 +22,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { formatMicro, formatMicroCompact, parseAmountToMicro } from "../../lib/money";
 import { createPlan, deletePlan, listPlans, updatePlan } from "./api";
 import {
   BITS_PER_MBPS,
@@ -30,6 +31,38 @@ import {
   unitsToBase,
 } from "./plan-units";
 import type { AdminPlan, PlanPatch, PlanStatus, PlanWrite } from "./types";
+
+/*
+ * The periods a plan may name, in the order the form offers them.
+ *
+ * These are the values `validPlanPeriod` accepts on the server: the named
+ * periods `month` / `week` / `day` / `once`, plus the "<n>d" form. `year` used to
+ * be in this list and the server refused it, so choosing it made every save fail
+ * with a 400 that named a field the operator had not touched.
+ */
+const PERIOD_OPTIONS = ["month", "week", "day", "30d", "90d", "365d", "once"] as const;
+
+/** periodLabel names a period in the reader's language. */
+function periodLabel(period: string, t: (text: string) => string): string {
+  switch (period) {
+    case "month":
+      return t("按月");
+    case "week":
+      return t("按周");
+    case "day":
+      return t("按天");
+    case "30d":
+      return t("30 天");
+    case "90d":
+      return t("90 天");
+    case "365d":
+      return t("365 天");
+    case "once":
+      return t("不重置");
+    default:
+      return period;
+  }
+}
 
 export function PlansPage() {
   const { t } = useI18n();
@@ -144,6 +177,7 @@ export function PlansPage() {
                     <TH>{t("最大并发")}</TH>
                     <TH>{t("最大密钥数")}</TH>
                     <TH>{t("有效天数")}</TH>
+                    <TH className="text-right">{t("价格 (USDT)")}</TH>
                     <TH>{t("活跃用户")}</TH>
                     <TH className="text-right">{t("操作")}</TH>
                   </TR>
@@ -193,6 +227,13 @@ export function PlansPage() {
                         {plan.duration_days > 0
                           ? t("{{days}} 天", { days: plan.duration_days })
                           : t("永久有效")}
+                      </TD>
+                      <TD className="readout text-right text-xs">
+                        {plan.price_micro > 0 ? (
+                          formatMicro(plan.price_micro)
+                        ) : (
+                          <span className="text-ink-faint">{t("非卖品")}</span>
+                        )}
                       </TD>
                       <TD className="readout text-xs">
                         {plan.active_user_count ?? 0}
@@ -326,6 +367,14 @@ function PlanFormContent({
     initialPlan ? initialPlan.traffic_bytes : null,
   );
   const [period, setPeriod] = useState(initialPlan?.period || "month");
+  /*
+   * A stored period the list does not carry still gets an entry: a select
+   * whose value matches no option renders blank, which reads as "unset" on
+   * a plan that has one.
+   */
+  const periodOptions = (PERIOD_OPTIONS as readonly string[]).includes(period)
+    ? [...PERIOD_OPTIONS]
+    : [period, ...PERIOD_OPTIONS];
   const [maxConcurrent, setMaxConcurrent] = useState(
     String(initialPlan?.max_concurrent ?? 0),
   );
@@ -339,6 +388,11 @@ function PlanFormContent({
   const [maxKeys, setMaxKeys] = useState(String(initialPlan?.max_keys ?? 5));
   const [durationDays, setDurationDays] = useState(
     String(initialPlan?.duration_days ?? 30),
+  );
+  const [price, setPrice] = useState(() =>
+    initialPlan && initialPlan.price_micro > 0
+      ? formatMicroCompact(initialPlan.price_micro)
+      : "",
   );
   const [status, setStatus] = useState<PlanStatus>(
     initialPlan?.status || "active",
@@ -369,6 +423,13 @@ function PlanFormContent({
       const bandwidthBps =
         bandwidthBpsExact ?? unitsToBase(maxBandwidthMbps, BITS_PER_MBPS);
 
+      // An empty field means the plan is not for sale, which the server spells
+      // as price_micro = 0. Anything typed has to be an amount it can store.
+      const priceMicro = price.trim() === "" ? 0 : parseAmountToMicro(price);
+      if (priceMicro === null) {
+        throw new Error(t("价格最多六位小数，留空表示不对外出售。"));
+      }
+
       const payload: PlanWrite = {
         name: trimmedName,
         platforms,
@@ -380,6 +441,7 @@ function PlanFormContent({
         max_bandwidth_bps: bandwidthBps,
         max_keys: Math.max(0, Number(maxKeys) || 0),
         duration_days: Math.max(0, Number(durationDays) || 0),
+        price_micro: priceMicro,
         status,
       };
 
@@ -438,10 +500,11 @@ function PlanFormContent({
                   value={period}
                   onChange={(e) => setPeriod(e.target.value)}
                 >
-                  <option value="month">{t("按月")}</option>
-                  <option value="day">{t("按天")}</option>
-                  <option value="week">{t("按周")}</option>
-                  <option value="year">{t("按年")}</option>
+                  {periodOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {periodLabel(option, t)}
+                    </option>
+                  ))}
                 </Select>
               </Fieldset>
             </div>
@@ -505,6 +568,21 @@ function PlanFormContent({
                 />
               </Fieldset>
             </div>
+
+            <Fieldset
+              label={t("价格 (USDT)")}
+              hint={t("一个周期的售价，留空表示非卖品，由运营方手动分配。")}
+              htmlFor="plan-price"
+            >
+              <Input
+                id="plan-price"
+                inputMode="decimal"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="0.000000"
+                className="font-mono"
+              />
+            </Fieldset>
 
             <div className="grid grid-cols-3 gap-3">
               <Fieldset

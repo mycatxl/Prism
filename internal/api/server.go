@@ -304,6 +304,14 @@ func NewServerWithAddress(
 		// actor like everything else under /me.
 		authed.Handle("GET /api/v1/me/balance", HandleMeBalance(cp))
 		authed.Handle("POST /api/v1/me/redeem", HandleMeRedeem(cp))
+
+		// Buying and renewing. The price is the snapshot's, the charge and the
+		// subscription commit together, and the switch is the customer's own.
+		authed.Handle("GET /api/v1/me/plans", HandleMePlans(cp))
+		authed.Handle("POST /api/v1/me/purchases", HandleMePurchase(cp))
+		authed.Handle("PATCH /api/v1/me/subscription", HandleMeAutoRenew(cp))
+		authed.Handle("GET /api/v1/me/leases", HandleMeLeases(cp))
+		authed.Handle("DELETE /api/v1/me/leases/{platformID}/{account}", HandleMeReleaseLease(cp))
 	}
 
 	// Request log endpoints (always registered if repo is available).
