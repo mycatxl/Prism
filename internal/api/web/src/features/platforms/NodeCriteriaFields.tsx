@@ -166,7 +166,7 @@ function CheckboxList({
                     onChange={() => toggle(option.value)}
                   />
                   <span className="min-w-0 flex-1 truncate">{option.label}</span>
-                  {option.hint ? <span className="shrink-0 text-2xs text-ink-faint">{option.hint}</span> : null}
+                  {option.hint ? <span className="shrink-0 text-2xs text-ink-faint">{t(option.hint)}</span> : null}
                 </label>
               </li>
             );
@@ -287,7 +287,7 @@ function ScopePreview({ criteriaKey, criteria }: { criteriaKey: string; criteria
               const label = reason.startsWith(qualityReasonPrefix)
                 ? exclusionLabels.QUALITY_REJECTED
                 : exclusionLabels[reason] ?? reason;
-              return `${label} ${count}`;
+              return `${t(label)} ${count}`;
             })
             .join(" · ")}
         </p>
@@ -399,7 +399,7 @@ export function NodeCriteriaFields({
             name="ip_type"
             options={ipTypeOptions.map((value) => ({
               value,
-              label: `${ipTypeLabels[value] ?? value} (${value})`,
+              label: `${t(ipTypeLabels[value] ?? value)} (${value})`,
             }))}
             selected={values.ip_types}
             onChange={(next) => form.setValue("ip_types", next, { shouldDirty: true })}
@@ -412,7 +412,7 @@ export function NodeCriteriaFields({
             name="purity_band"
             options={purityBandOptions.map((value) => ({
               value,
-              label: `${purityBandLabels[value] ?? value} (${value})`,
+              label: `${t(purityBandLabels[value] ?? value)} (${value})`,
             }))}
             selected={values.purity_bands}
             onChange={(next) => form.setValue("purity_bands", next, { shouldDirty: true })}

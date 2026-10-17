@@ -1,6 +1,7 @@
 import { Suspense, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { LoadingState } from "../components/ui/QueryState";
+import { useI18n } from "../i18n";
 
 /**
  * Route boundary.
@@ -11,10 +12,11 @@ import { LoadingState } from "../components/ui/QueryState";
  */
 export function Page({ children }: { children: ReactNode }) {
   const location = useLocation();
+  const { t } = useI18n();
   return (
     <Suspense
       key={location.pathname}
-      fallback={<LoadingState label="载入页面" className="py-24" />}
+      fallback={<LoadingState label={t("载入页面")} className="py-24" />}
     >
       {children}
     </Suspense>

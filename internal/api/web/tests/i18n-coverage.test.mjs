@@ -209,3 +209,38 @@ test("no Chinese key maps to itself in the English dictionary", () => {
     `${offenders.length} English entr(ies) equal their Chinese key, so they stay Chinese in English mode:\n${report}`,
   );
 });
+
+/*
+ * A third shape of the same defect, and the one the first two rules cannot see: the
+ * Chinese text is not an argument to `t()` but a *value* in a label map, rendered
+ * straight into the DOM (`{option.label}`, `{t(label)}` where the map holds the key
+ * either way). `t()` coverage says nothing about it, and a map value has no `key:
+ * value` pair to compare against itself.
+ *
+ * The rule: every Chinese string that is a value in an object literal must also be a
+ * dictionary key, so whatever renders it can translate it. Values that already are
+ * keys pass; the platform criteria tables had sixteen that were not.
+ */
+test("every Chinese label-map value has a dictionary entry", () => {
+  const keys = dictionaryKeys();
+  const missing = [];
+  for (const path of filesIn(src, (p) => p.endsWith(".ts") || p.endsWith(".tsx"))) {
+    if (path.includes(`${sep}i18n${sep}`)) continue;
+    const lines = stripComments(readFileSync(path, "utf8")).split("\n");
+    lines.forEach((line, index) => {
+      for (const match of line.matchAll(/(?:"((?:[^"\\]|\\.)+)"|'((?:[^'\\]|\\.)+)'|([A-Za-z0-9_]+))\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+        const value = match[4] ?? "";
+        if (!CJK.test(value)) continue;
+        if (keys.has(value)) continue;
+        // `foo: "中文"` inside an i18n module is a dictionary entry, skipped above;
+        // here it is a map value or a default argument, both of which reach the DOM.
+        missing.push(`${relative(web, path)}:${index + 1}  ${JSON.stringify(value)}`);
+      }
+    });
+  }
+  assert.equal(
+    missing.length,
+    0,
+    `${missing.length} Chinese literal(s) sit in an object value with no dictionary entry, so they stay Chinese in English mode:\n${missing.map((m) => "  " + m).join("\n")}`,
+  );
+});

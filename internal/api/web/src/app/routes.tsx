@@ -5,6 +5,7 @@ import { NotFoundPage } from "../components/NotFoundPage";
 import { LoadingState } from "../components/ui/QueryState";
 import { RequireAuth } from "../features/auth/RequireAuth";
 import { useAuthStore } from "../features/auth/auth-store";
+import { useI18n } from "../i18n";
 import { isAdminRole, homePathFor } from "../lib/roles";
 import { Page } from "./page";
 
@@ -49,13 +50,14 @@ const LazyAdminRoutes = lazy(() =>
  */
 function AdminSurface() {
   const session = useAuthStore((state) => state.session);
+  const { t } = useI18n();
   // auth_required=false is a deployment with authentication switched off: every
   // surface is reachable, so the management table is loaded there too.
   const wantsAdmin = !session.auth_required || isAdminRole(session.user?.role);
 
   if (!wantsAdmin) return <NotFoundPage />;
   return (
-    <Suspense fallback={<LoadingState label="载入页面" className="py-24" />}>
+    <Suspense fallback={<LoadingState label={t("载入页面")} className="py-24" />}>
       <LazyAdminRoutes />
     </Suspense>
   );

@@ -11,7 +11,8 @@ import { Button } from "./Button";
  * Loading uses a static, shimmer-free glass skeleton stack so it never loops a
  * decorative animation and naturally respects reduced motion.
  */
-export function LoadingState({ label = "读取中", className }: { label?: string; className?: string }) {
+export function LoadingState({ label, className }: { label?: string; className?: string }) {
+  const { t } = useI18n();
   return (
     <div
       className={cn(
@@ -24,7 +25,7 @@ export function LoadingState({ label = "读取中", className }: { label?: strin
         <div className="h-2.5 w-3/4 rounded-control border border-rule-faint bg-paper-inset" />
         <div className="h-2.5 w-1/2 rounded-control border border-rule-faint bg-paper-inset/75" />
       </div>
-      <span>{label}</span>
+      <span>{label ? t(label) : t("读取中")}</span>
     </div>
   );
 }
