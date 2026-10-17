@@ -126,8 +126,15 @@ func (r *StateRepo) PurchasePlanWithBalance(sub model.UserSubscription, entry mo
 // answer with what happened rather than with a conflict.
 //
 // sub carries the terms to write: the new expiry, the new period index and, on
-// the fallback path, the price written back into the snapshot. The counters are
-// not in that set and are not touched here.
+// the fallback path, the price written back into the snapshot.
+//
+// The period counters move with them. A renewal buys a fresh allowance, so
+// period_start_ns jumps to the new window and period_used_bytes goes to zero in
+// the same statement. Leaving them behind was a real defect: a customer who had
+// spent their whole allowance, then paid, kept a spent counter and stayed
+// refused until the rollover worker happened to advance the old window - which
+// for a subscription whose period_start_ns was still the purchase date could be
+// up to a full period away.
 func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, expectedPeriodIndex int, entry model.BalanceEntry) (PurchaseResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -166,10 +173,12 @@ func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, exp
 			plan_snapshot_json = ?,
 			expires_at_ns      = ?,
 			period_index       = ?,
+			period_start_ns    = ?,
+			period_used_bytes  = 0,
 			status             = ?
 		WHERE id = ? AND period_index = ?
-	`, snapshot, sub.ExpiresAtNs, sub.PeriodIndex, model.SubscriptionStatusActive,
-		sub.ID, expectedPeriodIndex)
+	`, snapshot, sub.ExpiresAtNs, sub.PeriodIndex, sub.PeriodStartNs,
+		model.SubscriptionStatusActive, sub.ID, expectedPeriodIndex)
 	if err != nil {
 		return PurchaseResult{}, fmt.Errorf("extend subscription: %w", err)
 	}

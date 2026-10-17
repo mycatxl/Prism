@@ -409,8 +409,14 @@ func (s *ControlPlaneService) renewOne(sub model.UserSubscription, nowNs int64, 
 		return state.PurchaseResult{}, false, err
 	}
 	updated := sub
-	updated.ExpiresAtNs = expiryFromDays(plan.DurationDays, maxInt64(sub.ExpiresAtNs, nowNs))
+	base := maxInt64(sub.ExpiresAtNs, nowNs)
+	updated.ExpiresAtNs = expiryFromDays(plan.DurationDays, base)
 	updated.PeriodIndex = sub.PeriodIndex + 1
+	// The new period starts where the old one would have ended, so renewing a
+	// week early does not throw that week away. The counters reset with it: the
+	// renewal buys a fresh allowance, and leaving the spent one in place kept a
+	// customer refused after they had paid.
+	updated.PeriodStartNs = base
 	// A snapshot with no price in it is written back with the price it is
 	// being charged, so the fallback happens once rather than every period.
 	if snapshotPrice <= 0 {

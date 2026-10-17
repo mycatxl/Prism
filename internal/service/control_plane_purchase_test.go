@@ -757,3 +757,69 @@ func TestChainDepositFundsPurchaseAndRenewal(t *testing.T) {
 		t.Fatalf("renewal rows: got %d, want 1 (%v)", reasons[model.BalanceReasonRenew], reasons)
 	}
 }
+
+// A renewal buys a fresh allowance. Before this was fixed, the row kept the
+// period it had already spent: the expiry moved forward and the customer stayed
+// refused, because nothing except the rollover worker ever zeroed the counter.
+func TestSelfRenew_StartsAFreshAllowance(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	_, subID := buyAndRenew(t, cp, userID, nowNs, 5_000_000)
+
+	before, err := cp.Engine.GetUserSubscription(subID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	// Spend part of the allowance on disk, the way the flush worker records it.
+	if err := cp.Engine.AddSubscriptionUsedBytes(subID, 999_999); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+
+	if _, err := cp.SelfRenew(userID, RenewInput{SubscriptionID: subID, RequestID: "fresh-1"}, nowNs); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+
+	after, err := cp.Engine.GetUserSubscription(subID)
+	if err != nil {
+		t.Fatalf("read subscription after renew: %v", err)
+	}
+	if after.PeriodUsedBytes != 0 {
+		t.Fatalf("period usage after renewal: got %d, want 0", after.PeriodUsedBytes)
+	}
+	// The new window starts where the old one would have ended, so renewing
+	// early costs the customer nothing.
+	if after.PeriodStartNs != before.ExpiresAtNs {
+		t.Fatalf("period start: got %d, want the old expiry %d", after.PeriodStartNs, before.ExpiresAtNs)
+	}
+}
+
+// Renewing before the period ends must not move the window backwards, and the
+// running aggregate has to follow the disk or the quota keeps refusing.
+func TestSelfRenew_EarlyRenewalKeepsTheRemainingTime(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan, subID := buyAndRenew(t, cp, userID, nowNs, 5_000_000)
+
+	before, err := cp.Engine.GetUserSubscription(subID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	// Renew a day into a 30-day period, well before it ends.
+	earlyNs := nowNs + int64(24*time.Hour)
+	if _, err := cp.SelfRenew(userID, RenewInput{SubscriptionID: subID, RequestID: "early-1"}, earlyNs); err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	after, err := cp.Engine.GetUserSubscription(subID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	// The old expiry already covered a full period, so one more period lands
+	// exactly one period past it.
+	want := expiryFromDays(plan.DurationDays, before.ExpiresAtNs)
+	if after.ExpiresAtNs != want {
+		t.Fatalf("expiry: got %d, want %d", after.ExpiresAtNs, want)
+	}
+	if after.PeriodStartNs != before.ExpiresAtNs {
+		t.Fatalf("period start: got %d, want the old expiry %d", after.PeriodStartNs, before.ExpiresAtNs)
+	}
+}
