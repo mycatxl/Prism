@@ -98,14 +98,9 @@
 
 /* ---- the light theme ----------------------------------------------------- */
 /*
-  Light surfaces use Prism's fog-blue graphite material: a low-saturation blue-grey
-  ground, silver-blue panes and a deeper mist-blue inset. It is deliberately not
-  paper-white or cream; hierarchy comes from temperature, measured contrast and
-  quiet elevation rather than a blank sheet.
-*/
-/*
  * The day board is solved as its own world. Glass remains a restrained separator,
- * while the blue-grey material carries the identity and keeps long sessions calm.
+ * while the green-tinted material carries the identity and keeps long sessions calm.
+ * Surfaces stay opaque hex so `check:contrast` can compute every pair.
  */
 :root {
   --p-canvas: #ecf5f1;
