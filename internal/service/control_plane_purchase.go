@@ -61,6 +61,17 @@ type PurchaseInput struct {
 	RequestID string `json:"request_id"`
 }
 
+// RenewInput is the accepted body of a self-service renewal.
+//
+// SubscriptionID names which subscription; the service checks it belongs to the
+// caller. RequestID is the same kind of key a purchase carries and answers the
+// same question: pressing renew twice, or retrying after a dropped response,
+// charges once.
+type RenewInput struct {
+	SubscriptionID string `json:"subscription_id"`
+	RequestID      string `json:"request_id"`
+}
+
 // PurchaseResultView is what a purchase answers with.
 type PurchaseResultView struct {
 	Subscription SubscriptionView `json:"subscription"`
@@ -223,6 +234,80 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 	return view, nil
 }
 
+// SelfRenew extends the caller's own subscription by one period, charging the
+// price the snapshot agreed to.
+//
+// This is the manual half of what the sweep does on its own schedule. It exists
+// because the alternative to a button is a customer waiting for a sweep that will
+// refuse them anyway if their balance is short - and a renewal that only ever
+// happens by itself is a renewal nobody can decide to make early.
+//
+// Ownership is checked by reading the row through the user's own id, exactly
+// like SetAutoRenew: a subscription id learnt elsewhere matches nothing.
+func (s *ControlPlaneService) SelfRenew(userID string, in RenewInput, nowNs int64) (PurchaseResultView, error) {
+	if s == nil || s.Engine == nil {
+		return PurchaseResultView{}, internal("no state engine", nil)
+	}
+	if nowNs <= 0 {
+		return PurchaseResultView{}, invalidArg("now_ns: must be positive")
+	}
+	subscriptionID := strings.TrimSpace(in.SubscriptionID)
+	if subscriptionID == "" {
+		return PurchaseResultView{}, invalidArg("subscription_id: required")
+	}
+	requestID := strings.TrimSpace(in.RequestID)
+	if len(requestID) > maxPurchaseRequestID {
+		return PurchaseResultView{}, invalidArg("request_id: too long")
+	}
+
+	sub, err := s.Engine.GetUserSubscription(subscriptionID)
+	if err != nil {
+		return PurchaseResultView{}, mapSubscriptionLookupError(err)
+	}
+	if sub.UserID != userID {
+		return PurchaseResultView{}, notFound("subscription not found")
+	}
+	if sub.Status != model.SubscriptionStatusActive {
+		return PurchaseResultView{}, invalidArg("subscription_id: the subscription is not active")
+	}
+
+	result, renewed, err := s.renewOne(*sub, nowNs, requestID)
+	if errors.Is(err, state.ErrInsufficientBalance) {
+		return PurchaseResultView{}, invalidArg("balance: not enough to renew this plan")
+	}
+	if errors.Is(err, state.ErrConflict) {
+		return PurchaseResultView{}, conflict("that renewal could not be settled; retry with a new request_id")
+	}
+	if err != nil {
+		return PurchaseResultView{}, err
+	}
+	if !renewed {
+		return PurchaseResultView{}, invalidArg("plan_id: the subscription has no duration to renew")
+	}
+
+	// Read the row back rather than reconstructing it: the renewal wrote a new
+	// expiry, a new period index and possibly a repriced snapshot, and the
+	// answer has to be what is on disk.
+	current, err := s.Engine.GetUserSubscription(subscriptionID)
+	if err != nil {
+		return PurchaseResultView{}, mapSubscriptionLookupError(err)
+	}
+	views, err := s.subscriptionViews([]model.UserSubscription{*current})
+	if err != nil {
+		return PurchaseResultView{}, err
+	}
+	view := PurchaseResultView{
+		Subscription: views[0],
+		BalanceMicro: result.Entry.BalanceAfterMicro,
+		ChargedMicro: -result.Entry.DeltaMicro,
+		Replayed:     result.Replayed,
+	}
+	if result.Replayed {
+		view.ChargedMicro = 0
+	}
+	return view, nil
+}
+
 // SetAutoRenew turns the caller's own renewal switch on or off.
 //
 // Ownership is checked by reading the row through the user's own id: a
@@ -288,7 +373,7 @@ func (s *ControlPlaneService) RenewDueSubscriptions(nowNs int64) (RenewalView, e
 
 	var result RenewalView
 	for _, sub := range due {
-		renewed, err := s.renewOne(sub, nowNs)
+		_, renewed, err := s.renewOne(sub, nowNs, renewalRequestID(sub))
 		switch {
 		case err == nil && renewed:
 			result.Renewed++
@@ -301,19 +386,27 @@ func (s *ControlPlaneService) RenewDueSubscriptions(nowNs int64) (RenewalView, e
 	return result, nil
 }
 
-// renewOne renews a single subscription, reporting whether it was charged.
-func (s *ControlPlaneService) renewOne(sub model.UserSubscription, nowNs int64) (bool, error) {
+// renewOne renews a single subscription and reports what settled.
+//
+// requestID is passed in rather than derived here: the sweep derives it from the
+// period, because a retried pass must collide with the charge it already made,
+// while a person's own renew button sends the key its dialog minted. Deriving it
+// inside would make the button's retry look like a second period.
+//
+// renewed is false when the plan carries no duration, which is a subscription
+// nobody can price a period for rather than a failure.
+func (s *ControlPlaneService) renewOne(sub model.UserSubscription, nowNs int64, requestID string) (state.PurchaseResult, bool, error) {
 	plan, snapshotPrice, err := s.renewalPrice(sub)
 	if err != nil {
-		return false, err
+		return state.PurchaseResult{}, false, err
 	}
 	if plan.DurationDays <= 0 {
-		return false, nil
+		return state.PurchaseResult{}, false, nil
 	}
 
 	entryID, err := newID("bl_")
 	if err != nil {
-		return false, err
+		return state.PurchaseResult{}, false, err
 	}
 	updated := sub
 	updated.ExpiresAtNs = expiryFromDays(plan.DurationDays, maxInt64(sub.ExpiresAtNs, nowNs))
@@ -323,29 +416,34 @@ func (s *ControlPlaneService) renewOne(sub model.UserSubscription, nowNs int64) 
 	if snapshotPrice <= 0 {
 		snapshot, encodeErr := planSnapshotJSON(plan)
 		if encodeErr != nil {
-			return false, encodeErr
+			return state.PurchaseResult{}, false, encodeErr
 		}
 		updated.PlanSnapshotJSON = snapshot
 	}
 
-	if _, err := s.Engine.RenewSubscriptionWithBalance(updated, sub.PeriodIndex, model.BalanceEntry{
+	result, err := s.Engine.RenewSubscriptionWithBalance(updated, sub.PeriodIndex, model.BalanceEntry{
 		ID:          entryID,
 		UserID:      sub.UserID,
 		DeltaMicro:  -plan.PriceMicro,
 		Reason:      model.BalanceReasonRenew,
 		RefID:       sub.ID,
-		RequestID:   renewalRequestID(sub),
+		RequestID:   requestID,
 		CreatedAtNs: nowNs,
-	}); err != nil {
-		return false, err
+	})
+	if err != nil {
+		return state.PurchaseResult{}, false, err
 	}
-	if s.Usage != nil {
-		s.Usage.ResetUser(sub.UserID)
+	// A replay charged nothing and changed nothing, so resetting the running
+	// aggregate would throw away the bytes this period has actually used.
+	if !result.Replayed {
+		if s.Usage != nil {
+			s.Usage.ResetUser(sub.UserID)
+		}
+		if err := s.republishUserKeys(sub.UserID); err != nil {
+			return state.PurchaseResult{}, false, err
+		}
 	}
-	if err := s.republishUserKeys(sub.UserID); err != nil {
-		return false, err
-	}
-	return true, nil
+	return result, true, nil
 }
 
 // renewalPrice resolves what a renewal costs.

@@ -93,6 +93,32 @@ func HandleMeAutoRenew(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+// HandleMeRenew implements POST /api/v1/me/renewals.
+//
+// The charge and the extension commit together, so a 200 means the customer paid
+// and the period is longer. A replay carrying the same request_id answers with
+// the first call's result and charged_micro = 0 rather than charging again.
+func HandleMeRenew(cp *service.ControlPlaneService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := meActor(w, r)
+		if !ok {
+			return
+		}
+		var in service.RenewInput
+		if err := DecodeBody(r, &in); err != nil {
+			writeDecodeBodyError(w, err)
+			return
+		}
+		view, err := cp.SelfRenew(actor.UserID, in, adminNowNs())
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusCreated, view)
+	}
+}
+
 // HandleMeLeases implements GET /api/v1/me/leases.
 func HandleMeLeases(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

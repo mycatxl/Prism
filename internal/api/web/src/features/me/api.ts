@@ -49,6 +49,19 @@ export async function purchase(planID: string, requestID: string): Promise<Purch
   });
 }
 
+/**
+ * Extends the caller's own subscription by one period.
+ *
+ * `request_id` is minted by the dialog and kept for its lifetime, so pressing
+ * renew twice - or retrying after a dropped response - charges one period.
+ */
+export async function renew(subscriptionID: string, requestID: string): Promise<PurchaseResult> {
+  return apiRequest<PurchaseResult>("/api/v1/me/renewals", {
+    method: "POST",
+    body: { subscription_id: subscriptionID, request_id: requestID },
+  });
+}
+
 export async function setAutoRenew(
   subscriptionID: string,
   autoRenew: boolean,

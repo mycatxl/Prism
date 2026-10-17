@@ -309,6 +309,7 @@ func NewServerWithAddress(
 		// subscription commit together, and the switch is the customer's own.
 		authed.Handle("GET /api/v1/me/plans", HandleMePlans(cp))
 		authed.Handle("POST /api/v1/me/purchases", HandleMePurchase(cp))
+		authed.Handle("POST /api/v1/me/renewals", HandleMeRenew(cp))
 		authed.Handle("PATCH /api/v1/me/subscription", HandleMeAutoRenew(cp))
 		authed.Handle("GET /api/v1/me/leases", HandleMeLeases(cp))
 		authed.Handle("DELETE /api/v1/me/leases/{platformID}/{account}", HandleMeReleaseLease(cp))

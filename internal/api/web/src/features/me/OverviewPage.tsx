@@ -1,8 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { RefreshCw, ShoppingCart } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
+import {
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from "../../components/ui/Dialog";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
@@ -16,9 +24,11 @@ import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { newRequestID } from "../../lib/idempotency";
 import { formatMicro } from "../../lib/money";
-import { getOverview, getSessions, revokeSession, setAutoRenew } from "./api";
+import { getOverview, getSessions, renew, revokeSession, setAutoRenew } from "./api";
 import { BalancePanel } from "./BalancePanel";
+import type { SubscriptionView } from "./types";
 
 const NANOS_PER_MILLI = 1_000_000;
 
@@ -54,6 +64,7 @@ export function OverviewPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
+  const [renewing, setRenewing] = useState(false);
 
   const overviewQuery = useQuery({
     queryKey: ["me-overview"],
@@ -160,12 +171,25 @@ export function OverviewPage() {
                 ) : null
               }
               actions={
-                <Button variant="secondary" size="sm" asChild>
-                  <Link to="/me/plans">
-                    <ShoppingCart size={14} />
-                    <span>{t("购买套餐")}</span>
-                  </Link>
-                </Button>
+                <div className="flex items-center gap-2">
+                  {overview?.subscription && overview.subscription.price_micro > 0 && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setRenewing(true)}
+                      title={t("用余额续期一个周期")}
+                    >
+                      <RefreshCw size={14} />
+                      <span>{t("续费")}</span>
+                    </Button>
+                  )}
+                  <Button variant="secondary" size="sm" asChild>
+                    <Link to="/me/plans">
+                      <ShoppingCart size={14} />
+                      <span>{t("购买套餐")}</span>
+                    </Link>
+                  </Button>
+                </div>
               }
             />
             <PanelBody>
@@ -542,7 +566,123 @@ export function OverviewPage() {
         </>
       )}
 
+      {renewing && overview?.subscription && (
+        <RenewDialog
+          subscription={overview.subscription}
+          onClose={() => setRenewing(false)}
+          onDone={() => {
+            setRenewing(false);
+            showToast("success", t("续费成功，套餐已延长"));
+            void queryClient.invalidateQueries({ queryKey: ["me-overview"] });
+            void queryClient.invalidateQueries({ queryKey: ["me-balance"] });
+          }}
+        />
+      )}
+
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
+  );
+}
+
+/**
+ * The confirmation step for a manual renewal, which is also where the
+ * idempotency key is minted.
+ *
+ * The key is minted once, when the dialog mounts, and kept for its lifetime: a
+ * retry after a network error answers with the first call's result instead of
+ * extending a second period. Closing and reopening really is another decision,
+ * so it mints a new one.
+ */
+function RenewDialog({
+  subscription,
+  onClose,
+  onDone,
+}: {
+  subscription: SubscriptionView;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const { t } = useI18n();
+  const [requestID] = useState(newRequestID);
+
+  const renewMutation = useMutation({
+    mutationFn: (input: { subscriptionID: string; requestID: string }) =>
+      renew(input.subscriptionID, input.requestID),
+    onSuccess: () => {
+      onDone();
+    },
+  });
+
+  return (
+    <DialogRoot
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          renewMutation.reset();
+          onClose();
+        }
+      }}
+    >
+      <DialogPortal>
+        <DialogOverlay />
+        <DialogContent className="w-full max-w-md p-6">
+          <DialogTitle className="text-base font-semibold text-ink">
+            {t("确认续费")}
+          </DialogTitle>
+          <p className="mt-1 text-xs text-ink-soft">
+            {t("扣款与延长同时完成，余额不足时不会扣款。")}
+          </p>
+
+          <div className="mt-4 space-y-2 rounded-control border border-glass-edge bg-glass p-3 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="text-ink-soft">{t("套餐")}</span>
+              <span className="font-medium text-ink">{subscription.plan_name}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-ink-soft">{t("当前到期")}</span>
+              <span className="readout text-ink">
+                {subscription.expires_at_ns > 0
+                  ? formatNsDate(subscription.expires_at_ns)
+                  : t("永不过期")}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-ink-soft">{t("扣款金额")}</span>
+              <span className="readout font-mono text-ink">
+                {formatMicro(subscription.price_micro)} USDT
+              </span>
+            </div>
+          </div>
+
+          {renewMutation.isError && (
+            <div className="mt-3 rounded-control border border-alert/30 bg-alert-wash p-3 text-xs text-alert">
+              {formatApiErrorMessage(renewMutation.error, t)}
+            </div>
+          )}
+
+          <div className="mt-6 flex items-center justify-end gap-3">
+            <Button
+              variant="secondary"
+              onClick={onClose}
+              disabled={renewMutation.isPending}
+            >
+              {t("取消")}
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() =>
+                renewMutation.mutate({
+                  subscriptionID: subscription.id,
+                  requestID,
+                })
+              }
+              disabled={renewMutation.isPending}
+            >
+              {renewMutation.isPending ? t("正在续费...") : t("确认续费")}
+            </Button>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   );
 }

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Coins, Ticket } from "lucide-react";
+import { Coins, Ticket, Wallet } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
@@ -104,7 +105,7 @@ export function BalancePanel() {
       <Panel>
         <PanelHeader
           title={t("余额")}
-          description={t("用兑换码充值，余额用于购买与续费套餐。")}
+          description={t("用兑换码或链上转账充值，余额用于购买与续费套餐。")}
           meta={
             <Badge tone={balance > 0 ? "signal" : "neutral"}>
               {balance > 0 ? t("可用") : t("暂无余额")}
@@ -161,6 +162,12 @@ export function BalancePanel() {
               <Ticket size={14} />
               <span>{redeemMutation.isPending ? t("兑换中...") : t("兑换")}</span>
             </Button>
+            <Button variant="secondary" asChild title={t("转入 USDT (TRC20) 充值")}>
+              <Link to="/me/deposit">
+                <Wallet size={14} />
+                <span>{t("链上充值")}</span>
+              </Link>
+            </Button>
           </div>
         </PanelBody>
       </Panel>
@@ -183,7 +190,7 @@ export function BalancePanel() {
           ) : ledger.length === 0 ? (
             <EmptyState
               title={t("暂无余额变动")}
-              hint={t("使用兑换码充值后，流水会显示在这里。")}
+              hint={t("充值或消费后，流水会显示在这里。")}
               className="py-8"
             />
           ) : (

@@ -118,22 +118,43 @@ func (r *StateRepo) PurchasePlanWithBalance(sub model.UserSubscription, entry mo
 // (subscription_id, period_index) idempotency key, enforced where the money is
 // rather than in a table of its own.
 //
+// entry.RequestID is the second lock, and the one a customer's own button needs:
+// a sweep derives it from the period, so a retry reads a higher period and gets
+// a different key, while a person pressing renew twice sends the same id and is
+// answered with the first call's result instead of a second charge. It is
+// checked first, exactly like PurchasePlanWithBalance, because a replay has to
+// answer with what happened rather than with a conflict.
+//
 // sub carries the terms to write: the new expiry, the new period index and, on
 // the fallback path, the price written back into the snapshot. The counters are
 // not in that set and are not touched here.
-func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, expectedPeriodIndex int, entry model.BalanceEntry) (model.BalanceEntry, error) {
+func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, expectedPeriodIndex int, entry model.BalanceEntry) (PurchaseResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	tx, err := r.db.Begin()
 	if err != nil {
-		return model.BalanceEntry{}, fmt.Errorf("begin renewal: %w", err)
+		return PurchaseResult{}, fmt.Errorf("begin renewal: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if entry.RequestID != "" {
+		settled, err := ledgerEntryByRequest(tx, entry.UserID, entry.RequestID)
+		if err != nil {
+			return PurchaseResult{}, err
+		}
+		if settled != nil {
+			current, err := activeSubscriptionTx(tx, entry.UserID)
+			if err != nil {
+				return PurchaseResult{}, err
+			}
+			return PurchaseResult{Entry: *settled, Subscription: current, Replayed: true}, nil
+		}
+	}
+
 	entry, err = chargeInTx(tx, entry)
 	if err != nil {
-		return model.BalanceEntry{}, err
+		return PurchaseResult{}, err
 	}
 
 	snapshot := sub.PlanSnapshotJSON
@@ -150,18 +171,18 @@ func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, exp
 	`, snapshot, sub.ExpiresAtNs, sub.PeriodIndex, model.SubscriptionStatusActive,
 		sub.ID, expectedPeriodIndex)
 	if err != nil {
-		return model.BalanceEntry{}, fmt.Errorf("extend subscription: %w", err)
+		return PurchaseResult{}, fmt.Errorf("extend subscription: %w", err)
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
 		// Another writer renewed it first, or the row is gone. Both mean this
 		// charge must not stand, and the deferred rollback is what stops it.
-		return model.BalanceEntry{}, fmt.Errorf("%w: the subscription was renewed by another writer", ErrConflict)
+		return PurchaseResult{}, fmt.Errorf("%w: the subscription was renewed by another writer", ErrConflict)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return model.BalanceEntry{}, fmt.Errorf("commit renewal: %w", err)
+		return PurchaseResult{}, fmt.Errorf("commit renewal: %w", err)
 	}
-	return entry, nil
+	return PurchaseResult{Entry: entry, Subscription: sub}, nil
 }
 
 // SetSubscriptionAutoRenew flips the customer's own renewal switch.

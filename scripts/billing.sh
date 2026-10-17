@@ -352,6 +352,26 @@ status="$(session "$TENANT_JAR" -H 'Content-Type: application/json' \
 check 200 "$status" "customer turned auto renew on"
 check true "$(json subscription.auto_renew)" "auto renew is on"
 
+# The customer's own renew button, not the sweep: one period, one charge, and a
+# retried request answered rather than charged twice.
+status="$(session "$TENANT_JAR" -H 'Content-Type: application/json' \
+    -X POST "$BASE/api/v1/me/renewals" \
+    --data-binary "{\"subscription_id\":\"$SUBSCRIPTION_ID\",\"request_id\":\"billing-renew-1\"}"
+)"
+check 201 "$status" "customer renewed by hand"
+check 5000000 "$(json charged_micro)" "the renewal charged the snapshot price"
+check 2000001 "$(json balance_micro)" "the balance went down by one period"
+RENEWED_EXPIRY="$(json subscription.expires_at_ns)"
+
+status="$(session "$TENANT_JAR" -H 'Content-Type: application/json' \
+    -X POST "$BASE/api/v1/me/renewals" \
+    --data-binary "{\"subscription_id\":\"$SUBSCRIPTION_ID\",\"request_id\":\"billing-renew-1\"}"
+)"
+check 201 "$status" "the replayed renewal was answered"
+check 0 "$(json charged_micro)" "the replayed renewal charged nothing"
+check 2000001 "$(json balance_micro)" "the replayed renewal left the balance alone"
+check "$RENEWED_EXPIRY" "$(json subscription.expires_at_ns)" "the replay did not extend a second period"
+
 log "results: $PASS passed, $FAIL failed"
 if [ "$FAIL" -ne 0 ]; then
     exit 1
