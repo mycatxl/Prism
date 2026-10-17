@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -77,43 +78,6 @@ func TestStateRepo_UserDuplicateUsernameIsConflict(t *testing.T) {
 	}
 }
 
-func TestStateRepo_UpdateUser(t *testing.T) {
-	repo := newTestStateRepo(t)
-	user := mustInsertUser(t, repo, "u-1", "alice")
-	mustInsertUser(t, repo, "u-2", "bob")
-
-	user.Username = "alice-renamed"
-	user.Status = model.UserStatusDisabled
-	user.UpdatedAtNs = time.Now().UnixNano()
-	if err := repo.UpdateUser(user); err != nil {
-		t.Fatalf("UpdateUser: %v", err)
-	}
-
-	got, err := repo.GetUser("u-1")
-	if err != nil {
-		t.Fatalf("GetUser: %v", err)
-	}
-	if got.Username != "alice-renamed" {
-		t.Errorf("username: got %q, want %q", got.Username, "alice-renamed")
-	}
-	if got.Status != model.UserStatusDisabled {
-		t.Errorf("status: got %q, want %q", got.Status, model.UserStatusDisabled)
-	}
-
-	// Renaming onto another user's name is a conflict.
-	user.Username = "bob"
-	if err := repo.UpdateUser(user); !errors.Is(err, ErrConflict) {
-		t.Fatalf("rename onto a taken name: got %v, want ErrConflict", err)
-	}
-
-	// Updating a missing row reports not found.
-	user.ID = "missing"
-	user.Username = "nobody"
-	if err := repo.UpdateUser(user); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("update a missing row: got %v, want ErrNotFound", err)
-	}
-}
-
 func TestStateRepo_ListAndCountUsers(t *testing.T) {
 	repo := newTestStateRepo(t)
 
@@ -177,11 +141,6 @@ func TestStateRepo_DeleteUserCascadesButKeepsUsage(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertSession: %v", err)
 	}
-	if err := repo.InsertOrder(model.Order{
-		ID: "o-1", UserID: "u-1", PlanID: "p-1", CreatedAtNs: now,
-	}); err != nil {
-		t.Fatalf("InsertOrder: %v", err)
-	}
 	if err := repo.UpsertUsageHourly([]model.UsageRow{{
 		KeyID: "k-1", UserID: "u-1", PlatformID: "plat-a",
 		TSNs: now, IngressBytes: 10, EgressBytes: 20,
@@ -205,9 +164,6 @@ func TestStateRepo_DeleteUserCascadesButKeepsUsage(t *testing.T) {
 	}
 	if _, err := repo.GetSession("h-1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("session must cascade: got %v, want ErrNotFound", err)
-	}
-	if orders, err := repo.ListOrdersByUser("u-1"); err != nil || len(orders) != 0 {
-		t.Errorf("orders must cascade: got %d rows, err %v", len(orders), err)
 	}
 
 	// The plan itself survives, and usage has no foreign key on purpose.
@@ -754,125 +710,21 @@ func TestStateRepo_UpsertUsageHourlySums(t *testing.T) {
 	}
 }
 
-func TestStateRepo_SumUsageHourlyBeforeBucketsByDay(t *testing.T) {
-	repo := newTestStateRepo(t)
-	const day = int64(24 * time.Hour)
-
-	// Two hours on the same UTC day, one on the next, one recent enough to be
-	// left alone.
-	rows := []model.UsageRow{
-		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0, IngressBytes: 10, Requests: 1},
-		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: day - int64(time.Hour),
-			IngressBytes: 20, Requests: 2},
-		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: day + int64(time.Hour),
-			IngressBytes: 40, Requests: 4},
-		{KeyID: "k-2", UserID: "u-2", PlatformID: "p-1", TSNs: 0, IngressBytes: 5, Requests: 1},
-	}
-	if err := repo.UpsertUsageHourly(rows); err != nil {
-		t.Fatalf("UpsertUsageHourly: %v", err)
-	}
-
-	// Cut off at the end of the first day: only the two hour rows of day 0
-	// qualify.
-	aggregated, err := repo.SumUsageHourlyBefore(day)
-	if err != nil {
-		t.Fatalf("SumUsageHourlyBefore: %v", err)
-	}
-	if len(aggregated) != 2 {
-		t.Fatalf("got %d aggregated rows, want 2 (one per key on day 0)", len(aggregated))
-	}
-
-	byKey := map[string]model.UsageRow{}
-	for _, row := range aggregated {
-		if row.TSNs != 0 {
-			t.Errorf("day bucket: got %d, want 0", row.TSNs)
-		}
-		byKey[row.KeyID] = row
-	}
-	if got := byKey["k-1"]; got.IngressBytes != 30 || got.Requests != 3 {
-		t.Errorf("k-1 day 0: ingress=%d requests=%d, want 30/3", got.IngressBytes, got.Requests)
-	}
-	if got := byKey["k-2"]; got.IngressBytes != 5 || got.Requests != 1 {
-		t.Errorf("k-2 day 0: ingress=%d requests=%d, want 5/1", got.IngressBytes, got.Requests)
-	}
-}
-
-func TestStateRepo_UsageSummaryRoundTrip(t *testing.T) {
-	repo := newTestStateRepo(t)
-	const day = int64(24 * time.Hour)
-
-	if err := repo.UpsertUsageHourly([]model.UsageRow{
-		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0, IngressBytes: 10, EgressBytes: 20, Requests: 1},
-		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: int64(time.Hour), IngressBytes: 5, EgressBytes: 6, Requests: 2},
-	}); err != nil {
-		t.Fatalf("UpsertUsageHourly: %v", err)
-	}
-
-	aggregated, err := repo.SumUsageHourlyBefore(day)
-	if err != nil {
-		t.Fatalf("SumUsageHourlyBefore: %v", err)
-	}
-	if err := repo.UpsertUsageDaily(aggregated); err != nil {
-		t.Fatalf("UpsertUsageDaily: %v", err)
-	}
-
-	removed, err := repo.DeleteUsageHourlyBefore(day)
-	if err != nil {
-		t.Fatalf("DeleteUsageHourlyBefore: %v", err)
-	}
-	if removed != 2 {
-		t.Errorf("removed %d hourly rows, want 2", removed)
-	}
-
-	var hourlyLeft int
-	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&hourlyLeft); err != nil {
-		t.Fatalf("count hourly: %v", err)
-	}
-	if hourlyLeft != 0 {
-		t.Errorf("hourly rows left after the summary: %d, want 0", hourlyLeft)
-	}
-
-	// Running the summary twice must not double-count: the second run finds
-	// nothing to aggregate and the daily row stays as it was.
-	if err := repo.UpsertUsageDaily(aggregated); err != nil {
-		t.Fatalf("UpsertUsageDaily second time: %v", err)
-	}
-
-	daily, err := repo.ListUsageByUser("u-1", 0, day)
-	if err != nil {
-		t.Fatalf("ListUsageByUser: %v", err)
-	}
-	if len(daily) != 1 {
-		t.Fatalf("got %d daily rows, want 1", len(daily))
-	}
-	// The aggregation is summed into the existing row, so re-applying the same
-	// batch doubles it. That is why the summary deletes the hourly rows in the
-	// same pass; this asserts the summing semantics are deliberate.
-	if daily[0].IngressBytes != 30 || daily[0].EgressBytes != 52 || daily[0].Requests != 6 {
-		t.Errorf("daily row after two applies: %+v", daily[0])
-	}
-
-	removed, err = repo.DeleteUsageDailyBefore(day + 1)
-	if err != nil {
-		t.Fatalf("DeleteUsageDailyBefore: %v", err)
-	}
-	if removed != 1 {
-		t.Errorf("removed %d daily rows, want 1", removed)
-	}
-}
-
 func TestStateRepo_ListUsageByUserReadsBothTables(t *testing.T) {
 	repo := newTestStateRepo(t)
 	const day = int64(24 * time.Hour)
 
 	// Day 0 is summarized (daily), day 1 is still recent (hourly), day 2 is out
 	// of the requested window.
-	if err := repo.UpsertUsageDaily([]model.UsageRow{
+	if err := repo.UpsertUsageHourly([]model.UsageRow{
 		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0,
 			IngressBytes: 10, EgressBytes: 1, Requests: 1, Errors: 1},
 		{KeyID: "k-2", UserID: "u-2", PlatformID: "p-1", TSNs: 0, IngressBytes: 99},
 	}); err != nil {
-		t.Fatalf("UpsertUsageDaily: %v", err)
+		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+	if _, err := repo.SummarizeUsageHourlyBefore(day); err != nil {
+		t.Fatalf("SummarizeUsageHourlyBefore: %v", err)
 	}
 	if err := repo.UpsertUsageHourly([]model.UsageRow{
 		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: day, IngressBytes: 20, EgressBytes: 2, Requests: 2},
@@ -921,54 +773,6 @@ func TestStateRepo_ListUsageByUserReadsBothTables(t *testing.T) {
 		if row.TSNs >= 2*day {
 			t.Errorf("a row outside the window was returned: %+v", row)
 		}
-	}
-}
-
-// --- orders ---
-
-func TestStateRepo_OrderRoundTrip(t *testing.T) {
-	repo := newTestStateRepo(t)
-	mustInsertUser(t, repo, "u-1", "alice")
-	now := time.Now().UnixNano()
-
-	// plan_id carries a foreign key, so the plan has to exist first.
-	if err := repo.UpsertPlan(model.Plan{
-		ID: "p-1", Name: "Starter", CreatedAtNs: now, UpdatedAtNs: now,
-	}); err != nil {
-		t.Fatalf("UpsertPlan: %v", err)
-	}
-
-	order := model.Order{
-		ID: "o-1", UserID: "u-1", PlanID: "p-1",
-		AmountMinor: 9900, Currency: "CNY", Note: "manual renewal",
-		CreatedBy: "u-admin", CreatedAtNs: now,
-	}
-	if err := repo.InsertOrder(order); err != nil {
-		t.Fatalf("InsertOrder: %v", err)
-	}
-	// An order without a plan is valid.
-	if err := repo.InsertOrder(model.Order{
-		ID: "o-2", UserID: "u-1", AmountMinor: 100, CreatedAtNs: now + 1,
-	}); err != nil {
-		t.Fatalf("InsertOrder without a plan: %v", err)
-	}
-
-	orders, err := repo.ListOrdersByUser("u-1")
-	if err != nil {
-		t.Fatalf("ListOrdersByUser: %v", err)
-	}
-	if len(orders) != 2 {
-		t.Fatalf("got %d orders, want 2", len(orders))
-	}
-	// Newest first.
-	if orders[0].ID != "o-2" || orders[1].ID != "o-1" {
-		t.Errorf("orders must be newest first, got %q then %q", orders[0].ID, orders[1].ID)
-	}
-	if orders[1].AmountMinor != 9900 || orders[1].Currency != "CNY" {
-		t.Errorf("order did not round-trip: %+v", orders[1])
-	}
-	if orders[0].PlanID != "" {
-		t.Errorf("an order without a plan must come back empty, got %q", orders[0].PlanID)
 	}
 }
 
@@ -1300,45 +1104,30 @@ func TestStateRepo_ListUsageDailyRangeCountsTheHourTheWindowIsIn(t *testing.T) {
 // stateDeleteBatch is shrunk here so the loop has to run more than once: with a
 // single statement, deleting five rows while the limit is two could only ever
 // report two.
-func TestStateRepo_DeleteUsageBeforeBatches(t *testing.T) {
+func TestStateRepo_DeleteUsageDailyBeforeBatches(t *testing.T) {
 	repo := newTestStateRepo(t)
 	original := stateDeleteBatch
 	stateDeleteBatch = 2
 	t.Cleanup(func() { stateDeleteBatch = original })
 
-	const hour = int64(time.Hour)
-	cutoff := 10 * hour
+	const day = int64(24 * time.Hour)
+	cutoff := 10 * day
 
-	hourly := []model.UsageRow{}
-	for i := int64(0); i < 5; i++ {
-		hourly = append(hourly, model.UsageRow{
-			KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: i * hour, IngressBytes: 1,
-		})
-	}
-	// One row inside the retention window: it must survive the delete.
-	hourly = append(hourly, model.UsageRow{
-		KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 11 * hour, IngressBytes: 1,
-	})
-	if err := repo.UpsertUsageHourly(hourly); err != nil {
+	// Three days of traffic for three keys, plus one day inside the retention
+	// window. The summary folds the three older days into the daily table.
+	if err := repo.UpsertUsageHourly([]model.UsageRow{
+		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0, IngressBytes: 1},
+		{KeyID: "k-2", UserID: "u-2", PlatformID: "p-1", TSNs: day, IngressBytes: 1},
+		{KeyID: "k-3", UserID: "u-3", PlatformID: "p-1", TSNs: 2 * day, IngressBytes: 1},
+		{KeyID: "k-4", UserID: "u-4", PlatformID: "p-1", TSNs: 11 * day, IngressBytes: 1},
+	}); err != nil {
 		t.Fatalf("UpsertUsageHourly: %v", err)
 	}
-	if err := repo.UpsertUsageDaily([]model.UsageRow{
-		{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: 0, IngressBytes: 1},
-		{KeyID: "k-2", UserID: "u-2", PlatformID: "p-1", TSNs: hour, IngressBytes: 1},
-		{KeyID: "k-3", UserID: "u-3", PlatformID: "p-1", TSNs: 2 * hour, IngressBytes: 1},
-		{KeyID: "k-4", UserID: "u-4", PlatformID: "p-1", TSNs: 11 * hour, IngressBytes: 1},
-	}); err != nil {
-		t.Fatalf("UpsertUsageDaily: %v", err)
+	if _, err := repo.SummarizeUsageHourlyBefore(cutoff); err != nil {
+		t.Fatalf("SummarizeUsageHourlyBefore: %v", err)
 	}
 
-	removed, err := repo.DeleteUsageHourlyBefore(cutoff)
-	if err != nil {
-		t.Fatalf("DeleteUsageHourlyBefore: %v", err)
-	}
-	if removed != 5 {
-		t.Errorf("hourly rows removed: got %d, want 5 (several batches)", removed)
-	}
-	removed, err = repo.DeleteUsageDailyBefore(cutoff)
+	removed, err := repo.DeleteUsageDailyBefore(cutoff)
 	if err != nil {
 		t.Fatalf("DeleteUsageDailyBefore: %v", err)
 	}
@@ -1346,20 +1135,20 @@ func TestStateRepo_DeleteUsageBeforeBatches(t *testing.T) {
 		t.Errorf("daily rows removed: got %d, want 3 (several batches)", removed)
 	}
 
-	// The rows inside the window stay, and a second call has nothing left to do.
-	var hourlyLeft, dailyLeft int
-	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&hourlyLeft); err != nil {
-		t.Fatalf("count hourly rows: %v", err)
-	}
+	// The day inside the window stays, and a second call has nothing left to do.
+	var dailyLeft, hourlyLeft int
 	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_daily`).Scan(&dailyLeft); err != nil {
 		t.Fatalf("count daily rows: %v", err)
 	}
-	if hourlyLeft != 1 || dailyLeft != 1 {
-		t.Errorf("rows left: hourly=%d daily=%d, want 1/1", hourlyLeft, dailyLeft)
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&hourlyLeft); err != nil {
+		t.Fatalf("count hourly rows: %v", err)
 	}
-	removed, err = repo.DeleteUsageHourlyBefore(cutoff)
+	if dailyLeft != 0 || hourlyLeft != 1 {
+		t.Errorf("rows left: daily=%d hourly=%d, want 0/1", dailyLeft, hourlyLeft)
+	}
+	removed, err = repo.DeleteUsageDailyBefore(cutoff)
 	if err != nil {
-		t.Fatalf("DeleteUsageHourlyBefore (second call): %v", err)
+		t.Fatalf("DeleteUsageDailyBefore (second call): %v", err)
 	}
 	if removed != 0 {
 		t.Errorf("second call removed %d rows, want 0", removed)
@@ -1367,24 +1156,27 @@ func TestStateRepo_DeleteUsageBeforeBatches(t *testing.T) {
 }
 
 // More rows than one batch of the production size, pruned by one call.
-func TestStateRepo_DeleteUsageHourlyBeforeRemovesMoreThanOneBatch(t *testing.T) {
+func TestStateRepo_DeleteUsageDailyBeforeRemovesMoreThanOneBatch(t *testing.T) {
 	repo := newTestStateRepo(t)
 
 	total := int(stateDeleteBatch) + 7
-	rows := make([]model.UsageRow, 0, total)
+	hourly := make([]model.UsageRow, 0, total)
 	for i := 0; i < total; i++ {
-		rows = append(rows, model.UsageRow{
-			KeyID: "k-1", UserID: "u-1", PlatformID: "p-1",
-			TSNs: int64(i), IngressBytes: 1,
+		hourly = append(hourly, model.UsageRow{
+			KeyID: fmt.Sprintf("k-%d", i), UserID: "u-1", PlatformID: "p-1",
+			TSNs: 0, IngressBytes: 1,
 		})
 	}
-	if err := repo.UpsertUsageHourly(rows); err != nil {
+	if err := repo.UpsertUsageHourly(hourly); err != nil {
 		t.Fatalf("UpsertUsageHourly: %v", err)
 	}
+	if _, err := repo.SummarizeUsageHourlyBefore(1); err != nil {
+		t.Fatalf("SummarizeUsageHourlyBefore: %v", err)
+	}
 
-	removed, err := repo.DeleteUsageHourlyBefore(int64(total))
+	removed, err := repo.DeleteUsageDailyBefore(int64(total))
 	if err != nil {
-		t.Fatalf("DeleteUsageHourlyBefore: %v", err)
+		t.Fatalf("DeleteUsageDailyBefore: %v", err)
 	}
 	if int(removed) != total {
 		t.Errorf("removed %d rows, want %d (more than one batch of %d)",
@@ -1392,11 +1184,11 @@ func TestStateRepo_DeleteUsageHourlyBeforeRemovesMoreThanOneBatch(t *testing.T) 
 	}
 
 	var left int
-	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&left); err != nil {
-		t.Fatalf("count hourly rows: %v", err)
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_daily`).Scan(&left); err != nil {
+		t.Fatalf("count daily rows: %v", err)
 	}
 	if left != 0 {
-		t.Errorf("hourly rows left: got %d, want 0", left)
+		t.Errorf("daily rows left: got %d, want 0", left)
 	}
 }
 
@@ -1407,46 +1199,49 @@ func TestStateRepo_DeleteUsageHourlyBeforeRemovesMoreThanOneBatch(t *testing.T) 
 //
 // The trigger pins the failure to the number of rows still in the table, so the
 // test does not depend on timing.
-func TestStateRepo_DeleteUsageBeforeKeepsPartialProgressWhenABatchFails(t *testing.T) {
+func TestStateRepo_DeleteUsageDailyBeforeKeepsPartialProgressWhenABatchFails(t *testing.T) {
 	repo := newTestStateRepo(t)
 	original := stateDeleteBatch
 	stateDeleteBatch = 2
 	t.Cleanup(func() { stateDeleteBatch = original })
 
-	const hour = int64(time.Hour)
-	cutoff := 10 * hour
-	rows := make([]model.UsageRow, 0, 5)
-	for i := int64(0); i < 5; i++ {
-		rows = append(rows, model.UsageRow{
-			KeyID: "k-1", UserID: "u-1", PlatformID: "p-1", TSNs: i * hour, IngressBytes: 1,
+	const day = int64(24 * time.Hour)
+	cutoff := 10 * day
+	hourly := make([]model.UsageRow, 0, 5)
+	for i := 0; i < 5; i++ {
+		hourly = append(hourly, model.UsageRow{
+			KeyID: fmt.Sprintf("k-%d", i), UserID: "u-1", PlatformID: "p-1", TSNs: 0, IngressBytes: 1,
 		})
 	}
-	if err := repo.UpsertUsageHourly(rows); err != nil {
+	if err := repo.UpsertUsageHourly(hourly); err != nil {
 		t.Fatalf("UpsertUsageHourly: %v", err)
+	}
+	if _, err := repo.SummarizeUsageHourlyBefore(cutoff); err != nil {
+		t.Fatalf("SummarizeUsageHourlyBefore: %v", err)
 	}
 
 	// Abort a delete that would have to go below three rows: the first batch of
 	// two succeeds, the second one fails.
 	if _, err := repo.db.Exec(`CREATE TRIGGER test_abort_deep_batch
-		BEFORE DELETE ON usage_hourly
-		WHEN (SELECT COUNT(*) FROM usage_hourly) <= 3
+		BEFORE DELETE ON usage_daily
+		WHEN (SELECT COUNT(*) FROM usage_daily) <= 3
 		BEGIN SELECT RAISE(ABORT, 'test: batch too deep'); END`); err != nil {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	removed, err := repo.DeleteUsageHourlyBefore(cutoff)
+	removed, err := repo.DeleteUsageDailyBefore(cutoff)
 	if err == nil {
-		t.Fatalf("DeleteUsageHourlyBefore: want the aborted batch to fail, got nil (removed %d)", removed)
+		t.Fatalf("DeleteUsageDailyBefore: want the aborted batch to fail, got nil (removed %d)", removed)
 	}
 	if removed != 2 {
 		t.Errorf("removed before the failure: got %d, want 2 (the first batch)", removed)
 	}
 
 	var left int
-	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_hourly`).Scan(&left); err != nil {
-		t.Fatalf("count hourly rows: %v", err)
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM usage_daily`).Scan(&left); err != nil {
+		t.Fatalf("count daily rows: %v", err)
 	}
 	if left != 3 {
-		t.Errorf("hourly rows left after the failed batch: got %d, want 3 (one statement would have restored all 5)", left)
+		t.Errorf("daily rows left after the failed batch: got %d, want 3 (one statement would have restored all 5)", left)
 	}
 }

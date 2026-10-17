@@ -83,37 +83,6 @@ func (r *StateRepo) ListInvites() ([]model.Invite, error) {
 	return result, rows.Err()
 }
 
-// UpdateInvite replaces the mutable fields of an existing invite. Code is part
-// of that set, so renaming onto a taken code returns ErrConflict.
-func (r *StateRepo) UpdateInvite(inv model.Invite) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec(`
-		UPDATE invites SET
-			code          = ?,
-			plan_id       = ?,
-			max_uses      = ?,
-			used_count    = ?,
-			expires_at_ns = ?,
-			note          = ?,
-			status        = ?,
-			updated_at_ns = ?
-		WHERE id = ?
-	`, inv.Code, inv.PlanID, inv.MaxUses, inv.UsedCount, inv.ExpiresAtNs,
-		inv.Note, inv.Status, inv.UpdatedAtNs, inv.ID)
-	if isSQLiteUniqueConstraint(err) {
-		return fmt.Errorf("%w: invite code already exists", ErrConflict)
-	}
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 // DeleteInvite removes an invite.
 func (r *StateRepo) DeleteInvite(id string) error {
 	r.mu.Lock()
@@ -155,33 +124,6 @@ func (r *StateRepo) RedeemInviteByCode(code string, nowNs int64) (*model.Invite,
 		return nil, ErrNotFound
 	}
 	return r.getInviteByCodeLocked(code)
-}
-
-// RedeemInvite claims one use of the invite identified by id, with the same
-// conditional semantics as RedeemInviteByCode.
-func (r *StateRepo) RedeemInvite(id string, nowNs int64) (*model.Invite, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec(`
-		UPDATE invites SET used_count = used_count + 1, updated_at_ns = ?
-		WHERE id = ?
-		  AND status = ?
-		  AND (expires_at_ns = 0 OR expires_at_ns > ?)
-		  AND (max_uses = 0 OR used_count < max_uses)
-	`, nowNs, id, model.InviteStatusActive, nowNs)
-	if err != nil {
-		return nil, fmt.Errorf("redeem invite: %w", err)
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return nil, ErrNotFound
-	}
-	row := r.db.QueryRow("SELECT "+inviteColumns+" FROM invites WHERE id = ?", id)
-	inv, err := scanInvite(row)
-	if err != nil {
-		return nil, fmt.Errorf("read redeemed invite: %w", err)
-	}
-	return &inv, nil
 }
 
 // RedeemInviteAndInsertUser claims one use of the invite and inserts the account

@@ -904,8 +904,8 @@ func TestUsage_SummaryAndAggregation(t *testing.T) {
 		Requests:     50,
 		Errors:       0,
 	}
-	if err := cp.Engine.UpsertUsageDaily([]model.UsageRow{row}); err != nil {
-		t.Fatalf("UpsertUsageDaily: %v", err)
+	if err := cp.Engine.UpsertUsageHourly([]model.UsageRow{row}); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
 	}
 
 	// 1. UsageSummary

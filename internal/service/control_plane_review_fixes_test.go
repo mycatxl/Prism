@@ -39,32 +39,28 @@ func TestRegisterTenantUser_UnusableCodesCostNoHash(t *testing.T) {
 		return "$argon2id$counted-once", nil
 	}
 
-	invite := func() InviteView {
+	invite := func(code string, mutate func(*model.Invite)) model.Invite {
 		t.Helper()
-		view, err := cp.CreateInvite(InviteInput{PlanID: plan.ID, MaxUses: 1, ExpiresInDays: 7}, "review", nowNs)
-		if err != nil {
-			t.Fatalf("CreateInvite: %v", err)
+		row := model.Invite{
+			ID:          "inv_review_" + code,
+			Code:        code,
+			PlanID:      plan.ID,
+			MaxUses:     1,
+			Status:      model.InviteStatusActive,
+			CreatedBy:   "review",
+			CreatedAtNs: nowNs,
+			UpdatedAtNs: nowNs,
 		}
-		return view
-	}
-	update := func(code string, mutate func(*model.Invite)) {
-		t.Helper()
-		row, err := cp.Engine.GetInviteByCode(code)
-		if err != nil {
-			t.Fatalf("GetInviteByCode(%s): %v", code, err)
+		mutate(&row)
+		if err := cp.Engine.InsertInvite(row); err != nil {
+			t.Fatalf("InsertInvite(%s): %v", code, err)
 		}
-		mutate(row)
-		if err := cp.Engine.UpdateInvite(*row); err != nil {
-			t.Fatalf("UpdateInvite(%s): %v", code, err)
-		}
+		return row
 	}
 
-	disabled := invite()
-	update(disabled.Code, func(row *model.Invite) { row.Status = model.InviteStatusDisabled })
-	expired := invite()
-	update(expired.Code, func(row *model.Invite) { row.ExpiresAtNs = nowNs - 1 })
-	exhausted := invite()
-	update(exhausted.Code, func(row *model.Invite) {
+	disabled := invite("ABCD-2345", func(row *model.Invite) { row.Status = model.InviteStatusDisabled })
+	expired := invite("EFGH-6789", func(row *model.Invite) { row.ExpiresAtNs = nowNs - 1 })
+	exhausted := invite("JKMN-2345", func(row *model.Invite) {
 		row.MaxUses = 1
 		row.UsedCount = 1
 	})

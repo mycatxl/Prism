@@ -473,8 +473,8 @@ func TestUsageByUserClampsTheLimit(t *testing.T) {
 			IngressBytes: int64(i + 1),
 		})
 	}
-	if err := cp.Engine.UpsertUsageDaily(rows); err != nil {
-		t.Fatalf("UpsertUsageDaily: %v", err)
+	if err := cp.Engine.UpsertUsageHourly(rows); err != nil {
+		t.Fatalf("UpsertUsageHourly: %v", err)
 	}
 
 	if got := clampUsageUserLimit(0); got != defaultUserUsageLimit {

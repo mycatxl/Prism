@@ -1,3 +1,13 @@
+---
+id: prism-multi-tenant
+type: module-design
+status: active
+title: Prism 多租户运营层
+tags: [prism, multi-tenant, operations]
+parent: prism-architecture
+references: [prism-goal]
+---
+
 # 多租户运维指南
 
 Prism 从一个「单人自用」的代理池长成了一个多租户控制台：一个管理员维护节点与平台，若干租户只看见自己的套餐、密钥和用量。本文是这一层的运维说明——谁能做什么、怎么开号、怎么下发流量、以及每个开关落在哪个环境变量上。

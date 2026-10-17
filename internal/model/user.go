@@ -140,20 +140,6 @@ type UsageRow struct {
 	Errors       int64  `json:"errors"`
 }
 
-// Order is a manual top-up or renewal record. Payment is out of scope; the
-// amount is recorded in minor units with an explicit currency so the column
-// semantics are fixed before anything writes them.
-type Order struct {
-	ID          string `json:"id"`
-	UserID      string `json:"user_id"`
-	PlanID      string `json:"plan_id"`
-	AmountMinor int64  `json:"amount_minor"`
-	Currency    string `json:"currency"`
-	Note        string `json:"note"`
-	CreatedBy   string `json:"created_by"`
-	CreatedAtNs int64  `json:"created_at_ns"`
-}
-
 // Session is a console login session. Only the hash of the session ID is
 // stored, never the ID itself, so a database read cannot be replayed as a
 // login.

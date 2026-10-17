@@ -39,52 +39,6 @@ func (r *StateRepo) InsertUser(u model.User) error {
 	return err
 }
 
-// UpdateUser replaces every mutable column of a user row in one statement.
-// Username is unique, so renaming onto a taken name returns ErrConflict.
-//
-// A whole-row write is only safe for a caller that owns the row for the whole
-// read-modify-write - seeding a fixture, importing a row. A caller that read
-// the row, decided something, and is now writing it back must use one of the
-// single-column writers below instead (UpdateUserPassword, UpdateUserStatus,
-// UpdateUserRole, UpdateUserTOTPSecret). This statement also carries the columns
-// that caller's read copied, so any write that landed in between - the second
-// administrator disabling the account while this one resets a password - is
-// silently reverted, and the answer still reads as a success. The login path and
-// the subscription terms write made the same choice for the same reason
-// (MarkUserLogin, UpdateUserSubscriptionTerms).
-//
-// totp_last_used_ns is deliberately not one of these columns: it is the replay
-// ledger, it may only move forward (AdvanceTOTPLastUsed), and only a replaced
-// secret may clear it (ResetTOTPLastUsed).
-func (r *StateRepo) UpdateUser(u model.User) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec(`
-		UPDATE users SET
-			username        = ?,
-			password_hash   = ?,
-			role            = ?,
-			status          = ?,
-			totp_secret_enc = ?,
-			updated_at_ns   = ?,
-			last_login_ns   = ?
-		WHERE id = ?
-	`, u.Username, u.PasswordHash, u.Role, u.Status, u.TOTPSecretEnc,
-		u.UpdatedAtNs, u.LastLoginNs, u.ID)
-	if isSQLiteUniqueConstraint(err) {
-		return fmt.Errorf("%w: username already exists", ErrConflict)
-	}
-	if err != nil {
-		return err
-	}
-	n, _ := result.RowsAffected()
-	if n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
 const userColumns = `id, username, password_hash, role, status, totp_secret_enc,
 	created_at_ns, updated_at_ns, last_login_ns, totp_last_used_ns`
 
@@ -160,6 +114,21 @@ func (r *StateRepo) CountUsers() (int, error) {
 
 // DeleteUser removes a user. Subscriptions, access keys, sessions and orders
 // cascade; usage rows survive because they carry no foreign key.
+//
+// A whole-row write of a user is only safe for a caller that owns the row for
+// the whole read-modify-write - seeding a fixture, importing a row. A caller
+// that read the row, decided something, and is now writing it back must use one
+// of the single-column writers instead (UpdateUserPassword, UpdateUserStatus,
+// UpdateUserRole, UpdateUserTOTPSecret): a statement that carries the columns
+// the caller's read copied silently reverts any write that landed in between -
+// the second administrator disabling the account while this one resets a
+// password - and the answer still reads as a success. The login path and the
+// subscription terms write made the same choice for the same reason
+// (MarkUserLogin, UpdateUserSubscriptionTerms).
+//
+// totp_last_used_ns is deliberately not one of those columns: it is the replay
+// ledger, it may only move forward (AdvanceTOTPLastUsed), and only a replaced
+// secret may clear it (ResetTOTPLastUsed).
 func (r *StateRepo) DeleteUser(id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -912,21 +881,6 @@ func (r *StateRepo) UpsertUsageHourly(rows []model.UsageRow) error {
 	`, rows)
 }
 
-// UpsertUsageDaily adds the given daily rows to the table, with the same
-// summing semantics as UpsertUsageHourly.
-func (r *StateRepo) UpsertUsageDaily(rows []model.UsageRow) error {
-	return r.upsertUsage(`
-		INSERT INTO usage_daily (key_id, user_id, platform_id, day_ts_ns,
-		                         ingress_bytes, egress_bytes, requests, errors)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(key_id, platform_id, day_ts_ns) DO UPDATE SET
-			ingress_bytes = ingress_bytes + excluded.ingress_bytes,
-			egress_bytes  = egress_bytes  + excluded.egress_bytes,
-			requests      = requests      + excluded.requests,
-			errors        = errors        + excluded.errors
-	`, rows)
-}
-
 // upsertUsage runs one batch insert in a single transaction. An empty batch is
 // a no-op rather than an error, because the flush path calls it every tick.
 func (r *StateRepo) upsertUsage(query string, rows []model.UsageRow) error {
@@ -958,53 +912,24 @@ func (r *StateRepo) upsertUsage(query string, rows []model.UsageRow) error {
 	return tx.Commit()
 }
 
-// SumUsageHourlyBefore aggregates hourly rows older than cutoffNs into daily
-// rows, bucketing by UTC day. It is the read half of the hourly-to-daily
-// summary and returns rows ready for UpsertUsageDaily.
-func (r *StateRepo) SumUsageHourlyBefore(cutoffNs int64) ([]model.UsageRow, error) {
-	rows, err := r.db.Query(`
-		SELECT key_id, user_id, platform_id,
-		       (hour_ts_ns / 86400000000000) * 86400000000000 AS day_ts_ns,
-		       SUM(ingress_bytes), SUM(egress_bytes), SUM(requests), SUM(errors)
-		FROM usage_hourly
-		WHERE hour_ts_ns < ?
-		GROUP BY key_id, user_id, platform_id, day_ts_ns
-	`, cutoffNs)
-	if err != nil {
-		return nil, fmt.Errorf("sum usage hourly: %w", err)
-	}
-	defer rows.Close()
-
-	result := []model.UsageRow{}
-	for rows.Next() {
-		var row model.UsageRow
-		if err := rows.Scan(&row.KeyID, &row.UserID, &row.PlatformID, &row.TSNs,
-			&row.IngressBytes, &row.EgressBytes, &row.Requests, &row.Errors); err != nil {
-			return nil, err
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
-}
-
 // SummarizeUsageHourlyBefore folds every hourly row older than cutoffNs into
 // the daily table and deletes the rows it folded, in one transaction. The
 // returned count is how many hourly rows were folded and removed.
 //
-// It is the whole summary in one statement pair, which is the point: the
-// SumUsageHourlyBefore + UpsertUsageDaily + DeleteUsageHourlyBefore sequence it
-// replaces takes the write lock three times, so a crash (or a failure of the
-// third call) after the second one committed leaves the hourly rows in place
-// while their traffic is already in the daily table. The next pass would sum
-// those same rows again, and UpsertUsageDaily adds rather than replaces, so the
-// day would read double forever: every usage page and every alert built on it
-// would be wrong and nothing would repair itself. Both statements here run in
-// one transaction, so the daily rows and the hourly rows always agree: either
-// the traffic moved to the daily table and the hourly rows are gone, or nothing
-// happened at all.
+// It is the whole summary in one statement pair, which is the point: a
+// three-call sequence (sum the hourly rows, add them to the daily table, delete
+// the hourly rows) takes the write lock three times, so a crash (or a failure
+// of the third call) after the second one committed leaves the hourly rows in
+// place while their traffic is already in the daily table. The next pass would
+// sum those same rows again, and the daily upsert adds rather than replaces, so
+// the day would read double forever: every usage page and every alert built on
+// it would be wrong and nothing would repair itself. Both statements here run
+// in one transaction, so the daily rows and the hourly rows always agree:
+// either the traffic moved to the daily table and the hourly rows are gone, or
+// nothing happened at all.
 //
-// Aggregation is the same as SumUsageHourlyBefore: one row per key, platform
-// and UTC day, summed into whatever is already in the daily table.
+// Aggregation buckets by key, platform and UTC day, summed into whatever is
+// already in the daily table.
 func (r *StateRepo) SummarizeUsageHourlyBefore(cutoffNs int64) (int64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -1094,15 +1019,9 @@ func (r *StateRepo) deleteBeforeBatched(table, matchColumn string, cutoff int64)
 	}
 }
 
-// DeleteUsageHourlyBefore removes hourly rows older than cutoffNs and returns
-// how many were removed. It deletes in batches, so the connection is available
-// to the other writers between them.
-func (r *StateRepo) DeleteUsageHourlyBefore(cutoffNs int64) (int64, error) {
-	return r.deleteBeforeBatched("usage_hourly", "hour_ts_ns", cutoffNs)
-}
-
 // DeleteUsageDailyBefore removes daily rows older than cutoffNs and returns how
-// many were removed. It deletes in batches, like DeleteUsageHourlyBefore.
+// many were removed. It deletes in batches, so the connection is available to
+// the other writers between them.
 func (r *StateRepo) DeleteUsageDailyBefore(cutoffNs int64) (int64, error) {
 	return r.deleteBeforeBatched("usage_daily", "day_ts_ns", cutoffNs)
 }
@@ -1149,48 +1068,6 @@ func (r *StateRepo) ListUsageByUser(userID string, fromNs, toNs int64) ([]model.
 			return nil, err
 		}
 		result = append(result, row)
-	}
-	return result, rows.Err()
-}
-
-// --- orders ---
-
-// InsertOrder records a manual top-up or renewal.
-func (r *StateRepo) InsertOrder(o model.Order) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	_, err := r.db.Exec(`
-		INSERT INTO orders (id, user_id, plan_id, amount_minor, currency, note, created_by, created_at_ns)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, o.ID, o.UserID, nullableString(o.PlanID), o.AmountMinor, o.Currency, o.Note,
-		o.CreatedBy, o.CreatedAtNs)
-	return err
-}
-
-// ListOrdersByUser returns the user's orders, newest first.
-func (r *StateRepo) ListOrdersByUser(userID string) ([]model.Order, error) {
-	rows, err := r.db.Query(`
-		SELECT id, user_id, plan_id, amount_minor, currency, note, created_by, created_at_ns
-		FROM orders WHERE user_id = ? ORDER BY created_at_ns DESC
-	`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	result := []model.Order{}
-	for rows.Next() {
-		var o model.Order
-		var planID sql.NullString
-		if err := rows.Scan(&o.ID, &o.UserID, &planID, &o.AmountMinor, &o.Currency, &o.Note,
-			&o.CreatedBy, &o.CreatedAtNs); err != nil {
-			return nil, err
-		}
-		if planID.Valid {
-			o.PlanID = planID.String
-		}
-		result = append(result, o)
 	}
 	return result, rows.Err()
 }
@@ -1446,31 +1323,6 @@ func (r *StateRepo) ListUsageDailyRange(fromNs, toNs int64) ([]model.UsageRow, e
 		result = append(result, row)
 	}
 	return result, rows.Err()
-}
-
-// DeleteUserSubscription removes one subscription row for good.
-//
-// It is no longer how the console ends a user's access: that revokes the row
-// instead (RevokeUserSubscription), because an account left with no subscription
-// row at all is the state that reads as unlimited. This stays for the callers
-// that really want the row gone - a rollback, a test, a cleanup - and it is the
-// only function that can take the row out of existence.
-//
-// Usage is deliberately left alone: usage rows carry no foreign key to a
-// subscription, so the traffic a user already generated stays accountable after
-// the subscription that allowed it is gone.
-func (r *StateRepo) DeleteUserSubscription(id string) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	result, err := r.db.Exec("DELETE FROM user_subscriptions WHERE id = ?", id)
-	if err != nil {
-		return err
-	}
-	if n, _ := result.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
 }
 
 // RevokeUserSubscription takes a subscription out of force without deleting it.

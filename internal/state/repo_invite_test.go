@@ -68,24 +68,7 @@ func TestInviteRepo_CRUD(t *testing.T) {
 		t.Fatalf("ListInvites unexpected result: got %+v", list)
 	}
 
-	// 3. UpdateInvite disable
-	updated := *gotByCode
-	updated.Status = model.InviteStatusDisabled
-	updated.Note = "updated note"
-	updated.UpdatedAtNs = nowNs + 1000
-	if err := repo.UpdateInvite(updated); err != nil {
-		t.Fatalf("UpdateInvite failed: %v", err)
-	}
-
-	refetched, err := repo.GetInviteByCode("TEST-CODE")
-	if err != nil {
-		t.Fatalf("GetInviteByCode after update failed: %v", err)
-	}
-	if refetched.Status != model.InviteStatusDisabled || refetched.Note != "updated note" {
-		t.Fatalf("UpdateInvite not applied: got status=%s note=%s", refetched.Status, refetched.Note)
-	}
-
-	// 4. DeleteInvite
+	// 3. DeleteInvite
 	if err := repo.DeleteInvite(inv.ID); err != nil {
 		t.Fatalf("DeleteInvite failed: %v", err)
 	}

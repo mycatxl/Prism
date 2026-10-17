@@ -29,13 +29,15 @@ node_modules/
 /internal/api/web/dist/*
 !/internal/api/web/dist/.gitkeep
 
-# Local scratch: notes, plans and reference material stay on the machine that
-# wrote them. This repository ships the code, the README, the licence and
+# Local scratch: notes, plans, specs and reference material stay on the machine
+# that wrote them. This repository ships the code, the README, the licence and
 # provenance files, and the operator guide - the README links
-# docs/MULTI_TENANT.md, so docs/ is tracked and these three paths are not.
+# docs/MULTI_TENANT.md, so docs/ is tracked and these four paths are not.
 /notes/
 /plans/
 /references/
+/docs/specs/
+/PRODUCT.md
 
 # Editors / OS
 .vscode/
