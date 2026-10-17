@@ -63,6 +63,14 @@ jobs:
       - name: Smoke test (end-to-end against the built binary)
         run: make smoke
 
+      # The commercial surface, walked over real HTTP: a priced plan, an invite,
+      # registration, a deposit credited by a fake TronGrid, a purchase, a
+      # replayed purchase, and the auto-renew switch. Loopback only, about half a
+      # minute (it waits for one scanner cycle), and it catches any drift between
+      # the balance, the ledger and the subscription that unit tests would miss.
+      - name: Billing walk (deposit, purchase, renewal)
+        run: make billing
+
       # Browser regression: boots bin/prism in an isolated environment and drives
       # Chromium against the panel it serves (internal/api/web/scripts/check-ui-live.mjs).
       - name: Install Playwright Chromium

@@ -122,6 +122,16 @@ verify: lint test test-race protocol-matrix coverage-gate test-web
 smoke:
 	bash scripts/smoke.sh
 
+# Acceptance walk of the commercial surface: boots the built binary against a
+# throw-away environment and drives the whole money path over real HTTP - an
+# operator creates a priced plan and an invite, a customer registers, opens a
+# deposit, a fake TronGrid reports the matching transfer, the scanner credits the
+# balance, the balance buys the plan, a replayed purchase is answered without
+# charging twice, and auto renew is switched on. 21 checks. It needs bin/prism,
+# so it runs after `make backend`; like `smoke`, CI runs it as its own step.
+billing:
+	bash scripts/billing.sh
+
 # Frontend checks that need no browser: the panel's server modules, the kit's own
 # invariants, the design system's contrast gate (which reads the tokens in
 # src/styles/design.css and fails on any pair below WCAG AA), and the
