@@ -20,6 +20,7 @@ import { Page } from "./page";
 const AdminInvitesPage = lazy(() => import("../features/admin/InvitesPage").then((m) => ({ default: m.InvitesPage })));
 const AdminPlansPage = lazy(() => import("../features/admin/PlansPage").then((m) => ({ default: m.PlansPage })));
 const AdminSettingsPage = lazy(() => import("../features/admin/SettingsPage").then((m) => ({ default: m.SettingsPage })));
+const AdminRedeemCodesPage = lazy(() => import("../features/admin/RedeemCodesPage").then((m) => ({ default: m.RedeemCodesPage })));
 const AdminUsagePage = lazy(() => import("../features/admin/UsagePage").then((m) => ({ default: m.UsagePage })));
 const AdminUserDetailPage = lazy(() => import("../features/admin/UserDetailPage").then((m) => ({ default: m.UserDetailPage })));
 const AdminUsersPage = lazy(() => import("../features/admin/UsersPage").then((m) => ({ default: m.UsersPage })));
@@ -61,6 +62,7 @@ const adminRouteObjects: RouteObject[] = [
       { path: "/admin/users/:userId", element: <Page><AdminUserDetailPage /></Page> },
       { path: "/admin/plans", element: <Page><AdminPlansPage /></Page> },
       { path: "/admin/invites", element: <Page><AdminInvitesPage /></Page> },
+      { path: "/admin/redeem-codes", element: <Page><AdminRedeemCodesPage /></Page> },
       { path: "/admin/usage", element: <Page><AdminUsagePage /></Page> },
       { path: "/admin/settings", element: <Page><AdminSettingsPage /></Page> },
     ],

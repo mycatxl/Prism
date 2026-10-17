@@ -219,7 +219,10 @@ func TestMigrateStateDB_SubscriptionBackfillAndTOTPDown(t *testing.T) {
 	}
 
 	m := newStateMigrator(t, db)
-	if err := m.Steps(-1); err != nil {
+	// Step down to the version before the backfill, whatever latest happens to
+	// be: this test is about 000021 being reversible, not about how many
+	// migrations were added after it.
+	if err := m.Steps(stateVersionIntegrityFixes - stateLatestVersion); err != nil {
 		t.Fatalf("down of %d: %v", stateLatestVersion, err)
 	}
 	assertStateMigrationVersion(t, db, stateVersionIntegrityFixes)

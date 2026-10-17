@@ -225,3 +225,53 @@ export type AdminSystemConfigPatch = {
   usage_retention_days?: number;
   purity_bands?: PurityBands;
 };
+
+// A redemption code as the console lists it. The plaintext is not here: it is
+// returned once when the code is minted and never stored, so `code_hint` is the
+// only part that can be shown afterwards.
+export interface AdminRedeemCode {
+  id: string;
+  code_hint: string;
+  amount_micro: number;
+  max_uses: number;
+  used_count: number;
+  status: string;
+  expires_at_ns: number;
+  note: string;
+  created_at_ns: number;
+}
+
+// A freshly minted code: the listing shape plus the one-time plaintext.
+export interface AdminRedeemCodeItem extends AdminRedeemCode {
+  code: string;
+}
+
+export interface AdminRedeemCodeBatch {
+  codes: AdminRedeemCodeItem[];
+}
+
+export interface CreateRedeemCodeInput {
+  amount_micro: number;
+  max_uses?: number;
+  expires_in_days?: number;
+  note?: string;
+  count?: number;
+}
+
+export interface AdminBalanceEntry {
+  id: string;
+  user_id: string;
+  delta_micro: number;
+  balance_after_micro: number;
+  reason: string;
+  ref_id: string;
+  request_id: string;
+  note: string;
+  actor: string;
+  created_at_ns: number;
+}
+
+export interface AdminBalanceView {
+  balance_micro: number;
+  ledger: AdminBalanceEntry[] | null;
+}

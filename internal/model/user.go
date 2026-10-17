@@ -178,3 +178,78 @@ type Invite struct {
 	CreatedAtNs int64  `json:"created_at_ns"`
 	UpdatedAtNs int64  `json:"updated_at_ns"`
 }
+
+// Balance reasons. Every ledger row names where the money came from or went,
+// which is what lets a statement be read without a second table: a reason plus
+// RefID answers "what was this" for all six.
+const (
+	// BalanceReasonRedeem is a redemption code being cashed in; RefID is the
+	// code's id.
+	BalanceReasonRedeem = "redeem"
+	// BalanceReasonPurchase is a plan bought with balance; RefID is the plan id.
+	BalanceReasonPurchase = "purchase"
+	// BalanceReasonRenew is a subscription renewed with balance; RefID is the
+	// subscription id.
+	BalanceReasonRenew = "renew"
+	// BalanceReasonAdminAdjust is an operator moving money by hand. It has no
+	// RefID; the actor and the note are the record.
+	BalanceReasonAdminAdjust = "admin_adjust"
+	// BalanceReasonRefund is money returned to a user.
+	BalanceReasonRefund = "refund"
+	// BalanceReasonDeposit is USDT arriving on chain; RefID is the transaction
+	// hash, which is also what makes a replayed transfer harmless.
+	BalanceReasonDeposit = "deposit"
+)
+
+// BalanceEntry is one movement of money, as the ledger stores it.
+//
+// DeltaMicro is signed and BalanceAfterMicro is the balance as it stood right
+// after the movement, so a statement can be replayed and checked against the
+// balance column. Amounts are int64 micro-units - one micro is 1e-6 USDT, the
+// token's own precision - and never floats.
+//
+// RequestID is the client's idempotency key and is empty when a movement cannot
+// be retried; RefID is an external handle (a code, a plan, a subscription, a
+// transaction hash) and is empty when there is none. Both empty cases are exempt
+// from the unique indexes, because many movements legitimately have neither.
+type BalanceEntry struct {
+	ID                string `json:"id"`
+	UserID            string `json:"user_id"`
+	DeltaMicro        int64  `json:"delta_micro"`
+	BalanceAfterMicro int64  `json:"balance_after_micro"`
+	Reason            string `json:"reason"`
+	RefID             string `json:"ref_id"`
+	RequestID         string `json:"request_id"`
+	Note              string `json:"note"`
+	Actor             string `json:"actor"`
+	CreatedAtNs       int64  `json:"created_at_ns"`
+}
+
+// Redeem code statuses. A disabled code is refused even with uses left, which is
+// how an operator withdraws a leaked code without erasing that it existed.
+const (
+	RedeemCodeStatusActive   = "active"
+	RedeemCodeStatusDisabled = "disabled"
+)
+
+// RedeemCode is a top-up code: it adds balance, it does not admit an account.
+//
+// CodeHash is the HMAC of the plaintext under a subkey of the key pepper, so the
+// code itself is nowhere in the database. CodeHint is the last four symbols, the
+// only part an operator needs to tell two codes apart in a list. AmountMicro is
+// the credit in micro-units - 1e-6 USDT each - and MaxUses of 0 means unlimited.
+// ExpiresAtNs of 0 never expires.
+type RedeemCode struct {
+	ID          string `json:"id"`
+	CodeHash    []byte `json:"-"`
+	CodeHint    string `json:"code_hint"`
+	AmountMicro int64  `json:"amount_micro"`
+	MaxUses     int    `json:"max_uses"`
+	UsedCount   int    `json:"used_count"`
+	ExpiresAtNs int64  `json:"expires_at_ns"`
+	Note        string `json:"note"`
+	Status      string `json:"status"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAtNs int64  `json:"created_at_ns"`
+	UpdatedAtNs int64  `json:"updated_at_ns"`
+}

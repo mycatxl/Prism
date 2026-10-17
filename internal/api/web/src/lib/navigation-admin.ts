@@ -22,6 +22,7 @@ export const adminItems: NavigationItem[] = [
   { label: "用户管理", path: "/admin/users", section: "管理", adminOnly: true },
   { label: "套餐管理", path: "/admin/plans", section: "管理", adminOnly: true },
   { label: "邀请码管理", path: "/admin/invites", section: "管理", adminOnly: true },
+  { label: "兑换码管理", path: "/admin/redeem-codes", section: "管理", adminOnly: true },
   { label: "用量统计", path: "/admin/usage", section: "管理", adminOnly: true },
   { label: "系统设置", path: "/admin/settings", section: "管理", adminOnly: true },
 ];

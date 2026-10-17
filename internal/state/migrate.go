@@ -40,7 +40,9 @@ const (
 	stateVersionAlerts                           = 19
 	stateVersionIntegrityFixes                   = 20
 	stateVersionSubscriptionBackfillAndTOTP      = 21
-	stateLatestVersion                           = stateVersionSubscriptionBackfillAndTOTP
+	stateVersionBalance                          = 22
+	stateVersionRedeemCodes                      = 23
+	stateLatestVersion                           = stateVersionRedeemCodes
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	// Keep these version markers in sync with SQL files under migrations/cache/.

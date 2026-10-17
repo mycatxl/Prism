@@ -18,6 +18,10 @@ import type {
   AdminUserDetail,
   PlanPatch,
   PlanWrite,
+  AdminBalanceView,
+  AdminRedeemCode,
+  AdminRedeemCodeBatch,
+  CreateRedeemCodeInput,
   WritePage,
 } from "./types";
 
@@ -262,6 +266,68 @@ export async function deleteInvite(id: string): Promise<void> {
   return apiRequest<void>(`/api/v1/admin/invites/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
+}
+
+// ---------------------------------------------------------------------------
+// 兑换码 /api/v1/admin/redeem-codes
+// ---------------------------------------------------------------------------
+
+export type ListRedeemCodesParams = {
+  limit?: number;
+  offset?: number;
+};
+
+export async function listRedeemCodes(
+  params: ListRedeemCodesParams = {},
+): Promise<WritePage<AdminRedeemCode>> {
+  const qs = toQueryString(params);
+  return apiRequest<WritePage<AdminRedeemCode>>(`/api/v1/admin/redeem-codes${qs}`);
+}
+
+export async function createRedeemCodes(
+  input: CreateRedeemCodeInput,
+): Promise<AdminRedeemCodeBatch> {
+  return apiRequest<AdminRedeemCodeBatch>("/api/v1/admin/redeem-codes", {
+    method: "POST",
+    body: {
+      amount_micro: input.amount_micro,
+      max_uses: input.max_uses ?? 0,
+      expires_in_days: input.expires_in_days ?? 0,
+      note: input.note ?? "",
+      count: input.count ?? 1,
+    },
+  });
+}
+
+export async function deleteRedeemCode(id: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/admin/redeem-codes/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 余额 /api/v1/admin/users/{id}/balance
+// ---------------------------------------------------------------------------
+
+export async function getUserBalance(
+  userID: string,
+  limit?: number,
+): Promise<AdminBalanceView> {
+  const qs = toQueryString({ limit });
+  return apiRequest<AdminBalanceView>(
+    `/api/v1/admin/users/${encodeURIComponent(userID)}/balance${qs}`,
+  );
+}
+
+export async function adjustUserBalance(
+  userID: string,
+  deltaMicro: number,
+  note: string,
+): Promise<AdminBalanceView> {
+  return apiRequest<AdminBalanceView>(
+    `/api/v1/admin/users/${encodeURIComponent(userID)}/balance`,
+    { method: "POST", body: { delta_micro: deltaMicro, note } },
+  );
 }
 
 // ---------------------------------------------------------------------------

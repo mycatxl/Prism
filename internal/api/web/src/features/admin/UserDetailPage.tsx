@@ -35,6 +35,7 @@ import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { copyToClipboard } from "../../lib/clipboard";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { UserBalancePanel } from "./UserBalancePanel";
 import {
   createSubscription,
   createUserKey,
@@ -383,6 +384,8 @@ export function UserDetailPage() {
           </PanelBody>
         </Panel>
       </div>
+
+      <UserBalancePanel userId={id} />
 
       {/* Section C: 访问密钥 Panel */}
       <Panel>

@@ -57,6 +57,7 @@ const RAIL_PATHS = [
   "/ui/admin/users",
   "/ui/admin/plans",
   "/ui/admin/invites",
+  "/ui/admin/redeem-codes",
   "/ui/admin/usage",
   "/ui/admin/settings",
   "/ui/account-security",

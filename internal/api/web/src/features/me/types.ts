@@ -38,6 +38,24 @@ export interface SelfOverview {
   platforms: SelfPlatform[];
 }
 
+export interface BalanceEntry {
+  id: string;
+  user_id: string;
+  delta_micro: number;
+  balance_after_micro: number;
+  reason: string;
+  ref_id: string;
+  request_id: string;
+  note: string;
+  actor: string;
+  created_at_ns: number;
+}
+
+export interface BalanceView {
+  balance_micro: number;
+  ledger: BalanceEntry[] | null;
+}
+
 export interface SessionView {
   id: string;
   created_at_ns: number;

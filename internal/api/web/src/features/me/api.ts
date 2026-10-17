@@ -1,6 +1,7 @@
 import { apiRequest } from "../../lib/api-client";
 import type {
   AccessKeyInput,
+  BalanceView,
   CreateKeyResponse,
   KeysResponse,
   SelfOverview,
@@ -9,6 +10,18 @@ import type {
 
 export async function getOverview(): Promise<SelfOverview> {
   return apiRequest<SelfOverview>("/api/v1/me/overview");
+}
+
+export async function getBalance(limit?: number): Promise<BalanceView> {
+  const query = limit && limit > 0 ? `?limit=${limit}` : "";
+  return apiRequest<BalanceView>(`/api/v1/me/balance${query}`);
+}
+
+export async function redeemCode(code: string): Promise<BalanceView> {
+  return apiRequest<BalanceView>("/api/v1/me/redeem", {
+    method: "POST",
+    body: { code },
+  });
 }
 
 export async function getKeys(): Promise<KeysResponse> {

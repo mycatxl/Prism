@@ -283,6 +283,12 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/admin/alerts", HandleAdminListAlerts(cp))
 		authed.Handle("POST /api/v1/admin/alerts/{id}/actions/acknowledge", HandleAdminAcknowledgeAlert(cp))
 
+		authed.Handle("GET /api/v1/admin/redeem-codes", HandleAdminListRedeemCodes(cp))
+		authed.Handle("POST /api/v1/admin/redeem-codes", HandleAdminCreateRedeemCodes(cp))
+		authed.Handle("DELETE /api/v1/admin/redeem-codes/{id}", HandleAdminDeleteRedeemCode(cp))
+		authed.Handle("GET /api/v1/admin/users/{id}/balance", HandleAdminGetUserBalance(cp))
+		authed.Handle("POST /api/v1/admin/users/{id}/balance", HandleAdminAdjustUserBalance(cp))
+
 		// The user's own panel. Every handler keys off the session's actor, so
 		// there is no id in these paths to point at somebody else.
 		authed.Handle("GET /api/v1/me/overview", HandleMeOverview(cp))
@@ -293,6 +299,11 @@ func NewServerWithAddress(
 		authed.Handle("DELETE /api/v1/me/keys/{keyID}", HandleMeDeleteKey(cp))
 		authed.Handle("GET /api/v1/me/security/sessions", HandleMeSessions(cp))
 		authed.Handle("DELETE /api/v1/me/security/sessions/{sessionID}", HandleMeRevokeSession(cp))
+
+		// Money. A balance is the user's own, so these are keyed by the session
+		// actor like everything else under /me.
+		authed.Handle("GET /api/v1/me/balance", HandleMeBalance(cp))
+		authed.Handle("POST /api/v1/me/redeem", HandleMeRedeem(cp))
 	}
 
 	// Request log endpoints (always registered if repo is available).

@@ -15,6 +15,7 @@ import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { getOverview, getSessions, revokeSession } from "./api";
+import { BalancePanel } from "./BalancePanel";
 
 const NANOS_PER_MILLI = 1_000_000;
 
@@ -271,6 +272,9 @@ export function OverviewPage() {
               )}
             </PanelBody>
           </Panel>
+
+          {/* Money: the user's own balance, how to top it up, and its history */}
+          <BalancePanel />
 
           {/* Live Concurrency Card */}
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
