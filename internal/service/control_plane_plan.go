@@ -34,6 +34,11 @@ import (
 const (
 	planStatusActive   = "active"
 	planStatusDisabled = "disabled"
+	// maxExpiryDays bounds every operator-supplied term: a plan's
+	// duration_days and an invite's or a redeem code's expires_in_days. A
+	// hundred years is past any plausible term and leaves the expiry
+	// arithmetic far from int64.
+	maxExpiryDays = 36500
 )
 
 // PlanInput is the accepted body of a plan write.
@@ -425,6 +430,12 @@ func validatePlan(plan model.Plan) *ServiceError {
 	}
 	if plan.DurationDays <= 0 {
 		return invalidArg("duration_days: must be greater than zero")
+	}
+	// A hundred years is past any plausible term and well inside the range where
+	// nowNs + days*24h still fits in int64. Without a ceiling a typo is stored
+	// and then either overflows the expiry or reads as a term nobody meant.
+	if plan.DurationDays > maxExpiryDays {
+		return invalidArg("duration_days: must not exceed 36500 (100 years)")
 	}
 	switch plan.Status {
 	case "", planStatusActive, planStatusDisabled:

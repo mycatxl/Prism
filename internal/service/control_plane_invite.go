@@ -62,6 +62,9 @@ func (s *ControlPlaneService) CreateInvite(in InviteInput, createdBy string, now
 	if in.ExpiresInDays < 0 {
 		return InviteView{}, invalidArg("expires_in_days: must not be negative")
 	}
+	if in.ExpiresInDays > maxExpiryDays {
+		return InviteView{}, invalidArg("expires_in_days: must not exceed 36500 (100 years)")
+	}
 
 	planName := ""
 	if planID := strings.TrimSpace(in.PlanID); planID != "" {

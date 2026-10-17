@@ -240,6 +240,9 @@ func (s *ControlPlaneService) CreateRedeemCodes(in RedeemCodeInput, createdBy st
 	if in.ExpiresInDays < 0 {
 		return nil, invalidArg("expires_in_days: must not be negative")
 	}
+	if in.ExpiresInDays > maxExpiryDays {
+		return nil, invalidArg("expires_in_days: must not exceed 36500 (100 years)")
+	}
 	count := in.Count
 	if count <= 0 {
 		count = 1

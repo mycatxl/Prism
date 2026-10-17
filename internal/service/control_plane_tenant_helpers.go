@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -107,11 +108,25 @@ func planFromSnapshotJSON(raw string) (model.Plan, error) {
 
 // expiryFromDays turns a duration in days into an absolute time. Zero days
 // means "no expiry" and comes back as zero.
+//
+// The multiplication saturates rather than wrapping. An admin-supplied
+// duration_days is only checked for being positive, so a large one (213504 and
+// up) overflows int64 and lands on a *negative* offset - the subscription would
+// be expired the moment it was created. Saturating keeps an absurd value
+// absurdly long instead of instantly dead.
 func expiryFromDays(days int, nowNs int64) int64 {
 	if days <= 0 {
 		return 0
 	}
-	return nowNs + int64(days)*int64(24*time.Hour)
+	const maxDays = int64(math.MaxInt64) / int64(24*time.Hour)
+	if int64(days) > maxDays {
+		return math.MaxInt64
+	}
+	offset := int64(days) * int64(24*time.Hour)
+	if nowNs > math.MaxInt64-offset {
+		return math.MaxInt64
+	}
+	return nowNs + offset
 }
 
 // remainingBytes reports the traffic left in the period, or nil when the plan

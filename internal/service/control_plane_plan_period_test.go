@@ -1,6 +1,7 @@
 package service
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -53,5 +54,49 @@ func TestValidatePlanRefusesAnUnknownPeriod(t *testing.T) {
 	}
 	if !strings.Contains(svcErr.Error(), "period:") {
 		t.Fatalf("validatePlan error %q does not name the offending field", svcErr.Error())
+	}
+}
+
+// A term long enough to overflow the expiry arithmetic is refused at the door.
+// The multiplication used to wrap: 213504 days landed on a negative offset, so
+// a plan an operator typed as "effectively forever" created subscriptions that
+// were already expired, and 1000000 days wrapped to a *shorter* term than 30.
+func TestValidatePlanRefusesATermThatWouldOverflowTheExpiry(t *testing.T) {
+	base := model.Plan{
+		ID: "p-1", Name: "p-1", DurationDays: 30, Period: "month", Status: planStatusActive,
+	}
+	for _, days := range []int{213504, 1_000_000, 100_000_000} {
+		plan := base
+		plan.DurationDays = days
+		svcErr := validatePlan(plan)
+		if svcErr == nil {
+			t.Fatalf("validatePlan accepted duration_days=%d", days)
+		}
+		if !strings.Contains(svcErr.Error(), "duration_days:") {
+			t.Fatalf("validatePlan error %q does not name the offending field", svcErr.Error())
+		}
+	}
+	plan := base
+	plan.DurationDays = maxExpiryDays
+	if svcErr := validatePlan(plan); svcErr != nil {
+		t.Fatalf("validatePlan refused duration_days=%d: %v", maxExpiryDays, svcErr)
+	}
+}
+
+// The helper saturates, so even a row written before the ceiling existed cannot
+// produce an expiry in the past.
+func TestExpiryFromDaysNeverGoesBackwards(t *testing.T) {
+	now := int64(1_700_000_000_000_000_000)
+	for _, days := range []int{1, 30, 365, 36500, 213503, 213504, 1_000_000, 100_000_000} {
+		got := expiryFromDays(days, now)
+		if got <= now {
+			t.Fatalf("expiryFromDays(%d) = %d, want after %d", days, got, now)
+		}
+	}
+	if got := expiryFromDays(0, now); got != 0 {
+		t.Fatalf("expiryFromDays(0) = %d, want 0 (no expiry)", got)
+	}
+	if got := expiryFromDays(1_000_000, now); got != math.MaxInt64 {
+		t.Fatalf("expiryFromDays(1000000) = %d, want saturation at MaxInt64", got)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
-	"time"
 
 	"prism/internal/keys"
 	"prism/internal/model"
@@ -147,7 +146,9 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 		CreatedAtNs: nowNs,
 	}
 	if in.ExpiresInDays > 0 {
-		row.ExpiresAtNs = nowNs + int64(in.ExpiresInDays)*int64(24*time.Hour)
+		// expiryFromDays saturates instead of wrapping; the inline multiplication it
+		// replaces turned a large expires_in_days into a key that was already expired.
+		row.ExpiresAtNs = expiryFromDays(in.ExpiresInDays, nowNs)
 	}
 
 	if svcErr := s.insertAccessKeyWithinAllowance(*user, row); svcErr != nil {
