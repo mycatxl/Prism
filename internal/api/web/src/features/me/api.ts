@@ -5,32 +5,10 @@ import type {
   KeysResponse,
   SelfOverview,
   SessionsResponse,
-  SubscriptionResponse,
-  UsageResponse,
 } from "./types";
-
-function toQueryString(params: Record<string, string | number | undefined | null>): string {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && value !== "") {
-      search.set(key, String(value));
-    }
-  }
-  const qs = search.toString();
-  return qs ? `?${qs}` : "";
-}
 
 export async function getOverview(): Promise<SelfOverview> {
   return apiRequest<SelfOverview>("/api/v1/me/overview");
-}
-
-export async function getSubscription(): Promise<SubscriptionResponse> {
-  return apiRequest<SubscriptionResponse>("/api/v1/me/subscription");
-}
-
-export async function getUsage(params?: { days?: number }): Promise<UsageResponse> {
-  const query = params ? toQueryString(params) : "";
-  return apiRequest<UsageResponse>(`/api/v1/me/usage${query}`);
 }
 
 export async function getKeys(): Promise<KeysResponse> {

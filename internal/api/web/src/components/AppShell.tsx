@@ -34,7 +34,16 @@ export function AppShell() {
   // Instance health and the environment dump are operator surfaces: a tenant
   // session is refused both by the role gate, so the shell must not ask.
   const isAdmin = isAdminRole(session.user?.role);
-  const navItems = navigationFor(session.user?.role);
+  // The operator rail names management paths, so it is fetched rather than
+  // bundled: a tenant's browser never holds them. Until it arrives the rail is
+  // empty for an operator and shows the self-service set for a tenant.
+  const { data: adminItems } = useQuery({
+    queryKey: ["navigation-admin"],
+    queryFn: () => import("../lib/navigation-admin").then((m) => m.adminItems),
+    enabled: isAdmin,
+    staleTime: Infinity,
+  });
+  const navItems = navigationFor(session.user?.role, adminItems);
 
   const info = useQuery({
     queryKey: SYSTEM_INFO_QUERY_KEY,

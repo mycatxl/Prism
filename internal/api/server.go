@@ -323,7 +323,15 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/metrics/snapshots/node-latency-distribution", HandleSnapshotNodeLatencyDistribution(metricsManager))
 	}
 
-	// Management write auditing. The request-body limit wraps the
+	// Anything no route above matched is answered here, so every refusal on
+	// this surface has one shape. Without it the mux answers a path that
+	// exists under another method with 405 and an Allow header, which confirms
+	// the route - and the role gate's not-found exists precisely so a caller
+	// cannot tell a management route from one that was never there.
+	authed.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "not found")
+	}))
+
 	// audit middleware, so the raw body its payload peek reads is already bounded
 	// by apiMaxBodyBytes before the peek's own 64 KiB cap applies.
 	var authedHandler http.Handler = authed

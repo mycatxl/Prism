@@ -416,15 +416,19 @@ func TestMultiTenantAdmin_E2E_TenantLifecycle(t *testing.T) {
 
 	// The role gate: a tenant session reaches its own surface and nothing
 	// else, including the read-only management and instance endpoints the
-	// console's operator shell uses.
+	// The role gate: a tenant session reaches its own surface and nothing
+	// else, including the read-only management and instance endpoints the
+	// console's operator shell uses. The refusal is not-found rather than
+	// forbidden, so a tenant cannot tell a management route from one that was
+	// never registered.
 	for _, path := range []string{"/api/v1/admin/plans", "/api/v1/admin/users", "/api/v1/admin/usage/summary", "/api/v1/admin/alerts", "/api/v1/system/info"} {
 		rec = tenant.do(http.MethodGet, path, nil)
-		tenantAssertStatus(t, rec, http.StatusForbidden)
-		assertErrorCode(t, rec, "FORBIDDEN")
+		tenantAssertStatus(t, rec, http.StatusNotFound)
+		assertErrorCode(t, rec, "NOT_FOUND")
 	}
 	rec = tenant.do(http.MethodDelete, "/api/v1/admin/plans/"+planID, nil)
-	tenantAssertStatus(t, rec, http.StatusForbidden)
-	assertErrorCode(t, rec, "FORBIDDEN")
+	tenantAssertStatus(t, rec, http.StatusNotFound)
+	assertErrorCode(t, rec, "NOT_FOUND")
 
 	// The tenant manages their own credentials, and the plan's key allowance
 	// is what stops them.

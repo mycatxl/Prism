@@ -73,14 +73,6 @@ export interface CreateKeyResponse {
   credential: string;
 }
 
-export interface SubscriptionResponse {
-  subscription: SubscriptionView | null;
-}
-
-export interface UsageResponse {
-  items: UsageDay[];
-}
-
 export interface KeysResponse {
   items: AccessKeyView[];
 }

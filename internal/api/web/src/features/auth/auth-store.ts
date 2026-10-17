@@ -12,6 +12,8 @@ export type SessionInfo = {
   authenticated: boolean;
   user?: AuthUser;
   must_enrol_totp?: boolean;
+  /** The deployment's sign-up policy: "off", "invite" or "open". */
+  registration_mode?: string;
 };
 
 type AuthState = {

@@ -3,10 +3,13 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"prism/internal/auth"
+	"prism/internal/config"
 	"prism/internal/model"
+	"prism/internal/service"
 )
 
 // The role gate is what keeps the two management surfaces apart: the routes a
@@ -85,12 +88,14 @@ func TestRequireAdmin(t *testing.T) {
 		wantReached bool
 	}{
 		{
-			name:       "a user is refused on the control plane",
+			// A refusal must be indistinguishable from a path that does not
+			// exist, or the management surface becomes something to enumerate.
+			name:       "a user is refused on the control plane as not-found",
 			session:    "user-session",
 			method:     http.MethodGet,
 			path:       "/api/v1/platforms",
-			wantStatus: http.StatusForbidden,
-			wantCode:   "FORBIDDEN",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NOT_FOUND",
 		},
 		{
 			name:        "a user reaches their own panel",
@@ -115,8 +120,8 @@ func TestRequireAdmin(t *testing.T) {
 			session:    "user-session",
 			method:     http.MethodGet,
 			path:       "/api/v1/metoo",
-			wantStatus: http.StatusForbidden,
-			wantCode:   "FORBIDDEN",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NOT_FOUND",
 		},
 		{
 			// The CSRF pair matches, so the refusal below is the role and not
@@ -126,8 +131,8 @@ func TestRequireAdmin(t *testing.T) {
 			method:     http.MethodPost,
 			path:       "/api/v1/admin/plans",
 			csrf:       true,
-			wantStatus: http.StatusForbidden,
-			wantCode:   "FORBIDDEN",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NOT_FOUND",
 		},
 		{
 			// A key inherits the role of whoever holds it: minting one for a
@@ -136,8 +141,8 @@ func TestRequireAdmin(t *testing.T) {
 			key:        "pk_test_user",
 			method:     http.MethodGet,
 			path:       "/api/v1/platforms",
-			wantStatus: http.StatusForbidden,
-			wantCode:   "FORBIDDEN",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NOT_FOUND",
 		},
 		{
 			name:       "no credential is refused as unauthenticated",
@@ -220,4 +225,92 @@ func TestRequireAdmin(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestRequireAdminRefusalMatchesNotFound pins the property the refusal exists
+// for: a tenant who reaches a management route gets the same answer as a tenant
+// who invented the path. Any difference - status, code, body - tells a prober
+// that the route is real, which is exactly what the gate must not leak.
+func TestRequireAdminRefusalMatchesNotFound(t *testing.T) {
+	identity := userRoleIdentity()
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("handler reached for a path a user may not use")
+	})
+
+	refused := httptest.NewRecorder()
+	identity.Middleware(requireAdmin(next)).ServeHTTP(
+		refused, sessionRequest(http.MethodGet, "/api/v1/platforms", "user-session"),
+	)
+
+	// The same shape a caller gets for a path no mux ever registered.
+	absent := httptest.NewRecorder()
+	WriteError(absent, http.StatusNotFound, "NOT_FOUND", "not found")
+
+	if refused.Code != http.StatusNotFound {
+		t.Fatalf("refusal status = %d, want %d", refused.Code, http.StatusNotFound)
+	}
+	if refused.Body.String() != absent.Body.String() {
+		t.Fatalf("refusal body = %q, want the not-found body %q", refused.Body.String(), absent.Body.String())
+	}
+}
+
+// TestNoRouteLeaksThroughItsMethod pins the other half of the same property.
+//
+// A path that exists under one method answers 405 - with an Allow header
+// naming the methods it serves - to a request using another. That confirms the
+// route as surely as a 403 would. The catch-all route removes it: every
+// request no route matched is the one not-found shape, whatever its method.
+func TestNoRouteLeaksThroughItsMethod(t *testing.T) {
+	// An administrator holding a bearer credential is the case where the role
+	// gate lets the request through, so the mux itself decides - and the mux
+	// is what used to answer 405 with an Allow header.
+	srv := probeServerWithIdentity(testIdentityWithLimiter(testAdminCredential, nil))
+
+	want := httptest.NewRecorder()
+	WriteError(want, http.StatusNotFound, "NOT_FOUND", "not found")
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, bearerRequest(method, "/api/v1/system/info"))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("%s on a GET-only route = %d, want %d", method, rec.Code, http.StatusNotFound)
+			continue
+		}
+		if rec.Body.String() != want.Body.String() {
+			t.Errorf("%s body = %q, want %q", method, rec.Body.String(), want.Body.String())
+		}
+		if allow := rec.Header().Get("Allow"); allow != "" {
+			t.Errorf("%s leaked Allow: %q", method, allow)
+		}
+	}
+
+	// The route itself still answers for the method it serves.
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, bearerRequest(http.MethodGet, "/api/v1/system/info"))
+	if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
+		t.Errorf("GET on a GET route = %d, want the route to answer", rec.Code)
+	}
+}
+
+// bearerRequest carries the administrator's access key, which is what an
+// automation uses: no session cookie, so no CSRF token to match.
+func bearerRequest(method, path string) *http.Request {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+testAdminCredential)
+	return req
+}
+
+// probeServerWithIdentity builds the real server around a given resolver, so
+// both the catch-all route and the role gate are in the chain.
+func probeServerWithIdentity(identity *Identity) *Server {
+	runtimeCfg := &atomic.Pointer[config.RuntimeConfig]{}
+	runtimeCfg.Store(config.NewDefaultRuntimeConfig())
+	envCfg := &config.EnvConfig{APIMaxBodyBytes: 1 << 20}
+	deps := &AuthDeps{
+		Identity:  identity,
+		Handlers:  &AuthHandlers{Sessions: &fakeSessions{}},
+		Issuer:    "Prism",
+		Blocklist: NewLoginBlocklist(nil),
+	}
+	return NewServer(0, service.SystemInfo{Version: "test"}, runtimeCfg, envCfg, nil, 1<<20, nil, nil, nil, deps)
 }

@@ -166,10 +166,8 @@ func TestWebUISessionJSON_ReportsHasTOTP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUserByName: %v", err)
 	}
-	stored.TOTPSecretEnc = []byte("sealed-second-factor")
-	stored.UpdatedAtNs = time.Now().UnixNano()
-	if err := env.cp.Engine.UpdateUser(*stored); err != nil {
-		t.Fatalf("UpdateUser: %v", err)
+	if err := env.cp.Engine.UpdateUserTOTPSecret(stored.ID, []byte("sealed-second-factor"), time.Now().UnixNano()); err != nil {
+		t.Fatalf("UpdateUserTOTPSecret: %v", err)
 	}
 
 	after := sessionJSON()

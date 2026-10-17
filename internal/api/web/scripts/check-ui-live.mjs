@@ -623,11 +623,25 @@ check("a tenant session reaches the self-service panel and nothing else", async 
       assert.deepEqual(logged, [], `${path}: ${logged.map((entry) => entry.text).join("; ")}`);
     }
 
+    // A management path must be indistinguishable from one that was never
+    // routed: same page, same URL, no bounce home. Sending the tenant back to
+    // /ui/me would confirm the path exists, which is what a prober wants.
     await tenantPage.goto(origin + DASHBOARD);
-    await tenantPage.waitForURL(/\/ui\/me$/, { timeout: 15000 });
+    await tenantPage.locator("main").waitFor({ state: "visible", timeout: 15000 });
+    const managementText = await tenantPage.locator("main").innerText();
+    await tenantPage.goto(origin + "/ui/no-such-route");
+    await tenantPage.locator("main").waitFor({ state: "visible", timeout: 15000 });
+    assert.equal(
+      managementText,
+      await tenantPage.locator("main").innerText(),
+      "a management path must answer exactly what an unrouted path answers",
+    );
 
     const refused = await tenantContext.request.get(origin + "/api/v1/admin/users?limit=1");
-    assert.equal(refused.status(), 403, "the admin API must refuse a tenant session");
+    // 404, not 403: a refusal that named the path would confirm it exists.
+    assert.equal(refused.status(), 404, "the admin API must answer a tenant exactly as it answers an unrouted path");
+    const unrouted = await tenantContext.request.get(origin + "/api/v1/admin/no-such-endpoint");
+    assert.equal(unrouted.status(), refused.status(), "a management path and an unrouted path must be indistinguishable");
     const ownOverview = await tenantContext.request.get(origin + "/api/v1/me/overview");
     assert(ownOverview.ok(), `the tenant must read their own overview (HTTP ${ownOverview.status()})`);
   } finally {

@@ -2,7 +2,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
@@ -10,6 +10,7 @@ import { ErrorState } from "../../components/ui/QueryState";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { cn } from "../../lib/cn";
 import { ApiError, fetchSession, login } from "../../lib/api-client";
+import { homePathFor } from "../../lib/roles";
 import { useAuthStore } from "./auth-store";
 import { useI18n } from "../../i18n";
 
@@ -21,9 +22,10 @@ const formSchema = z.object({
 
 type LoginFormInput = z.infer<typeof formSchema>;
 
-function destination(search: string) {
+function destination(search: string, role: string | undefined) {
   const next = new URLSearchParams(search).get("next");
-  return next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : "/dashboard";
+  const fallback = homePathFor(role);
+  return next?.startsWith("/") && !next.startsWith("//") && !next.includes("\\") ? next : fallback;
 }
 
 function loginErrorMessage(error: ApiError, t: (text: string, options?: Record<string, unknown>) => string): string {
@@ -50,6 +52,7 @@ export function LoginPage() {
   const session = useAuthStore((state) => state.session);
   const [submitError, setSubmitError] = useState("");
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const registrationMode = session.registration_mode ?? "off";
 
   const {
     register,
@@ -62,7 +65,7 @@ export function LoginPage() {
 
   useEffect(() => {
     if (session.authenticated || !session.auth_required) {
-      navigate(destination(location.search), { replace: true });
+      navigate(destination(location.search, session.user?.role), { replace: true });
       return;
     }
 
@@ -70,7 +73,7 @@ export function LoginPage() {
     const controller = new AbortController();
     void fetchSession(controller.signal).then((next) => {
       if (active && (next.authenticated || !next.auth_required)) {
-        navigate(destination(location.search), { replace: true });
+        navigate(destination(location.search, next.user?.role), { replace: true });
       }
     }).catch(() => {
       // Keep the form visible when the session probe cannot complete.
@@ -79,13 +82,13 @@ export function LoginPage() {
       active = false;
       controller.abort();
     };
-  }, [location.search, navigate, session.auth_required, session.authenticated]);
+  }, [location.search, navigate, session.auth_required, session.authenticated, session.user?.role]);
 
   const onSubmit = handleSubmit(async (values) => {
     setSubmitError("");
     try {
-      await login(values.username, values.password, values.totp);
-      navigate(destination(location.search), { replace: true });
+      const response = await login(values.username, values.password, values.totp);
+      navigate(destination(location.search, response.user.role), { replace: true });
     } catch (error) {
       if (error instanceof ApiError) {
         setSubmitError(loginErrorMessage(error, t));
@@ -185,6 +188,15 @@ export function LoginPage() {
           <p className="mt-5 border-t border-rule pt-3 text-xs leading-relaxed text-ink-faint">
             {t("登录状态由安全 Cookie 保持，不会把密码或会话令牌写入浏览器存储。")}
           </p>
+
+          {registrationMode === "open" || registrationMode === "invite" ? (
+            <p className="mt-3 text-xs leading-relaxed text-ink-faint">
+              {t("还没有账号？")}
+              <Link className="ml-1 text-signal underline-offset-2 hover:underline" to="/register">
+                {t("注册")}
+              </Link>
+            </p>
+          ) : null}
         </div>
       </section>
     </main>

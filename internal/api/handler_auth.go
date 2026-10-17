@@ -653,4 +653,8 @@ type sessionInfoForWebUI struct {
 	Authenticated bool         `json:"authenticated"`
 	User          *sessionUser `json:"user,omitempty"`
 	MustEnrolTOTP bool         `json:"must_enrol_totp,omitempty"`
+	// RegistrationMode is the deployment's sign-up policy (off, invite or
+	// open). The console needs it before anyone is signed in, to decide whether
+	// the sign-in page offers a way to create an account.
+	RegistrationMode string `json:"registration_mode"`
 }

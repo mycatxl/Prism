@@ -37,10 +37,16 @@ func isUserReachablePath(path string) bool {
 
 // requireAdmin refuses a management request whose actor is not an administrator.
 //
-// It runs inside the identity middleware, so a caller that reaches it has
-// already authenticated. That is what makes 403 the right answer rather than
-// 401: the credential is fine, the role is not, and telling the console which
-// of the two is wrong is what lets it render something useful.
+// The refusal is a 404 with the same body a path that does not exist gets, not
+// a 403. A signed-in tenant who probes the management surface must not be able
+// to tell a route that exists and is refused from one that was never there: a
+// 403 confirms the endpoint, which turns the whole surface into something to
+// enumerate. The credential is fine either way, so nothing is hidden from the
+// console that it needs - a tenant session is never offered a management route.
+//
+// This is the same shape the login path uses for an unknown account, and for
+// the same reason: a refusal that differs from the absence of a thing tells a
+// prober which of the two they found.
 func requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := ActorFromContext(r.Context())
@@ -60,6 +66,6 @@ func requireAdmin(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		WriteError(w, http.StatusForbidden, "FORBIDDEN", "administrator access required")
+		WriteError(w, http.StatusNotFound, "NOT_FOUND", "not found")
 	})
 }

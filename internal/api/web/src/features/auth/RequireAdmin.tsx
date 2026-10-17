@@ -1,23 +1,25 @@
 import type { ReactElement } from "react";
-import { Navigate, useLocation } from "react-router-dom";
-import { homePathFor } from "../../lib/roles";
+import { NotFoundPage } from "../../components/NotFoundPage";
 import { useAuthStore } from "./auth-store";
 
 /**
  * Role boundary for the management surfaces.
  *
  * This is convenience, not the control: every request behind these pages is
- * refused by `requireAdmin` on the server whatever the client does. The guard
- * exists so a tenant who follows an old link lands on their own surface instead
- * of a page whose every query would come back 403.
+ * refused by `requireAdmin` on the server whatever the client does.
+ *
+ * A tenant session sees the ordinary not-found page, not a refusal. The server
+ * answers 404 for a management route a tenant may not use, exactly as it does
+ * for a path that was never routed, and this guard keeps the console telling
+ * the same story: a distinct "no permission" screen would confirm which paths
+ * exist, which is the one thing a prober is after.
  */
 export function RequireAdmin({ children }: { children: ReactElement }) {
   const session = useAuthStore((state) => state.session);
-  const location = useLocation();
 
   if (!session.auth_required || session.user?.role === "admin") {
     return children;
   }
 
-  return <Navigate to={homePathFor(session.user?.role)} replace state={{ from: location.pathname }} />;
+  return <NotFoundPage />;
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"prism/internal/auth"
+	"prism/internal/config"
 	"prism/internal/model"
 )
 
@@ -106,6 +107,10 @@ type Identity struct {
 	// RequireAdminTOTP makes a second factor mandatory for administrators. An
 	// administrator without one is let in only far enough to enrol.
 	RequireAdminTOTP func() bool
+	// RegistrationMode reports the deployment's sign-up policy so the console
+	// knows whether to offer the form. Nil is read as off, the same fail-closed
+	// reading the register endpoint applies.
+	RegistrationMode func() config.RegistrationMode
 	// Logf receives authentication refusals. Nil silences them.
 	Logf func(format string, args ...any)
 }
@@ -306,9 +311,10 @@ func isSafeMethod(method string) bool {
 // (it is served before the login page renders), so a failure would turn the
 // console's first screen into an error.
 func (i *Identity) sessionInfo(r *http.Request) sessionInfoForWebUI {
+	mode := i.registrationMode()
 	actor, ok := i.resolve(r)
 	if !ok {
-		return sessionInfoForWebUI{Authenticated: false}
+		return sessionInfoForWebUI{Authenticated: false, RegistrationMode: string(mode)}
 	}
 	// has_totp is filled from the account the session resolved to, which is the
 	// same answer the login response and GET /api/v1/auth/session give. Without
@@ -322,8 +328,22 @@ func (i *Identity) sessionInfo(r *http.Request) sessionInfoForWebUI {
 			Role:     actor.Role,
 			HasTOTP:  actor.HasTOTP,
 		},
-		MustEnrolTOTP: actor.MustEnrolTOTP,
+		MustEnrolTOTP:    actor.MustEnrolTOTP,
+		RegistrationMode: string(mode),
 	}
+}
+
+// registrationMode reads the deployment's sign-up policy, treating a nil reader
+// as off. A policy that cannot be read must not advertise a door.
+func (i *Identity) registrationMode() config.RegistrationMode {
+	if i == nil || i.RegistrationMode == nil {
+		return config.RegistrationOff
+	}
+	mode := i.RegistrationMode()
+	if !mode.Valid() {
+		return config.RegistrationOff
+	}
+	return mode
 }
 
 // isPublicManagementPath reports whether a route is reachable without an

@@ -92,6 +92,7 @@ export async function fetchSession(signal?: AbortSignal): Promise<SessionInfo> {
     authenticated: body.authenticated === true,
     user: body.user,
     must_enrol_totp: body.must_enrol_totp === true,
+    registration_mode: body.registration_mode,
   };
   setSession(session);
   return session;
@@ -156,6 +157,27 @@ export type LoginResponse = {
   user: NonNullable<SessionInfo["user"]>;
   expires_at_ns: number;
 };
+
+/**
+ * Creates an account and signs it in.
+ *
+ * The server decides whether this is open at all (`PRISM_REGISTRATION`) and, in
+ * invite mode, whether the code is good; both refusals come back as ApiError and
+ * are shown without saying which part of the invite was wrong.
+ */
+export async function register(inviteCode: string, username: string, password: string): Promise<LoginResponse> {
+  const response = await apiRequest<LoginResponse>("/api/v1/auth/register", {
+    method: "POST",
+    body: { invite_code: inviteCode, username, password },
+  });
+  setSession({
+    auth_required: true,
+    authenticated: true,
+    user: response.user,
+    must_enrol_totp: false,
+  });
+  return response;
+}
 
 export async function login(username: string, password: string, totp: string): Promise<LoginResponse> {
   const response = await apiRequest<LoginResponse>("/api/v1/auth/login", {

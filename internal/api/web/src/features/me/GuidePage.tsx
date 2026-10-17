@@ -43,25 +43,38 @@ export function GuidePage() {
 
   const platforms = overviewQuery.data?.platforms ?? [];
 
-  const forwardCurl = `curl -x http://<PRISM_HOST>:<PORT> \\
-  -U "platform_id.account_id:pk_xxxx_yyyy" \\
+  // The identity is the platform's name, not its id: the proxy resolves it with
+  // GetPlatformByName, so an id here matches nothing and the request is
+  // refused. The account part is optional - the part before the dot selects
+  // the platform, the part after it pins a sticky account.
+  const firstPlatform = platforms[0]?.platform_name ?? "platform_name";
+  // The console is served by the same listener that proxies traffic, so the
+  // page's own address is the gateway address. A deployment that splits the two
+  // has to tell its tenants the proxy address itself.
+  const gatewayAddr =
+    typeof window === "undefined" ? "<PRISM_HOST>:<PORT>" : window.location.host;
+  const gatewayOrigin =
+    typeof window === "undefined" ? "http://<PRISM_HOST>:<PORT>" : window.location.origin;
+
+  const forwardCurl = `curl -x ${gatewayOrigin} \\
+  -U "${firstPlatform}.<account_id>:pk_xxxx_yyyy" \\
   https://httpbin.org/ip`;
 
   const forwardPython = `import requests
 
 proxies = {
-    "http": "http://platform_id.account_id:pk_xxxx_yyyy@<PRISM_HOST>:<PORT>",
-    "https": "http://platform_id.account_id:pk_xxxx_yyyy@<PRISM_HOST>:<PORT>",
+    "http": "http://${firstPlatform}.<account_id>:pk_xxxx_yyyy@${gatewayAddr}",
+    "https": "http://${firstPlatform}.<account_id>:pk_xxxx_yyyy@${gatewayAddr}",
 }
 
 resp = requests.get("https://httpbin.org/ip", proxies=proxies, timeout=10)
 print(resp.json())`;
 
-  const socks5Curl = `curl --socks5 <PRISM_HOST>:<PORT> \\
-  --proxy-user "platform_id.account_id:pk_xxxx_yyyy" \\
+  const socks5Curl = `curl --socks5 ${gatewayAddr} \\
+  --proxy-user "${firstPlatform}.<account_id>:pk_xxxx_yyyy" \\
   https://httpbin.org/ip`;
 
-  const reverseCurl = `curl http://<PRISM_HOST>:<PORT>/pk_xxxx_yyyy/platform_id:account_id/https/httpbin.org/ip`;
+  const reverseCurl = `curl ${gatewayOrigin}/pk_xxxx_yyyy/${firstPlatform}:<account_id>/https/httpbin.org/ip`;
 
   return (
     <div className="flex flex-col gap-6">
@@ -101,9 +114,9 @@ print(resp.json())`;
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
               <div className="text-xs font-semibold text-ink-soft">{t("网关地址 (Host / Port)")}</div>
-              <div className="text-sm font-mono text-ink select-all break-all">&lt;PRISM_HOST&gt;:&lt;PORT&gt;</div>
+              <div className="text-sm font-mono text-ink select-all break-all">{gatewayAddr}</div>
               <div className="text-xs text-ink-muted leading-relaxed">
-                {t("具体网关 IP 与监听端口由平台运营方分配提供，租户侧无权读取底层接入点配置。")}
+                {t("控制台与代理网关是同一入口时，这里就是本页地址；若运营方另设代理端口，以运营方提供的地址为准。")}
               </div>
             </div>
 
@@ -117,9 +130,9 @@ print(resp.json())`;
 
             <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
               <div className="text-xs font-semibold text-ink-soft">{t("账号标识 (Identity)")}</div>
-              <div className="text-sm font-mono text-ink select-all break-all">&lt;platform_id&gt;.&lt;account_id&gt;</div>
+              <div className="text-sm font-mono text-ink select-all break-all">&lt;platform_name&gt;.&lt;account_id&gt;</div>
               <div className="text-xs text-ink-muted leading-relaxed">
-                {t("用于区分目标平台与会话粘性账号；若无需指定平台或账号，可用通用占位符下划线。")}
+                {t("点号前是平台名称，点号后是会话粘性账号。只填平台名称、不写点号也可用；整段留空则走默认平台。")}
               </div>
             </div>
           </div>
@@ -135,7 +148,7 @@ print(resp.json())`;
               <span>{t("可用平台标识")}</span>
             </div>
           }
-          description={t("当前租户绑定的可用平台代号，用于拼装认证标识中的 platform_id。")}
+          description={t("当前租户可用的平台名称，直接填进认证标识的点号之前。")}
           meta={<Badge tone="neutral">{t("{{count}} 个平台", { count: platforms.length })}</Badge>}
         />
         <PanelBody>
@@ -148,16 +161,16 @@ print(resp.json())`;
             />
           ) : platforms.length === 0 ? (
             <EmptyState
-              title={t("暂无可指定平台")}
-              hint={t("当前套餐未绑定特定受限平台，认证时 platform_id 可使用下划线 _ 代替。")}
+              title={t("暂无可用平台")}
+              hint={t("当前套餐没有绑定特定平台，认证时把点号前的部分留空，请求会走默认平台。")}
             />
           ) : (
             <TableWrap>
               <Table>
                 <THead>
                   <TR>
-                    <TH>{t("平台代号 (platform_id)")}</TH>
-                    <TH>{t("平台名称")}</TH>
+                    <TH>{t("平台名称 (platform_name)")}</TH>
+                    <TH>{t("说明")}</TH>
                   </TR>
                 </THead>
                 <TBody>
@@ -165,11 +178,11 @@ print(resp.json())`;
                     <TR key={plat.platform_id}>
                       <TD>
                         <span className="font-mono text-xs font-semibold text-ink select-all">
-                          {plat.platform_id}
+                          {plat.platform_name}
                         </span>
                       </TD>
                       <TD>
-                        <span className="text-sm text-ink-soft">{plat.platform_name}</span>
+                        <span className="text-sm text-ink-soft">{t("填在认证标识的点号之前")}</span>
                       </TD>
                     </TR>
                   ))}
@@ -203,7 +216,7 @@ print(resp.json())`;
             <TabsContent value="forward" className="flex flex-col gap-4">
               <div className="text-xs text-ink-soft leading-relaxed">
                 {t(
-                  "标准 HTTP / HTTPS 代理模式，支持 HTTP CONNECT 隧道。客户端使用 Proxy-Authorization Basic 头进行认证，用户名传入 <platform_id>.<account_id>，密码传入 Access Key 凭据。",
+                  "标准 HTTP / HTTPS 代理模式，支持 HTTP CONNECT 隧道。客户端使用 Proxy-Authorization Basic 头进行认证，用户名传入 <platform_name>.<account_id>，密码传入 Access Key 凭据。",
                 )}
               </div>
 
@@ -254,7 +267,7 @@ print(resp.json())`;
             <TabsContent value="socks5" className="flex flex-col gap-4">
               <div className="text-xs text-ink-soft leading-relaxed">
                 {t(
-                  "标准 SOCKS5 代理模式，遵循 RFC 1929 用户名/密码认证规范。用户名传入 <platform_id>.<account_id>，密码传入 Access Key 凭据。",
+                  "标准 SOCKS5 代理模式，遵循 RFC 1929 用户名/密码认证规范。用户名传入 <platform_name>.<account_id>，密码传入 Access Key 凭据。",
                 )}
               </div>
 
@@ -291,7 +304,7 @@ print(resp.json())`;
               <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
                 <div className="text-xs font-semibold text-ink-soft">{t("URL 路径规范")}</div>
                 <div className="font-mono text-xs text-ink select-all break-all">
-                  /&lt;credential&gt;/&lt;platform_id&gt;:&lt;account_id&gt;/&lt;target_scheme&gt;/&lt;target_host&gt;/&lt;target_path&gt;
+                  /&lt;credential&gt;/&lt;platform_name&gt;:&lt;account_id&gt;/&lt;target_scheme&gt;/&lt;target_host&gt;/&lt;target_path&gt;
                 </div>
                 <div className="text-xs text-ink-muted">
                   {t("例如目标为 https://httpbin.org/ip 时，target_scheme 填 https，target_host 填 httpbin.org。")}

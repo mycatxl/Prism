@@ -100,8 +100,12 @@ func TestAPIContract_RotateLease_ValidationAndAuth(t *testing.T) {
 	}
 	assertErrorCode(t, rec, "UNAUTHORIZED")
 
+	// A method the route does not serve is not-found, not method-not-allowed:
+	// the whole API surface answers one shape, so nothing about it says which
+	// paths exist.
 	rec = doJSONRequest(t, srv, http.MethodGet, "/api/v1/platforms/"+platformID+"/leases/alice/actions/rotate", nil, true)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("wrong method status: got %d, want %d, body=%s", rec.Code, http.StatusMethodNotAllowed, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("wrong method status: got %d, want %d, body=%s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
+	assertErrorCode(t, rec, "NOT_FOUND")
 }

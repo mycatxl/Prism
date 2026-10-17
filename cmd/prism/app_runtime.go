@@ -839,6 +839,9 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 			// enrol, which is what keeps the requirement from locking everyone
 			// out of a fresh install.
 			RequireAdminTOTP: func() bool { return a.envCfg.RequireAdminTOTP },
+			// The console reads the same policy as the register endpoint, so
+			// it offers the form exactly when that endpoint would accept it.
+			RegistrationMode: func() config.RegistrationMode { return a.envCfg.Registration },
 			Logf:             log.Printf,
 		},
 		Handlers: &api.AuthHandlers{
