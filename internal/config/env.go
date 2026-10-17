@@ -148,6 +148,15 @@ type EnvConfig struct {
 	// (PRISM_REGISTRATION). Off by default; see RegistrationMode.
 	Registration RegistrationMode
 
+	// Billing is where USDT arrives from (PRISM_USDT_*). The receiving address
+	// is the operator's own wallet; the server only reads the chain and holds
+	// no key. An empty address turns the whole deposit feature off, which is
+	// why it is not an error.
+	USDTAddress      string `json:"-"`
+	USDTContract     string
+	TronGridAPIKey   string `json:"-"`
+	TronGridEndpoint string
+
 	// Request log
 	RequestLogQueueSize           int
 	RequestLogQueueFlushBatchSize int
@@ -297,6 +306,20 @@ func LoadEnvConfig() (*EnvConfig, error) {
 			registrationRaw, RegistrationOff, RegistrationInvite, RegistrationOpen,
 		))
 		cfg.Registration = RegistrationOff
+	}
+	// --- USDT deposits ---
+	// The address is the operator's own wallet and the server never signs
+	// anything, so an empty value is a supported state: deposits stay off and
+	// everything else keeps working.
+	cfg.USDTAddress = strings.TrimSpace(envStr("PRISM_USDT_ADDRESS", ""))
+	cfg.USDTContract = strings.TrimSpace(envStr("PRISM_USDT_CONTRACT", DefaultUSDTContract))
+	if cfg.USDTContract == "" {
+		cfg.USDTContract = DefaultUSDTContract
+	}
+	cfg.TronGridAPIKey = strings.TrimSpace(envStr("PRISM_TRONGRID_API_KEY", ""))
+	cfg.TronGridEndpoint = strings.TrimSpace(envStr("PRISM_TRONGRID_ENDPOINT", DefaultTronGridEndpoint))
+	if cfg.TronGridEndpoint == "" {
+		cfg.TronGridEndpoint = DefaultTronGridEndpoint
 	}
 	// --- Usage alerts ---
 	// The three PRISM_ALERT_* variables seed the alert settings at startup; the
@@ -572,6 +595,15 @@ func LoadEnvConfig() (*EnvConfig, error) {
 const (
 	prismEnvPrefix = "PRISM_"
 	resinEnvPrefix = "RESIN_"
+)
+
+// USDT on TRON. The contract is fixed because Tether has deployed one TRC20
+// USDT contract and everything here is denominated in it; the endpoint is
+// TronGrid, which returns already-decoded Transfer events, so no log parsing is
+// involved.
+const (
+	DefaultUSDTContract     = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+	DefaultTronGridEndpoint = "https://api.trongrid.io"
 )
 
 // legacyEnvWarned records the RESIN_<X> variables that already produced a

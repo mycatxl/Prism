@@ -312,6 +312,14 @@ func NewServerWithAddress(
 		authed.Handle("PATCH /api/v1/me/subscription", HandleMeAutoRenew(cp))
 		authed.Handle("GET /api/v1/me/leases", HandleMeLeases(cp))
 		authed.Handle("DELETE /api/v1/me/leases/{platformID}/{account}", HandleMeReleaseLease(cp))
+
+		// On-chain deposits. The address is the operator's and the server only
+		// reads the chain; an unconfigured address makes the feature report
+		// itself unavailable instead of failing.
+		authed.Handle("GET /api/v1/me/deposit", HandleMeDepositInfo(cp))
+		authed.Handle("GET /api/v1/me/deposits", HandleMeDeposits(cp))
+		authed.Handle("POST /api/v1/me/deposits", HandleMeDeposits(cp))
+		authed.Handle("GET /api/v1/me/deposits/{id}", HandleMeDeposit(cp))
 	}
 
 	// Request log endpoints (always registered if repo is available).

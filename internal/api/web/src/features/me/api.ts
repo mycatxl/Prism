@@ -3,6 +3,9 @@ import type {
   AccessKeyInput,
   BalanceView,
   CreateKeyResponse,
+  DepositInfo,
+  DepositIntent,
+  DepositIntentsResponse,
   KeysResponse,
   PurchaseResult,
   PurchasablePlan,
@@ -92,4 +95,23 @@ export async function revokeSession(sessionID: string): Promise<void> {
   return apiRequest<void>(`/api/v1/me/security/sessions/${encodeURIComponent(sessionID)}`, {
     method: "DELETE",
   });
+}
+
+export async function getDepositInfo(): Promise<DepositInfo> {
+  return apiRequest<DepositInfo>("/api/v1/me/deposit");
+}
+
+export async function openDeposit(amountMicro: number): Promise<DepositIntent> {
+  return apiRequest<DepositIntent>("/api/v1/me/deposits", {
+    method: "POST",
+    body: { amount_micro: amountMicro },
+  });
+}
+
+export async function getDepositIntents(): Promise<DepositIntentsResponse> {
+  return apiRequest<DepositIntentsResponse>("/api/v1/me/deposits");
+}
+
+export async function getDepositIntent(id: string): Promise<DepositIntent> {
+  return apiRequest<DepositIntent>(`/api/v1/me/deposits/${encodeURIComponent(id)}`);
 }

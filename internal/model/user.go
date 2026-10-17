@@ -262,3 +262,32 @@ type RedeemCode struct {
 	CreatedAtNs int64  `json:"created_at_ns"`
 	UpdatedAtNs int64  `json:"updated_at_ns"`
 }
+
+// Deposit intent statuses. Only pending and unpaid hold their amount; paid is
+// terminal and released means the occupancy ran out.
+const (
+	DepositStatusPending  = "pending"
+	DepositStatusUnpaid   = "unpaid"
+	DepositStatusPaid     = "paid"
+	DepositStatusReleased = "released"
+)
+
+// DepositIntent is one request to top up by an amount that nobody else is
+// holding at that moment.
+//
+// The amount, not a memo, is what identifies the payer: a bare TRC20 transfer
+// carries no field for an identifier and the server holds no keys, so the
+// unique amount is the only channel left. HoldUntilNs is the end of the amount's
+// occupancy and is what crediting is judged against - a transfer made at the
+// last second of the payment window is only visible on chain a minute later.
+type DepositIntent struct {
+	ID          string `json:"id"`
+	UserID      string `json:"user_id"`
+	AmountMicro int64  `json:"amount_micro"`
+	Status      string `json:"status"`
+	TxID        string `json:"tx_id"`
+	CreatedAtNs int64  `json:"created_at_ns"`
+	ExpiresAtNs int64  `json:"expires_at_ns"`
+	HoldUntilNs int64  `json:"hold_until_ns"`
+	PaidAtNs    int64  `json:"paid_at_ns"`
+}

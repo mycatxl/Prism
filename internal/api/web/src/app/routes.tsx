@@ -14,6 +14,7 @@ const RegisterPage = lazy(() => import("../features/auth/RegisterPage").then((m)
 const MeGuidePage = lazy(() => import("../features/me/GuidePage").then((m) => ({ default: m.GuidePage })));
 const MeKeysPage = lazy(() => import("../features/me/KeysPage").then((m) => ({ default: m.KeysPage })));
 const MeLeasesPage = lazy(() => import("../features/me/LeasesPage").then((m) => ({ default: m.LeasesPage })));
+const MeDepositPage = lazy(() => import("../features/me/DepositPage").then((m) => ({ default: m.DepositPage })));
 const MeOverviewPage = lazy(() => import("../features/me/OverviewPage").then((m) => ({ default: m.OverviewPage })));
 const MePlansPage = lazy(() => import("../features/me/PlansPage").then((m) => ({ default: m.PlansPage })));
 
@@ -92,6 +93,7 @@ export function AppRoutes() {
         <Route path="/me/guide" element={<Page><MeGuidePage /></Page>} />
         <Route path="/me/plans" element={<Page><MePlansPage /></Page>} />
         <Route path="/me/leases" element={<Page><MeLeasesPage /></Page>} />
+        <Route path="/me/deposit" element={<Page><MeDepositPage /></Page>} />
         <Route path="/account-security" element={<Page><AccountSecurityPage /></Page>} />
         <Route path="*" element={<AdminSurface />} />
       </Route>

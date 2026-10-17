@@ -138,3 +138,28 @@ export interface KeysResponse {
 export interface SessionsResponse {
   items: SessionView[];
 }
+
+export interface DepositInfo {
+  enabled: boolean;
+  address: string;
+  contract: string;
+  min_micro: number;
+  max_micro: number;
+  window_secs: number;
+}
+
+export interface DepositIntent {
+  id: string;
+  amount_micro: number;
+  status: string;
+  address: string;
+  tx_id: string;
+  created_at_ns: number;
+  expires_at_ns: number;
+  hold_until_ns: number;
+  paid_at_ns: number;
+}
+
+export interface DepositIntentsResponse {
+  items: DepositIntent[];
+}

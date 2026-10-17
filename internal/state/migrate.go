@@ -45,7 +45,8 @@ const (
 	stateVersionPlanPrice                        = 24
 	stateVersionBalanceLedgerRefScope            = 25
 	stateVersionDropOrders                       = 26
-	stateLatestVersion                           = stateVersionDropOrders
+	stateVersionDeposits                         = 27
+	stateLatestVersion                           = stateVersionDeposits
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	// Keep these version markers in sync with SQL files under migrations/cache/.

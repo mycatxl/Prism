@@ -22,6 +22,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/state"
 	"prism/internal/topology"
+	"prism/internal/tron"
 	"prism/internal/usage"
 )
 
@@ -97,10 +98,14 @@ type ControlPlaneService struct {
 	// management-only deployment, and every method here treats nil as "the
 	// database is the only record": the console keeps working without a data
 	// plane, and there is exactly one place that knows the difference.
-	Keys          *keys.Store
-	Usage         *usage.Counters
-	Conns         *usage.ConnRegistry
-	Limiter       *usage.Limiter
+	Keys    *keys.Store
+	Usage   *usage.Counters
+	Conns   *usage.ConnRegistry
+	Limiter *usage.Limiter
+	// Tron reads confirmed USDT transfers for the deposit listener. It is nil
+	// when no receiving address is configured, which is a supported state:
+	// on-chain deposits are then simply off.
+	Tron          *tron.Client
 	configMu      sync.Mutex
 	configVersion int
 	endpointMu    sync.RWMutex

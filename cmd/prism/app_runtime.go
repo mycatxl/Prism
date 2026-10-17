@@ -35,6 +35,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/service"
 	"prism/internal/state"
+	"prism/internal/tron"
 	"prism/internal/usage"
 )
 
@@ -65,6 +66,8 @@ type prismApp struct {
 	stopSubscriptionSweeper func()
 	//: the automatic renewal sweep over state.db.
 	stopRenewalSweeper func()
+	//: the on-chain deposit listener and amount sweeper.
+	stopDepositScanner func()
 	//: the authoritative intel store, its in-memory projection and the job
 	// executor.
 	stateEngine *state.StateEngine
@@ -715,6 +718,18 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.stopRenewalSweeper = service.StartRenewalSweeper(cpService, 0, log.Printf)
 	log.Println("Subscription renewal sweeper started")
 
+	// On-chain deposits. The client only reads: the receiving address is the
+	// operator's wallet and the server holds no key, so an empty address simply
+	// means the feature is off and the scanner is never started.
+	//
+	// It writes state.db, so it is stopped with the other loops before the
+	// database closes.
+	if address := a.envCfg.USDTAddress; address != "" {
+		cpService.Tron = tron.NewClient(a.envCfg.TronGridEndpoint, a.envCfg.TronGridAPIKey, a.envCfg.USDTContract)
+		a.stopDepositScanner = service.StartDepositScanner(cpService, 0, log.Printf)
+		log.Println("On-chain deposit scanner started")
+	}
+
 	// Accounting. One counter set and one session registry are shared by every
 	// inbound: a key's allowance spans the protocols it uses, and so does the
 	// set of tunnels that may need ending.
@@ -1360,6 +1375,11 @@ func (a *prismApp) shutdown() {
 	// both of which reach state.db.
 	if a.stopRenewalSweeper != nil {
 		a.stopRenewalSweeper()
+	}
+	// And the deposit scanner credits balances and advances its cursor, so it
+	// stops here too, before state.db closes.
+	if a.stopDepositScanner != nil {
+		a.stopDepositScanner()
 	}
 	// Cancelling the accounting runs the flusher's final pass, which writes to
 	// state.db - so it has to happen here, while that database is still open,

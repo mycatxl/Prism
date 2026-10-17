@@ -27,6 +27,7 @@ export const tenantItems: NavigationItem[] = [
   { label: "接入指南", path: "/me/guide", section: "账号", tenantOnly: true },
   { label: "购买套餐", path: "/me/plans", section: "账号", tenantOnly: true },
   { label: "我的租约", path: "/me/leases", section: "账号", tenantOnly: true },
+  { label: "链上充值", path: "/me/deposit", section: "账号", tenantOnly: true },
   { label: "账户安全", path: "/account-security", section: "账号" },
 ];
 

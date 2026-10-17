@@ -71,6 +71,7 @@ const TENANT_RAIL = [
   "/ui/me/guide",
   "/ui/me/plans",
   "/ui/me/leases",
+  "/ui/me/deposit",
   "/ui/account-security",
 ];
 
