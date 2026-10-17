@@ -1,12 +1,18 @@
 package service
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"prism/internal/config"
 	"prism/internal/model"
+	"prism/internal/tron"
 )
 
 // Buying, renewing and the renewal switch.
@@ -443,5 +449,106 @@ func TestRenewDueSubscriptions_PricesAnUnpricedSnapshotOnce(t *testing.T) {
 	}
 	if !strings.Contains(row.PlanSnapshotJSON, "5000000") {
 		t.Fatalf("the price should have been written back: %s", row.PlanSnapshotJSON)
+	}
+}
+
+// The four steps only pay for themselves when money that arrives on chain can be
+// spent, and the next period is paid for out of the same balance. This walks the
+// whole way through the service layer with a fake chain: a transfer credits the
+// balance, the balance buys a plan, and the renewal that follows charges the same
+// ledger. Anything that drifts between the three shows up as a balance that does
+// not reconcile.
+func TestChainDepositFundsPurchaseAndRenewal(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	userID := createDepositUser(t, cp, "chain-wallet")
+	plan := mustPlan(t, cp, pricedPlanInput("Chain monthly", 5_000_000), nowNs)
+
+	intent, err := cp.SelfDeposit(userID, 12_000_000, nowNs)
+	if err != nil {
+		t.Fatalf("open deposit: %v", err)
+	}
+
+	// The chain reports exactly what the page told the user to send.
+	blockMs := (intent.CreatedAtNs + 1_000_000_000) / 1_000_000
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"data":[{"transaction_id":"tx-funding","block_timestamp":%d,`+
+			`"from":"TPayer","to":%q,"type":"Transfer","value":"%d",`+
+			`"token_info":{"address":%q,"decimals":6}}]}`,
+			blockMs, testUSDTAddress, intent.AmountMicro, config.DefaultUSDTContract)
+	}))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	credited, err := cp.ScanDeposits(context.Background(), nowNs)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if credited != 1 {
+		t.Fatalf("credited: got %d, want 1", credited)
+	}
+	balance, err := cp.Engine.GetBalance(userID)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if balance != intent.AmountMicro {
+		t.Fatalf("balance after deposit: got %d, want %d", balance, intent.AmountMicro)
+	}
+
+	// The balance buys the plan.
+	bought, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-chain-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if bought.ChargedMicro != plan.PriceMicro {
+		t.Fatalf("charged: got %d, want %d", bought.ChargedMicro, plan.PriceMicro)
+	}
+	if bought.BalanceMicro != intent.AmountMicro-plan.PriceMicro {
+		t.Fatalf("balance after purchase: got %d, want %d", bought.BalanceMicro, intent.AmountMicro-plan.PriceMicro)
+	}
+
+	// Opting in, then letting the period run out, charges the next one.
+	if _, err := cp.SetAutoRenew(userID, bought.Subscription.ID, true); err != nil {
+		t.Fatalf("auto renew on: %v", err)
+	}
+	dueAt := bought.Subscription.ExpiresAtNs + int64(time.Second)
+	renewed, err := cp.RenewDueSubscriptions(dueAt)
+	if err != nil {
+		t.Fatalf("renew: %v", err)
+	}
+	if renewed.Renewed != 1 {
+		t.Fatalf("renewed: got %d, want 1 (%+v)", renewed.Renewed, renewed)
+	}
+
+	finalBalance, err := cp.Engine.GetBalance(userID)
+	if err != nil {
+		t.Fatalf("final balance: %v", err)
+	}
+	if want := intent.AmountMicro - 2*plan.PriceMicro; finalBalance != want {
+		t.Fatalf("final balance: got %d, want %d", finalBalance, want)
+	}
+
+	// Every micro-unit that moved is accounted for in the ledger.
+	ledger, err := cp.Engine.ListBalanceLedger(userID, 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	var sum int64
+	reasons := map[string]int{}
+	for _, entry := range ledger {
+		sum += entry.DeltaMicro
+		reasons[entry.Reason]++
+	}
+	if sum != finalBalance {
+		t.Fatalf("ledger sum: got %d, balance %d", sum, finalBalance)
+	}
+	if reasons[model.BalanceReasonDeposit] != 1 {
+		t.Fatalf("deposit rows: got %d, want 1 (%v)", reasons[model.BalanceReasonDeposit], reasons)
+	}
+	if reasons[model.BalanceReasonPurchase] != 1 {
+		t.Fatalf("purchase rows: got %d, want 1 (%v)", reasons[model.BalanceReasonPurchase], reasons)
+	}
+	if reasons[model.BalanceReasonRenew] != 1 {
+		t.Fatalf("renewal rows: got %d, want 1 (%v)", reasons[model.BalanceReasonRenew], reasons)
 	}
 }

@@ -1,11 +1,17 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"prism/internal/config"
 	"prism/internal/model"
+	"prism/internal/tron"
 )
 
 // Deposits are off unless an operator configured a receiving address, so every
@@ -178,5 +184,263 @@ func TestSelfDepositsListsOwnIntents(t *testing.T) {
 	}
 	if got[0].Address != testUSDTAddress {
 		t.Fatalf("address: got %q, want %q", got[0].Address, testUSDTAddress)
+	}
+}
+
+// fakeChain is a TronGrid stand-in: it answers the TRC20 endpoint with the
+// transfers it was given, and records the min_timestamp each query carried so a
+// test can see the cursor move.
+type fakeChain struct {
+	transfers []fakeTransfer
+	queries   []string
+	failWith  int
+}
+
+type fakeTransfer struct {
+	txID     string
+	amount   int64
+	blockMs  int64
+	to       string
+	contract string
+}
+
+func (f *fakeChain) handler(t *testing.T) http.HandlerFunc {
+	t.Helper()
+	return func(w http.ResponseWriter, r *http.Request) {
+		f.queries = append(f.queries, r.URL.Query().Get("min_timestamp"))
+		if f.failWith != 0 {
+			w.WriteHeader(f.failWith)
+			_, _ = w.Write([]byte(`{"error":"upstream down"}`))
+			return
+		}
+		if got := r.URL.Query().Get("only_confirmed"); got != "true" {
+			t.Errorf("only_confirmed: got %q, want true", got)
+		}
+		type row struct {
+			TransactionID string `json:"transaction_id"`
+			BlockTS       int64  `json:"block_timestamp"`
+			From          string `json:"from"`
+			To            string `json:"to"`
+			Type          string `json:"type"`
+			Value         string `json:"value"`
+			TokenInfo     struct {
+				Address  string `json:"address"`
+				Decimals int    `json:"decimals"`
+			} `json:"token_info"`
+		}
+		payload := struct {
+			Data []row `json:"data"`
+		}{}
+		for _, tr := range f.transfers {
+			var out row
+			out.TransactionID = tr.txID
+			out.BlockTS = tr.blockMs
+			out.From = "TFromAddress"
+			out.To = tr.to
+			out.Type = "Transfer"
+			out.Value = fmt.Sprintf("%d", tr.amount)
+			out.TokenInfo.Address = tr.contract
+			out.TokenInfo.Decimals = 6
+			payload.Data = append(payload.Data, out)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}
+}
+
+// A transfer that matches an intent's amount and lands inside its window is
+// credited, and the intent records the transaction.
+func TestScanDepositsCreditsAMatchingTransfer(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	userID := createDepositUser(t, cp, "scan-credit")
+	intent, err := cp.SelfDeposit(userID, 10_000_000, nowNs)
+	if err != nil {
+		t.Fatalf("deposit: %v", err)
+	}
+
+	chain := &fakeChain{transfers: []fakeTransfer{{
+		txID:     "tx-match",
+		amount:   intent.AmountMicro,
+		blockMs:  (intent.CreatedAtNs + 1_000_000_000) / 1_000_000,
+		to:       testUSDTAddress,
+		contract: config.DefaultUSDTContract,
+	}}}
+	srv := httptest.NewServer(chain.handler(t))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	credited, err := cp.ScanDeposits(context.Background(), nowNs)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if credited != 1 {
+		t.Fatalf("credited: got %d, want 1", credited)
+	}
+
+	got, err := cp.SelfDepositIntent(userID, intent.ID)
+	if err != nil {
+		t.Fatalf("read intent: %v", err)
+	}
+	if got.Status != model.DepositStatusPaid {
+		t.Fatalf("status: got %q, want paid", got.Status)
+	}
+	if got.TxID != "tx-match" {
+		t.Fatalf("tx id: got %q, want tx-match", got.TxID)
+	}
+	balance, err := cp.Engine.GetBalance(userID)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if balance != intent.AmountMicro {
+		t.Fatalf("balance: got %d, want %d", balance, intent.AmountMicro)
+	}
+}
+
+// A second scan of the same transfer must not credit twice.
+func TestScanDepositsIsIdempotentAcrossScans(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	userID := createDepositUser(t, cp, "scan-replay")
+	intent, err := cp.SelfDeposit(userID, 10_000_000, nowNs)
+	if err != nil {
+		t.Fatalf("deposit: %v", err)
+	}
+
+	chain := &fakeChain{transfers: []fakeTransfer{{
+		txID:     "tx-once",
+		amount:   intent.AmountMicro,
+		blockMs:  (intent.CreatedAtNs + 1_000_000_000) / 1_000_000,
+		to:       testUSDTAddress,
+		contract: config.DefaultUSDTContract,
+	}}}
+	srv := httptest.NewServer(chain.handler(t))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	if _, err := cp.ScanDeposits(context.Background(), nowNs); err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	again, err := cp.ScanDeposits(context.Background(), nowNs)
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if again != 0 {
+		t.Fatalf("second scan credited %d, want 0", again)
+	}
+	balance, err := cp.Engine.GetBalance(userID)
+	if err != nil {
+		t.Fatalf("balance: %v", err)
+	}
+	if balance != intent.AmountMicro {
+		t.Fatalf("balance after replay: got %d, want %d", balance, intent.AmountMicro)
+	}
+}
+
+// A transfer nobody asked for is skipped, and the cursor still moves past it so
+// the next poll does not read it again.
+func TestScanDepositsSkipsUnknownAmountsAndAdvancesCursor(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	if _, err := cp.SelfDeposit(createDepositUser(t, cp, "scan-cursor"), 10_000_000, nowNs); err != nil {
+		t.Fatalf("deposit: %v", err)
+	}
+
+	blockMs := nowNs/1_000_000 + 1_000
+	chain := &fakeChain{transfers: []fakeTransfer{{
+		txID:     "tx-stranger",
+		amount:   77_000_077,
+		blockMs:  blockMs,
+		to:       testUSDTAddress,
+		contract: config.DefaultUSDTContract,
+	}}}
+	srv := httptest.NewServer(chain.handler(t))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	credited, err := cp.ScanDeposits(context.Background(), nowNs)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if credited != 0 {
+		t.Fatalf("credited: got %d, want 0", credited)
+	}
+	cursor, err := cp.Engine.ChainCursor(depositCursorName)
+	if err != nil {
+		t.Fatalf("cursor: %v", err)
+	}
+	if cursor != blockMs {
+		t.Fatalf("cursor: got %d, want %d", cursor, blockMs)
+	}
+	// A zero watermark is omitted from the query, so the first poll reads the
+	// whole confirmed history of the address.
+	if len(chain.queries) != 1 || chain.queries[0] != "" {
+		t.Fatalf("first query min_timestamp: got %v, want one query without a watermark", chain.queries)
+	}
+
+	// The next scan must ask from the new watermark.
+	chain.transfers = nil
+	if _, err := cp.ScanDeposits(context.Background(), nowNs); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if len(chain.queries) != 2 {
+		t.Fatalf("queries: got %d, want 2", len(chain.queries))
+	}
+	if chain.queries[1] != fmt.Sprintf("%d", blockMs) {
+		t.Fatalf("second query min_timestamp: got %q, want %d", chain.queries[1], blockMs)
+	}
+}
+
+// Dust below the minimum is ignored rather than credited.
+func TestScanDepositsIgnoresDust(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	if _, err := cp.SelfDeposit(createDepositUser(t, cp, "scan-dust"), 10_000_000, nowNs); err != nil {
+		t.Fatalf("deposit: %v", err)
+	}
+
+	chain := &fakeChain{transfers: []fakeTransfer{{
+		txID:     "tx-dust",
+		amount:   depositMinMicro - 1,
+		blockMs:  nowNs/1_000_000 + 1_000,
+		to:       testUSDTAddress,
+		contract: config.DefaultUSDTContract,
+	}}}
+	srv := httptest.NewServer(chain.handler(t))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	credited, err := cp.ScanDeposits(context.Background(), nowNs)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if credited != 0 {
+		t.Fatalf("credited dust: got %d, want 0", credited)
+	}
+}
+
+// A chain that answers with an error must surface it, not swallow it: a silent
+// poller looks exactly like "nobody paid".
+func TestScanDepositsReportsChainFailures(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	chain := &fakeChain{failWith: http.StatusBadGateway}
+	srv := httptest.NewServer(chain.handler(t))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	if _, err := cp.ScanDeposits(context.Background(), nowNs); err == nil {
+		t.Fatal("a failing chain must return an error")
+	}
+}
+
+// With no address or no client there is nothing to watch, and the scan says so
+// by crediting nothing rather than failing.
+func TestScanDepositsNoOpsWhenUnconfigured(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	cp.EnvCfg.USDTAddress = ""
+	if credited, err := cp.ScanDeposits(context.Background(), nowNs); err != nil || credited != 0 {
+		t.Fatalf("no address: got (%d, %v), want (0, nil)", credited, err)
+	}
+
+	cp.EnvCfg.USDTAddress = testUSDTAddress
+	cp.Tron = nil
+	if credited, err := cp.ScanDeposits(context.Background(), nowNs); err != nil || credited != 0 {
+		t.Fatalf("no client: got (%d, %v), want (0, nil)", credited, err)
 	}
 }
