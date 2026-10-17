@@ -67,8 +67,9 @@ that lacks one is incomplete rather than minimal.
   hand-swapped label. The `loading` prop is forbidden together with `asChild` —
   Radix `Slot` throws on two children, and neither `check:types` nor `eslint`
   sees it at runtime. That prohibition is typed and locked by `kit.test.mjs`.
-- Enforced by `check:kit` rule 4 (a control must expose a way to operate it) and
-  `kit.test.mjs`.
+- Enforced by `kit.test.mjs` ("no control is rendered without a way to operate
+  it"), which reads the kit source. `check:kit` has three rules and none of them
+  covers this, so the test is the gate here.
 
 ## 6. Data surfaces
 
