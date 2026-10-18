@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"sync"
 	"time"
 
 	"prism/internal/keys"
@@ -47,6 +48,10 @@ type Limiter struct {
 	// now is the clock the expiry checks read. It is a field so tests can pin
 	// it without sleeping.
 	now func() int64
+	// rates is the per-key request schedule behind MaxRPS. It lives here
+	// rather than in the data plane because this is the only object that sees
+	// every request a key makes.
+	rates rateTable
 }
 
 // NewLimiter returns a limiter over the given counters.
@@ -92,6 +97,15 @@ func (l *Limiter) Check(key *keys.KeyState, concurrent int) Decision {
 
 	if limit := key.Plan.MaxConcurrent; limit > 0 && concurrent >= limit {
 		return Decision{Reason: ReasonConcurrency}
+	}
+
+	if limit := key.Plan.MaxRPS; limit > 0 {
+		if name := rateKey(key); name != "" {
+			interval := int64(time.Second) / int64(limit)
+			if !l.rates.allow(name, interval, int64(time.Second), nowNs) {
+				return Decision{Reason: ReasonRate}
+			}
+		}
 	}
 
 	if limit := key.Plan.TrafficBytes; limit > 0 {
@@ -173,4 +187,83 @@ func (l *Limiter) SetNow(now func() int64) {
 		return
 	}
 	l.now = now
+}
+
+// maxRateEntries bounds the request-schedule table.
+//
+// A key that falls out of it is admitted again from a clean schedule, which is
+// the safe direction to fail: a plan's rate limit is not worth unbounded memory
+// on a path where minting keys is how an account attacks the process.
+const maxRateEntries = 65536
+
+// rateTable is the per-key request schedule behind MaxRPS, kept in the generic
+// cell rate form: one integer per key holding the time its next request is due.
+//
+// A token bucket is the other way to say the same thing and needs two integers
+// and a refill rule; this needs one and no refill. It also has no window
+// boundary, so a caller cannot send the whole limit twice around the edge of a
+// whole second.
+type rateTable struct {
+	mu      sync.Mutex
+	entries map[string]int64
+}
+
+// allow reports whether the key may start one more request.
+//
+// intervalNs is the spacing its limit implies and burstNs how far ahead of
+// schedule a request may run, which is the allowance for a burst at the start
+// of a busy period. Both come from the key's own plan, so two keys on different
+// plans never share a budget. A zero interval means the limit is above one
+// request per nanosecond, which is no limit at all.
+func (t *rateTable) allow(name string, intervalNs, burstNs, nowNs int64) bool {
+	if intervalNs <= 0 {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.entries == nil {
+		t.entries = make(map[string]int64)
+	}
+	due, scheduled := t.entries[name]
+	if !scheduled || due < nowNs {
+		// A key seen for the first time, or one whose schedule has fallen
+		// behind the clock, starts from now: an idle key owes nothing for the
+		// time it was quiet.
+		due = nowNs
+	}
+	next := due + intervalNs
+	if next-nowNs > burstNs {
+		return false
+	}
+	t.entries[name] = next
+	if len(t.entries) > maxRateEntries {
+		t.prune(nowNs)
+	}
+	return true
+}
+
+// prune drops every schedule that has already caught up with the clock. When
+// that is not enough - every entry is live - the table is emptied rather than
+// grown: the worst case is one extra burst per prune, and the alternative is a
+// map an attacker can inflate one key at a time.
+func (t *rateTable) prune(nowNs int64) {
+	for name, due := range t.entries {
+		if due <= nowNs {
+			delete(t.entries, name)
+		}
+	}
+	if len(t.entries) > maxRateEntries {
+		clear(t.entries)
+	}
+}
+
+// rateKey names the budget a key's requests are charged against. The key's own
+// id is the budget, so two keys of one user do not share a rate; a state without
+// one falls back to the user, and a state with neither is not rate limited at
+// all because there is nothing to charge.
+func rateKey(key *keys.KeyState) string {
+	if key.KeyID != "" {
+		return key.KeyID
+	}
+	return key.UserID
 }

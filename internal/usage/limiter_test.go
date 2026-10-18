@@ -359,3 +359,71 @@ func TestLimiter_NilIsSafe(t *testing.T) {
 		t.Fatalf("a limiter without counters refused a request: %+v", got)
 	}
 }
+
+// MaxRPS was stored, snapshotted and shipped to the data plane with nothing
+// reading it, so a plan that advertised a rate gave away an unlimited one.
+// These pin the schedule the limiter now keeps.
+func TestLimiter_RefusesBeyondTheRateLimit(t *testing.T) {
+	limiter := NewLimiter(NewCounters())
+	key := quotaKey(t, "u-1", keys.PlanSnapshot{
+		MaxRPS: 2,
+		Status: model.SubscriptionStatusActive,
+	})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	limiter.SetNow(func() int64 { return now })
+
+	for i := 0; i < 2; i++ {
+		if got := limiter.Check(key, 0); !got.Allowed {
+			t.Fatalf("request %d within two per second was refused: %+v", i+1, got)
+		}
+	}
+	if got := limiter.Check(key, 0); got.Allowed || got.Reason != ReasonRate {
+		t.Fatalf("the third request in one second must be refused for rate: %+v", got)
+	}
+	// The refusals above must not have pushed the schedule out: half a second
+	// after the pair, exactly one slot is back.
+	now += int64(500 * time.Millisecond)
+	if got := limiter.Check(key, 0); !got.Allowed {
+		t.Fatalf("a request after the interval was refused: %+v", got)
+	}
+	if got := limiter.Check(key, 0); got.Allowed {
+		t.Fatalf("the schedule handed back a second slot early: %+v", got)
+	}
+}
+
+// The budget belongs to the key, so one key cannot spend another key's
+// allowance and the user's second key is not throttled by the first.
+func TestLimiter_RateIsPerKeyNotPerUser(t *testing.T) {
+	limiter := NewLimiter(NewCounters())
+	plan := keys.PlanSnapshot{MaxRPS: 1, Status: model.SubscriptionStatusActive}
+	first := quotaKey(t, "u-1", plan)
+	second := quotaKey(t, "u-1", plan)
+	second.KeyID = "k-2"
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	limiter.SetNow(func() int64 { return now })
+
+	if got := limiter.Check(first, 0); !got.Allowed {
+		t.Fatalf("first key refused: %+v", got)
+	}
+	if got := limiter.Check(second, 0); !got.Allowed {
+		t.Fatalf("one key's requests must not spend another key's budget: %+v", got)
+	}
+	if got := limiter.Check(first, 0); got.Allowed {
+		t.Fatalf("the first key had its second request in the same second admitted: %+v", got)
+	}
+}
+
+// A plan with no rate limit is not slowed down, and an idle key owes nothing
+// for the time it was quiet.
+func TestLimiter_RateLimitOfZeroIsUnlimited(t *testing.T) {
+	limiter := NewLimiter(NewCounters())
+	key := quotaKey(t, "u-1", keys.PlanSnapshot{Status: model.SubscriptionStatusActive})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano()
+	limiter.SetNow(func() int64 { return now })
+
+	for i := 0; i < 1000; i++ {
+		if got := limiter.Check(key, 0); !got.Allowed {
+			t.Fatalf("an unlimited plan was refused on request %d: %+v", i+1, got)
+		}
+	}
+}
