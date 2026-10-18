@@ -111,6 +111,93 @@ func loaderEnvVariables(t *testing.T) []string {
 	return names
 }
 
+// allEnvVariables returns every PRISM_ variable name a non-test Go file spells
+// out, sorted.
+//
+// The loader scan above only sees internal/config. Two packages read the
+// environment themselves - the sing-box runtime bounds its endpoint budget with
+// PRISM_MAX_ENDPOINTS, and the intel provider settings seed their credentials
+// from PRISM_IPQS_API_KEY and its siblings - so a variable can be read by the
+// process and documented nowhere. That is what this scan catches.
+func allEnvVariables(t *testing.T) []string {
+	t.Helper()
+	seen := map[string]bool{}
+	err := filepath.WalkDir(filepath.Join("..", ".."), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			// node_modules carries third-party Go sources that are not ours.
+			if entry.Name() == ".git" || entry.Name() == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, match := range loaderEnvLiteral.FindAllStringSubmatch(string(raw), -1) {
+			seen[match[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("scan the repository for PRISM_ variables: %v", err)
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// deprecatedEnvVariables are read only to warn the operator that they no longer
+// do anything. The examples explain them in prose instead of offering a line to
+// copy, so there is nothing for the assertions below to match.
+var deprecatedEnvVariables = map[string]bool{
+	"PRISM_QUALITY_QUEUE_SIZE": true,
+}
+
+// TestBothEnvironmentExamplesDocumentEveryVariable pins the promise README makes
+// about the two example files: each lists every setting the process reads.
+//
+// A variable missing from deploy/backend.env.example is the worse half: an
+// operator copies that file, never sees the deposit address or the provider
+// credentials, and the feature stays invisible rather than misconfigured.
+func TestBothEnvironmentExamplesDocumentEveryVariable(t *testing.T) {
+	names := allEnvVariables(t)
+	// A scan that silently stops matching would make the assertions below
+	// vacuous. The repository reads 76 variables today.
+	if len(names) < 70 {
+		t.Fatalf("scanned %d PRISM_ variables, want at least 70: %v", len(names), names)
+	}
+
+	for _, path := range []string{
+		filepath.Join("..", "..", ".env.example"),
+		filepath.Join("..", "..", "deploy", "backend.env.example"),
+	} {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read %s: %v", path, readErr)
+		}
+		example := string(raw)
+		for _, name := range names {
+			if deprecatedEnvVariables[name] {
+				continue
+			}
+			if !envExampleDocuments(example, name) {
+				t.Errorf("%s does not document %s (a non-test file reads it)", path, name)
+			}
+		}
+	}
+}
+
 // envExampleDocuments reports whether .env.example carries a line for name,
 // either as an active setting or as a commented-out one.
 func envExampleDocuments(example, name string) bool {
