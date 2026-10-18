@@ -688,3 +688,78 @@ func TestParseOpenVPNProfile_AcceptsSeveralFingerprints(t *testing.T) {
 		t.Errorf("tls[peer_fingerprint] = %#v, want [%q %q]", fingerprints, openVPNTestDigest, second)
 	}
 }
+
+// TestParseOpenVPNProfile_VerifyX509Name pins the certificate-name check, which
+// is the only thing that ties the TLS session to the intended server.
+func TestParseOpenVPNProfile_VerifyX509Name(t *testing.T) {
+	profile := mustParseOpenVPN(t, tlsProfile("verify-x509-name vpn.example.com\n"))
+	tls, ok := profile.Options["tls"].(map[string]any)
+	if !ok {
+		t.Fatalf("options[tls] = %#v, want a map", profile.Options["tls"])
+	}
+	if tls["server_name"] != "vpn.example.com" {
+		t.Errorf("tls[server_name] = %#v, want %q", tls["server_name"], "vpn.example.com")
+	}
+	if tls["server_name_type"] != "subject" {
+		t.Errorf("tls[server_name_type] = %#v, want %q: subject is the OpenVPN default", tls["server_name_type"], "subject")
+	}
+}
+
+func TestParseOpenVPNProfile_VerifyX509NameType(t *testing.T) {
+	cases := map[string]string{
+		"verify-x509-name vpn.example.com name\n":        "name",
+		"verify-x509-name vpn.example.com name-prefix\n": "name-prefix",
+		"verify-x509-name vpn.example.com SUBJECT\n":     "subject",
+	}
+	for directive, want := range cases {
+		t.Run(want, func(t *testing.T) {
+			profile := mustParseOpenVPN(t, tlsProfile(directive))
+			tls, _ := profile.Options["tls"].(map[string]any)
+			if tls["server_name_type"] != want {
+				t.Errorf("tls[server_name_type] = %#v, want %q", tls["server_name_type"], want)
+			}
+		})
+	}
+}
+
+// TestParseOpenVPNProfile_RefusesEmptyVerifyX509Name is the security half of the
+// rule: an empty name verifies nothing, so accepting it would answer a profile
+// that asked for verification with a session that skips it.
+func TestParseOpenVPNProfile_RefusesEmptyVerifyX509Name(t *testing.T) {
+	parseErr := parseOpenVPNError(t, tlsProfile("verify-x509-name \"\"\n"))
+	if parseErr.Reason != ReasonInvalid {
+		t.Errorf("Reason = %q, want %q", parseErr.Reason, ReasonInvalid)
+	}
+	if !strings.Contains(parseErr.Detail, "verify-x509-name") {
+		t.Errorf("Detail = %q, want it to name the directive", parseErr.Detail)
+	}
+}
+
+func TestParseOpenVPNProfile_RefusesUnknownVerifyX509NameType(t *testing.T) {
+	parseErr := parseOpenVPNError(t, tlsProfile("verify-x509-name vpn.example.com common-name\n"))
+	if parseErr.Reason != ReasonInvalid {
+		t.Errorf("Reason = %q, want %q", parseErr.Reason, ReasonInvalid)
+	}
+	if !strings.Contains(parseErr.Detail, "verify-x509-name") {
+		t.Errorf("Detail = %q, want it to name the directive", parseErr.Detail)
+	}
+}
+
+// TestParseOpenVPNProfile_RemoteCertTLS pins that a client profile always asks
+// the peer to be a server, and that a value naming a different check is refused
+// rather than quietly replaced by the one Prism can perform.
+func TestParseOpenVPNProfile_RemoteCertTLS(t *testing.T) {
+	profile := mustParseOpenVPN(t, tlsProfile("remote-cert-tls server\n"))
+	tls, _ := profile.Options["tls"].(map[string]any)
+	if tls["remote_certificate_tls"] != "server" {
+		t.Errorf("tls[remote_certificate_tls] = %#v, want %q", tls["remote_certificate_tls"], "server")
+	}
+
+	parseErr := parseOpenVPNError(t, tlsProfile("remote-cert-tls client\n"))
+	if parseErr.Reason != ReasonUnsupportedFeature {
+		t.Errorf("Reason = %q, want %q", parseErr.Reason, ReasonUnsupportedFeature)
+	}
+	if !strings.Contains(parseErr.Detail, "remote-cert-tls") {
+		t.Errorf("Detail = %q, want it to name the directive", parseErr.Detail)
+	}
+}

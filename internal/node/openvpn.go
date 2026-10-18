@@ -697,6 +697,11 @@ func (b *openVPNBuilder) applyTLSNames(directives map[string][]openVPNDirective)
 			return openVPNErrorf(ReasonInvalid, "verify-x509-name without a name")
 		}
 		name := strings.TrimSpace(entry.args[0])
+		// An empty name verifies nothing while the profile asks for
+		// verification, so it is refused instead of being dropped.
+		if name == "" {
+			return openVPNErrorf(ReasonInvalid, "verify-x509-name without a name")
+		}
 		nameType := "subject"
 		if len(entry.args) > 1 {
 			switch strings.ToLower(strings.TrimSpace(entry.args[1])) {
@@ -710,12 +715,16 @@ func (b *openVPNBuilder) applyTLSNames(directives map[string][]openVPNDirective)
 				return openVPNErrorf(ReasonInvalid, "verify-x509-name type %s", entry.args[1])
 			}
 		}
-		if name != "" {
-			b.tls["server_name"] = name
-			b.tls["server_name_type"] = nameType
-		}
+		b.tls["server_name"] = name
+		b.tls["server_name_type"] = nameType
 	}
-	if _, ok := firstDirective(directives, "remote-cert-tls"); ok {
+	if entry, ok := firstDirective(directives, "remote-cert-tls"); ok {
+		// A client profile can only ask the peer to be a server. Any other
+		// value names a different check than the one the profile asked for, so
+		// it is refused rather than replaced.
+		if value := strings.ToLower(directiveFirstArg(entry)); value != "" && value != "server" {
+			return openVPNErrorf(ReasonUnsupportedFeature, "remote-cert-tls %s", directiveFirstArg(entry))
+		}
 		b.tls["remote_certificate_tls"] = "server"
 	}
 	return nil
