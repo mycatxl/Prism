@@ -373,7 +373,19 @@ func (s *ControlPlaneService) RenewDueSubscriptions(nowNs int64) (RenewalView, e
 
 	var result RenewalView
 	for _, sub := range due {
-		_, renewed, err := s.renewOne(sub, nowNs, renewalRequestID(sub))
+		plan, price, err := s.renewalPrice(sub)
+		if err != nil {
+			// A subscription that cannot be priced cannot be charged either;
+			// counting it as failed is what puts it in front of an operator.
+			result.Failed++
+			continue
+		}
+		if !renewalDue(sub, plan, nowNs) {
+			// An earlier pass already bought this period. The row is only
+			// inside the sweep's outer query window, not its own.
+			continue
+		}
+		_, renewed, err := s.renewOneWithPlan(sub, plan, price, nowNs, renewalRequestID(sub))
 		switch {
 		case err == nil && renewed:
 			result.Renewed++
@@ -400,6 +412,12 @@ func (s *ControlPlaneService) renewOne(sub model.UserSubscription, nowNs int64, 
 	if err != nil {
 		return state.PurchaseResult{}, false, err
 	}
+	return s.renewOneWithPlan(sub, plan, snapshotPrice, nowNs, requestID)
+}
+
+// renewOneWithPlan is renewOne once the plan has been resolved, so a caller
+// that had to read the plan anyway does not read it a second time.
+func (s *ControlPlaneService) renewOneWithPlan(sub model.UserSubscription, plan model.Plan, snapshotPrice int64, nowNs int64, requestID string) (state.PurchaseResult, bool, error) {
 	if plan.DurationDays <= 0 {
 		return state.PurchaseResult{}, false, nil
 	}
@@ -497,4 +515,37 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// renewalDue reports whether one subscription is inside its own renewal window.
+//
+// A subscription already pushed past that window by an earlier pass is left
+// alone, which is what stops a short plan from being bought again on the next
+// tick: the sweep runs every minute and the window is measured against the
+// period being bought, not against a constant.
+func renewalDue(sub model.UserSubscription, plan model.Plan, nowNs int64) bool {
+	if sub.ExpiresAtNs <= 0 {
+		return false
+	}
+	return sub.ExpiresAtNs-nowNs <= renewalWindowNs(renewalLeadTimeNs, plan.DurationDays)
+}
+
+// renewalWindowNs is how far ahead of its expiry one sweep may renew a
+// subscription: the lead time, but never more than the period being bought.
+//
+// A lead time longer than the period is not a wider early-renewal window, it is
+// a loop. The extension lands back inside the same window, so the next pass -
+// one minute later - buys that period again, and again, until the expiry has
+// been pushed beyond the lead time. A one-day plan under the fixed seven-day
+// lead was charged seven times in seven minutes, which is why the cap lives
+// here rather than being a constant in the query.
+func renewalWindowNs(leadNs int64, durationDays int) int64 {
+	if durationDays <= 0 {
+		return leadNs
+	}
+	period := expiryFromDays(durationDays, 0)
+	if period <= 0 || period < leadNs {
+		return period
+	}
+	return leadNs
 }

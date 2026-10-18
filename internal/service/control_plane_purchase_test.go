@@ -823,3 +823,70 @@ func TestSelfRenew_EarlyRenewalKeepsTheRemainingTime(t *testing.T) {
 		t.Fatalf("period start: got %d, want the old expiry %d", after.PeriodStartNs, before.ExpiresAtNs)
 	}
 }
+
+// A plan whose period is shorter than the renewal lead time is inside the
+// window the moment it is bought, so a sweep that compared only the expiry with
+// the lead bought the same period again on every tick. The window is capped by
+// the period being bought, which is what this pins: one purchase, one renewal,
+// whatever the sweep interval is.
+func TestRenewDueSubscriptions_DoesNotRebuyAPlanShorterThanTheLead(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	in := pricedPlanInput("Daily", 2_000_000)
+	in.Period = "1d"
+	in.DurationDays = 1
+	plan := mustPlan(t, cp, in, nowNs)
+	creditUser(t, cp, userID, 10_000_000, nowNs)
+
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if _, err := cp.SetAutoRenew(userID, purchased.Subscription.ID, true); err != nil {
+		t.Fatalf("set auto renew: %v", err)
+	}
+	if remaining := purchased.Subscription.ExpiresAtNs - nowNs; remaining >= renewalLeadTimeNs {
+		t.Fatalf("a one-day plan has to start inside the lead time for this test: %d", remaining)
+	}
+
+	// Three passes, a minute apart, exactly what StartRenewalSweeper does.
+	renewed := 0
+	for i := 0; i < 3; i++ {
+		result, err := cp.RenewDueSubscriptions(nowNs + int64(i)*int64(time.Minute))
+		if err != nil {
+			t.Fatalf("sweep %d: %v", i, err)
+		}
+		renewed += result.Renewed
+	}
+	if renewed != 1 {
+		t.Fatalf("a short plan must renew once, not once per tick: %d", renewed)
+	}
+	row, err := cp.Engine.GetUserSubscription(purchased.Subscription.ID)
+	if err != nil {
+		t.Fatalf("read subscription: %v", err)
+	}
+	if row.PeriodIndex != 1 {
+		t.Fatalf("period index: got %d, want 1", row.PeriodIndex)
+	}
+	// 10 in, 2 for the purchase, 2 for the one renewal.
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 6_000_000 {
+		t.Fatalf("a short plan must be charged once: got %d, %v", balance, err)
+	}
+}
+
+// The window is the lead time unless the period being bought is shorter.
+func TestRenewalWindowNs_CapsAtThePeriod(t *testing.T) {
+	day := int64(24 * time.Hour)
+	if got := renewalWindowNs(renewalLeadTimeNs, 30); got != renewalLeadTimeNs {
+		t.Fatalf("a monthly plan keeps the lead time: got %d", got)
+	}
+	if got := renewalWindowNs(renewalLeadTimeNs, 7); got != renewalLeadTimeNs {
+		t.Fatalf("a seven-day plan is exactly the lead time: got %d", got)
+	}
+	if got := renewalWindowNs(renewalLeadTimeNs, 1); got != day {
+		t.Fatalf("a one-day plan caps the window at its own period: got %d, want %d", got, day)
+	}
+	if got := renewalWindowNs(renewalLeadTimeNs, 0); got != renewalLeadTimeNs {
+		t.Fatalf("a duration of zero keeps the lead time: got %d", got)
+	}
+}
