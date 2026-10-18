@@ -30,8 +30,6 @@ import (
 type reserveBarrierGate struct {
 	limit   int
 	arrived chan struct{}
-	release chan struct{}
-	settle  time.Duration
 
 	mu        sync.Mutex
 	observing []int
@@ -43,20 +41,17 @@ func newReserveBarrierGate(limit int) *reserveBarrierGate {
 	return &reserveBarrierGate{
 		limit:   limit,
 		arrived: make(chan struct{}, 64),
-		release: make(chan struct{}),
-		settle:  500 * time.Millisecond,
 	}
 }
 
-// Check blocks every request until the test releases the gate, then answers the
-// way usage.Limiter does: a key that already holds its limit may not hold one
-// more.
+// Check answers the way usage.Limiter does - a key that already holds its limit
+// may not hold one more - and reports the arrival so the test can tell when
+// every request has been through the gate.
 func (g *reserveBarrierGate) Check(_ *keys.KeyState, concurrent int) (bool, string) {
 	select {
 	case g.arrived <- struct{}{}:
 	default:
 	}
-	<-g.release
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -71,22 +66,19 @@ func (g *reserveBarrierGate) Check(_ *keys.KeyState, concurrent int) (bool, stri
 
 func (g *reserveBarrierGate) Exceeded(*keys.KeyState, int) bool { return false }
 
-// settleThenRelease waits until every request reached the gate, or until no new
-// arrival turns up for one settle window, and then lets all of them through.
+// waitChecks waits until want requests have been through the gate.
 //
-// The wait is what the red light depends on: with the check and the
-// registration separated, all of the requests reach their check before any of
-// them can register.
-func (g *reserveBarrierGate) settleThenRelease(want int, maxWait time.Duration) {
-	defer close(g.release)
-
+// The gate answers at once rather than holding the requests, because the
+// reservation lock already serialises them: reserveSession reads the count,
+// asks the gate and registers the session inside one critical section, so the
+// requests reach the gate one after another, never together. A gate that
+// blocked would therefore deadlock the burst rather than gather it.
+func (g *reserveBarrierGate) waitChecks(want int, maxWait time.Duration) {
 	deadline := time.Now().Add(maxWait)
-	arrived := 0
-	for arrived < want && time.Now().Before(deadline) {
+	for arrived := 0; arrived < want; arrived++ {
 		select {
 		case <-g.arrived:
-			arrived++
-		case <-time.After(g.settle):
+		case <-time.After(time.Until(deadline)):
 			return
 		}
 	}
@@ -114,10 +106,19 @@ func (g *reserveBarrierGate) observations() []int {
 // another.
 func TestProxyConcurrency_ReservesTheSessionBeforeItAnswers(t *testing.T) {
 	t.Run("http requests", func(t *testing.T) {
+		// The upstream holds the admitted request open until every request has
+		// been through the gate. Without that the admitted request can finish
+		// first, release its reservation, and leave the refusals reading an
+		// empty key - which would prove nothing about the check.
+		upstreamRelease := make(chan struct{})
+		var upstreamOnce sync.Once
+		releaseUpstream := func() { upstreamOnce.Do(func() { close(upstreamRelease) }) }
 		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			<-upstreamRelease
 			_, _ = w.Write([]byte("ok"))
 		}))
 		defer upstream.Close()
+		defer releaseUpstream()
 
 		env := newProxyE2EEnv(t)
 		setProxyE2EOutboundDialFunc(t, env, func(ctx context.Context, network string, _ M.Socksaddr) (net.Conn, error) {
@@ -153,7 +154,8 @@ func TestProxyConcurrency_ReservesTheSessionBeforeItAnswers(t *testing.T) {
 			}(i, req)
 		}
 
-		gate.settleThenRelease(requests, 5*time.Second)
+		gate.waitChecks(requests, 5*time.Second)
+		releaseUpstream()
 		wg.Wait()
 
 		admitted, refused := 0, 0
@@ -177,18 +179,29 @@ func TestProxyConcurrency_ReservesTheSessionBeforeItAnswers(t *testing.T) {
 		// The refusals saw the admitted request's reservation: that is the
 		// evidence that the check is made against the session the request is
 		// about to hold, not against a count that moves only afterwards.
+		//
+		// Only the single zero is exact. The observations are taken one after
+		// another rather than at once, and a refusal undoes its placeholder
+		// after it leaves the critical section, so the next request can still
+		// see that placeholder and read one more than the admitted request
+		// alone accounts for. Both are the reservation working, so the rest is
+		// asserted to be non-zero rather than exactly one.
 		observations := gate.observations()
-		zeros, ones := 0, 0
+		if len(observations) != requests {
+			t.Fatalf("the gate saw %d requests, want %d (%s)", len(observations), requests, gate.summary())
+		}
+		zeros := 0
 		for _, concurrent := range observations {
-			switch concurrent {
-			case 0:
+			if concurrent == 0 {
 				zeros++
-			case 1:
-				ones++
+				continue
+			}
+			if concurrent < 1 || concurrent > requests {
+				t.Fatalf("the gate saw concurrency %v, want one 0 and every other reading between 1 and %d", observations, requests)
 			}
 		}
-		if zeros != 1 || ones != requests-1 {
-			t.Fatalf("the gate saw concurrency %v, want one 0 (the admitted request) and %d 1s (the reservations)", observations, requests-1)
+		if zeros != 1 {
+			t.Fatalf("the gate saw concurrency %v, want exactly one 0 (the admitted request)", observations)
 		}
 
 		waitForSessionCount(t, registry, "k-meter", 0)
@@ -241,7 +254,7 @@ func TestProxyConcurrency_ReservesTheSessionBeforeItAnswers(t *testing.T) {
 			}
 		})
 
-		gate.settleThenRelease(requests, 5*time.Second)
+		gate.waitChecks(requests, 5*time.Second)
 
 		established, refused := 0, 0
 		for i, reader := range readers {
