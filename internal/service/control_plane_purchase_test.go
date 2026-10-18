@@ -14,6 +14,7 @@ import (
 	"prism/internal/config"
 	"prism/internal/model"
 	"prism/internal/tron"
+	"prism/internal/usage"
 )
 
 // Buying, renewing and the renewal switch.
@@ -928,5 +929,29 @@ func TestSelfRenew_RequiresAnIdempotencyKey(t *testing.T) {
 	}
 	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 15_000_000 {
 		t.Fatalf("a refused renewal must not charge: %d, %v", balance, err)
+	}
+}
+
+// Assigning a plan has to start a fresh allowance in memory, not only on disk.
+// The running aggregate belongs to the subscription that just ended, and a
+// leftover total keeps the quota refusing a user who has used nothing of the
+// plan they were just given - the same trap a self-purchase clears.
+func TestAssignSubscription_StartsAFreshAllowance(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+
+	cp.Usage = usage.NewCounters()
+	held := usage.CounterKey{KeyID: "k-1", UserID: userID, PlatformID: "p-1"}
+	cp.Usage.Add(held, usage.Delta{EgressBytes: 999_999})
+	if got := cp.Usage.UserBytes(userID); got != 999_999 {
+		t.Fatalf("fixture: the aggregate has to hold the old total: got %d", got)
+	}
+
+	if _, err := cp.AssignSubscription(userID, plan.ID, 0, nowNs); err != nil {
+		t.Fatalf("assign: %v", err)
+	}
+	if got := cp.Usage.UserBytes(userID); got != 0 {
+		t.Fatalf("an assigned plan must start from zero in memory: got %d", got)
 	}
 }

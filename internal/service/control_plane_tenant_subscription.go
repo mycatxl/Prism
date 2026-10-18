@@ -143,6 +143,13 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 		// server fault.
 		return SubscriptionView{}, mapSubscriptionWriteError("write subscription", err)
 	}
+	// The running aggregate belongs to the subscription that just ended, the
+	// same way it does after a purchase: the new row starts at zero bytes on
+	// disk, and leaving the old total in memory would keep the quota refusing
+	// a user who has used nothing of the plan they were just given.
+	if s.Usage != nil {
+		s.Usage.ResetUser(userID)
+	}
 	// The new plan is in force from the next request, not from the next
 	// restart: the keys of this user are republished with the new snapshot.
 	if err := s.republishUserKeys(userID); err != nil {
