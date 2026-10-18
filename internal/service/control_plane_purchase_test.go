@@ -1003,3 +1003,44 @@ func TestSetAutoRenew_RefusesARowTheSweepCannotSee(t *testing.T) {
 		t.Fatalf("a subscription that never expires has nothing to renew")
 	}
 }
+
+// A replay has to answer with what already happened, not with a fresh
+// allowance. The purchase path cleared the running aggregate unconditionally,
+// so replaying the same request_id - which a client can do on demand, because
+// the answer is a 200 - reset the bytes used in the current period while
+// writing nothing to disk: an unlimited plan for one price.
+func TestSelfPurchase_ReplayKeepsTheCurrentAllowance(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 10_000_000, nowNs)
+
+	cp.Usage = usage.NewCounters()
+	first, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if first.Replayed {
+		t.Fatalf("fixture: the first purchase must not be a replay")
+	}
+
+	held := usage.CounterKey{KeyID: "k-1", UserID: userID, PlatformID: "p-1"}
+	cp.Usage.Add(held, usage.Delta{EgressBytes: 4_000_000})
+	if got := cp.Usage.UserBytes(userID); got != 4_000_000 {
+		t.Fatalf("fixture: the aggregate has to hold the bytes used: got %d", got)
+	}
+
+	replay, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("replay: %v", err)
+	}
+	if !replay.Replayed {
+		t.Fatalf("the same request_id has to replay")
+	}
+	if got := cp.Usage.UserBytes(userID); got != 4_000_000 {
+		t.Fatalf("a replay buys nothing, so it must not hand out a second allowance: got %d", got)
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 5_000_000 {
+		t.Fatalf("a replay must not charge twice: %d, %v", balance, err)
+	}
+}

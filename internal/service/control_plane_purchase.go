@@ -213,16 +213,23 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 		return PurchaseResultView{}, internal("purchase plan", err)
 	}
 
-	// The running aggregate belongs to the subscription that just ended. A new
-	// window starts at zero bytes on disk, so the in-memory total has to follow
-	// or the quota would refuse a user who has used nothing.
-	if s.Usage != nil {
-		s.Usage.ResetUser(userID)
-	}
-	// The new plan is in force from the next request rather than the next
-	// restart.
-	if err := s.republishUserKeys(userID); err != nil {
-		return PurchaseResultView{}, err
+	// A replay charged nothing and wrote nothing: the subscription in force is
+	// the one that was already there, so the running aggregate is this period's
+	// usage, not a leftover. Clearing it would hand out a whole second
+	// allowance for one price - and a client can replay on demand, because the
+	// answer is a 200. renewOneWithPlan already guards the same way.
+	if !result.Replayed {
+		// The running aggregate belongs to the subscription that just ended. A
+		// new window starts at zero bytes on disk, so the in-memory total has
+		// to follow or the quota would refuse a user who has used nothing.
+		if s.Usage != nil {
+			s.Usage.ResetUser(userID)
+		}
+		// The new plan is in force from the next request rather than the next
+		// restart.
+		if err := s.republishUserKeys(userID); err != nil {
+			return PurchaseResultView{}, err
+		}
 	}
 
 	view := PurchaseResultView{
