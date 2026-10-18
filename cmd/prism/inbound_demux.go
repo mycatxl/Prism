@@ -6,8 +6,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -197,6 +199,17 @@ func (s *inboundDemuxServer) Shutdown(ctx context.Context) error {
 
 func (s *inboundDemuxServer) handleAcceptedConn(conn net.Conn) {
 	defer s.workerWG.Done()
+	// This runs on a worker goroutine, not on a net/http one: net/http recovers
+	// a panicking handler, but a panic here has no recoverer and takes the whole
+	// process down. One SOCKS5 session must not be able to stop the proxy.
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			log.Printf("proxy: recovered a panic serving an inbound connection: %v\n%s", recovered, debug.Stack())
+			if conn != nil {
+				_ = conn.Close()
+			}
+		}
+	}()
 	s.trackActiveConn(conn)
 	s.trackSniffConn(conn)
 
