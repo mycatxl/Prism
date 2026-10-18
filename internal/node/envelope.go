@@ -229,6 +229,9 @@ func ParseNodeDoc(raw []byte) (NodeDoc, error) {
 		if err := json.Unmarshal(envelope.Proxy, &proxyHeader); err != nil {
 			return NodeDoc{}, fmt.Errorf("parse mihomo proxy: %w", err)
 		}
+		if proxyHeader.Type == "" {
+			return NodeDoc{}, errors.New("INVALID:mihomo proxy has no type")
+		}
 		doc.Type = proxyHeader.Type
 		return doc, nil
 	case EngineSingbox:
