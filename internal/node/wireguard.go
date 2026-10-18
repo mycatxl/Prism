@@ -200,7 +200,12 @@ func wireGuardSinglePeer(options map[string]any) (WireGuardPeer, bool, error) {
 	// does for the local addresses.
 	allowedIPs := stringListOption(options, "allowed_ips", "allowed-ips", "allowedIPs")
 	if len(allowedIPs) == 0 {
-		allowedIPs = DefaultWireGuardAllowedIPs()
+		// Only a peer that omits the key gets the default routes. A key that is
+		// present but holds nothing falls through to the refusal below instead of
+		// being silently widened to the default routes.
+		if _, present := firstValue(options, "allowed_ips", "allowed-ips", "allowedIPs"); !present {
+			allowedIPs = DefaultWireGuardAllowedIPs()
+		}
 	}
 	allowedIPs = splitWireGuardPrefixEntries(allowedIPs)
 	if len(allowedIPs) == 0 {

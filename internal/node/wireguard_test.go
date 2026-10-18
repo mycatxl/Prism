@@ -236,3 +236,18 @@ func TestSplitWireGuardPrefixEntries(t *testing.T) {
 		})
 	}
 }
+
+// TestWireGuardPeerOptions_EmptyAllowedIPsFailsClosed pins that an allowed_ips
+// key which is present but holds nothing is refused instead of being widened to
+// the default routes. The empty slice and empty string spellings used to be
+// treated as if the key were absent, while the neighbouring `[""]` and `","`
+// spellings were already refused.
+func TestWireGuardPeerOptions_EmptyAllowedIPsFailsClosed(t *testing.T) {
+	for _, value := range []any{[]any{}, []string{}, ""} {
+		options := wireGuardOptions(t, "")
+		options["allowed_ips"] = value
+		if _, err := WireGuardEndpointFromOptions(options); err == nil {
+			t.Errorf("allowed_ips=%#v: expected a refusal, got none", value)
+		}
+	}
+}
