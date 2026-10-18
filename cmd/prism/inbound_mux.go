@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/subtle"
+	"log"
 	"net/http"
 	"net/url"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -31,6 +33,15 @@ func newEndpointInboundMux(
 	if tokenActionHandler == nil {
 		tokenActionHandler = http.NotFoundHandler()
 	}
+
+	// The management handler already recovers panics (api.Server.Handler wraps
+	// its mux). The proxy handlers are mounted here directly, on a listener of
+	// their own, so they get the same treatment: without it a panic in the data
+	// plane drops the connection with nothing written, which a client sees as a
+	// dead proxy rather than as one failed request.
+	forward = recoverProxyPanic("forward", forward)
+	reverse = recoverProxyPanic("reverse", reverse)
+	tokenActionHandler = recoverProxyPanic("token action", tokenActionHandler)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		endpoint := model.Endpoint{}
@@ -86,6 +97,47 @@ func newEndpointInboundMux(
 		}
 		reverse.ServeHTTP(w, r)
 	})
+}
+
+// recoverProxyPanic answers a panicking data-plane handler with the proxy's own
+// 502 and keeps the connection usable.
+//
+// The proxy speaks to clients that are not the console: an HTTP proxy client
+// reads the status line, and a CONNECT tunnel reads the handshake reply. A
+// dropped connection there is indistinguishable from a broken proxy, so the
+// failure is reported as a proxy error instead. The stack goes to the server
+// log - it can name a target or a credential - and never into the response.
+//
+// http.ErrAbortHandler is repanicked: it is how a handler abandons a response
+// it has already started, and net/http is the one that has to finish that.
+func recoverProxyPanic(name string, next http.Handler) http.Handler {
+	if next == nil {
+		return http.NotFoundHandler()
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			if recovered == http.ErrAbortHandler {
+				panic(recovered)
+			}
+			log.Printf("proxy: recovered a panic in the %s handler: %v\n%s", name, recovered, debug.Stack())
+			writeInboundProxyFailure(w)
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// PRISM-DEVIATION: X4 — error responses carry both the Prism and the upstream
+// Resin header, with the same value.
+func writeInboundProxyFailure(w http.ResponseWriter) {
+	w.Header().Set("X-Prism-Error", "PROXY_FAILURE")
+	w.Header().Set("X-Resin-Error", "PROXY_FAILURE")
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusBadGateway)
+	_, _ = w.Write([]byte("Proxy request failed"))
 }
 
 // PRISM-DEVIATION: X4 — error responses carry both the Prism and the upstream
