@@ -105,7 +105,7 @@ func prepareConnectTunnel(
 		// The bypass path moves the user's bytes just as the routed one does,
 		// so it is metered too. Its platform id is empty: no platform was
 		// resolved, and the traffic is still the key's.
-		return prepareDirectConnectTunnel(ctx, deps, target, attributionFor(deps.metering, key, ""))
+		return prepareDirectConnectTunnel(ctx, deps, target, attributionFor(deps.metering, key, ""), key)
 	}
 
 	routed, routeErr := resolveRoutedOutbound(deps.router, deps.pool, platformName, account, target, key)
@@ -152,7 +152,7 @@ func prepareConnectTunnel(
 	attributed := attributionFor(deps.metering, key, routed.Route.PlatformID)
 
 	upstreamBase := rawConn
-	if deps.metricsSink != nil || attributed != nil {
+	if deps.metricsSink != nil || attributed != nil || hasBandwidthLimit(key) {
 		if deps.metricsSink != nil {
 			deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
 		}
@@ -160,8 +160,10 @@ func prepareConnectTunnel(
 		// session alone, so the bytes can be attributed to the key as they
 		// flow. This is the only path where that is true: the pooled HTTP
 		// transports reuse connections across requests, and attributing one of
-		// those would bill the next request's bytes to the wrong tenant.
-		upstreamBase = newAttributedCountingConn(rawConn, deps.metricsSink, attributed)
+		// those would bill the next request's bytes to the wrong tenant. The
+		// wrapper also carries the key's bandwidth limit, which is why it is
+		// installed even when nothing else asks for one.
+		upstreamBase = newAttributedCountingConn(rawConn, deps.metricsSink, attributed).throttleTo(key)
 	}
 
 	upstreamConn := newTLSLatencyConn(upstreamBase, func(latency time.Duration) {
@@ -202,6 +204,7 @@ func prepareDirectConnectTunnel(
 	deps tunnelDeps,
 	target string,
 	attributed *keyAttribution,
+	key *keys.KeyState,
 ) tunnelPrepareResult {
 	// The dial-time half of the guard runs inside this dialer, so the address
 	// connected to is validated even after a re-resolution.
@@ -220,11 +223,11 @@ func prepareDirectConnectTunnel(
 	}
 
 	upstreamConn := rawConn
-	if deps.metricsSink != nil || attributed != nil {
+	if deps.metricsSink != nil || attributed != nil || hasBandwidthLimit(key) {
 		if deps.metricsSink != nil {
 			deps.metricsSink.OnConnectionLifecycle(ConnectionOutbound, ConnectionOpen)
 		}
-		upstreamConn = newAttributedCountingConn(rawConn, deps.metricsSink, attributed)
+		upstreamConn = newAttributedCountingConn(rawConn, deps.metricsSink, attributed).throttleTo(key)
 	}
 	return tunnelPrepareResult{
 		session: &preparedTunnel{

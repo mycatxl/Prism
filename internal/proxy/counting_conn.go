@@ -41,6 +41,13 @@ type countingConn struct {
 	sink        MetricsEventSink
 	attribution *keyAttribution
 
+	// bandwidth is the key's byte schedule, installed only when its plan
+	// limits bandwidth. A nil table is the unlimited path and costs the read
+	// and write paths one comparison each.
+	bandwidth        *bandwidthTable
+	bandwidthRateBps int64
+	bandwidthKey     string
+
 	pendingRead  atomic.Int64
 	pendingWrite atomic.Int64
 	closed       atomic.Bool
@@ -86,6 +93,7 @@ func (c *countingConn) Read(b []byte) (int, error) {
 		} else {
 			c.armDeferredFlush()
 		}
+		c.throttleBytes(n)
 	}
 	return n, err
 }
@@ -99,6 +107,7 @@ func (c *countingConn) Write(b []byte) (int, error) {
 		} else {
 			c.armDeferredFlush()
 		}
+		c.throttleBytes(n)
 	}
 	return n, err
 }
