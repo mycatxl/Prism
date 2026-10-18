@@ -25,6 +25,11 @@ import {
 } from "./api";
 import type { AdminSystemConfig, AdminSystemConfigPatch } from "./types";
 
+// MAX_RETENTION_DAYS mirrors config.MaxRetentionDays on the server: a longer
+// window overflows the nanosecond offset the prune subtracts from now, which
+// moves the cutoff into the future and deletes the whole table.
+const MAX_RETENTION_DAYS = 36500
+
 export function SettingsPage() {
   const { t } = useI18n();
 
@@ -278,6 +283,7 @@ function SettingsFormContent({
                   id={auditFieldId}
                   type="number"
                   min="0"
+                  max={MAX_RETENTION_DAYS}
                   step="1"
                   value={auditRetention}
                   onChange={(e) => setAuditRetention(e.target.value)}
@@ -301,6 +307,7 @@ function SettingsFormContent({
                   id={usageFieldId}
                   type="number"
                   min="0"
+                  max={MAX_RETENTION_DAYS}
                   step="1"
                   value={usageRetention}
                   onChange={(e) => setUsageRetention(e.target.value)}
