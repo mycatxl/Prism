@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
+	"log"
 	"net"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -272,6 +275,28 @@ func pumpPreparedTunnelReader(
 			_ = session.upstreamConn.Close()
 		})
 	}
+	// relay runs one direction of the copy on its own goroutine and always
+	// reports a result. A panic ends that direction, closes both ends so the
+	// peer is not left waiting, and is reported as a copy error: the relay below
+	// waits on these two channels, so a goroutine that died without sending
+	// would leave the tunnel parked forever as well.
+	relay := func(results chan<- copyResult, copyFn func() (int64, error)) {
+		go func() {
+			var n int64
+			var err error
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("proxy: recovered a panic relaying a tunnel: %v\n%s", recovered, debug.Stack())
+					closeBoth()
+					if err == nil {
+						err = fmt.Errorf("relay panicked: %v", recovered)
+					}
+				}
+				results <- copyResult{n: n, err: err}
+			}()
+			n, err = copyFn()
+		}()
+	}
 	// The allowance is enforced from inside the relay. Both directions count
 	// against the same allowance, which is why one quota covers the two copies,
 	// and the abort closes both ends - a cut that left one of them open would
@@ -280,7 +305,11 @@ func pumpPreparedTunnelReader(
 
 	ingressBytesCh := make(chan copyResult, 1)
 	egressBytesCh := make(chan copyResult, 1)
-	go func() {
+	// Both directions run on their own goroutine, and neither may take the
+	// process down: a panic in a copy loop is one broken tunnel, and the relay
+	// below waits on these two channels for the byte counts, so a goroutine that
+	// died without sending would leave the tunnel parked forever as well.
+	relay(egressBytesCh, func() (int64, error) {
 		clientReader := io.Reader(clientToUpstream)
 		if quota != nil {
 			clientReader = &quotaReader{reader: clientToUpstream, quota: quota}
@@ -289,9 +318,9 @@ func pumpPreparedTunnelReader(
 		if !isBenignTunnelCopyError(copyErr) || !closeWriteConn(session.upstreamConn) {
 			closeBoth()
 		}
-		egressBytesCh <- copyResult{n: n, err: copyErr}
-	}()
-	go func() {
+		return n, copyErr
+	})
+	relay(ingressBytesCh, func() (int64, error) {
 		var upstreamReader io.Reader = session.upstreamConn
 		if quota != nil {
 			upstreamReader = &quotaReader{reader: upstreamReader, quota: quota, ingress: true}
@@ -304,8 +333,8 @@ func pumpPreparedTunnelReader(
 		if !isBenignTunnelCopyError(copyErr) || !closeWriteConn(clientConn) {
 			closeBoth()
 		}
-		ingressBytesCh <- copyResult{n: n, err: copyErr}
-	}()
+		return n, copyErr
+	})
 
 	ingressResult := <-ingressBytesCh
 	egressResult := <-egressBytesCh
