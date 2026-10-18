@@ -7,6 +7,7 @@ import type {
   AdminSubscription,
   AdminSystemConfig,
   AdminSystemConfigPatch,
+  AdminSystemEnvConfig,
   AdminUsageAlertItem,
   AdminUsageAlertsResponse,
   AdminUsageDailyResponse,
@@ -446,4 +447,10 @@ export async function updateSystemConfig(
 
 export async function getDefaultSystemConfig(): Promise<AdminSystemConfig> {
   return apiRequest<AdminSystemConfig>("/api/v1/system/config/default");
+}
+
+// The deployment's own configuration. The console cannot change it, but it needs
+// the values to explain what a cleared runtime override falls back to.
+export async function getSystemEnvConfig(): Promise<AdminSystemEnvConfig> {
+  return apiRequest<AdminSystemEnvConfig>("/api/v1/system/config/env");
 }

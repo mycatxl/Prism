@@ -228,7 +228,7 @@ export function PlatformPage() {
     <TooltipProvider>
       <Page bleed>
         <PageHeader
-          title={t("平台管理")}
+          title={t("平台")}
           actions={
             <>
               <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>

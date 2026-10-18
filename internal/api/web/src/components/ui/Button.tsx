@@ -5,11 +5,13 @@ import type { ButtonHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 /*
+ * A button is a stamped plate on the sheet: square, hairline, no lift.
+ *
  * Control states:
  *   default   the variant's own classes
- *   hover     per variant, below
+ *   hover     a step in fill, never a shadow
  *   focus     the shared `:focus-visible` outline in `design.css`
- *   active    `active:` per variant, a step past hover
+ *   active    one step past hover
  *   disabled  `disabled:opacity-45` + no pointer events
  *   loading   the `loading` prop: a spinner *and* `disabled` *and* `aria-busy`
  */
@@ -18,16 +20,13 @@ const button = cva(
   {
     variants: {
       variant: {
-        primary:
-          "bg-accent text-on-accent shadow-xs hover:bg-accent-deep active:bg-accent-deep",
+        primary: "border-accent-deep bg-accent text-on-accent hover:bg-accent-deep active:bg-accent-deep",
         secondary:
-          "border-glass-edge bg-glass text-ink shadow-[inset_0_1px_0_0_var(--color-glass-highlight)] hover:border-glass-edge-strong hover:bg-glass-strong active:border-glass-edge-strong active:bg-glass-strong",
+          "border-rule bg-paper-raised text-ink hover:border-rule-strong hover:bg-paper-elevated active:bg-paper-inset",
         ghost:
-          "bg-transparent text-ink-soft hover:border-glass-edge hover:bg-glass hover:text-ink active:bg-glass-strong active:text-ink",
-        danger:
-          "border-alert/40 bg-alert text-on-alert shadow-xs hover:brightness-95 active:brightness-90",
-        quiet:
-          "border-transparent text-ink-soft hover:border-glass-edge hover:text-ink active:text-ink",
+          "bg-transparent text-ink-soft hover:bg-hover hover:text-ink active:bg-paper-inset active:text-ink",
+        danger: "border-alert bg-alert text-on-alert hover:brightness-95 active:brightness-90",
+        quiet: "border-transparent text-ink-soft hover:text-ink active:text-ink",
       },
       size: {
         sm: "h-[var(--control-h-sm)] px-2.5 text-xs",

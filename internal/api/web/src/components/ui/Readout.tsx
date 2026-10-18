@@ -165,7 +165,7 @@ export function Readout({
 }
 
 /**
- * Several readouts on one glass strip, separated by soft hairlines.
+ * Several readouts on one strip, separated by hairlines.
  */
 export function ReadoutStrip({ children, className }: { children: ReactNode; className?: string }) {
   return (

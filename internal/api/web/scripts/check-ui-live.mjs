@@ -80,6 +80,28 @@ const TENANT_RAIL = [
 // The board's replica classes are on the list too: their CSS went with the 1536px
 // layer, so a `wb-slot-*` or a `wb-folded` left in the DOM is a pane the grid does
 // not know about.
+// The worlds before this one, kept listed because Tailwind classes do not fail
+// when the utility behind them is gone: `bg-glass-soft` in a page renders as a
+// transparent box and no gate notices. `check:responsive` guards the stylesheet;
+// this list guards the markup a page could still carry.
+const RETIRED_WORLD_TOKENS = [
+  "dash-",
+  "glass-",
+  "register__",
+  "amendment",
+  "term-",
+  "shell-topbar",
+  "shell-theme-toggle",
+  "shell-nav__extra",
+  // Tailwind utilities whose CSS was deleted, so they paint nothing at all.
+  "bg-glass",
+  "bg-glass-soft",
+  "bg-glass-strong",
+  "hover:bg-glass",
+  "border-glass-edge",
+  "border-glass-edge-strong",
+];
+
 const REMOVED_CLASS_TOKENS = [
   "content",
   "node-name",
@@ -387,7 +409,7 @@ check("no removed class token survives in the DOM", async ({ origin, page }) => 
   for (const path of RAIL_PATHS) {
     await page.goto(origin + path);
     await rendered(page);
-    const hits = await page.evaluate(collectRemovedTokens, REMOVED_CLASS_TOKENS);
+    const hits = await page.evaluate(collectRemovedTokens, [...REMOVED_CLASS_TOKENS, ...RETIRED_WORLD_TOKENS]);
     for (const hit of hits) failures.push(`${path}: "${hit.token}" on <${hit.tag}>`);
   }
   assert.deepEqual(failures, [], "removed class tokens found:\n  " + failures.join("\n  "));
@@ -421,7 +443,7 @@ check("legacy node envelopes do not crash the node pool", async ({ origin, page,
     await rendered(page);
     await page.waitForTimeout(250);
     const text = await page.locator("main").innerText();
-    assert.match(text, /节点池/);
+    assert.match(text, /legacy-node/, "the legacy row must still render");
     assert.doesNotMatch(text, /界面渲染失败|toLocaleString/);
     assert.deepEqual(errors.drain(), [], "legacy node envelope must not emit a render error");
   } finally {
@@ -548,6 +570,79 @@ check("the rail reaches every destination and marks the current one", async ({ o
 });
 
 /**
+ * The command palette only exists on a keystroke, which makes it the one surface
+ * a route sweep cannot reach. This check is the proof that the lazy chunk arrives,
+ * that the index is the rail plus the five shell actions and nothing invented,
+ * that typing narrows it, and that both ways out (Enter, Escape) work.
+ */
+check("the command palette opens from the keyboard, filters and routes", async ({ origin, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
+
+  const palette = page.locator("[cmdk-dialog]");
+  assert.equal(await palette.count(), 0, "the palette must not be mounted before it is asked for");
+
+  await page.keyboard.press("Control+k");
+  await palette.waitFor({ state: "visible", timeout: 15000 });
+  // One destination for every rail link, plus 刷新数据 / 切换主题 / 切换语言 /
+  // 账户安全 / 退出登录. An exact count, so adding one without the other fails here.
+  assert.equal(
+    await palette.locator("[cmdk-item]").count(),
+    RAIL_PATHS.length + 5,
+    "the palette indexes the rail plus the shell's own actions, and nothing else",
+  );
+  assert.equal(
+    await page.evaluate(() => document.activeElement?.hasAttribute("cmdk-input") ?? false),
+    true,
+    "the palette takes the keyboard when it opens",
+  );
+
+  await page.locator("[cmdk-input]").fill("审计日志");
+  await page.waitForFunction(() => document.querySelectorAll("[cmdk-item]").length === 1, null, { timeout: 5000 });
+  await page.keyboard.press("Enter");
+  await page.waitForURL(/\/ui\/audit$/);
+  await palette.waitFor({ state: "hidden", timeout: 15000 });
+
+  await page.keyboard.press("Control+k");
+  await palette.waitFor({ state: "visible", timeout: 15000 });
+  await page.keyboard.press("Escape");
+  await palette.waitFor({ state: "hidden", timeout: 15000 });
+});
+
+/**
+ * The English dictionary is a chunk now, so the language control has two jobs:
+ * fetch it, and only then change the language. This check watches the network for
+ * the chunk and the document for the language, which is exactly the pair that can
+ * silently break — a switch that repaints Chinese keys looks like a working button
+ * with a broken dictionary.
+ */
+check("switching to English fetches its dictionary and stays English", async ({ origin, page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
+
+  // The suite runs in Chinese: the English map must not be on the wire yet.
+  const seen = async () =>
+    page.evaluate(() =>
+      performance.getEntriesByType("resource").map((entry) => entry.name).filter((name) => /assets\/translations-/.test(name)),
+    );
+  assert.deepEqual(await seen(), [], "a Chinese session must never download the English dictionary");
+
+  await page.locator('button[aria-label="切换语言"]').click();
+  await page.waitForFunction(() => document.documentElement.lang === "en-US", null, { timeout: 15000 });
+  // The rail's own name is translated, so it is the cheapest honest witness that
+  // the tree re-rendered in English rather than only the <html lang> attribute.
+  await page.locator('nav[aria-label="Main Navigation"]').waitFor({ state: "visible", timeout: 15000 });
+  assert.equal(await page.title(), "Prism · Proxy Workbench", "the document title follows the language");
+  assert.equal((await seen()).length, 1, "the chunk is fetched once, not per render");
+
+  await page.locator('button[aria-label="Switch Language"]').click();
+  await page.waitForFunction(() => document.documentElement.lang === "zh-CN", null, { timeout: 15000 });
+  await page.locator('nav[aria-label="主导航"]').waitFor({ state: "visible", timeout: 15000 });
+});
+
+/**
  * The tenant half of the console, which no other check reaches. The bundle and
  * the routing are shared, so the honest proof is a browser: sign a tenant in and
  * assert both what they get (their own rail, their own pages) and what they must
@@ -620,6 +715,31 @@ check("a tenant session reaches the self-service panel and nothing else", async 
     for (const path of TENANT_RAIL) {
       assert.equal(await rail.locator(`a[href="${path}"]:visible`).count(), 1, `the tenant rail must link to ${path}`);
     }
+
+    /*
+     * The two products must not look the same. The self-service rail is narrower
+     * and its rows taller than the console's: a tenant's panel is a place to do
+     * one thing, not a control desk.
+     */
+    const selfSurface = await tenantPage.evaluate(() => {
+      const shell = document.querySelector(".shell");
+      const box = (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        return { w: Math.round(r.width), h: Math.round(r.height) };
+      };
+      return { cls: shell?.className ?? "", rail: box(".shell-nav"), link: box(".shell-nav__link") };
+    });
+    assert.match(selfSurface.cls, /shell--self/, "a tenant session must mount the self-service surface");
+    assert(
+      selfSurface.rail !== null && selfSurface.rail.w < 236,
+      `the self-service rail is ${selfSurface.rail?.w}px, not narrower than the console's 236px`,
+    );
+    assert(
+      selfSurface.link !== null && selfSurface.link.h >= 36,
+      `self-service rows are ${selfSurface.link?.h}px, not taller than the console's 28px`,
+    );
 
     for (const path of TENANT_RAIL) {
       tenantErrors.reset(path);
@@ -705,28 +825,41 @@ check("the page never overflows horizontally", async ({ origin, page }) => {
   assert.deepEqual(failures, [], "horizontal overflow:\n  " + failures.join("\n  "));
 });
 
-check("the dashboard hero renders", async ({ origin, page }) => {
+check("the dashboard states its condition and works from real registers", async ({ origin, page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(origin + DASHBOARD);
   await rendered(page);
 
-  // The exit plate is an offline SVG projection. Assert the rendered surface
-  // rather than an implementation-specific canvas node.
-  const map = page.locator("main .dash-map").first();
-  await map.waitFor({ state: "visible", timeout: 20000 });
-  const svg = map.locator("svg").first();
-  await svg.waitFor({ state: "attached", timeout: 20000 });
-  const box = await svg.boundingBox();
-  assert(box && box.width > 0 && box.height > 0, "the exit map must draw an SVG with a real size");
+  /*
+   * Two states are legitimate: a deployment with a fleet states its condition and
+   * opens its registers; an empty one walks the operator through the first run
+   * instead of printing four zeros. Both must be real.
+   */
+  const band = page.locator("main dl").first();
+  if ((await band.count()) > 0) {
+    const facts = await band.locator("dd").allInnerTexts();
+    assert(facts.length >= 4, "the condition band must state four facts");
+    assert(
+      facts.some((text) => /\d/.test(text)),
+      "at least one fact must carry a number, not four dashes",
+    );
 
-  // The instrument strip is the ReadoutStrip: a row of cells divided by hairlines.
-  // Each cell's number is a `Numeral`, which is the class that carries the value
-  // (`.readout` is only on a unit suffix, and these cells have no unit). Measuring
-  // by the value keeps the assertion about content rather than about the layout
-  // classes the strip happened to use, which have already changed once.
-  const stats = page.locator("main .dash-map__stats").first();
-  await stats.waitFor({ state: "visible", timeout: 15000 });
-  assert(/\d/.test((await stats.textContent()) || ""), "the map stats must show numbers");
+    // The two registers the page is worked from, addressed by their own names.
+    await page.getByRole("table", { name: "需要处理" }).waitFor({ state: "visible", timeout: 20000 });
+    await page.getByRole("table", { name: "平台配线" }).waitFor({ state: "visible", timeout: 20000 });
+
+    // The egress plate is an offline SVG projection; when there are exits it must
+    // draw at a real size rather than collapsing to an empty box.
+    const svg = page.locator("main svg").first();
+    if ((await svg.count()) > 0) {
+      const box = await svg.boundingBox();
+      assert(box && box.width > 0 && box.height > 0, "the egress plate must draw an SVG with a real size");
+    }
+  } else {
+    await page.getByRole("heading", { name: "从三步开始" }).waitFor({ state: "visible", timeout: 20000 });
+    const steps = page.locator("main ol > li");
+    assert.equal(await steps.count(), 3, "the first run must list exactly three steps");
+  }
 });
 
 check("every theme is legible, not just the one the art was drawn in", async ({ origin, page }) => {
@@ -758,18 +891,6 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
    * These semantic hooks are stable across loading and populated fixtures, and
    * they cover the words operators actually read in both authored themes.
    */
-  const TARGETS = [
-    ".dash-card__head",
-    ".dash-card__meta",
-    ".dash-map__stats",
-    ".dash-map__legend",
-    ".dash-line__name",
-    ".dash-platform-name",
-    ".dash-change__text",
-    ".dash-issue__text",
-    ".dash-muted",
-    ".readout",
-  ];
 
   /*
    * The current board uses shared Readout components and token-bound surfaces.
@@ -781,33 +902,41 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
   const exemptionFor = (sel, theme) =>
     ART_EXEMPTIONS.find((entry) => entry.sel === sel && entry.theme === theme);
 
-  /** Runs in the page: every target that carries words and is on screen. */
-  const COLLECT = (selectors) => {
+  /**
+   * Runs in the page: every element that carries its own words and is on screen.
+   *
+   * Deliberately selector-free. The previous version listed the class names of the
+   * one page it was written for, so a composition change shrank the sample to a
+   * handful of survivors and the check kept passing on a tenth of the text.
+   */
+  const COLLECT = () => {
     const rows = [];
-    for (const sel of selectors) {
-      for (const el of document.querySelectorAll(sel)) {
-        // A mark with no text is a colour sample, not a word: the dots carry no
-        // ink, so their contrast is meaningless.
-        const text = (el.textContent || "").trim();
-        if (!text) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.width < 2 || rect.height < 2) continue;
-        const cx = Math.round(rect.left + rect.width / 2);
-        const cy = Math.round(rect.top + rect.height / 2);
-        // Off-screen text is not what the operator reads, so it is not measured;
-        // the count is reported so a target that silently left the viewport shows.
-        if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
-        const cs = getComputedStyle(el);
-        rows.push({
-          sel,
-          text: text.slice(0, 24),
-          ink: cs.color,
-          size: parseFloat(cs.fontSize),
-          weight: parseInt(cs.fontWeight, 10) || 400,
-          cx,
-          cy,
-        });
-      }
+    const root = document.querySelector("main");
+    if (!root) return rows;
+    for (const el of root.querySelectorAll("*")) {
+      const own = [...el.childNodes]
+        .filter((node) => node.nodeType === Node.TEXT_NODE)
+        .map((node) => (node.textContent || "").trim())
+        .join(" ")
+        .trim();
+      if (!own) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 2 || rect.height < 2) continue;
+      const cx = Math.round(rect.left + rect.width / 2);
+      const cy = Math.round(rect.top + rect.height / 2);
+      // Off-screen text is not what the operator reads, so it is not measured.
+      if (cx < 0 || cy < 0 || cx >= innerWidth || cy >= innerHeight) continue;
+      const cs = getComputedStyle(el);
+      if (cs.visibility === "hidden" || cs.opacity === "0") continue;
+      rows.push({
+        sel: el.tagName.toLowerCase(),
+        text: own.slice(0, 24),
+        ink: cs.color,
+        size: parseFloat(cs.fontSize),
+        weight: parseInt(cs.fontWeight, 10) || 400,
+        cx,
+        cy,
+      });
     }
     return rows;
   };
@@ -889,7 +1018,7 @@ check("every theme is legible, not just the one the art was drawn in", async ({ 
     const applied = await page.evaluate(() => document.documentElement.dataset.theme);
     assert.equal(applied, theme, `the page painted the ${applied} theme after ${theme} was requested`);
 
-    const rows = await page.evaluate(COLLECT, TARGETS);
+    const rows = await page.evaluate(COLLECT);
     assert(rows.length >= 12, `only ${rows.length} legible targets were found on screen`);
 
     await page.evaluate(HIDE_TEXT);

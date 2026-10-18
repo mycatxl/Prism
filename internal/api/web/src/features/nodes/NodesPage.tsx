@@ -563,7 +563,7 @@ export function NodesPage() {
         onValueChange={(next) => changeView(next === "exits" ? "exits" : "nodes")}
       >
         <PageHeader
-          title={t("节点池")}
+          title={t("节点")}
           meta={
             <>
               <PageMeta

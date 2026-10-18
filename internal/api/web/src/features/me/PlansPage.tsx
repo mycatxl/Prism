@@ -267,7 +267,7 @@ function PurchaseDialog({
             {t("扣款与套餐生效同时完成，余额不足时不会扣款。")}
           </p>
 
-          <div className="mt-4 space-y-2 rounded-control border border-glass-edge bg-glass p-3 text-xs">
+          <div className="mt-4 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-ink-soft">{t("套餐")}</span>
               <span className="font-medium text-ink">{plan.name}</span>
@@ -284,7 +284,7 @@ function PurchaseDialog({
                 {formatMicro(plan.price_micro)} USDT
               </span>
             </div>
-            <div className="flex items-center justify-between border-t border-glass-edge pt-2">
+            <div className="flex items-center justify-between border-t border-rule pt-2">
               <span className="text-ink-soft">{t("扣款后余额")}</span>
               <span
                 className={`readout font-mono ${

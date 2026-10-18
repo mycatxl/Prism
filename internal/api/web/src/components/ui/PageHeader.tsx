@@ -2,8 +2,13 @@ import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * The page header: a 52px minimum band on the canvas with title, metadata, actions,
- * optional description, and optional tab strip.
+ * The page header: a minimum-height band on the canvas with the page's name, the
+ * facts that qualify it, the actions that belong to it, and its tab strip.
+ *
+ * Its stickiness and its fill come from `.page-header` in `design.css`, not from a
+ * utility here: the shell has to be able to move the header below the instance bar
+ * on a phone, and a `top-0` utility in this file would win that argument by layer
+ * order no matter what the stylesheet said.
  */
 export function PageHeader({
   title,
@@ -23,7 +28,7 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        "page-header sticky top-0 z-20 bg-paper",
+        "page-header",
         className,
       )}
     >
@@ -55,8 +60,8 @@ export function PageMeta({ label, value }: { label: ReactNode; value: ReactNode 
 }
 
 /**
- * The page shell: transparent over the glowing ground so Bento glass panels float
- * cleanly on the canvas.
+ * The page shell: a plain column on the canvas. It adds no ground, glow or frame of
+ * its own — the shell owns the measure, the page's panels own their rules.
  */
 export function Page({
   children,
@@ -70,7 +75,7 @@ export function Page({
   return (
     <section
       className={cn(
-        "page-shell flex min-h-full flex-col",
+        "flex min-h-full flex-col",
         bleed ? "px-0" : "px-[var(--page-gutter)] py-4 lg:py-5",
         className,
       )}

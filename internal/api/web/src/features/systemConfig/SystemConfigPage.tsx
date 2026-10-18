@@ -573,7 +573,7 @@ export function SystemConfigPage() {
       <PageHeader
         title={
           <span id="settings-title" tabIndex={-1} className="outline-none">
-            {t("系统配置")}
+            {t("运行参数")}
           </span>
         }
         description={category ? t(category.description) : t("选择一类设置，集中查看和调整。")}

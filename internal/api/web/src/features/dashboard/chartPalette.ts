@@ -13,24 +13,24 @@
  * timeline is the day chart; the egress map carries its own palette, because it is
  * the one surface that paints a night sky rather than paper.
  */
-export const CHART_PAPER = "#ecf5f1";
-export const CHART_PAPER_SUNK = "#e4f0eb";
+export const CHART_PAPER = "#f4f5f7";
+export const CHART_PAPER_SUNK = "#eceef1";
 /*
- * Fog-blue graphite day surfaces. These literals mirror design.css so canvas
- * charts keep the same material as the rest of the console.
+ * Neutral console surfaces. These literals mirror design.css so canvas charts
+ * keep the same material as the rest of the console.
  */
-export const CHART_PAPER_RAISED = "#fafcfb";
-export const CHART_PAPER_INSET = "#f3f8f6";
-export const CHART_RULE = "#d5e2dc";
-export const CHART_RULE_STRONG = "#8fa39b";
-export const CHART_INK = "#0f172a";
-export const CHART_INK_SOFT = "#475569";
-export const CHART_INK_FAINT = "#56657c";
-export const CHART_SIGNAL = "#137a52";
-export const CHART_SIGNAL_DEEP = "#0f6343";
-export const CHART_LIVE = "#0369a1";
-export const CHART_GRID = "#ced9e5";
-export const CHART_AXIS = "#53677c";
+export const CHART_PAPER_RAISED = "#ffffff";
+export const CHART_PAPER_INSET = "#f7f8fa";
+export const CHART_RULE = "#dfe3e8";
+export const CHART_RULE_STRONG = "#a7aeb8";
+export const CHART_INK = "#16181d";
+export const CHART_INK_SOFT = "#4a5361";
+export const CHART_INK_FAINT = "#5b6470";
+export const CHART_SIGNAL = "#12633f";
+export const CHART_SIGNAL_DEEP = "#0d4b30";
+export const CHART_LIVE = "#0b5c86";
+export const CHART_GRID = "#e2e6eb";
+export const CHART_AXIS = "#5b6470";
 
 /*
  * The accent, which the map spends on exactly one thing: the panel's own egress
@@ -38,24 +38,24 @@ export const CHART_AXIS = "#53677c";
  * on the plate that never means "a region". Both values are `--p-accent` from
  * their own theme.
  */
-export const CHART_ACCENT = "#0a7a60";
-export const CHART_ACCENT_DARK = "#2fe0b0";
+export const CHART_ACCENT = "#3f4bc4";
+export const CHART_ACCENT_DARK = "#8f9bff";
 
 /**
  * The categorical sequence, in the order a chart should spend it.
  *
  * Spread across the luminance axis as well as the hue axis, so the lines stay
  * apart in greyscale — the fallback that a printed screenshot, a colour-blind
- * reader and a three-metre viewing distance all land on. Indigo is the primary
- * series, teal is healthy, amber is warned, red is failing.
+ * reader and a three-metre viewing distance all land on. Indigo leads, then
+ * steel, green, amber, terracotta, orchid.
  */
 export const CHART_SERIES = [
-  "#2b2470",
-  "#04745c",
-  "#b86c04",
-  "#dd2408",
-  "#6d1eb5",
-  "#0393c9",
+  "#362d9b",
+  "#204f70",
+  "#1d654a",
+  "#826326",
+  "#c95846",
+  "#d46aba",
 ] as const;
 
 /**
@@ -68,15 +68,15 @@ export const CHART_SERIES = [
  * `Donut.tsx` makes for its ring and its legend.
  */
 export const CHART_SERIES_DARK = [
-  "#5665e0",
-  "#248f75",
-  "#bf841f",
-  "#e88272",
-  "#c6a0eb",
-  "#70d4ec",
+  "#635ac8",
+  "#397dac",
+  "#339873",
+  "#bf9540",
+  "#dea69d",
+  "#eabedf",
 ] as const;
 
-export const CHART_FONT_SANS = '"Manrope", ui-sans-serif, system-ui, sans-serif';
+export const CHART_FONT_SANS = '"IBM Plex Sans", ui-sans-serif, system-ui, sans-serif';
 export const CHART_FONT_MONO = '"IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace';
 
 /**
@@ -146,40 +146,40 @@ export type MapPalette = {
  * without competing with the route pulses.
  */
 export const MAP_DARK: MapPalette = {
-  land: "#143a36",
-  coast: "#1d4440",
-  ink: "#e8ecf3",
+  land: "#232833",
+  coast: "#2f3642",
+  ink: "#e7e9ed",
   series: CHART_SERIES_DARK,
-  hubStroke: "rgba(11, 22, 47, 0.85)",
+  hubStroke: "rgba(9, 11, 14, 0.85)",
   origin: CHART_ACCENT_DARK,
-  originStroke: "rgba(11, 22, 47, 0.85)",
+  originStroke: "rgba(9, 11, 14, 0.85)",
   originSize: 12,
   hubMin: 5.5,
   hubMax: 5.5,
-  line: "#7fd6f0",
-  lineTrail: "#d8f4ff",
+  line: "#8f9bff",
+  lineTrail: "#d6dbff",
   linePeriod: 5,
-  tooltipSignal: "#3fcf8e",
+  tooltipSignal: "#4fc48d",
 };
 
 /**
- * The fog-blue graphite day plate. The sea is the inset surface behind the SVG;
- * land is deliberately darker and bluer than that surface so an empty map still
- * has a readable geographic footprint without inventing activity.
+ * The day plate. The sea is the inset surface behind the SVG; land is a step
+ * darker and cooler than that surface so an empty map still has a readable
+ * geographic footprint without inventing activity.
  */
 export const MAP_LIGHT: MapPalette = {
-  land: "#d4e6de",
-  coast: "#bcd3c9",
+  land: "#dde1e7",
+  coast: "#c8ced7",
   ink: CHART_INK,
   series: CHART_SERIES,
-  hubStroke: "rgba(232, 238, 246, 0.96)",
+  hubStroke: "rgba(255, 255, 255, 0.96)",
   origin: CHART_ACCENT,
-  originStroke: "rgba(232, 238, 246, 0.96)",
+  originStroke: "rgba(255, 255, 255, 0.96)",
   originSize: 12,
   hubMin: 5.5,
   hubMax: 5.5,
-  line: "#326d9a",
-  lineTrail: "#1b426e",
+  line: "#3f4bc4",
+  lineTrail: "#2f39a0",
   linePeriod: 5,
   tooltipSignal: CHART_SIGNAL_DEEP,
 };

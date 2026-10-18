@@ -211,7 +211,7 @@ export function OverviewPage() {
                 />
               ) : (
                 <div className="space-y-6">
-                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-glass-edge pb-4">
+                  <div className="flex flex-wrap items-center justify-between gap-4 border-b border-rule pb-4">
                     <div className="space-y-1">
                       <span className="text-xs text-ink-faint">
                         {t("当前套餐")}
@@ -271,14 +271,14 @@ export function OverviewPage() {
 
                   {/* Readout Metrics */}
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <div className="rounded-panel border border-glass-edge bg-glass p-3">
+                    <div className="rounded-panel border border-rule bg-paper-inset p-3">
                       <Readout
                         label={t("本周期已用流量")}
                         value={formatBytes(overview.period_used_bytes)}
                         tone="ink"
                       />
                     </div>
-                    <div className="rounded-panel border border-glass-edge bg-glass p-3">
+                    <div className="rounded-panel border border-rule bg-paper-inset p-3">
                       <Readout
                         label={t("周期剩余流量")}
                         value={
@@ -294,7 +294,7 @@ export function OverviewPage() {
                         }
                       />
                     </div>
-                    <div className="rounded-panel border border-glass-edge bg-glass p-3">
+                    <div className="rounded-panel border border-rule bg-paper-inset p-3">
                       <Readout
                         label={t("最大并发限制")}
                         value={
@@ -306,7 +306,7 @@ export function OverviewPage() {
                         tone="ink"
                       />
                     </div>
-                    <div className="rounded-panel border border-glass-edge bg-glass p-3">
+                    <div className="rounded-panel border border-rule bg-paper-inset p-3">
                       <Readout
                         label={t("活跃密钥数 / 配额")}
                         value={
@@ -329,7 +329,7 @@ export function OverviewPage() {
                    * here rather than in the plan: rewriting a plan's snapshot
                    * must not silently flip what somebody chose.
                    */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-glass-edge bg-glass p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-control border border-rule bg-paper-inset p-3">
                     <div className="space-y-0.5">
                       <span className="text-xs font-medium text-ink">
                         {t("自动续费")}
@@ -407,7 +407,7 @@ export function OverviewPage() {
                     {overview.platforms.map((plat) => (
                       <div
                         key={plat.platform_id}
-                        className="flex items-center gap-1.5 rounded-control border border-glass-edge bg-glass px-2.5 py-1 text-xs"
+                        className="flex items-center gap-1.5 rounded-control border border-rule bg-paper-inset px-2.5 py-1 text-xs"
                       >
                         <span className="font-medium text-ink">
                           {plat.platform_name || plat.platform_id}
@@ -633,7 +633,7 @@ function RenewDialog({
             {t("扣款与延长同时完成，余额不足时不会扣款。")}
           </p>
 
-          <div className="mt-4 space-y-2 rounded-control border border-glass-edge bg-glass p-3 text-xs">
+          <div className="mt-4 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-ink-soft">{t("套餐")}</span>
               <span className="font-medium text-ink">{subscription.plan_name}</span>

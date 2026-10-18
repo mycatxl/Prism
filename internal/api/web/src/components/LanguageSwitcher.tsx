@@ -4,7 +4,7 @@ import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
 /**
- * Language control inside a compact glass trough.
+ * Language control inside a compact inset trough.
  */
 export function LanguageSwitcher({
   collapsed = false,
@@ -35,7 +35,7 @@ export function LanguageSwitcher({
   return (
     <div
       className={cn(
-        "inline-flex items-center rounded-control border border-glass-edge bg-glass p-0.5 shadow-[inset_0_1px_0_0_var(--color-glass-highlight)]",
+        "inline-flex items-center rounded-control border border-rule bg-paper-inset p-0.5",
         className,
       )}
       role="group"

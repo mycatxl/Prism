@@ -22,12 +22,12 @@ export type NavigationItem = {
 
 /** The self-service destinations: the only ones a tenant session is shown. */
 export const tenantItems: NavigationItem[] = [
-  { label: "概览", path: "/me", section: "账号", tenantOnly: true },
-  { label: "我的密钥", path: "/me/keys", section: "账号", tenantOnly: true },
-  { label: "接入指南", path: "/me/guide", section: "账号", tenantOnly: true },
-  { label: "购买套餐", path: "/me/plans", section: "账号", tenantOnly: true },
-  { label: "我的租约", path: "/me/leases", section: "账号", tenantOnly: true },
-  { label: "链上充值", path: "/me/deposit", section: "账号", tenantOnly: true },
+  { label: "概览", path: "/me", section: "使用", tenantOnly: true },
+  { label: "我的密钥", path: "/me/keys", section: "使用", tenantOnly: true },
+  { label: "接入指南", path: "/me/guide", section: "使用", tenantOnly: true },
+  { label: "购买套餐", path: "/me/plans", section: "费用", tenantOnly: true },
+  { label: "我的租约", path: "/me/leases", section: "费用", tenantOnly: true },
+  { label: "链上充值", path: "/me/deposit", section: "费用", tenantOnly: true },
   { label: "账户安全", path: "/account-security", section: "账号" },
 ];
 

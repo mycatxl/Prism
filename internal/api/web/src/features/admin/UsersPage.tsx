@@ -120,7 +120,7 @@ export function UsersPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t("用户管理")}
+        title={t("用户")}
         description={t("管理系统用户、角色分配、套餐与访问权限。")}
         actions={
           <div className="flex items-center gap-2">
@@ -233,7 +233,7 @@ export function UsersPage() {
                     return (
                       <TR
                         key={user.id}
-                        className="cursor-pointer hover:bg-glass"
+                        className="cursor-pointer hover:bg-hover"
                         onClick={() => navigate(`/admin/users/${user.id}`)}
                       >
                         <TD>

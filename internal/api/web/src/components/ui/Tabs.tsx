@@ -2,8 +2,9 @@ import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { cn } from "../../lib/cn";
 
 /**
- * Segmented control inside a glass trough; the active segment is a raised glass
- * pill with identical Radix ARIA/keyboard behaviour.
+ * Segmented control inside an inset trough; the active segment is the raised one,
+ * with Radix's ARIA and keyboard behaviour untouched. Both shapes are rectangles —
+ * the only pill in the system is `Badge`.
  */
 export const Tabs = TabsPrimitive.Root;
 
@@ -14,7 +15,7 @@ export function TabsList({
   return (
     <TabsPrimitive.List
       className={cn(
-        "inline-flex min-h-[var(--control-h-lg)] flex-wrap items-center gap-1 rounded-control border border-glass-edge bg-glass p-1 shadow-[inset_0_1px_0_0_var(--color-glass-highlight)]",
+        "inline-flex min-h-[var(--control-h-lg)] flex-wrap items-center gap-1 rounded-control border border-rule bg-paper-inset p-1",
         className,
       )}
       {...rest}
@@ -31,7 +32,7 @@ export function TabsTrigger({
       className={cn(
         "action inline-flex h-[var(--control-h-sm)] items-center justify-center rounded-[calc(var(--radius-control)-3px)] px-3 text-xs font-medium text-ink-soft select-none",
         "hover:text-ink",
-        "data-[state=active]:border data-[state=active]:border-glass-edge data-[state=active]:bg-glass-strong data-[state=active]:font-semibold data-[state=active]:text-ink data-[state=active]:shadow-xs",
+        "data-[state=active]:border data-[state=active]:border-rule data-[state=active]:bg-paper-raised data-[state=active]:font-semibold data-[state=active]:text-ink data-[state=active]:shadow-xs",
         className,
       )}
       {...rest}

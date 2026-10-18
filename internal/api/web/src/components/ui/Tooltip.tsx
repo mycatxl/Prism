@@ -24,7 +24,7 @@ export function Tooltip({
           side={side}
           sideOffset={6}
           className={cn(
-            "glass-elevated z-50 max-w-xs rounded-panel border border-glass-edge-strong bg-paper-elevated px-2.5 py-1.5 text-xs leading-relaxed text-ink shadow-lg",
+            "overlay-surface z-50 max-w-xs rounded-panel border border-rule-strong bg-paper-elevated px-2.5 py-1.5 text-xs leading-relaxed text-ink shadow-lg",
             className,
           )}
         >

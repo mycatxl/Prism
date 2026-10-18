@@ -428,7 +428,7 @@ export function UserDetailPage() {
                         <TDClip className="font-semibold text-ink">{key.name}</TDClip>
                       </TD>
                       <TD>
-                        <code className="rounded-control bg-glass px-1.5 py-0.5 font-mono text-xs text-ink">
+                        <code className="rounded-control bg-paper-inset px-1.5 py-0.5 font-mono text-xs text-ink">
                           {key.credential_hint || "****"}
                         </code>
                       </TD>

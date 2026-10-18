@@ -7,7 +7,7 @@ type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
 };
 
 /**
- * Native select inside a glass well with token height (`--control-h`).
+ * Native select inside a ruled box with token height (`--control-h`).
  */
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select(
   { className, invalid, children, ...props },
@@ -18,11 +18,9 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        "action h-[var(--control-h)] w-full rounded-control border bg-glass px-2.5 text-sm text-ink shadow-[inset_0_1px_0_0_var(--color-glass-highlight)]",
-        "focus:border-accent focus:bg-glass-strong disabled:cursor-not-allowed disabled:opacity-50",
-        invalid
-          ? "border-alert"
-          : "border-glass-edge hover:border-glass-edge-strong active:border-accent",
+        "action h-[var(--control-h)] w-full rounded-control border bg-paper-raised px-2.5 text-sm text-ink",
+        "focus:border-accent disabled:cursor-not-allowed disabled:opacity-50",
+        invalid ? "border-alert" : "border-rule hover:border-rule-strong active:border-accent",
         className,
       )}
       {...props}

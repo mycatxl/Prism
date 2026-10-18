@@ -822,7 +822,7 @@ export function SubscriptionPage() {
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       <PageHeader
-        title={t("订阅管理")}
+        title={t("订阅源")}
         actions={
           <>
             <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>

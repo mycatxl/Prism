@@ -1,135 +1,64 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, type ReactNode } from "react";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
+import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { ToastContainer } from "../../components/ui/Toast";
-import { useToast } from "../../hooks/useToast";
+import { DataTable, type Column } from "../../components/ui/DataTable";
+import { PageHeader } from "../../components/ui/PageHeader";
+import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
+import { Stat, StatStrip } from "../../components/ui/StatStrip";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
-import { formatApiErrorMessage } from "../../lib/error-message";
 import { listAuditLogs } from "../audit/api";
+import type { AuditLogEntry } from "../audit/types";
 import { listIntelJobs } from "../jobs/api";
 import type { IntelJob } from "../jobs/types";
 import { listPlatforms } from "../platforms/api";
-import { getEnvConfig } from "../systemConfig/api";
-import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../systemInfo/api";
-import { listSubscriptions, refreshSubscription } from "../subscriptions/api";
-import {
-  getDashboardGlobalSnapshotData,
-  getGlobalLeaseSeries,
-  getPlatformPulse,
-  getTrafficAndProbes,
-  listNodeExitFacts,
-} from "./api";
-import { alertPhrase } from "./auditPhrases";
+import type { Platform } from "../platforms/types";
+import { listSubscriptions } from "../subscriptions/api";
+import { getDashboardGlobalSnapshotData, getPlatformPulse, getTrafficAndProbes, listNodeExitFacts } from "./api";
 import EgressMap from "./EgressMap";
 import { aggregateExitCountries, useCountryName } from "./exitCountries";
-import { PLACEHOLDER, formatBytes, formatCount, toEpochMs } from "./format";
+import { PLACEHOLDER, formatBytes, formatCount, formatTimestamp } from "./format";
 import { NODE_EXITS_REFRESH_MS, SNAPSHOT_REFRESH_MS, getTimeWindow } from "./range";
 
 const OFFLINE = "无法连接服务，请检查连接后重试。";
-const HOUR_MS = 3_600_000;
 
-const JOB_KIND_LABELS: Record<string, string> = {
-  intel: "情报检测",
-  full: "完整检测",
-  egress: "出口探测",
-  checks: "解锁检测",
+/** One thing an operator has to look at, and the page that fixes it. */
+type Attention = {
+  id: string;
+  level: "alert" | "warn" | "notice";
+  area: string;
+  subject: string;
+  reason: string;
+  to: string;
 };
 
-/** IP types folded into the heat grid's four rows. */
-const TYPE_ROWS: { label: string; match: (type: string) => boolean }[] = [
-  { label: "住宅", match: (type) => type === "residential" },
-  { label: "机房", match: (type) => type === "datacenter" },
-  { label: "移动", match: (type) => type === "mobile" || type === "wireless" },
-  { label: "其他", match: (type) => !["residential", "datacenter", "mobile", "wireless"].includes(type) },
-];
+type PlatformRow = { platform: Platform; routable: number | null; egress: number | null; leases: number | null };
 
-/** Purity bands folded into the heat grid's four columns. */
-const BAND_COLUMNS: { label: string; bands: string[] }[] = [
-  { label: "纯净", bands: ["excellent", "clean"] },
-  { label: "良好", bands: ["fair"] },
-  { label: "一般", bands: ["mixed"] },
-  { label: "较差", bands: ["poor"] },
-];
-
-type Tone = "ok" | "warn" | "bad" | "faint" | "accent";
-
-function Dot({ tone }: { tone: Tone }) {
-  return <span aria-hidden className={`dash-dot dash-dot--${tone}`} />;
-}
-
-/** A thin stacked bar: each part is a share in [0, 1] with a tone. */
-function Bar({ parts, className }: { parts: { share: number; tone: Tone }[]; className?: string }) {
-  return (
-    <span className={cn("dash-bar", className)} aria-hidden>
-      {parts.map((part, index) => (
-        <i key={index} className={`dash-fill--${part.tone}`} style={{ width: `${Math.max(0, Math.min(1, part.share)) * 100}%` }} />
-      ))}
-    </span>
-  );
-}
-
-function Card({
-  className,
-  title,
-  meta,
-  action,
-  footer,
-  children,
-}: {
-  className: string;
-  title: string;
-  meta?: ReactNode;
-  action?: ReactNode;
-  footer?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <section className={cn("dash-card", className)} aria-label={title}>
-      <header className="dash-card__head">
-        <h2>{title}</h2>
-        {meta !== undefined && meta !== null && <span className="dash-card__meta">{meta}</span>}
-        {action && <span className="dash-card__action">{action}</span>}
-      </header>
-      {children}
-      {footer && <div className="dash-card__foot">{footer}</div>}
-    </section>
-  );
-}
-
-function clock(ms: number): string {
-  const date = new Date(ms);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
-
-function jobProgress(job: IntelJob): number {
-  if (job.total <= 0) return 0;
-  return (job.done + job.failed + job.skipped) / job.total;
-}
+const LEVEL_ORDER: Record<Attention["level"], number> = { alert: 0, warn: 1, notice: 2 };
 
 /**
- * The overview board: one viewport of twelve-column glass cards. Every figure is
- * read from the API; a card whose source is loading, failed or empty says so
- * instead of showing a number.
+ * The operator's first screen: the condition of the whole deployment, the things
+ * that need a decision, and the registers the decisions are made from.
+ *
+ * Composition rather than decoration: a condition band, one queue, one matrix,
+ * two registers and a log, separated by rules instead of boxed into tiles. Every
+ * figure comes from the API — a source that is loading, failed or empty says so
+ * instead of printing a plausible zero.
  */
 export function WorkbenchPage() {
   const { t } = useI18n();
-  const { toasts, showToast, dismissToast } = useToast();
-  const queryClient = useQueryClient();
   const countryName = useCountryName();
   const offline = t(OFFLINE);
 
-  const info = useQuery({ queryKey: SYSTEM_INFO_QUERY_KEY, queryFn: getSystemInfo, refetchInterval: 30_000, retry: false });
-  const env = useQuery({ queryKey: ["system-config-env", "shell"], queryFn: getEnvConfig, staleTime: 30_000 });
   const snapshot = useQuery({
     queryKey: ["dashboard-global-snapshot"],
     queryFn: getDashboardGlobalSnapshotData,
     refetchInterval: SNAPSHOT_REFRESH_MS,
     placeholderData: (previous) => previous,
   });
-  const nodes = useQuery({
+  const exits = useQuery({
     queryKey: ["workbench", "node-exits"],
     queryFn: ({ signal }) => listNodeExitFacts(signal),
     refetchInterval: NODE_EXITS_REFRESH_MS,
@@ -139,12 +68,6 @@ export function WorkbenchPage() {
     queryKey: ["workbench", "traffic-probes-24h"],
     queryFn: () => getTrafficAndProbes(getTimeWindow("24h")),
     refetchInterval: 60_000,
-    placeholderData: (previous) => previous,
-  });
-  const leases = useQuery({
-    queryKey: ["workbench", "leases-24h"],
-    queryFn: () => getGlobalLeaseSeries(getTimeWindow("24h")),
-    refetchInterval: 30_000,
     placeholderData: (previous) => previous,
   });
   const platforms = useQuery({
@@ -159,10 +82,22 @@ export function WorkbenchPage() {
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
-  const events = useQuery({ queryKey: ["workbench", "events"], queryFn: () => listAuditLogs({ limit: 3 }), refetchInterval: 60_000 });
+  const events = useQuery({ queryKey: ["workbench", "events"], queryFn: () => listAuditLogs({ limit: 8 }), refetchInterval: 60_000 });
   const jobs = useQuery({ queryKey: ["workbench", "jobs"], queryFn: () => listIntelJobs("", 6), refetchInterval: 15_000 });
-  const running = useQuery({ queryKey: ["workbench", "jobs", "running"], queryFn: () => listIntelJobs("running", 1), refetchInterval: 15_000 });
-  const queued = useQuery({ queryKey: ["workbench", "jobs", "queued"], queryFn: () => listIntelJobs("queued", 1), refetchInterval: 15_000 });
+
+  const facts = useMemo(() => exits.data ?? [], [exits.data]);
+  const countries = useMemo(() => aggregateExitCountries(facts), [facts]);
+  const pool = snapshot.data?.snapshot_node_pool;
+  const egress24h = useMemo(
+    () => (day.data?.traffic.items ?? []).reduce((sum, item) => sum + item.egress_bytes, 0),
+    [day.data],
+  );
+  const requests24h = useMemo(
+    () => (day.data?.probes.items ?? []).reduce((sum, item) => sum + item.total_count, 0),
+    [day.data],
+  );
+  const circuitOpen = useMemo(() => facts.filter((fact) => fact.circuitOpen).length, [facts]);
+  const unassessed = useMemo(() => facts.filter((fact) => fact.egressIp && !fact.ipType).length, [facts]);
 
   const platformItems = useMemo(() => platforms.data?.items ?? [], [platforms.data]);
   const pulses = useQueries({
@@ -174,496 +109,528 @@ export function WorkbenchPage() {
     })),
   });
 
-  const retry = useMutation({
-    mutationFn: (id: string) => refreshSubscription(id),
-    onSuccess: () => {
-      showToast("success", t("已开始刷新"));
-      void queryClient.invalidateQueries({ queryKey: ["workbench", "subscriptions"] });
-    },
-    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
-  });
-
-  /* ---- derived facts ---- */
-  const facts = useMemo(() => nodes.data ?? [], [nodes.data]);
-  const countries = useMemo(() => aggregateExitCountries(facts), [facts]);
-  const pool = snapshot.data?.snapshot_node_pool;
-  const egress24h = useMemo(() => (day.data?.traffic.items ?? []).reduce((sum, item) => sum + item.egress_bytes, 0), [day.data]);
-  const probes24h = useMemo(() => (day.data?.probes.items ?? []).reduce((sum, item) => sum + item.total_count, 0), [day.data]);
-  const circuitOpen = useMemo(() => facts.filter((fact) => fact.circuitOpen).length, [facts]);
-
-  const quality = useMemo(() => {
-    const byIp = new Map<string, { type: string; band: string }>();
-    for (const fact of facts) {
-      if (fact.egressIp && !byIp.has(fact.egressIp)) byIp.set(fact.egressIp, { type: fact.ipType, band: fact.purityBand });
-    }
-    const grid = TYPE_ROWS.map(() => BAND_COLUMNS.map(() => 0));
-    let unassessed = 0;
-    for (const { type, band } of byIp.values()) {
-      const column = BAND_COLUMNS.findIndex((entry) => entry.bands.includes(band));
-      if (column < 0) {
-        unassessed += 1;
-        continue;
-      }
-      const row = TYPE_ROWS.findIndex((entry) => entry.match(type));
-      grid[row][column] += 1;
-    }
-    const max = Math.max(0, ...grid.flat());
-    return { grid, max, unassessed, assessed: byIp.size - unassessed };
-  }, [facts]);
-
-  const hourly = useMemo(() => {
-    const items = leases.data?.items ?? [];
-    const end = leases.dataUpdatedAt;
-    const start = end - 24 * HOUR_MS;
-    const bars: (number | null)[] = Array.from({ length: 24 }, () => null);
-    let peak = 0;
-    for (const item of items) {
-      const stamp = toEpochMs(item.ts);
-      if (stamp === null || stamp < start) continue;
-      const index = Math.min(23, Math.floor((stamp - start) / HOUR_MS));
-      bars[index] = Math.max(bars[index] ?? 0, item.active_leases);
-      peak = Math.max(peak, item.active_leases);
-    }
-    return { bars, peak, latest: items.at(-1)?.active_leases ?? null };
-  }, [leases.data, leases.dataUpdatedAt]);
-
-  const platformRows = useMemo(
+  const platformRows: PlatformRow[] = useMemo(
     () =>
-      platformItems
-        .map((platform, index) => {
-          const pulse = pulses[index]?.data;
-          const routable = pulse?.pool.routable_node_count ?? platform.routable_node_count;
-          return {
-            platform,
-            routable,
-            exitIps: pulse ? pulse.pool.egress_ip_count : null,
-            sessions: pulse ? pulse.activeLeases : null,
-            problem: routable === 0,
-          };
-        })
-        .sort(
-          (a, b) =>
-            Number(b.problem) - Number(a.problem) ||
-            (b.sessions ?? -1) - (a.sessions ?? -1) ||
-            b.routable - a.routable ||
-            a.platform.name.localeCompare(b.platform.name),
-        ),
+      platformItems.map((platform, index) => {
+        const pulse = pulses[index]?.data;
+        return {
+          platform,
+          routable: pulse ? pulse.pool.routable_node_count : null,
+          egress: pulse ? pulse.pool.egress_ip_count : null,
+          leases: pulse ? pulse.activeLeases : null,
+        };
+      }),
     [platformItems, pulses],
   );
-  const maxRoutable = Math.max(1, ...platformRows.map((row) => row.routable));
 
-  const subscriptionRows = useMemo(
-    () => [...(subscriptions.data?.items ?? [])].sort((a, b) => b.node_count - a.node_count || a.name.localeCompare(b.name)),
-    [subscriptions.data],
+  /* ---- the queue: only real faults ---- */
+  const attention = useMemo(() => {
+    const items: Attention[] = [];
+    for (const platform of platformItems) {
+      if (platform.routable_node_count === 0) {
+        items.push({
+          id: `platform-${platform.id}`,
+          level: "alert",
+          area: t("平台"),
+          subject: platform.name,
+          reason: t("没有可路由节点，请求会按未命中策略处理"),
+          to: `/platforms/${platform.id}`,
+        });
+      }
+    }
+    for (const subscription of subscriptions.data?.items ?? []) {
+      if (subscription.last_error) {
+        items.push({
+          id: `subscription-${subscription.id}`,
+          level: "warn",
+          area: t("订阅源"),
+          subject: subscription.name,
+          reason: subscription.last_error,
+          to: "/subscriptions",
+        });
+      }
+    }
+    if (circuitOpen > 0) {
+      items.push({
+        id: "circuit-open",
+        level: "warn",
+        area: t("节点"),
+        subject: t("{{count}} 个节点", { count: circuitOpen }),
+        reason: t("被动熔断已暂停这些节点"),
+        to: "/nodes",
+      });
+    }
+    for (const job of jobs.data?.items ?? []) {
+      if (job.status === "failed" || job.failed > 0) {
+        items.push({
+          id: `job-${job.id}`,
+          level: "warn",
+          area: t("检测任务"),
+          subject: job.id.slice(0, 8),
+          reason: t("{{count}} 项检测失败", { count: job.failed }),
+          to: "/jobs",
+        });
+      }
+    }
+    if (unassessed > 0) {
+      items.push({
+        id: "unassessed",
+        level: "notice",
+        area: t("出口"),
+        subject: t("{{count}} 个出口未评估", { count: unassessed }),
+        reason: t("没有 IP 类型与纯净度，按条件的平台不会选中它"),
+        to: "/nodes",
+      });
+    }
+    return items.sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]);
+  }, [circuitOpen, jobs.data, platformItems, subscriptions.data, t, unassessed]);
+
+  const attentionColumns: Column<Attention>[] = [
+    {
+      id: "level",
+      header: t("级别"),
+      width: "5.5rem",
+      cell: (row) => (
+        <Badge tone={row.level === "alert" ? "alert" : row.level === "warn" ? "warn" : "neutral"} dot>
+          {row.level === "alert" ? t("阻断") : row.level === "warn" ? t("需处理") : t("待补")}
+        </Badge>
+      ),
+    },
+    { id: "area", header: t("类别"), width: "6rem", cell: (row) => <span className="text-ink-soft">{row.area}</span> },
+    {
+      id: "subject",
+      header: t("对象"),
+      width: "minmax(0,1.1fr)",
+      cell: (row) => (
+        <Link to={row.to} className="link-quiet font-medium text-ink">
+          {row.subject}
+        </Link>
+      ),
+    },
+    {
+      id: "reason",
+      header: t("原因"),
+      width: "minmax(0,1.6fr)",
+      cell: (row) => <span className="text-ink-soft">{row.reason}</span>,
+    },
+    {
+      id: "action",
+      header: t("处理"),
+      width: "5rem",
+      align: "end",
+      cell: (row) => (
+        <Link to={row.to} className="link-quiet text-accent">
+          {t("查看")}
+        </Link>
+      ),
+    },
+  ];
+
+  const platformColumns: Column<PlatformRow>[] = [
+    {
+      id: "name",
+      header: t("平台"),
+      width: "minmax(0,1.4fr)",
+      cell: (row) => (
+        <Link to={`/platforms/${row.platform.id}`} className="link-quiet font-medium text-ink">
+          {row.platform.name}
+        </Link>
+      ),
+    },
+    {
+      id: "routable",
+      header: t("可路由节点"),
+      align: "end",
+      mono: true,
+      cell: (row) => (row.routable === null ? PLACEHOLDER : formatCount(row.routable)),
+    },
+    {
+      id: "egress",
+      header: t("出口 IP"),
+      align: "end",
+      mono: true,
+      cell: (row) => (row.egress === null ? PLACEHOLDER : formatCount(row.egress)),
+    },
+    {
+      id: "leases",
+      header: t("活跃租约"),
+      align: "end",
+      mono: true,
+      cell: (row) => (row.leases === null ? PLACEHOLDER : formatCount(row.leases)),
+    },
+    {
+      id: "ttl",
+      header: t("粘性 TTL"),
+      align: "end",
+      mono: true,
+      cell: (row) => <span className="text-ink-soft">{row.platform.sticky_ttl || PLACEHOLDER}</span>,
+    },
+    {
+      id: "updated",
+      header: t("最近更新"),
+      align: "end",
+      mono: true,
+      cell: (row) => {
+        const updated = snapshotTime(row.platform.updated_at);
+        return <span className="text-ink-faint">{updated === null ? PLACEHOLDER : formatTimestamp(updated)}</span>;
+      },
+    },
+  ];
+
+  const regions = useMemo(
+    () => [...countries].sort((a, b) => b.exits - a.exits || a.iso.localeCompare(b.iso)),
+    [countries],
   );
+  const regionPeak = regions.reduce((peak, region) => Math.max(peak, region.exits), 0);
 
-  type Issue = { key: string; tone: Tone; title: string; detail: string; action: ReactNode };
-  const issues: Issue[] = [];
-  for (const source of subscriptionRows) {
-    if (source.enabled && source.last_error) {
-      issues.push({
-        key: `sub-${source.id}`,
-        tone: "bad",
-        title: t("{{name}} 刷新失败", { name: source.name }),
-        detail: source.last_error,
-        action: (
-          <Button size="sm" loading={retry.isPending && retry.variables === source.id} onClick={() => retry.mutate(source.id)}>
-            {t("重试")}
-          </Button>
-        ),
-      });
-    }
-  }
-  for (const row of platformRows) {
-    if (row.problem) {
-      issues.push({
-        key: `platform-${row.platform.id}`,
-        tone: "warn",
-        title: t("{{name}} 没有可路由节点", { name: row.platform.name }),
-        detail: t("请求会按平台的未命中策略处理"),
-        action: (
-          <Button asChild size="sm">
-            <Link to={`/platforms/${encodeURIComponent(row.platform.id)}`}>{t("查看")}</Link>
-          </Button>
-        ),
-      });
-    }
-  }
-  if (circuitOpen > 0) {
-    issues.push({
-      key: "circuit",
-      tone: "warn",
-      title: t("{{count}} 个节点熔断", { count: formatCount(circuitOpen) }),
-      detail: t("已暂停分配，恢复前不会接收请求"),
-      action: (
-        <Button asChild size="sm">
-          <Link to="/nodes?circuit_open=true">{t("查看")}</Link>
-        </Button>
-      ),
-    });
-  }
-  if (quality.unassessed > 0) {
-    issues.push({
-      key: "unassessed",
-      tone: "faint",
-      title: t("{{count}} 个 IP 未做质量检测", { count: formatCount(quality.unassessed) }),
-      detail: t("不会命中纯净度筛选"),
-      action: (
-        <Button asChild size="sm">
-          <Link to="/jobs">{t("检测")}</Link>
-        </Button>
-      ),
-    });
-  }
-  if (env.data && !env.data.proxy_token_set) {
-    issues.push({
-      key: "tokens",
-      tone: "warn",
-      title: t("令牌未设置"),
-      detail: t("代理令牌未设置"),
-      action: (
-        <Button asChild size="sm">
-          <Link to="/system-config">{t("设置")}</Link>
-        </Button>
-      ),
-    });
-  }
-  const issueSourcesReady = Boolean(subscriptions.data && platforms.data && nodes.data);
-  const issueSourcesFailed = subscriptions.isError || platforms.isError || nodes.isError;
-
-  const origin = info.data?.panel_egress_region?.trim().toUpperCase() ?? "";
-  const loading = <LoadingState className="dash-state" label={t("正在加载")} />;
-  const failed = (onRetry: () => void) => <ErrorState className="dash-state" message={offline} onRetry={onRetry} />;
+  const jobRows = jobs.data?.items ?? [];
+  const running = jobRows.filter((job) => job.status === "running").length;
+  const queued = jobRows.filter((job) => job.status === "queued").length;
+  /*
+   * A fresh install ships one placeholder platform and no nodes. That is a first
+   * run, not a dashboard of zeros: four cells reading 0 / 0 teach nothing, and a
+   * red "Default has no routable nodes" only restates the emptiness.
+   */
+  const firstRun =
+    Boolean(exits.data) &&
+    facts.length === 0 &&
+    Boolean(subscriptions.data) &&
+    (subscriptions.data?.items.length ?? 0) === 0;
 
   return (
-    <div className="dash">
-      <h1 className="sr-only">{t("总览")}</h1>
-
-      {/* ---- exit network ---- */}
-      <Card
-        className="dash-map"
-        title={t("出口网络")}
-        meta={origin ? t("本机在{{place}}", { place: countryName(origin) }) : undefined}
-      >
-        <div className="dash-map__stats">
-          <span>
-            <b className="readout">{pool ? formatCount(pool.healthy_egress_ip_count) : PLACEHOLDER}</b> / {pool ? formatCount(pool.egress_ip_count) : PLACEHOLDER} {t("可用出口 IP")}
-          </span>
-          <span>
-            <b className="readout">{nodes.data ? formatCount(countries.length) : PLACEHOLDER}</b> {t("个地区")}
-          </span>
-          <span>
-            {t("出站")} <b className="readout">{day.data ? formatBytes(egress24h) : PLACEHOLDER}</b> · 24h
-          </span>
-          <span className="dash-map__legend">
-            <span><Dot tone="accent" /> {t("节点出口")}</span>
-            {origin && <span><span aria-hidden className="dash-dot dash-dot--origin" /> {t("本机")}</span>}
-          </span>
-        </div>
-        <div className="dash-map__plate">
-          {nodes.isError && !nodes.data ? (
-            failed(() => void nodes.refetch())
-          ) : !nodes.data ? (
-            loading
-          ) : facts.length === 0 ? (
-            <EmptyState
-              className="dash-state"
-              title={t("建立你的第一个节点池")}
-              hint={t("添加订阅链接或导入本地节点，开始查看线路状态。")}
-              action={<Button asChild variant="primary"><Link to="/subscriptions?create=1">{t("开始导入")}</Link></Button>}
-            />
-          ) : (
-            <EgressMap countries={countries} origin={origin} />
-          )}
-        </div>
-      </Card>
-
-      {/* ---- needs attention ---- */}
-      <Card
-        className="dash-issues"
-        title={t("需要处理")}
-        meta={issueSourcesReady ? t("{{count}} 项", { count: issues.length }) : undefined}
-        footer={
-          <div className="dash-changes">
-            <div className="dash-changes__head">
-              <span>{t("最近变更")}</span>
-              <Link to="/audit" className="dash-link">{t("审计日志")}</Link>
-            </div>
-            {events.isError && !events.data ? (
-              <span className="dash-muted">{offline}</span>
-            ) : !events.data ? (
-              <span className="dash-muted">{t("正在加载")}</span>
-            ) : events.data.items.length === 0 ? (
-              <span className="dash-muted">{t("暂无变更记录")}</span>
-            ) : (
-              events.data.items.map((entry) => {
-                const { method, phrase } = alertPhrase(entry.action);
-                return (
-                  <div key={entry.id} className="dash-change" title={entry.action}>
-                    <b className={cn("readout dash-change__method", method === "DELETE" ? "text-alert" : method === "PATCH" ? "text-accent" : "text-signal")}>
-                      {method || PLACEHOLDER}
-                    </b>
-                    <span className="dash-change__text">{t(phrase)}{entry.target ? ` · ${entry.target}` : ""}</span>
-                    <span className="readout">{clock(entry.at_ns / 1_000_000)}</span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        }
-      >
-        <div className="dash-scroll">
-          {issueSourcesFailed && !issueSourcesReady ? (
-            failed(() => {
-              void subscriptions.refetch();
+    <>
+      <PageHeader
+        title={t("总览")}
+        description={t("全站的出口、平台与最近操作。这里只显示服务端返回的事实。")}
+        actions={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              void snapshot.refetch();
+              void exits.refetch();
               void platforms.refetch();
-              void nodes.refetch();
-            })
-          ) : !issueSourcesReady ? (
-            loading
-          ) : issues.length === 0 ? (
-            <EmptyState className="dash-state" title={t("一切正常")} hint={t("没有需要处理的问题")} />
-          ) : (
-            issues.map((issue) => (
-              <div key={issue.key} className="dash-issue">
-                <Dot tone={issue.tone} />
-                <span className="dash-issue__text">
-                  <b>{issue.title}</b>
-                  <span title={issue.detail}>{issue.detail}</span>
-                </span>
-                {issue.action}
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
+              void subscriptions.refetch();
+              void jobs.refetch();
+            }}
+          >
+            {t("刷新")}
+          </Button>
+        }
+      />
 
-      {/* ---- platforms ---- */}
-      <Card
-        className="dash-platforms"
-        title={t("平台")}
-        meta={t("有问题的排在前面")}
-        action={<Link to="/platforms" className="dash-link">{t("管理平台")}</Link>}
-      >
-        {platforms.isError && !platforms.data ? (
-          failed(() => void platforms.refetch())
-        ) : !platforms.data ? (
-          loading
-        ) : platformRows.length === 0 ? (
-          <EmptyState
-            className="dash-state"
-            title={t("无平台")}
-            hint={t("创建平台以聚合节点")}
-            action={<Button asChild variant="primary"><Link to="/platforms">{t("创建平台")}</Link></Button>}
-          />
-        ) : (
-          <div className="dash-table" tabIndex={0} role="region" aria-label={t("平台")}>
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">{t("平台")}</th>
-                  <th scope="col">{t("可路由节点")}</th>
-                  <th scope="col" className="is-num">{t("出口 IP")}</th>
-                  <th scope="col" className="is-num">{t("活跃会话")}</th>
-                  <th scope="col" className="is-num">{t("更新时间")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {platformRows.map((row) => (
-                  <tr key={row.platform.id}>
-                    <td>
-                      <Link to={`/platforms/${encodeURIComponent(row.platform.id)}`} className="dash-platform-name">
-                        <Dot tone={row.problem ? "bad" : "ok"} />
-                        <b>{row.platform.name}</b>
+      <div className="flex flex-col gap-5 px-[var(--page-gutter)] py-4 lg:py-5">
+        {firstRun ? (
+          <div className="mx-auto w-full max-w-[46rem] pt-6 lg:pt-14">
+          <section className="panel panel--ruled" aria-labelledby="first-run">
+            <div className="panel-header">
+              <h2 className="panel-header__title" id="first-run">
+                {t("从三步开始")}
+              </h2>
+              <p className="panel-header__description">{t("现在还没有节点，也没有平台。按顺序做完这三步，这页就有内容了。")}</p>
+            </div>
+            <div className="panel-body">
+              <ol className="flex flex-col">
+                {[
+                  { step: "01", title: t("导入订阅"), hint: t("订阅提供节点，节点提供出口。"), to: "/subscriptions" },
+                  { step: "02", title: t("建一个平台"), hint: t("平台是接入用户名里的一段，客户端按它路由。"), to: "/platforms" },
+                  { step: "03", title: t("跑一次检测"), hint: t("检测给出出口地区、IP 类型与纯净度。"), to: "/jobs" },
+                ].map((item) => (
+                  <li
+                    key={item.step}
+                    className="grid grid-cols-[2.5rem_minmax(0,1fr)_auto] items-baseline gap-3 border-b border-row-rule py-3 last:border-0"
+                  >
+                    <span className="readout text-xs text-ink-faint">{item.step}</span>
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <Link to={item.to} className="link-quiet text-sm font-medium text-ink">
+                        {item.title}
                       </Link>
-                    </td>
-                    <td>
-                      <span className="dash-rate">
-                        <Bar parts={[{ share: row.routable / maxRoutable, tone: row.problem ? "bad" : "ok" }]} />
-                        <span className={cn("readout", row.problem && "text-alert")}>{formatCount(row.routable)}</span>
-                      </span>
-                    </td>
-                    <td className="is-num readout">{row.exitIps === null ? PLACEHOLDER : formatCount(row.exitIps)}</td>
-                    <td className="is-num readout">{row.sessions === null ? PLACEHOLDER : formatCount(row.sessions)}</td>
-                    <td className="is-num readout dash-muted">
-                      {row.platform.updated_at ? new Date(row.platform.updated_at).toLocaleDateString() : PLACEHOLDER}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {/* ---- exit IP quality ---- */}
-      <Card
-        className="dash-quality"
-        title={t("出口 IP 质量")}
-        meta={nodes.data ? `${t("类型 × 纯净度")}${quality.unassessed > 0 ? ` · ${t("未检测")} ${formatCount(quality.unassessed)}` : ""}` : undefined}
-      >
-        {nodes.isError && !nodes.data ? (
-          failed(() => void nodes.refetch())
-        ) : !nodes.data ? (
-          loading
-        ) : quality.assessed === 0 ? (
-          <EmptyState
-            className="dash-state"
-            title={t("暂无质量检测结果")}
-            action={<Button asChild size="sm"><Link to="/jobs">{t("新建任务")}</Link></Button>}
-          />
-        ) : (
-          <div className="dash-heat" role="table" aria-label={t("出口 IP 质量")}>
-            <div role="row" className="dash-heat__row">
-              <span role="columnheader" />
-              {BAND_COLUMNS.map((column) => (
-                <span key={column.label} role="columnheader" className="dash-heat__hd">{t(column.label)}</span>
-              ))}
-              <span role="columnheader" className="dash-heat__total">{t("合计")}</span>
-            </div>
-            {TYPE_ROWS.map((row, rowIndex) => (
-              <div role="row" key={row.label} className="dash-heat__row">
-                <span role="rowheader" className="dash-muted">{t(row.label)}</span>
-                {quality.grid[rowIndex].map((value, column) => {
-                  const weight = quality.max > 0 ? value / quality.max : 0;
-                  const alpha = 0.06 + weight * 0.94;
-                  return (
-                    <span
-                      role="cell"
-                      key={column}
-                      className={cn("dash-heat__cell readout", alpha > 0.62 && "is-strong")}
-                      style={{ backgroundColor: `rgba(var(--p-heat-rgb), ${alpha.toFixed(2)})` }}
-                    >
-                      {formatCount(value)}
+                      <span className="text-xs text-ink-faint">{item.hint}</span>
                     </span>
-                  );
-                })}
-                <span role="cell" className="dash-heat__total readout">
-                  {formatCount(quality.grid[rowIndex].reduce((sum, value) => sum + value, 0))}
-                </span>
-              </div>
-            ))}
+                    <Link to={item.to} className="link-quiet text-xs text-accent">
+                      {t("打开")}
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
           </div>
-        )}
-      </Card>
-
-      {/* ---- sessions ---- */}
-      <Card className="dash-sessions" title={t("活跃会话")} meta={t("实时")}>
-        {leases.isError && !leases.data ? (
-          failed(() => void leases.refetch())
-        ) : !leases.data ? (
-          loading
         ) : (
           <>
-            <div className="dash-kv">
-              <span className="readout dash-big">{hourly.latest === null ? PLACEHOLDER : formatCount(hourly.latest)}</span>
-              <span className="dash-muted">{t("24 小时峰值")} {formatCount(hourly.peak)} · {t("每小时")}</span>
+            <StatStrip>
+              <Stat
+                label={t("可用出口 IP")}
+                value={
+                  pool
+                    ? `${formatCount(pool.healthy_egress_ip_count)} / ${formatCount(pool.egress_ip_count)}`
+                    : PLACEHOLDER
+                }
+                hint={pool ? t("{{count}} 个节点在池中", { count: pool.total_nodes }) : snapshot.isError ? offline : undefined}
+                tone={pool && pool.healthy_egress_ip_count === 0 && pool.egress_ip_count > 0 ? "alert" : "default"}
+              />
+              <Stat
+                label={t("覆盖地区")}
+                value={exits.data ? formatCount(regions.length) : PLACEHOLDER}
+                hint={exits.data ? t("按出口 IP 的国家与地区") : exits.isError ? offline : undefined}
+              />
+              <Stat
+                label={t("出站 24h")}
+                value={day.data ? formatBytes(egress24h) : PLACEHOLDER}
+                hint={day.data ? t("{{count}} 次请求", { count: requests24h }) : day.isError ? offline : undefined}
+              />
+              <Stat
+                label={t("熔断节点")}
+                value={exits.data ? formatCount(circuitOpen) : PLACEHOLDER}
+                hint={exits.data ? t("被动熔断暂停的节点数") : exits.isError ? offline : undefined}
+                tone={circuitOpen > 0 ? "warn" : "default"}
+              />
+            </StatStrip>
+
+            <div className="grid gap-5 lg:grid-cols-12">
+              <Panel className="lg:col-span-7">
+                <PanelHeader
+                  title={t("需要处理")}
+                  meta={
+                    platforms.data && subscriptions.data ? t("{{count}} 项", { count: attention.length }) : undefined
+                  }
+                />
+                <DataTable
+                  dense
+                  caption={t("需要处理")}
+                  columns={attentionColumns}
+                  rows={attention}
+                  rowKey={(row) => row.id}
+                  loading={!platforms.data && !subscriptions.data && platforms.isLoading}
+                  error={
+                    platforms.isError && !platforms.data
+                      ? { message: offline, retry: () => void platforms.refetch() }
+                      : null
+                  }
+                  empty={{
+                    title: t("没有需要处理的事项"),
+                    hint: t("每个平台都有可路由节点，订阅与检测任务都没有报错。"),
+                  }}
+                />
+              </Panel>
+
+              <Panel className="lg:col-span-5">
+                <PanelHeader
+                  title={t("检测任务")}
+                  meta={jobs.data ? t("运行 {{running}} · 排队 {{queued}}", { running, queued }) : undefined}
+                  actions={
+                    <Link to="/jobs" className="link-quiet text-xs text-ink-soft">
+                      {t("全部任务")}
+                    </Link>
+                  }
+                />
+                <PanelBody className="p-0">
+                  {jobs.isError && !jobs.data ? (
+                    <p className="px-4 py-3 text-xs text-ink-faint">{offline}</p>
+                  ) : !jobs.data ? (
+                    <p className="px-4 py-3 text-xs text-ink-faint">{t("正在加载")}</p>
+                  ) : jobRows.length === 0 ? (
+                    <p className="px-4 py-3 text-xs text-ink-faint">{t("还没有检测任务。")}</p>
+                  ) : (
+                    <ul>
+                      {jobRows.map((job) => (
+                        <JobRow key={job.id} job={job} label={jobStatusLabel(job.status, t)} />
+                      ))}
+                    </ul>
+                  )}
+                </PanelBody>
+              </Panel>
             </div>
-            <svg className="dash-spark" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden>
-              {hourly.bars.map((value, index) => {
-                const height = hourly.peak > 0 && value !== null ? Math.max(1, (value / hourly.peak) * 38) : 0;
-                return (
-                  <rect key={index} x={index * (100 / 24) + 0.6} y={40 - height} width={100 / 24 - 1.2} height={height} rx={0.6} className={index === 23 ? "is-now" : undefined} />
-                );
-              })}
-              <line x1="0" x2="100" y1="39.75" y2="39.75" />
-            </svg>
+
+            <Panel>
+              <PanelHeader
+                title={t("平台配线")}
+                description={t("一个平台一行：它能路由多少节点、对外用几个出口、此刻挂着多少租约。")}
+                meta={platforms.data ? t("{{count}} 个平台", { count: platformItems.length }) : undefined}
+              />
+              <DataTable
+                dense
+                caption={t("平台配线")}
+                columns={platformColumns}
+                rows={platformRows}
+                rowKey={(row) => row.platform.id}
+                loading={platforms.isLoading && !platforms.data}
+                error={
+                  platforms.isError && !platforms.data
+                    ? { message: offline, retry: () => void platforms.refetch() }
+                    : null
+                }
+                empty={{
+                  title: t("还没有平台"),
+                  hint: t("平台是接入用户名里的一段，先建一个平台，客户端才能连上来。"),
+                  action: (
+                    <Button asChild size="sm" variant="primary">
+                      <Link to="/platforms">{t("新建")}</Link>
+                    </Button>
+                  ),
+                }}
+              />
+            </Panel>
+
+            <div className="grid gap-5 lg:grid-cols-12">
+              <Panel className="lg:col-span-7">
+                <PanelHeader
+                  title={t("覆盖地区")}
+                  meta={exits.data ? t("{{count}} 个地区", { count: regions.length }) : undefined}
+                />
+                <PanelBody className="flex flex-col gap-3">
+                  {exits.data && facts.length > 0 ? (
+                    <div className="overflow-hidden border-y border-rule">
+                      <EgressMap countries={countries} origin="" />
+                    </div>
+                  ) : null}
+                  {exits.isError && !exits.data ? (
+                    <p className="text-xs text-ink-faint">{offline}</p>
+                  ) : !exits.data ? (
+                    <p className="text-xs text-ink-faint">{t("正在加载")}</p>
+                  ) : regions.length === 0 ? (
+                    <p className="text-xs text-ink-faint">{t("还没有出口，导入订阅后这里会按国家列出。")}</p>
+                  ) : (
+                    <ul className="flex flex-col">
+                      {regions.slice(0, 8).map((region) => (
+                        <li
+                          key={region.iso}
+                          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_3.5rem] items-center gap-2 border-b border-row-rule py-1.5 last:border-0"
+                        >
+                          <span className="truncate text-xs text-ink">{countryName(region.iso)}</span>
+                          <span aria-hidden className="h-1.5 overflow-hidden rounded-[2px] bg-sunk">
+                            <span
+                              className={cn("block h-full", region.healthy === region.exits ? "bg-signal" : "bg-warn")}
+                              style={{
+                                width: `${regionPeak === 0 ? 0 : Math.max(4, (region.exits / regionPeak) * 100)}%`,
+                              }}
+                            />
+                          </span>
+                          <span className="readout text-right text-2xs text-ink-soft">
+                            {formatCount(region.healthy)} / {formatCount(region.exits)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </PanelBody>
+              </Panel>
+
+              <Panel className="lg:col-span-5">
+                <PanelHeader
+                  title={t("最近变更")}
+                  meta={events.data ? t("{{count}} 条", { count: events.data.items.length }) : undefined}
+                  actions={
+                    <Link to="/audit" className="link-quiet text-xs text-ink-soft">
+                      {t("审计日志")}
+                    </Link>
+                  }
+                />
+                <PanelBody className="p-0">
+                  {events.isError && !events.data ? (
+                    <p className="px-4 py-3 text-xs text-ink-faint">{offline}</p>
+                  ) : !events.data ? (
+                    <p className="px-4 py-3 text-xs text-ink-faint">{t("正在加载")}</p>
+                  ) : events.data.items.length === 0 ? (
+                    <p className="px-4 py-3 text-xs text-ink-faint">{t("还没有写操作。")}</p>
+                  ) : (
+                    <ul>
+                      {events.data.items.map((entry) => (
+                        <AuditRow key={entry.id} entry={entry} />
+                      ))}
+                    </ul>
+                  )}
+                </PanelBody>
+              </Panel>
+            </div>
           </>
         )}
-      </Card>
+      </div>
+    </>
+  );
+}
 
-      {/* ---- subscription sources ---- */}
-      <Card
-        className="dash-sources"
-        title={t("订阅源")}
-        meta={subscriptions.data ? t("{{count}} 个", { count: formatCount(subscriptions.data.total) }) : undefined}
-        action={<Link to="/subscriptions" className="dash-link">{t("管理")}</Link>}
-        footer={
-          <>
-            <span>{t("健康节点")}</span>
-            <span className="readout dash-strong">{pool ? `${formatCount(pool.healthy_nodes)} / ${formatCount(pool.total_nodes)}` : PLACEHOLDER}</span>
-          </>
-        }
-      >
-        <div className="dash-scroll dash-list">
-          {subscriptions.isError && !subscriptions.data ? (
-            failed(() => void subscriptions.refetch())
-          ) : !subscriptions.data ? (
-            loading
-          ) : subscriptionRows.length === 0 ? (
-            <EmptyState className="dash-state" title={t("还没有订阅")} action={<Button asChild size="sm" variant="primary"><Link to="/subscriptions?create=1">{t("开始导入")}</Link></Button>} />
-          ) : (
-            subscriptionRows.map((source) => {
-              const failedSource = source.enabled && Boolean(source.last_error);
-              const share = source.node_count > 0 ? source.healthy_node_count / source.node_count : 0;
-              return (
-                <div key={source.id} className="dash-line" title={source.last_error || undefined}>
-                  <span className="dash-line__name">{source.name}</span>
-                  <Bar
-                    className="flex-1"
-                    parts={
-                      !source.enabled ? [] : failedSource ? [{ share: 1, tone: "bad" }] : [{ share, tone: "ok" }, { share: source.node_count > 0 ? 1 - share : 0, tone: "warn" }]
-                    }
-                  />
-                  <span className={cn("readout dash-line__value", failedSource && "text-alert")}>
-                    {!source.enabled ? t("已停用") : failedSource ? t("失败") : formatCount(source.node_count)}
-                  </span>
-                </div>
-              );
-            })
-          )}
-        </div>
-      </Card>
+function snapshotTime(iso: string): number | null {
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
 
-      {/* ---- jobs ---- */}
-      <Card
-        className="dash-jobs"
-        title={t("检测任务")}
-        meta={running.data && queued.data ? `${t("运行")} ${formatCount(running.data.total)} · ${t("排队")} ${formatCount(queued.data.total)}` : undefined}
-        action={<Link to="/jobs" className="dash-link">{t("全部")}</Link>}
-        footer={
-          <>
-            <span>{t("24h 探测")}</span>
-            <span className="readout dash-strong">{day.data ? t("{{count}} 次", { count: formatCount(probes24h) }) : PLACEHOLDER}</span>
-          </>
-        }
-      >
-        <div className="dash-scroll dash-list">
-          {jobs.isError && !jobs.data ? (
-            failed(() => void jobs.refetch())
-          ) : !jobs.data ? (
-            loading
-          ) : jobs.data.items.length === 0 ? (
-            <EmptyState className="dash-state" title={t("暂无任务")} action={<Button asChild size="sm"><Link to="/jobs">{t("新建任务")}</Link></Button>} />
-          ) : (
-            jobs.data.items.map((job) => {
-              const progress = jobProgress(job);
-              const tone: Tone =
-                job.status === "succeeded" ? "ok" : job.status === "failed" || job.status === "partial" ? "warn" : job.status === "canceled" ? "faint" : "accent";
-              const label =
-                job.status === "succeeded"
-                  ? t("完成")
-                  : job.status === "failed" || job.status === "partial"
-                    ? t("{{count}} 败", { count: formatCount(job.failed) })
-                    : job.status === "canceled"
-                      ? t("已取消")
-                      : job.status === "queued"
-                        ? t("排队")
-                        : `${Math.round(progress * 100)}%`;
-              return (
-                <Link key={job.id} to="/jobs" className="dash-line dash-line--link">
-                  <span className="dash-line__grow">
-                    {t(JOB_KIND_LABELS[job.kind] ?? job.kind)} · <span className="readout dash-muted">{formatCount(job.total)}</span>
-                  </span>
-                  <Bar className="dash-bar--short" parts={[{ share: job.status === "succeeded" ? 1 : progress, tone }]} />
-                  <span className={cn("readout dash-line__value", `dash-text--${tone}`)}>{label}</span>
-                </Link>
-              );
-            })
-          )}
-        </div>
-      </Card>
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </div>
+function jobStatusLabel(status: string, t: (key: string) => string): string {
+  switch (status) {
+    case "running":
+      return t("运行中");
+    case "queued":
+      return t("排队中");
+    case "done":
+      return t("已完成");
+    case "failed":
+      return t("失败");
+    case "cancelled":
+      return t("已取消");
+    default:
+      return status;
+  }
+}
+
+function jobTone(status: string): "signal" | "live" | "warn" | "alert" | "neutral" {
+  switch (status) {
+    case "running":
+      return "live";
+    case "done":
+      return "signal";
+    case "queued":
+      return "neutral";
+    case "failed":
+      return "alert";
+    default:
+      return "neutral";
+  }
+}
+
+function JobRow({ job, label }: { job: IntelJob; label: string }) {
+  const settled = job.done + job.failed + job.skipped;
+  const share = job.total > 0 ? Math.min(100, (settled / job.total) * 100) : 0;
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_5.5rem] items-center gap-3 border-b border-row-rule px-4 py-2 last:border-0">
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="flex items-baseline gap-2">
+          <span className="readout truncate text-xs text-ink">{job.id.slice(0, 8)}</span>
+          <span className="text-2xs text-ink-faint">{job.kind}</span>
+        </span>
+        <span className="flex items-center gap-2">
+          <span aria-hidden className="h-1.5 flex-1 overflow-hidden rounded-[2px] bg-sunk">
+            <span
+              className={cn(
+                "block h-full",
+                job.failed > 0 ? "bg-alert" : job.status === "done" ? "bg-signal" : "bg-live",
+              )}
+              style={{ width: `${share}%` }}
+            />
+          </span>
+          <span className="readout shrink-0 text-2xs text-ink-soft">
+            {formatCount(settled)} / {formatCount(job.total)}
+          </span>
+        </span>
+      </div>
+      <Badge tone={jobTone(job.status)} className="justify-self-end">
+        {label}
+      </Badge>
+    </li>
+  );
+}
+
+function AuditRow({ entry }: { entry: AuditLogEntry }) {
+  const [method, ...rest] = entry.action.split(" ");
+  const path = rest.join(" ");
+  return (
+    <li className="grid grid-cols-[4.5rem_4.5rem_minmax(0,1fr)] items-center gap-3 border-b border-row-rule px-4 py-2 last:border-0">
+      <span className="readout text-2xs text-ink-faint">{formatTimestamp(entry.at_ns / 1_000_000)}</span>
+      <Badge tone="neutral" className="justify-self-start">
+        {method}
+      </Badge>
+      <span className="readout truncate text-xs text-ink-soft" title={path || entry.action}>
+        {path || entry.action}
+      </span>
+    </li>
   );
 }

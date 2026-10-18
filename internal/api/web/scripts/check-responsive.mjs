@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 /*
- * Responsive-layout gate for the Precision Glass console.
+ * Responsive-layout gate for the console.
  *
- * The dashboard is intentionally semantic rather than a pixel replica: the
- * stylesheet owns the 7/5 evidence split, the 4/4/4 support row and the mobile
- * single-column flow. This gate keeps those contracts visible while preventing
- * fixed pane geometry from returning.
+ * The layout is semantic rather than a pixel replica: the stylesheet owns the
+ * rail / instance-bar / work-area cells, the single-column collapse below
+ * 1100px, and the page's own measure. This gate keeps those contracts visible
+ * while preventing fixed pane geometry from returning.
+ *
+ * The rule that matters is rule 2: a box that is meant to fill its cell must not
+ * carry a literal pixel height. `--shell-bar-h` is a token and may be used; a
+ * `height: 52px` in the same place is the same decision written down where it
+ * cannot move with the design.
  */
 
 import { readFileSync, statSync } from "node:fs";
@@ -16,16 +21,46 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cssPath = join(here, "..", "src", "styles", "design.css");
 
 const FORBIDDEN_LAYER = /@media\s*\(\s*min-width\s*:\s*1536px\s*\)/;
-const FLUID_BOXES = /\.(?:dash|shell|shell-main)(?![\w-])/;
-const PANES = /\.dash-(?:card|map|issues|platforms|quality|sessions|sources|jobs)(?![\w-])/;
+const FLUID_BOXES = /\.(?:shell|shell-bar|shell-main|page-content)(?![\w-])/;
+/* A page surface is a flow box. Only overlays — the sheet, the drawer, the skip
+   link, the scrim — are taken out of flow, and they are not in this list. */
+const PANES = /\.(?:panel|page-header|table-wrap|data-grid)(?![\w-])/;
 const REQUIRED_RULES = [
   ".shell",
+  ".shell-bar",
   ".shell-nav",
-  ".dash",
-  ".dash-card",
-  ".dash-map",
-  ".dash-platforms",
-  ".dash-heat",
+  ".shell-main",
+  ".page-header",
+  ".panel",
+  ".data-grid",
+];
+/*
+ * Retired names. Each belonged to a design the console no longer has: a
+ * dashboard grid, a paper "register", an amendment type set, a glass layer with
+ * its own shadow ladder. They were deleted, not aliased, so a rule that brings
+ * one back is either a merge from an old branch or a new page reaching for a
+ * world that is not there. Both deserve a failure: `.dash-cell` and `--p-glass`
+ * now paint nothing at all.
+ */
+const RETIRED_SELECTOR_PREFIXES = [
+  ".dash-",
+  ".register",
+  ".amendment",
+  ".term-",
+  ".glass",
+  ".shell-topbar",
+  ".shell-theme-toggle",
+  ".shell-nav__extra",
+];
+const RETIRED_PROPERTIES = [
+  "--p-glass",
+  "--p-slip",
+  "--p-punch",
+  "--p-heat-rgb",
+  "--p-shadow-card",
+  "--p-ground-glow",
+  "--gutter-w",
+  "--margin-w",
 ];
 
 const failures = [];
@@ -112,6 +147,16 @@ for (const rule of rules) {
     if (position === "absolute" || position === "fixed") {
       if (PANES.test(selector)) fail(`rule 3: ${selector} is ${position}; dashboard panes must remain grid/flex children`);
       else paneChecks += 1;
+    }
+    for (const prefix of RETIRED_SELECTOR_PREFIXES) {
+      if (selector.startsWith(prefix)) {
+        fail(`rule 5: ${selector} is back; \`${prefix}\` was retired, not aliased`);
+      }
+    }
+    for (const property of declarationsOfRule.keys()) {
+      if (RETIRED_PROPERTIES.some((retired) => property === retired || property.startsWith(`${retired}-`))) {
+        fail(`rule 5: ${selector} declares ${property}, a retired token`);
+      }
     }
   }
 }

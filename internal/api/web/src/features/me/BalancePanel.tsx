@@ -113,7 +113,7 @@ export function BalancePanel() {
           }
         />
         <PanelBody className="space-y-6">
-          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-glass-edge pb-4">
+          <div className="flex flex-wrap items-end justify-between gap-4 border-b border-rule pb-4">
             <Readout
               label={t("当前余额")}
               value={formatMicro(balance)}

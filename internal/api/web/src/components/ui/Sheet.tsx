@@ -6,7 +6,7 @@ import { cn } from "../../lib/cn";
 
 /**
  * A side sheet for detail views. Radix supplies focus trapping, escape handling and
- * the scroll lock; the surface is an elevated glass sheet with generous panel radius.
+ * the scroll lock; the surface is an overlay sheet at the panel radius.
  */
 export function Sheet({
   open,
@@ -31,10 +31,10 @@ export function Sheet({
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-xs" />
+        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/35" />
         <DialogPrimitive.Content
           className={cn(
-            "sheet-shell glass-elevated fixed right-0 z-50 flex w-full flex-col focus:outline-none",
+            "sheet-shell overlay-surface fixed right-0 z-50 flex w-full flex-col focus:outline-none",
             widthClass,
           )}
         >
@@ -51,7 +51,7 @@ export function Sheet({
             </div>
             <DialogPrimitive.Close
               aria-label={t("关闭")}
-              className="action -mr-1 rounded-control p-1.5 text-ink-soft hover:bg-glass hover:text-ink"
+              className="action -mr-1 rounded-control p-1.5 text-ink-soft hover:bg-hover hover:text-ink"
             >
               <X size={16} />
             </DialogPrimitive.Close>

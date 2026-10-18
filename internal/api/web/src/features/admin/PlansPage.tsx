@@ -102,7 +102,7 @@ export function PlansPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t("套餐管理")}
+        title={t("套餐")}
         description={t("管理订阅套餐规则、流量配额与并发限制。")}
         actions={
           <div className="flex items-center gap-2">
@@ -646,7 +646,7 @@ function PlanFormContent({
             </Fieldset>
 
             {initialPlan && (
-              <div className="flex items-center justify-between rounded-control border border-glass-edge bg-glass p-3">
+              <div className="flex items-center justify-between rounded-control border border-rule bg-paper-inset p-3">
                 <div className="space-y-0.5">
                   <span className="text-xs font-medium text-ink">
                     {t("同步应用到存量订阅")}

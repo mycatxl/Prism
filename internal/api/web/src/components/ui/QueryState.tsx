@@ -8,7 +8,7 @@ import { Button } from "./Button";
  * The three states every data region passes through, in one component so they look
  * the same everywhere: loading, failed, and empty.
  *
- * Loading uses a static, shimmer-free glass skeleton stack so it never loops a
+ * Loading uses a static, shimmer-free skeleton stack so it never loops a
  * decorative animation and naturally respects reduced motion.
  */
 export function LoadingState({ label, className }: { label?: string; className?: string }) {

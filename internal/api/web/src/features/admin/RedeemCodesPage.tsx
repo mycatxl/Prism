@@ -147,7 +147,7 @@ export function RedeemCodesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t("兑换码管理")}
+        title={t("兑换码")}
         description={t("生成用于余额充值的兑换码。码只显示一次，请生成后立即分发。")}
         actions={
           <div className="flex items-center gap-2">
@@ -188,7 +188,7 @@ export function RedeemCodesPage() {
             {minted.map((code) => (
               <div
                 key={code.id}
-                className="flex items-center justify-between gap-3 rounded-control border border-glass-edge bg-glass px-3 py-2"
+                className="flex items-center justify-between gap-3 rounded-control border border-rule bg-paper-inset px-3 py-2"
               >
                 <span className="font-mono text-sm tracking-wider text-ink">
                   {code.code}

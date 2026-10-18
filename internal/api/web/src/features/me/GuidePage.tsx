@@ -112,7 +112,7 @@ print(resp.json())`;
         />
         <PanelBody className="flex flex-col gap-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
+            <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
               <div className="text-xs font-semibold text-ink-soft">{t("网关地址 (Host / Port)")}</div>
               <div className="text-sm font-mono text-ink select-all break-all">{gatewayAddr}</div>
               <div className="text-xs text-ink-muted leading-relaxed">
@@ -120,7 +120,7 @@ print(resp.json())`;
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
+            <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
               <div className="text-xs font-semibold text-ink-soft">{t("访问凭据 (Access Key)")}</div>
               <div className="text-sm font-mono text-ink select-all break-all">pk_&lt;key_id&gt;_&lt;secret&gt;</div>
               <div className="text-xs text-ink-muted leading-relaxed">
@@ -128,7 +128,7 @@ print(resp.json())`;
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
+            <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
               <div className="text-xs font-semibold text-ink-soft">{t("账号标识 (Identity)")}</div>
               <div className="text-sm font-mono text-ink select-all break-all">&lt;platform_name&gt;.&lt;account_id&gt;</div>
               <div className="text-xs text-ink-muted leading-relaxed">
@@ -236,7 +236,7 @@ print(resp.json())`;
                     <span>{t("复制")}</span>
                   </Button>
                 </div>
-                <pre className="p-3 rounded-control border border-glass-edge bg-glass-soft font-mono text-xs text-ink overflow-x-auto whitespace-pre">
+                <pre className="p-3 rounded-control border border-rule bg-paper-inset font-mono text-xs text-ink overflow-x-auto whitespace-pre">
                   <code>{forwardCurl}</code>
                 </pre>
               </div>
@@ -257,7 +257,7 @@ print(resp.json())`;
                     <span>{t("复制")}</span>
                   </Button>
                 </div>
-                <pre className="p-3 rounded-control border border-glass-edge bg-glass-soft font-mono text-xs text-ink overflow-x-auto whitespace-pre">
+                <pre className="p-3 rounded-control border border-rule bg-paper-inset font-mono text-xs text-ink overflow-x-auto whitespace-pre">
                   <code>{forwardPython}</code>
                 </pre>
               </div>
@@ -287,7 +287,7 @@ print(resp.json())`;
                     <span>{t("复制")}</span>
                   </Button>
                 </div>
-                <pre className="p-3 rounded-control border border-glass-edge bg-glass-soft font-mono text-xs text-ink overflow-x-auto whitespace-pre">
+                <pre className="p-3 rounded-control border border-rule bg-paper-inset font-mono text-xs text-ink overflow-x-auto whitespace-pre">
                   <code>{socks5Curl}</code>
                 </pre>
               </div>
@@ -301,7 +301,7 @@ print(resp.json())`;
                 )}
               </div>
 
-              <div className="flex flex-col gap-1.5 p-3 rounded-control border border-glass-edge bg-glass-soft">
+              <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
                 <div className="text-xs font-semibold text-ink-soft">{t("URL 路径规范")}</div>
                 <div className="font-mono text-xs text-ink select-all break-all">
                   /&lt;credential&gt;/&lt;platform_name&gt;:&lt;account_id&gt;/&lt;target_scheme&gt;/&lt;target_host&gt;/&lt;target_path&gt;
@@ -327,7 +327,7 @@ print(resp.json())`;
                     <span>{t("复制")}</span>
                   </Button>
                 </div>
-                <pre className="p-3 rounded-control border border-glass-edge bg-glass-soft font-mono text-xs text-ink overflow-x-auto whitespace-pre">
+                <pre className="p-3 rounded-control border border-rule bg-paper-inset font-mono text-xs text-ink overflow-x-auto whitespace-pre">
                   <code>{reverseCurl}</code>
                 </pre>
               </div>

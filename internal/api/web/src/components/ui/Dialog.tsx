@@ -5,7 +5,7 @@ import { cn } from "../../lib/cn";
 /*
  * Dialog states:
  *   default   the overlay's `bg-ink/45` scrim over the page, with the content's
- *             elevated glass sheet centred on top of it
+ *             overlay surface centred on top of it
  *   hover     per control: a `DialogClose` composed with `Button` carries the
  *             button's own hover, and the primitive adds none of its own
  *   focus     Radix traps focus inside the content and returns it to whatever
@@ -53,15 +53,16 @@ export const DialogClose = DialogPrimitive.Close;
 export function DialogOverlay({ className, ...rest }: ComponentProps<typeof DialogPrimitive.Overlay>) {
   return (
     <DialogPrimitive.Overlay
-      className={cn("fixed inset-0 z-40 bg-ink/45 backdrop-blur-sm", className)}
+      className={cn("fixed inset-0 z-40 bg-ink/45", className)}
       {...rest}
     />
   );
 }
 
 /**
- * The surface: an elevated glass sheet, centred, at `--radius-panel` — the same 20px a
- * pane carries, so an overlay opened from a pane reads as the same material.
+ * The surface: an overlay sheet, centred, at `--radius-panel`. It is one of the two
+ * things in the system that carries a shadow — a surface on the desk is separated
+ * by a rule, and only a surface genuinely above the desk is lifted.
  *
  * It takes the width of its own body rather than naming one — a dialog that holds
  * a chart is as wide as that chart's frame, and a dialog that holds a sentence is
@@ -72,7 +73,7 @@ export function DialogContent({ className, ...rest }: ComponentProps<typeof Dial
   return (
     <DialogPrimitive.Content
       className={cn(
-        "fixed top-1/2 left-1/2 z-50 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-panel border border-glass-edge bg-paper-elevated shadow-lg focus:outline-none",
+        "fixed top-1/2 left-1/2 z-50 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-panel border border-rule bg-paper-elevated shadow-lg focus:outline-none",
         className,
       )}
       {...rest}

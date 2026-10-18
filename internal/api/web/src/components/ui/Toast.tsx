@@ -17,7 +17,7 @@ const TONE: Record<string, string> = {
 };
 
 /**
- * Transient confirmations and failures rendered as floating glass slips.
+ * Transient confirmations and failures, drawn on the overlay layer.
  */
 export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
   const { t } = useI18n();
@@ -33,8 +33,8 @@ export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
         <div
           key={toast.id}
           className={cn(
-            "pointer-events-auto flex items-start gap-2.5 rounded-panel border px-3.5 py-2.5 text-sm shadow-lg backdrop-blur-md transition-opacity",
-            TONE[toast.tone] ?? "border-glass-edge-strong bg-paper-elevated text-ink",
+            "pointer-events-auto flex items-start gap-2.5 rounded-panel border px-3.5 py-2.5 text-sm shadow-lg transition-opacity",
+            TONE[toast.tone] ?? "border-rule-strong bg-paper-elevated text-ink",
             toast.exiting && "opacity-0",
           )}
         >

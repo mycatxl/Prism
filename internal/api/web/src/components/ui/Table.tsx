@@ -2,7 +2,7 @@ import type { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Table primitives: sticky glass header, hairline row rules (`--color-row-rule`),
+ * Table primitives: a sticky head row, hairline row rules (`--color-row-rule`),
  * hover wash, and no zebra striping.
  */
 
@@ -36,7 +36,8 @@ export function THead({ className, ...rest }: HTMLAttributes<HTMLTableSectionEle
 }
 
 /**
- * Sticky glass column head in micro-caps.
+ * Sticky column head in micro-caps; opaque, because a head that shows rows through
+ * itself is a head nobody can read.
  */
 export function TH({ className, ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
   return <th className={className} {...rest} />;

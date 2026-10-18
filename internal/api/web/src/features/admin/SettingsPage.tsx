@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, RefreshCw, RotateCcw, Save } from "lucide-react";
+import {
+  ArrowUpRight,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  TriangleAlert,
+  Undo2,
+} from "lucide-react";
 import { useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import {
@@ -12,26 +20,71 @@ import {
 } from "../../components/ui/Dialog";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { PageHeader } from "../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
+import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
 import { ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { RadioGroup } from "../../components/ui/RadioGroup";
+import { StatusMark, type StatusMarkTone } from "../../components/ui/StatusMark";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
+import { fetchSession } from "../../lib/api-client";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import {
   getDefaultSystemConfig,
   getSystemConfig,
+  getSystemEnvConfig,
   updateSystemConfig,
 } from "./api";
-import type { AdminSystemConfig, AdminSystemConfigPatch } from "./types";
+import type {
+  AdminSystemConfig,
+  AdminSystemConfigPatch,
+  RegistrationMode,
+} from "./types";
 
 // MAX_RETENTION_DAYS mirrors config.MaxRetentionDays on the server: a longer
 // window overflows the nanosecond offset the prune subtracts from now, which
 // moves the cutoff into the future and deletes the whole table.
-const MAX_RETENTION_DAYS = 36500
+const MAX_RETENTION_DAYS = 36500;
+
+// The three policies the register endpoint understands. Kept as a literal tuple
+// so an unknown value from either source resolves to "not a policy" instead of
+// being rendered as one.
+const REGISTRATION_MODES = ["off", "invite", "open"] as const;
+
+function isRegistrationMode(value: unknown): value is RegistrationMode {
+  return typeof value === "string" && (REGISTRATION_MODES as readonly string[]).includes(value);
+}
+
+function modeTone(mode: RegistrationMode): StatusMarkTone {
+  // Open sign-up is the state that needs an eye on it, so it carries the caution
+  // tone; closed is the quiet default. The word is always there as well, so the
+  // colour is never the only thing that says which policy is in force.
+  if (mode === "open") return "warn";
+  if (mode === "invite") return "signal";
+  return "neutral";
+}
+
+/**
+ * Parses a whole, non-negative count. Empty means "use the shipped window" and
+ * reads as 0, which is what the server does with it; anything that is not a
+ * plain number is rejected instead of silently becoming 0, because a typo that
+ * saves as "no retention" is a data-loss bug wearing a form field's clothes.
+ */
+function parseCount(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (trimmed === "") return 0;
+  if (!/^\d+$/.test(trimmed)) return null;
+  return Number(trimmed);
+}
 
 export function SettingsPage() {
   const { t } = useI18n();
+  /*
+   * The toast lives above the form, not inside it. Saving changes the config,
+   * the config signature is the form's key, and the remount that follows would
+   * unmount the toast along with the form — a confirmation nobody ever sees.
+   */
+  const { toasts, showToast, dismissToast } = useToast();
 
   const configQuery = useQuery({
     queryKey: ["admin-system-config"],
@@ -43,12 +96,22 @@ export function SettingsPage() {
     queryFn: getDefaultSystemConfig,
   });
 
-  if (configQuery.isLoading || defaultQuery.isLoading) {
+  /*
+   * The deployment's own policy. The panel can override it, but it also has to
+   * be able to name what it is overriding and what clearing the override
+   * returns to, and that value is not in the runtime config.
+   */
+  const envQuery = useQuery({
+    queryKey: ["admin-system-env-config"],
+    queryFn: getSystemEnvConfig,
+  });
+
+  if (configQuery.isLoading || defaultQuery.isLoading || envQuery.isLoading) {
     return (
       <div className="space-y-6">
         <PageHeader
-          title={t("系统设置")}
-          description={t("管理系统数据保留周期、IP 纯净度评估阈值与运行参数。")}
+          title={t("策略与准入")}
+          description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。")}
         />
         <Panel>
           <PanelBody>
@@ -63,8 +126,8 @@ export function SettingsPage() {
     return (
       <div className="space-y-6">
         <PageHeader
-          title={t("系统设置")}
-          description={t("管理系统数据保留周期、IP 纯净度评估阈值与运行参数。")}
+          title={t("策略与准入")}
+          description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。")}
         />
         <Panel>
           <PanelBody>
@@ -83,7 +146,7 @@ export function SettingsPage() {
     audit_retention_days: 90,
     // The shipped window: 90 days for audit logs, 400 for usage (internal/config).
     usage_retention_days: 400,
-    purity_bands: { excellent: 90, clean: 70, fair: 50, mixed: 30 },
+    purity_bands: { excellent: 95, clean: 90, fair: 80, mixed: 60 },
   };
 
   /*
@@ -91,42 +154,76 @@ export function SettingsPage() {
    * fetched. `dataUpdatedAt` changes on every background refetch — and the query
    * client refetches on window focus — so keying on it remounted this form and
    * threw away whatever the operator had typed without saving.
+   *
+   * The inherited registration policy is part of the key for the same reason in
+   * the other direction: the radios start from the value that is actually in
+   * force, so their initial state must be rebuilt once the deployment's policy
+   * arrives rather than left on a placeholder.
    */
+  const envRegistration =
+    typeof envQuery.data?.registration === "string" ? envQuery.data.registration : "";
   const configSignature = JSON.stringify(config);
   const defaultConfig = defaultQuery.data ?? config;
 
   return (
-    <SettingsFormContent
-      key={configSignature}
-      config={config}
-      defaultConfig={defaultConfig}
-      onRefetch={() => {
-        void configQuery.refetch();
-        void defaultQuery.refetch();
-      }}
-    />
+    <>
+      <SettingsFormContent
+        key={`${configSignature}|${envRegistration}`}
+        config={config}
+        defaultConfig={defaultConfig}
+        envRegistration={envRegistration}
+        envKnown={!envQuery.isError}
+        showToast={showToast}
+        onRefetch={() => {
+          void configQuery.refetch();
+          void defaultQuery.refetch();
+          void envQuery.refetch();
+        }}
+      />
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+    </>
   );
 }
 
 function SettingsFormContent({
   config,
   defaultConfig,
+  envRegistration,
+  envKnown,
   onRefetch,
+  showToast,
 }: {
   config: AdminSystemConfig;
   defaultConfig: AdminSystemConfig;
+  envRegistration: string;
+  envKnown: boolean;
   onRefetch: () => void;
+  showToast: (tone: "success" | "error", text: string) => void;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const { toasts, showToast, dismissToast } = useToast();
-
   const auditFieldId = useId();
   const usageFieldId = useId();
   const excellentFieldId = useId();
   const cleanFieldId = useId();
   const fairFieldId = useId();
   const mixedFieldId = useId();
+
+  /*
+   * The override the server holds, if any, and the policy the deployment would
+   * apply without it. `""` means "no override" - it is a real value the endpoint
+   * accepts, and it is how the panel hands the decision back to the environment.
+   */
+  const savedOverride: RegistrationMode | null = isRegistrationMode(config.registration_mode)
+    ? config.registration_mode
+    : null;
+  const envMode: RegistrationMode | null = isRegistrationMode(envRegistration)
+    ? envRegistration
+    : null;
+  const effectiveMode: RegistrationMode = savedOverride ?? envMode ?? "off";
+
+  const [mode, setMode] = useState<RegistrationMode>(effectiveMode);
+  const [followEnv, setFollowEnv] = useState(false);
 
   const [auditRetention, setAuditRetention] = useState(
     String(config.audit_retention_days ?? 90),
@@ -135,16 +232,16 @@ function SettingsFormContent({
     String(config.usage_retention_days ?? 400),
   );
   const [purityExcellent, setPurityExcellent] = useState(
-    String(config.purity_bands?.excellent ?? 90),
+    String(config.purity_bands?.excellent ?? 95),
   );
   const [purityClean, setPurityClean] = useState(
-    String(config.purity_bands?.clean ?? 70),
+    String(config.purity_bands?.clean ?? 90),
   );
   const [purityFair, setPurityFair] = useState(
-    String(config.purity_bands?.fair ?? 50),
+    String(config.purity_bands?.fair ?? 80),
   );
   const [purityMixed, setPurityMixed] = useState(
-    String(config.purity_bands?.mixed ?? 30),
+    String(config.purity_bands?.mixed ?? 60),
   );
 
   const [resetModalOpen, setResetModalOpen] = useState(false);
@@ -152,10 +249,15 @@ function SettingsFormContent({
 
   const updateMutation = useMutation({
     mutationFn: (patch: AdminSystemConfigPatch) => updateSystemConfig(patch),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       showToast("success", t("系统设置已更新"));
       setErrorMsg("");
       void queryClient.invalidateQueries({ queryKey: ["admin-system-config"] });
+      // The console reads the sign-up policy from its own session; without this
+      // the page keeps advertising the previous door until the next reload.
+      if (variables.registration_mode !== undefined) {
+        void fetchSession().catch(() => undefined);
+      }
     },
     onError: (err) => {
       const msg = formatApiErrorMessage(err, t);
@@ -164,57 +266,139 @@ function SettingsFormContent({
     },
   });
 
+  // --- validation -----------------------------------------------------------
+
+  const auditValue = parseCount(auditRetention);
+  const usageValue = parseCount(usageRetention);
+  const auditOutOfRange = auditValue !== null && auditValue > MAX_RETENTION_DAYS;
+  const usageOutOfRange = usageValue !== null && usageValue > MAX_RETENTION_DAYS;
+  const retentionErrorText = t("必须是 0 到 {{max}} 之间的整数。", {
+    max: MAX_RETENTION_DAYS,
+  });
+  const auditError =
+    auditValue === null || auditOutOfRange ? retentionErrorText : undefined;
+  const usageError =
+    usageValue === null || usageOutOfRange ? retentionErrorText : undefined;
+
+  const purityValues = [
+    parseCount(purityExcellent),
+    parseCount(purityClean),
+    parseCount(purityFair),
+    parseCount(purityMixed),
+  ];
+  const purityParsed = purityValues.every((value) => value !== null);
+  const purityInRange =
+    purityParsed && purityValues.every((value) => (value as number) >= 1 && (value as number) <= 100);
+  // The server's Normalized() silently replaces an out-of-order set with the
+  // shipped thresholds, so an off-by-one here would look like the save worked
+  // and then quietly do something else. Check it before it leaves the page.
+  const [excellent, clean, fair, mixed] = purityValues.map((value) => value ?? 0);
+  const purityOrdered =
+    purityInRange && mixed < fair && fair < clean && clean < excellent;
+  const purityError =
+    !purityInRange || !purityOrdered
+      ? t("阈值必须是 1 到 100 之间的整数，并从高到低：极优 > 优良 > 一般 > 混合。")
+      : undefined;
+
+  // --- dirty state ----------------------------------------------------------
+
+  const auditDirty =
+    auditValue !== null && !auditOutOfRange && auditValue !== config.audit_retention_days;
+  const usageDirty =
+    usageValue !== null && !usageOutOfRange && usageValue !== config.usage_retention_days;
+  const purityDirty =
+    purityOrdered &&
+    (excellent !== config.purity_bands?.excellent ||
+      clean !== config.purity_bands?.clean ||
+      fair !== config.purity_bands?.fair ||
+      mixed !== config.purity_bands?.mixed);
+
+  /*
+   * What the save actually sends: only the fields that changed. The endpoint
+   * rejects unknown fields outright and treats absent ones as "leave it", so a
+   * patch built from the whole form would rewrite settings this page never
+   * showed — and would pin a registration override the operator never asked for.
+   */
+  const patch: AdminSystemConfigPatch = {};
+  if (auditDirty) patch.audit_retention_days = auditValue as number;
+  if (usageDirty) patch.usage_retention_days = usageValue as number;
+  if (purityDirty) {
+    patch.purity_bands = { excellent, clean, fair, mixed };
+  }
+  if (followEnv) {
+    // Clearing is only a change when there is an override to clear.
+    if (savedOverride !== null) patch.registration_mode = "";
+  } else if (mode !== effectiveMode) {
+    patch.registration_mode = mode;
+  }
+
+  const registrationDirty = patch.registration_mode !== undefined;
+  const dirtyKeys = Object.keys(patch);
+  const isDirty = dirtyKeys.length > 0;
+  const hasErrors = Boolean(auditError || usageError || purityError);
+  const canSave = isDirty && !hasErrors && !updateMutation.isPending;
+
+  const changedSections = [
+    registrationDirty ? t("注册准入") : null,
+    auditDirty || usageDirty ? t("数据保留") : null,
+    purityDirty ? t("纯净度阈值") : null,
+  ].filter((label): label is string => label !== null);
+
   const handleSave = () => {
+    if (!canSave) return;
     setErrorMsg("");
-    const patch: AdminSystemConfigPatch = {
-      audit_retention_days: Number(auditRetention) || 0,
-      usage_retention_days: Number(usageRetention) || 0,
-      // Only the four keys the server decodes; it rejects unknown fields whole,
-      // so an extra `poor` here failed every save with a 400.
-      purity_bands: {
-        excellent: Number(purityExcellent) || 0,
-        clean: Number(purityClean) || 0,
-        fair: Number(purityFair) || 0,
-        mixed: Number(purityMixed) || 0,
-      },
-    };
     updateMutation.mutate(patch);
   };
 
-  const handleResetToDefault = () => {
-    const patch: AdminSystemConfigPatch = {
-      audit_retention_days: defaultConfig.audit_retention_days,
-      usage_retention_days: defaultConfig.usage_retention_days,
-      purity_bands: defaultConfig.purity_bands,
-    };
-    updateMutation.mutate(patch, {
-      onSuccess: () => {
-        setResetModalOpen(false);
-        showToast("success", t("已恢复为默认设置"));
-      },
-    });
+  const revertChanges = () => {
+    setAuditRetention(String(config.audit_retention_days));
+    setUsageRetention(String(config.usage_retention_days));
+    setPurityExcellent(String(config.purity_bands?.excellent ?? 95));
+    setPurityClean(String(config.purity_bands?.clean ?? 90));
+    setPurityFair(String(config.purity_bands?.fair ?? 80));
+    setPurityMixed(String(config.purity_bands?.mixed ?? 60));
+    setMode(effectiveMode);
+    setFollowEnv(false);
+    setErrorMsg("");
   };
 
-  const isAuditModified =
-    defaultConfig.audit_retention_days != null &&
-    Number(auditRetention) !== defaultConfig.audit_retention_days;
+  const handleResetToDefault = () => {
+    updateMutation.mutate(
+      {
+        audit_retention_days: defaultConfig.audit_retention_days,
+        usage_retention_days: defaultConfig.usage_retention_days,
+        purity_bands: defaultConfig.purity_bands,
+      },
+      {
+        onSuccess: () => {
+          setResetModalOpen(false);
+          showToast("success", t("已恢复为默认设置"));
+        },
+      },
+    );
+  };
 
-  const isUsageModified =
-    defaultConfig.usage_retention_days != null &&
-    Number(usageRetention) !== defaultConfig.usage_retention_days;
+  const modeLabel = (value: RegistrationMode) => {
+    if (value === "open") return t("开放注册");
+    if (value === "invite") return t("仅邀请码");
+    return t("关闭注册");
+  };
 
-  const isPurityModified =
-    defaultConfig.purity_bands != null &&
-    (Number(purityExcellent) !== defaultConfig.purity_bands.excellent ||
-      Number(purityClean) !== defaultConfig.purity_bands.clean ||
-      Number(purityFair) !== defaultConfig.purity_bands.fair ||
-      Number(purityMixed) !== defaultConfig.purity_bands.mixed);
+  const sourceLabel = savedOverride ? t("面板设置") : envMode ? t("部署环境") : t("未配置");
+
+  const sourceSentence = savedOverride
+    ? t("面板正在覆盖部署环境，保存后立刻作用于新的注册请求。")
+    : envMode
+      ? t("由部署环境变量 PRISM_REGISTRATION={{mode}} 决定，面板没有覆盖。", {
+          mode: envMode,
+        })
+      : t("部署环境没有配置注册策略，当前按关闭处理。");
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t("系统设置")}
-        description={t("管理系统数据保留周期、IP 纯净度评估阈值与运行参数。")}
+        title={t("策略与准入")}
+        description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。")}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -237,34 +421,158 @@ function SettingsFormContent({
             <Button
               variant="primary"
               onClick={handleSave}
-              disabled={updateMutation.isPending}
+              disabled={!canSave}
+              loading={updateMutation.isPending}
             >
-              {updateMutation.isPending ? (
-                <span>{t("正在保存...")}</span>
-              ) : (
-                <>
-                  <Save size={14} />
-                  <span>{t("保存设置")}</span>
-                </>
-              )}
+              <Save size={14} />
+              <span>{t("保存更改")}</span>
             </Button>
           </div>
         }
       />
 
       {errorMsg && (
-        <div className="rounded-control border border-alert/30 bg-alert/10 px-4 py-3 text-xs text-alert">
+        <div
+          role="alert"
+          className="rounded-control border border-alert/30 bg-alert/10 px-4 py-3 text-xs text-alert"
+        >
           {errorMsg}
         </div>
       )}
+
+      {isDirty && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-accent/30 bg-accent-wash px-3.5 py-2.5">
+          <span className="text-xs font-medium text-accent">{t("有未保存的更改")}</span>
+          <span className="text-xs text-ink-soft">{changedSections.join("、")}</span>
+          <Button
+            variant="quiet"
+            size="sm"
+            className="ml-auto"
+            onClick={revertChanges}
+            disabled={updateMutation.isPending}
+          >
+            <Undo2 size={13} aria-hidden />
+            {t("放弃更改")}
+          </Button>
+        </div>
+      )}
+
+      {/* Sign-up admission: the control that decides whether the door exists. */}
+      <Panel>
+        <PanelHeader
+          title={t("账户注册")}
+          description={t("决定访客能否自行创建账号。保存后立即生效，无需重启服务。")}
+          meta={
+            registrationDirty ? <Badge tone="accent">{t("已修改")}</Badge> : undefined
+          }
+        />
+        <PanelBody className="space-y-5">
+          {envKnown ? (
+            <>
+              <div className="flex flex-col gap-3 rounded-control border border-rule bg-paper-inset px-3.5 py-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusMark tone={modeTone(effectiveMode)} label={modeLabel(effectiveMode)} />
+                    <Badge tone="outline">{sourceLabel}</Badge>
+                  </div>
+                  <p className="max-w-[68ch] text-xs leading-relaxed text-ink-faint">
+                    {sourceSentence}
+                  </p>
+                </div>
+                {savedOverride !== null && !followEnv && (
+                  <Button
+                    variant="quiet"
+                    size="sm"
+                    onClick={() => {
+                      setFollowEnv(true);
+                      setMode(envMode ?? "off");
+                    }}
+                    disabled={updateMutation.isPending}
+                  >
+                    {t("改回跟随部署环境")}
+                  </Button>
+                )}
+              </div>
+
+              <RadioGroup
+                legend={t("注册准入")}
+                hint={t("这是对外的注册入口，与管理员在控制台里创建账号无关。")}
+                value={mode}
+                onValueChange={(next) => {
+                  if (!isRegistrationMode(next)) return;
+                  setMode(next);
+                  setFollowEnv(false);
+                }}
+                options={[
+                  {
+                    value: "off",
+                    label: t("关闭注册"),
+                    description: t(
+                      "注册接口直接拒绝请求，登录页也不显示注册入口。只有管理员能创建账号。",
+                    ),
+                  },
+                  {
+                    value: "invite",
+                    label: t("仅邀请码"),
+                    description: t(
+                      "注册必须提供有效的邀请码，邀请码决定新账号绑定的套餐。",
+                    ),
+                  },
+                  {
+                    value: "open",
+                    label: t("开放注册"),
+                    description: t(
+                      "任何人都能自助注册。新账号不绑定套餐，需要管理员另行分配。",
+                    ),
+                  },
+                ]}
+              />
+
+              {followEnv ? (
+                <p className="text-xs leading-relaxed text-ink-soft">
+                  {t(
+                    "保存后将移除面板覆盖，注册行为回到部署环境（PRISM_REGISTRATION={{mode}}）。",
+                    { mode: envMode ?? "off" },
+                  )}
+                </p>
+              ) : mode === "invite" ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control border border-rule bg-paper-inset px-3.5 py-2.5 text-xs text-ink-soft">
+                  <span>{t("邀请码在邀请管理里创建，可以预先绑定套餐。")}</span>
+                  <Link
+                    to="/admin/invites"
+                    className="action inline-flex items-center gap-1 font-medium text-accent hover:text-accent-deep"
+                  >
+                    {t("管理邀请码")}
+                    <ArrowUpRight size={12} aria-hidden />
+                  </Link>
+                </div>
+              ) : mode === "open" ? (
+                <div className="flex items-start gap-2.5 rounded-control border border-warn/30 bg-warn-wash px-3.5 py-2.5 text-xs text-warn">
+                  <TriangleAlert size={14} aria-hidden className="mt-0.5 shrink-0" />
+                  <p className="max-w-[68ch] leading-relaxed">
+                    {t(
+                      "开放注册没有任何准入校验，注册接口也不限速。建议同时在反向代理上限制 /api/v1/auth/register 的请求频率。",
+                    )}
+                  </p>
+                </div>
+              ) : null}
+            </>
+          ) : (
+            <ErrorState
+              message={t("无法读取部署环境配置，暂时无法显示注册准入的当前状态。")}
+              onRetry={onRefetch}
+            />
+          )}
+        </PanelBody>
+      </Panel>
 
       {/* Retention Section */}
       <Panel>
         <PanelHeader
           title={t("数据保留周期")}
-          description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口：审计 90 天、用量 400 天。")}
+          description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口。")}
           meta={
-            (isAuditModified || isUsageModified) ? (
+            auditDirty || usageDirty ? (
               <Badge tone="accent">{t("已修改")}</Badge>
             ) : (
               <Badge tone="neutral">{t("系统默认")}</Badge>
@@ -278,22 +586,25 @@ function SettingsFormContent({
               hint={t("超过设定天数的审计日志将被自动清理。")}
               htmlFor={auditFieldId}
             >
-              <div className="relative">
-                <Input
-                  id={auditFieldId}
-                  type="number"
-                  min="0"
-                  max={MAX_RETENTION_DAYS}
-                  step="1"
-                  value={auditRetention}
-                  onChange={(e) => setAuditRetention(e.target.value)}
-                  placeholder="90"
-                />
-              </div>
-              {defaultConfig.audit_retention_days != null && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}} 天", { val: defaultConfig.audit_retention_days })}
-                </p>
+              <Input
+                id={auditFieldId}
+                type="number"
+                min="0"
+                max={MAX_RETENTION_DAYS}
+                step="1"
+                value={auditRetention}
+                onChange={(e) => setAuditRetention(e.target.value)}
+                placeholder={String(defaultConfig.audit_retention_days ?? 90)}
+                invalid={Boolean(auditError)}
+              />
+              {auditError ? (
+                <p className="text-xs text-alert">{auditError}</p>
+              ) : (
+                defaultConfig.audit_retention_days != null && (
+                  <p className="text-xs text-ink-faint">
+                    {t("默认值: {{val}} 天", { val: defaultConfig.audit_retention_days })}
+                  </p>
+                )
               )}
             </Fieldset>
 
@@ -302,22 +613,25 @@ function SettingsFormContent({
               hint={t("超过设定天数的每日用量统计数据将被自动清理。")}
               htmlFor={usageFieldId}
             >
-              <div className="relative">
-                <Input
-                  id={usageFieldId}
-                  type="number"
-                  min="0"
-                  max={MAX_RETENTION_DAYS}
-                  step="1"
-                  value={usageRetention}
-                  onChange={(e) => setUsageRetention(e.target.value)}
-                  placeholder="400"
-                />
-              </div>
-              {defaultConfig.usage_retention_days != null && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}} 天", { val: defaultConfig.usage_retention_days })}
-                </p>
+              <Input
+                id={usageFieldId}
+                type="number"
+                min="0"
+                max={MAX_RETENTION_DAYS}
+                step="1"
+                value={usageRetention}
+                onChange={(e) => setUsageRetention(e.target.value)}
+                placeholder={String(defaultConfig.usage_retention_days ?? 400)}
+                invalid={Boolean(usageError)}
+              />
+              {usageError ? (
+                <p className="text-xs text-alert">{usageError}</p>
+              ) : (
+                defaultConfig.usage_retention_days != null && (
+                  <p className="text-xs text-ink-faint">
+                    {t("默认值: {{val}} 天", { val: defaultConfig.usage_retention_days })}
+                  </p>
+                )
               )}
             </Fieldset>
           </div>
@@ -328,9 +642,9 @@ function SettingsFormContent({
       <Panel>
         <PanelHeader
           title={t("IP 纯净度等级分段")}
-          description={t("配置网络节点 IP 纯净度评估的四个等级阈值（0 - 100 分）。")}
+          description={t("配置网络节点 IP 纯净度评估的四个等级阈值（1 - 100 分）。")}
           meta={
-            isPurityModified ? (
+            purityDirty ? (
               <Badge tone="accent">{t("已修改")}</Badge>
             ) : (
               <Badge tone="neutral">{t("系统默认")}</Badge>
@@ -347,18 +661,14 @@ function SettingsFormContent({
               <Input
                 id={excellentFieldId}
                 type="number"
-                min="0"
+                min="1"
                 max="100"
                 step="1"
                 value={purityExcellent}
                 onChange={(e) => setPurityExcellent(e.target.value)}
-                placeholder="90"
+                placeholder={String(defaultConfig.purity_bands?.excellent ?? 95)}
+                invalid={Boolean(purityError)}
               />
-              {defaultConfig.purity_bands?.excellent != null && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}}", { val: defaultConfig.purity_bands.excellent })}
-                </p>
-              )}
             </Fieldset>
 
             <Fieldset
@@ -369,18 +679,14 @@ function SettingsFormContent({
               <Input
                 id={cleanFieldId}
                 type="number"
-                min="0"
+                min="1"
                 max="100"
                 step="1"
                 value={purityClean}
                 onChange={(e) => setPurityClean(e.target.value)}
-                placeholder="70"
+                placeholder={String(defaultConfig.purity_bands?.clean ?? 90)}
+                invalid={Boolean(purityError)}
               />
-              {defaultConfig.purity_bands?.clean != null && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}}", { val: defaultConfig.purity_bands.clean })}
-                </p>
-              )}
             </Fieldset>
 
             <Fieldset
@@ -391,18 +697,14 @@ function SettingsFormContent({
               <Input
                 id={fairFieldId}
                 type="number"
-                min="0"
+                min="1"
                 max="100"
                 step="1"
                 value={purityFair}
                 onChange={(e) => setPurityFair(e.target.value)}
-                placeholder="50"
+                placeholder={String(defaultConfig.purity_bands?.fair ?? 80)}
+                invalid={Boolean(purityError)}
               />
-              {defaultConfig.purity_bands?.fair != null && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}}", { val: defaultConfig.purity_bands.fair })}
-                </p>
-              )}
             </Fieldset>
 
             <Fieldset
@@ -413,69 +715,18 @@ function SettingsFormContent({
               <Input
                 id={mixedFieldId}
                 type="number"
-                min="0"
+                min="1"
                 max="100"
                 step="1"
                 value={purityMixed}
                 onChange={(e) => setPurityMixed(e.target.value)}
-                placeholder="30"
+                placeholder={String(defaultConfig.purity_bands?.mixed ?? 60)}
+                invalid={Boolean(purityError)}
               />
-              {defaultConfig.purity_bands?.mixed != null && (
-                <p className="mt-1 text-xs text-ink-faint">
-                  {t("默认值: {{val}}", { val: defaultConfig.purity_bands.mixed })}
-                </p>
-              )}
             </Fieldset>
           </div>
+          {purityError && <p className="text-xs text-alert">{purityError}</p>}
         </PanelBody>
-      </Panel>
-
-      {/* Registration Mode Section (Read-only as required) */}
-      <Panel>
-        <PanelHeader
-          title={t("系统环境与注册模式")}
-          description={t("由服务端启动参数与环境变量控制的静态运行时属性。")}
-        />
-        <PanelBody className="space-y-4">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div>
-              <span className="micro block text-ink-faint">{t("注册模式")}</span>
-              <div className="mt-1.5 flex items-center gap-2">
-                <Badge tone="neutral">{t("只读")}</Badge>
-                <span className="text-sm text-ink-soft">
-                  {t("由环境变量 PRISM_REGISTRATION 控制")}
-                </span>
-              </div>
-            </div>
-            <div>
-              <span className="micro block text-ink-faint">{t("配置生效模式")}</span>
-              <div className="mt-1.5 flex items-center gap-2">
-                <Badge tone="signal" dot>
-                  {t("实时热更新")}
-                </Badge>
-                <span className="text-sm text-ink-soft">
-                  {t("保存后立即在当前集群节点生效")}
-                </span>
-              </div>
-            </div>
-          </div>
-        </PanelBody>
-        <PanelFooter className="justify-end">
-          <Button
-            variant="primary"
-            onClick={handleSave}
-            disabled={updateMutation.isPending}
-          >
-            {updateMutation.isPending ? (
-              <span>{t("正在保存...")}</span>
-            ) : (
-              <>
-                <Check size={14} />
-                <span>{t("保存修改")}</span>
-              </>
-            )}
-          </Button>
-        </PanelFooter>
       </Panel>
 
       {/* Dialog: Confirm Reset to Default */}
@@ -487,7 +738,9 @@ function SettingsFormContent({
               {t("确认恢复默认设置")}
             </DialogTitle>
             <p className="mt-3 text-sm text-ink-soft">
-              {t("确定要将数据保留周期和纯净度等级阈值恢复为系统默认配置吗？未保存的手动更改将丢失。")}
+              {t(
+                "确定要将数据保留周期和纯净度等级阈值恢复为系统默认配置吗？未保存的手动更改将丢失。",
+              )}
             </p>
             <div className="mt-6 flex items-center justify-end gap-3">
               <Button
@@ -500,16 +753,14 @@ function SettingsFormContent({
               <Button
                 variant="primary"
                 onClick={handleResetToDefault}
-                disabled={updateMutation.isPending}
+                loading={updateMutation.isPending}
               >
-                {updateMutation.isPending ? t("正在保存...") : t("确认恢复")}
+                {t("确认恢复")}
               </Button>
             </div>
           </DialogContent>
         </DialogPortal>
       </DialogRoot>
-
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </div>
   );
 }

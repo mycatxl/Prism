@@ -215,10 +215,20 @@ export type PurityBands = {
   mixed: number;
 };
 
+// The sign-up policies the server accepts (internal/config RegistrationMode).
+// Kept as a union so the panel cannot send a value the endpoint would reject.
+export type RegistrationMode = "off" | "invite" | "open";
+
 export type AdminSystemConfig = {
   audit_retention_days: number;
   usage_retention_days: number;
   purity_bands: PurityBands;
+  /**
+   * The console's sign-up override. Empty or absent means the deployment's
+   * PRISM_REGISTRATION still decides, so the two are not interchangeable:
+   * `""` clears the override, `undefined` means this server does not have one.
+   */
+  registration_mode?: string;
   [key: string]: unknown;
 };
 
@@ -226,6 +236,16 @@ export type AdminSystemConfigPatch = {
   audit_retention_days?: number;
   usage_retention_days?: number;
   purity_bands?: PurityBands;
+  /** `""` clears the override and hands the decision back to the environment. */
+  registration_mode?: string;
+};
+
+// The subset of GET /api/v1/system/config/env the console reads: the values
+// that come from the deployment rather than from the panel, and therefore can
+// only be shown, not changed.
+export type AdminSystemEnvConfig = {
+  registration: string;
+  [key: string]: unknown;
 };
 
 // A redemption code as the console lists it. The plaintext is not here: it is

@@ -160,7 +160,7 @@ export function UsagePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t("用量与分析")}
+        title={t("用量")}
         description={t("全站资源用量、用户流量排名与每日用量趋势统计。")}
         actions={
           <div className="flex items-center gap-3">

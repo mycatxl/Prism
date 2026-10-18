@@ -542,11 +542,11 @@ function CreateKeyDialog({
                 {t("授权平台（可选，不选则允许套餐下所有平台）")}
               </span>
               {platforms.length === 0 ? (
-                <div className="rounded-control border border-glass-edge bg-glass p-2.5 text-xs text-ink-faint">
+                <div className="rounded-control border border-rule bg-paper-inset p-2.5 text-xs text-ink-faint">
                   {t("当前套餐未限定特定平台，密钥默认可用所有平台。")}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-2 rounded-control border border-glass-edge bg-glass p-3">
+                <div className="grid grid-cols-2 gap-2 rounded-control border border-rule bg-paper-inset p-3">
                   {platforms.map((plat) => {
                     const isChecked = selectedPlatforms.includes(plat.platform_id);
                     return (

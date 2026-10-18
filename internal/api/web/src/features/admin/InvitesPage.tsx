@@ -106,7 +106,7 @@ export function InvitesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={t("邀请码管理")}
+        title={t("邀请码")}
         description={t("创建与分发新用户注册邀请码，可绑定默认套餐和有效次数。")}
         actions={
           <div className="flex items-center gap-2">

@@ -2,9 +2,10 @@ import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * A panel is the console's glass framing primitive: a region with radius
- * `--radius-panel` (20px), a 1px glass edge, the inner top rim-light, backdrop blur,
- * and soft shadow elevation.
+ * A panel is a band on the desk: one hairline above it, the panel radius, and no
+ * fill, lift or blur of its own. The head row states what the band is and the body
+ * carries the real table, form or chart; a panel drawn only to frame another panel
+ * is a defect.
  */
 export function Panel({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("panel isolate overflow-hidden", className)} {...rest} />;

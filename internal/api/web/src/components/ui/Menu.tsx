@@ -3,7 +3,9 @@ import type { ComponentProps } from "react";
 import { cn } from "../../lib/cn";
 
 /**
- * Dropdown action menu (Radix): a trigger, then a glass-elevated list of items.
+ * Dropdown action menu (Radix): a trigger, then an overlay list of items.
+ * Use it for a small set of related one-shot actions, e.g. export formats.
+ *
  * Use it for a small set of related one-shot actions, e.g. export formats.
  */
 export const Menu = MenuPrimitive.Root;
@@ -16,7 +18,7 @@ export function MenuContent({ className, sideOffset = 6, align = "end", ...rest 
         sideOffset={sideOffset}
         align={align}
         className={cn(
-          "glass-elevated z-50 min-w-[12rem] rounded-panel border border-glass-edge-strong bg-paper-elevated p-1 text-sm text-ink shadow-lg",
+          "overlay-surface z-50 min-w-[12rem] rounded-panel border border-rule-strong bg-paper-elevated p-1 text-sm text-ink shadow-lg",
           className,
         )}
         {...rest}
@@ -34,7 +36,7 @@ export function MenuItem({ className, ...rest }: ComponentProps<typeof MenuPrimi
     <MenuPrimitive.Item
       className={cn(
         "flex cursor-default select-none items-center justify-between gap-3 rounded-control px-2.5 py-1.5 outline-none",
-        "data-[highlighted]:bg-glass-strong data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+        "data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
       {...rest}
@@ -43,5 +45,5 @@ export function MenuItem({ className, ...rest }: ComponentProps<typeof MenuPrimi
 }
 
 export function MenuSeparator({ className, ...rest }: ComponentProps<typeof MenuPrimitive.Separator>) {
-  return <MenuPrimitive.Separator className={cn("my-1 h-px bg-glass-edge", className)} {...rest} />;
+  return <MenuPrimitive.Separator className={cn("my-1 h-px bg-rule", className)} {...rest} />;
 }

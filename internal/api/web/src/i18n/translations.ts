@@ -1,13 +1,56 @@
-import type { AppLocale } from "./locale";
 import { WORKBENCH_TRANSLATIONS } from "./workbench";
 
-export const APP_TITLE_ZH = "Prism · 节点工作台";
-const APP_TITLE_EN = "Prism · Proxy Workbench";
-
+/*
+ * The English dictionary, and only the English dictionary.
+ *
+ * Every key in this file is the Chinese sentence itself, which is what makes the
+ * split possible: a zh-CN session needs no resource at all — i18next returns the
+ * key, and the key is the sentence. So this module is not imported by the shell;
+ * it is a chunk of its own, fetched the first time a session actually reads
+ * English. Nothing here may be imported eagerly, or the console pays 150 kB for a
+ * language most sessions never select.
+ */
 const EXACT_ZH_TO_EN: Record<string, string> = {
-  "Prism · 高性能粘性代理池": APP_TITLE_EN,
+  "Prism · 高性能粘性代理池": "Prism · Proxy Workbench",
   "高性能粘性代理池 · 管理面板": "High-performance sticky proxy pool · Admin Console",
   "主导航": "Main Navigation",
+  "管理控制台": "Admin Console",
+  "当前位置": "Current location",
+  "用户中心": "Account",
+  "账户菜单": "Account menu",
+  "命令面板": "Command palette",
+  "搜索页面或操作": "Search pages or actions",
+  "没有匹配的目的地或操作": "No matching destination or action",
+  "用方向键移动，回车打开": "Use the arrow keys to move, Return to open",
+  "前往": "Go to",
+  "刷新数据": "Refresh data",
+  "切换主题": "Switch theme",
+  "打开导航": "Open Navigation",
+  "关闭导航": "Close Navigation",
+  "运行": "Operations",
+  "用户与计费": "Users & Billing",
+  "接入与日志": "Access & Logs",
+  "分页": "Pagination",
+  "共": "of",
+  "条": "rows",
+  "已选": "Selected",
+  "清除选择": "Clear selection",
+  "选择本页全部": "Select every row on this page",
+  "选择行": "Select row",
+  "行操作": "Row actions",
+  "没有记录": "No records",
+  "清除筛选": "Clear filters",
+  "当前筛选": "Active filters",
+  "移除筛选": "Remove filter",
+  "出站 24h": "Egress 24h",
+  "售卖": "Catalog",
+  "客户": "Customers",
+  "用户": "Users",
+  "用量": "Usage",
+  "运行参数": "Runtime",
+  "策略与准入": "Policy & Access",
+  "使用": "Getting Started",
+  "费用": "Billing",
   "切换语言": "Switch Language",
   "安全警告": "Security Warning",
   "退出登录": "Sign Out",
@@ -322,6 +365,22 @@ Note: Once enabled, requests without authentication information are rejected ins
   "反向代理": "Reverse Proxy",
   "SOCKS5 正向代理": "SOCKS5 Forward Proxy",
   "接入": "Access",
+  "登记册": "The Roll",
+  "边界": "Limits",
+  "通道": "Conduits",
+  "存续": "Continuity",
+  "跳到正文": "Skip to the sheet",
+  "今日登记": "Entered today",
+  "在册": "On the roll",
+  "未接通": "No answer",
+  "接近上限": "Near limit",
+  "今日批单": "Today's amendments",
+  "批单": "Amendment",
+  "登记一条变更": "Enter a change",
+  "本页批单为空": "No amendment has been entered on this page today.",
+  "行号": "Line",
+  "原先": "Was",
+  "现登记为": "Now entered as",
   "复制正向/反向代理地址": "Copy forward / reverse proxy URLs",
   "接入方式": "Access",
   "填写账号与代理 token，一键复制正向/反向代理地址。":
@@ -1161,9 +1220,38 @@ Note: Once enabled, requests without authentication information are rejected ins
   "第 {{current}} / {{total}} 页 (共 {{count}} 条)": "Page {{current}} of {{total}} ({{count}} items)",
   "管理员": "Administrator",
   "管理系统数据保留周期、IP 纯净度评估阈值与运行参数。": "Manage data retention periods, IP purity evaluation thresholds, and runtime parameters.",
+  "管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。": "Manage account sign-up admission, data retention periods, and IP purity evaluation thresholds.",
+  "账户注册": "Account Registration",
+  "决定访客能否自行创建账号。保存后立即生效，无需重启服务。": "Decide whether visitors may create their own accounts. Changes apply immediately after saving, with no restart.",
+  "注册准入": "Sign-up Admission",
+  "这是对外的注册入口，与管理员在控制台里创建账号无关。": "This is the public sign-up door; it does not affect accounts an administrator creates in the console.",
+  "关闭注册": "Registration Closed",
+  "注册接口直接拒绝请求，登录页也不显示注册入口。只有管理员能创建账号。": "The register endpoint refuses every request and the login page shows no sign-up link. Only administrators can create accounts.",
+  "仅邀请码": "Invite Code Only",
+  "注册必须提供有效的邀请码，邀请码决定新账号绑定的套餐。": "Signing up requires a valid invite code, and that code decides which plan the new account is bound to.",
+  "开放注册": "Open Registration",
+  "任何人都能自助注册。新账号不绑定套餐，需要管理员另行分配。": "Anyone can sign up on their own. New accounts carry no plan and need one assigned by an administrator.",
+  "面板设置": "Console Setting",
+  "部署环境": "Deployment Environment",
+  "面板正在覆盖部署环境，保存后立刻作用于新的注册请求。": "The console overrides the deployment; a save takes effect on the next sign-up request.",
+  "由部署环境变量 PRISM_REGISTRATION={{mode}} 决定，面板没有覆盖。": "Decided by the deployment's PRISM_REGISTRATION={{mode}}; the console sets no override.",
+  "部署环境没有配置注册策略，当前按关闭处理。": "The deployment configures no sign-up policy, so registration is treated as closed.",
+  "改回跟随部署环境": "Follow Deployment Again",
+  "保存后将移除面板覆盖，注册行为回到部署环境（PRISM_REGISTRATION={{mode}}）。": "Saving removes the console override and sign-up returns to the deployment policy (PRISM_REGISTRATION={{mode}}).",
+  "邀请码在邀请管理里创建，可以预先绑定套餐。": "Invite codes are created in invite management and can be bound to a plan in advance.",
+  "管理邀请码": "Manage Invite Codes",
+  "开放注册没有任何准入校验，注册接口也不限速。建议同时在反向代理上限制 /api/v1/auth/register 的请求频率。": "Open registration applies no admission check and the register endpoint is not rate limited. Consider limiting /api/v1/auth/register at the reverse proxy as well.",
+  "无法读取部署环境配置，暂时无法显示注册准入的当前状态。": "The deployment configuration could not be read, so the current sign-up admission cannot be shown yet.",
+  "有未保存的更改": "Unsaved Changes",
+  "放弃更改": "Discard Changes",
+  "保存更改": "Save Changes",
+  "数据保留": "Data Retention",
+  "纯净度阈值": "Purity Thresholds",
+  "设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口。": "Set how long audit logs and usage statistics are kept before automatic cleanup; 0 or empty uses the shipped window.",
+  "必须是 0 到 {{max}} 之间的整数。": "Must be a whole number between 0 and {{max}}.",
+  "阈值必须是 1 到 100 之间的整数，并从高到低：极优 > 优良 > 一般 > 混合。": "Thresholds must be whole numbers from 1 to 100, descending: Excellent > Clean > Fair > Mixed.",
   "管理系统用户、角色分配、套餐与访问权限。": "Manage system users, role assignments, plans, and access permissions.",
   "管理订阅套餐规则、流量配额与并发限制。": "Manage subscription plan rules, traffic quotas, and concurrency limits.",
-  "系统环境与注册模式": "System Environment & Registration Mode",
   "系统设置": "System Settings",
   "系统设置已更新": "System settings updated",
   "系统默认": "System Default",
@@ -1181,7 +1269,6 @@ Note: Once enabled, requests without authentication information are rejected ins
   "角色": "Role",
   "订阅状态已更新": "Subscription status updated",
   "订阅续期成功": "Subscription renewed successfully",
-  "设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口：审计 90 天、用量 400 天。": "Configure automatic cleanup for audit logs and usage statistics. 0 or blank uses the shipped defaults: 90 days for audit logs and 400 days for usage.",
   "访问密钥": "Access Keys",
   "访问密钥已删除": "Access key deleted",
   "该用户当前未绑定任何套餐，点击上方按钮进行分配。": "This user currently has no bound plan. Click the button above to assign one.",
@@ -1205,7 +1292,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "邀请码管理": "Invite Code Management",
   "配置套餐的适用平台、网络质量约束与用量配额。": "Configure plan platforms, network quality constraints, and usage quotas.",
   "配置生效模式": "Configuration Effect Mode",
-  "配置网络节点 IP 纯净度评估的四个等级阈值（0 - 100 分）。": "Configure the four rating thresholds (0 - 100) for network node IP purity assessment.",
+  "配置网络节点 IP 纯净度评估的四个等级阈值（1 - 100 分）。": "Configure the four rating thresholds (1 - 100) for network node IP purity assessment.",
   "配额上限 / 剩余": "Quota Limit / Remaining",
   "重置周期": "Reset Period",
   "重置密码": "Reset Password",
@@ -1538,18 +1625,63 @@ Note: Once enabled, requests without authentication information are rejected ins
   "加载中": "Loading",
   "加载失败": "Could not load",
   "请稍后重试": "Try again shortly",
+  "全站的出口、平台与最近操作。这里只显示服务端返回的事实。":
+    "Exits, platforms and recent changes across the deployment. Only facts the server returns appear here.",
+  "可用出口 IP": "Healthy egress IPs",
+  "覆盖地区": "Regions covered",
+  "按出口 IP 的国家与地区": "By egress IP country and region",
+  "熔断节点": "Nodes paused",
+  "被动熔断暂停的节点数": "Nodes the passive breaker has paused",
+  "需要处理": "Needs attention",
+  "级别": "Level",
+  "类别": "Area",
+  "对象": "Subject",
+  "原因": "Reason",
+  "处理": "Action",
+  "阻断": "Blocked",
+  "需处理": "Act now",
+  "待补": "Incomplete",
+  "没有可路由节点，请求会按未命中策略处理": "No routable nodes; requests follow the miss policy",
+  "被动熔断已暂停这些节点": "The passive breaker has paused these nodes",
+  "没有 IP 类型与纯净度，按条件的平台不会选中它":
+    "No IP type or purity, so platforms that filter on them will not pick it",
+  "没有需要处理的事项": "Nothing needs attention",
+  "每个平台都有可路由节点，订阅与检测任务都没有报错。":
+    "Every platform has routable nodes; no subscription or scan reported an error.",
+  "平台配线": "Platform wiring",
+  "一个平台一行：它能路由多少节点、对外用几个出口、此刻挂着多少租约。":
+    "One row per platform: routable nodes, egress addresses, leases held right now.",
+  "粘性 TTL": "Sticky TTL",
+  "最近更新": "Last updated",
+  "还没有平台": "No platforms yet",
+  "平台是接入用户名里的一段，先建一个平台，客户端才能连上来。":
+    "A platform is a segment of the access username; create one before clients can connect.",
+  "还没有出口，导入订阅后这里会按国家列出。":
+    "No exits yet. Import a subscription and they appear here by country.",
+  "全部任务": "All scans",
+  "运行 {{running}} · 排队 {{queued}}": "running {{running}} · queued {{queued}}",
+  "还没有检测任务。": "No scans yet.",
+  "{{count}} 项检测失败": "{{count}} checks failed",
+  "最近变更": "Recent changes",
+  "还没有写操作。": "No write operations yet.",
+  "{{count}} 次请求": "{{count}} requests",
+  "{{count}} 个出口未评估": "{{count}} egress addresses unassessed",
+  "{{count}} 个地区": "{{count}} regions",
+  "{{count}} 个节点在池中": "{{count}} nodes in the pool",
+  "{{count}} 条": "{{count}} entries",
+  "从三步开始": "Start in three steps",
+  "现在还没有节点，也没有平台。按顺序做完这三步，这页就有内容了。":
+    "There are no nodes and no platforms yet. These three steps, in order, fill this page.",
+  "导入订阅": "Import a subscription",
+  "订阅提供节点，节点提供出口。": "A subscription brings nodes; nodes bring egress.",
+  "建一个平台": "Create a platform",
+  "平台是接入用户名里的一段，客户端按它路由。":
+    "A platform is the segment of the access username that clients route by.",
+  "跑一次检测": "Run one scan",
+  "检测给出出口地区、IP 类型与纯净度。": "A scan reports egress region, IP type and purity.",
+  "打开": "Open",
 };
 
-export function translateDocumentTitle(locale: AppLocale): string {
-  return locale === "en-US" ? APP_TITLE_EN : APP_TITLE_ZH;
-}
-
+/** The one export: key (the Chinese sentence) → English sentence. */
 export const EN_TRANSLATIONS: Readonly<Record<string, string>> = { ...EXACT_ZH_TO_EN, ...WORKBENCH_TRANSLATIONS };
 
-export function buildZhTranslations(): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (const key of Object.keys(EN_TRANSLATIONS)) {
-    map[key] = key;
-  }
-  return map;
-}
