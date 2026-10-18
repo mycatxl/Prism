@@ -46,7 +46,8 @@ const (
 	stateVersionBalanceLedgerRefScope            = 25
 	stateVersionDropOrders                       = 26
 	stateVersionDeposits                         = 27
-	stateLatestVersion                           = stateVersionDeposits
+	stateVersionRenewalSweepIndex                = 28
+	stateLatestVersion                           = stateVersionRenewalSweepIndex
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	// Keep these version markers in sync with SQL files under migrations/cache/.
