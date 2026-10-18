@@ -62,7 +62,14 @@ func TestTransfersSinceFiltersToAddressAndContract(t *testing.T) {
 	if want := "/v1/accounts/" + testAddress + "/transactions/trc20"; gotPath != want {
 		t.Fatalf("path: got %q, want %q", gotPath, want)
 	}
-	for _, fragment := range []string{"only_confirmed=true", "min_timestamp=1700000000000", "contract_address=" + testContract} {
+	for _, fragment := range []string{
+		"only_confirmed=true",
+		"min_timestamp=1700000000000",
+		"contract_address=" + testContract,
+		// TronGrid defaults to block_timestamp,desc; the watermark is the block
+		// time of the newest row, so a descending page makes it move backwards.
+		"order_by=block_timestamp%2Casc",
+	} {
 		if !containsFragment(gotQuery, fragment) {
 			t.Fatalf("query %q is missing %q", gotQuery, fragment)
 		}
@@ -99,4 +106,46 @@ func containsFragment(query, fragment string) bool {
 		}
 	}
 	return false
+}
+
+// TestTransfersSinceReturnsOldestFirst pins the contract the deposit scanner
+// relies on: the newest transfer is the LAST element, so its block time is what
+// the watermark advances to. TronGrid answers newest-first by default, which is
+// why the client sorts.
+func TestTransfersSinceReturnsOldestFirst(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"transaction_id":"tx-newest","block_timestamp":1700000003000,
+				 "from":"TFROM","to":"` + testAddress + `","type":"Transfer","value":"30000001",
+				 "token_info":{"address":"` + testContract + `","decimals":6}},
+				{"transaction_id":"tx-middle","block_timestamp":1700000002000,
+				 "from":"TFROM","to":"` + testAddress + `","type":"Transfer","value":"20000001",
+				 "token_info":{"address":"` + testContract + `","decimals":6}},
+				{"transaction_id":"tx-oldest","block_timestamp":1700000001000,
+				 "from":"TFROM","to":"` + testAddress + `","type":"Transfer","value":"10000001",
+				 "token_info":{"address":"` + testContract + `","decimals":6}}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "", testContract)
+	got, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
+	if err != nil {
+		t.Fatalf("TransfersSince: %v", err)
+	}
+	want := []string{"tx-oldest", "tx-middle", "tx-newest"}
+	if len(got) != len(want) {
+		t.Fatalf("transfers: got %d, want %d", len(got), len(want))
+	}
+	for i, id := range want {
+		if got[i].TxID != id {
+			t.Fatalf("transfer %d: got %q, want %q (the result must be oldest first)", i, got[i].TxID, id)
+		}
+	}
+	if newest := got[len(got)-1].BlockTSMs; newest != 1700000003000 {
+		t.Fatalf("newest block time: got %d, want 1700000003000", newest)
+	}
 }

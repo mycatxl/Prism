@@ -291,3 +291,36 @@ func TestPaidDepositReleasesItsAmount(t *testing.T) {
 		t.Fatalf("reused amount: got %d, want 8000001", next.AmountMicro)
 	}
 }
+
+// TestAdvanceChainCursorNeverMovesBackwards pins that the watermark is
+// monotonic. TronGrid answers newest-first by default, so a page handled in
+// descending order used to leave the cursor on its OLDEST row; once a backlog
+// exceeded one page that pushed every older transfer out of reach for good.
+func TestAdvanceChainCursorNeverMovesBackwards(t *testing.T) {
+	repo := newTestStateRepo(t)
+
+	if err := repo.AdvanceChainCursor(testCursorName, 5_000, depositTestNowNs); err != nil {
+		t.Fatalf("advance to 5000: %v", err)
+	}
+	if err := repo.AdvanceChainCursor(testCursorName, 3_000, depositTestNowNs); err != nil {
+		t.Fatalf("advance backwards: %v", err)
+	}
+	watermark, err := repo.ChainCursor(testCursorName)
+	if err != nil {
+		t.Fatalf("ChainCursor: %v", err)
+	}
+	if watermark != 5_000 {
+		t.Fatalf("watermark: got %d, want 5000 (the cursor must never move back)", watermark)
+	}
+
+	// A forward move still works.
+	if err := repo.AdvanceChainCursor(testCursorName, 7_000, depositTestNowNs); err != nil {
+		t.Fatalf("advance to 7000: %v", err)
+	}
+	if watermark, err = repo.ChainCursor(testCursorName); err != nil {
+		t.Fatalf("ChainCursor: %v", err)
+	}
+	if watermark != 7_000 {
+		t.Fatalf("watermark: got %d, want 7000", watermark)
+	}
+}

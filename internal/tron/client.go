@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -63,6 +64,14 @@ func NewClient(baseURL, apiKey, contract string) *Client {
 // watermark comes back again; the transaction id makes that harmless. The
 // endpoint has no block-height filter, which is why the watermark is a
 // timestamp.
+//
+// order_by is requested explicitly because TronGrid defaults to
+// block_timestamp,desc. The watermark is the block time of the newest transfer
+// handled, so a descending page means the cursor settles on the OLDEST row of
+// that page, and a backlog larger than one page then leaves everything older
+// than the newest page unreachable for good. The rows are sorted here as well,
+// so the "oldest first" contract holds even against an endpoint that ignores
+// the parameter.
 func (c *Client) TransfersSince(ctx context.Context, address string, minTimestampMs int64, limit int) ([]Transfer, error) {
 	if address == "" {
 		return nil, fmt.Errorf("tron: no address to watch")
@@ -75,6 +84,7 @@ func (c *Client) TransfersSince(ctx context.Context, address string, minTimestam
 	query.Set("only_confirmed", "true")
 	query.Set("limit", strconv.Itoa(limit))
 	query.Set("contract_address", c.contract)
+	query.Set("order_by", "block_timestamp,asc")
 	if minTimestampMs > 0 {
 		query.Set("min_timestamp", strconv.FormatInt(minTimestampMs, 10))
 	}
@@ -147,6 +157,7 @@ func (c *Client) TransfersSince(ctx context.Context, address string, minTimestam
 			BlockTSMs:   row.BlockTS,
 		})
 	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].BlockTSMs < out[j].BlockTSMs })
 	return out, nil
 }
 

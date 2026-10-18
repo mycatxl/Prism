@@ -265,7 +265,8 @@ func (r *StateRepo) ChainCursor(name string) (int64, error) {
 	return watermark, nil
 }
 
-// AdvanceChainCursor records the newest block time already handled.
+// AdvanceChainCursor records the newest block time already handled. The stored
+// watermark only ever grows; see chainCursorUpsert.
 //
 // The listener calls this for transfers that matched no intent. Nothing was
 // written for them, so a crash between reading and advancing only means they are
@@ -281,11 +282,15 @@ func (r *StateRepo) AdvanceChainCursor(name string, watermarkMs, nowNs int64) er
 	return nil
 }
 
+// chainCursorUpsert advances the watermark monotonically. A page that arrives
+// out of order must never pull the cursor back: the transfers between the lower
+// mark and the higher one would then be read again (harmless) or, once the page
+// limit stops covering them, skipped for good.
 const chainCursorUpsert = `
 	INSERT INTO chain_cursor (name, watermark_ms, updated_at_ns)
 	VALUES (?, ?, ?)
 	ON CONFLICT(name) DO UPDATE SET
-		watermark_ms = excluded.watermark_ms,
+		watermark_ms = max(chain_cursor.watermark_ms, excluded.watermark_ms),
 		updated_at_ns = excluded.updated_at_ns
 `
 
