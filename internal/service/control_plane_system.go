@@ -411,6 +411,25 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	if verr := validateAlertConfig(cfg); verr != nil {
 		return verr
 	}
+	if verr := validateRetentionConfig(cfg); verr != nil {
+		return verr
+	}
+	return nil
+}
+
+// validateRetentionConfig bounds the two log retention windows.
+//
+// Both are turned into a nanosecond offset and subtracted from the current time,
+// so a window large enough to overflow that arithmetic lands the cutoff in the
+// future and turns the next prune into a full table delete. Zero keeps its
+// existing meaning of "use the shipped window"; only the upper bound is new.
+func validateRetentionConfig(cfg *config.RuntimeConfig) *ServiceError {
+	if cfg.AuditRetentionDays > config.MaxRetentionDays {
+		return invalidArg(fmt.Sprintf("audit_retention_days: must not exceed %d", config.MaxRetentionDays))
+	}
+	if cfg.UsageRetentionDays > config.MaxRetentionDays {
+		return invalidArg(fmt.Sprintf("usage_retention_days: must not exceed %d", config.MaxRetentionDays))
+	}
 	return nil
 }
 
@@ -434,6 +453,9 @@ func validateAlertConfig(cfg *config.RuntimeConfig) *ServiceError {
 	}
 	if cfg.AlertRetentionDays < 1 {
 		return invalidArg("alert_retention_days: must be at least 1")
+	}
+	if cfg.AlertRetentionDays > config.MaxRetentionDays {
+		return invalidArg(fmt.Sprintf("alert_retention_days: must not exceed %d", config.MaxRetentionDays))
 	}
 	return nil
 }

@@ -11,6 +11,13 @@ import (
 	"prism/internal/model"
 )
 
+// maxPeriodDays bounds a "<n>d" period.
+//
+// time.Duration holds about 292 years in nanoseconds, so 106752 days - roughly
+// 292 years - is the first day count that overflows. A period past that bound is
+// refused here rather than wrapped into a negative length.
+const maxPeriodDays = 36500
+
 // DefaultPeriodCheckInterval is how often the rollover check runs.
 //
 // A period boundary is not an event that has to be caught within milliseconds:
@@ -352,15 +359,23 @@ func periodLength(period string) (time.Duration, bool) {
 
 	// A plain "<n>d" form, which is what the plan default uses.
 	trimmed := strings.TrimSuffix(normalized, "d")
-	days := 0
 	if trimmed == "" {
 		return 0, false
 	}
+	days := 0
 	for _, r := range trimmed {
 		if r < '0' || r > '9' {
 			return 0, false
 		}
 		days = days*10 + int(r-'0')
+		// The digit string is free text from the plans table, so it can name a
+		// window longer than a duration can hold. Checking as the number is
+		// built keeps the multiplication below inside range instead of letting
+		// it wrap to a negative length, which advancePeriod would then read as
+		// "this period never elapses".
+		if days > maxPeriodDays {
+			return 0, false
+		}
 	}
 	if days <= 0 {
 		return 0, false

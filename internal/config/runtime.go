@@ -136,10 +136,27 @@ func (b PurityBands) Normalized() PurityBands {
 	return b
 }
 
+// MaxRetentionDays bounds every retention window.
+//
+// The window is turned into a nanosecond offset and subtracted from the current
+// time, so it has to stay well inside the range a time.Duration can hold: 106752
+// days already overflows to a negative duration, which flips the cutoff into the
+// future and makes the next prune delete the whole table instead of the rows past
+// their window. 100 years is far beyond any window an operator would want and it
+// leaves the arithmetic several orders of magnitude of headroom.
+const MaxRetentionDays = 36500
+
 // RetentionDays returns a retention window, falling back to the shipped one.
+//
+// The upper bound is enforced here as well as at the API boundary: a value
+// persisted before the bound existed must not reach the arithmetic that deletes
+// rows.
 func RetentionDays(configured, shipped int) int {
 	if configured <= 0 {
 		return shipped
+	}
+	if configured > MaxRetentionDays {
+		return MaxRetentionDays
 	}
 	return configured
 }

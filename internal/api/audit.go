@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"prism/internal/config"
 	"prism/internal/model"
 )
 
@@ -357,6 +358,10 @@ func HandleListAuditLogs(store AuditLogStore) http.Handler {
 // The entry cap is not configurable and stays fixed: it bounds how large the
 // table may grow, which is a different promise from how long a row stays
 // readable. A non-positive window means the shipped default.
+//
+// The window is bounded before it becomes a duration. Days*24h overflows int64
+// at 106752, and a negative duration moves the cutoff into the future, where the
+// delete it drives removes every row instead of the expired ones.
 func PruneAuditLogsWithRetention(store AuditLogStore, retentionDays int) (int64, error) {
 	if store == nil {
 		return 0, nil
@@ -364,6 +369,9 @@ func PruneAuditLogsWithRetention(store AuditLogStore, retentionDays int) (int64,
 	days := retentionDays
 	if days <= 0 {
 		days = auditRetentionDays
+	}
+	if days > config.MaxRetentionDays {
+		days = config.MaxRetentionDays
 	}
 	olderThanNs := time.Now().Add(-time.Duration(days) * 24 * time.Hour).UnixNano()
 	return store.PruneAudit(olderThanNs, auditMaxEntries)

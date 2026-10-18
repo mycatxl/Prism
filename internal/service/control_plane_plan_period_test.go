@@ -44,6 +44,23 @@ func TestPlanPeriodRejectsWhatNoRolloverCanActOn(t *testing.T) {
 	}
 }
 
+// TestPlanPeriodRefusesADayCountPastTheCeiling covers the "<n>d" form at the
+// bound. The rollover multiplies the day count into a duration, so a value past
+// the ceiling overflows to a negative length there and the allowance would never
+// come back - the exact failure the period check exists to prevent.
+func TestPlanPeriodRefusesADayCountPastTheCeiling(t *testing.T) {
+	for _, in := range []string{"106752d", "200000d", "100000000d", "9223372036854775807d"} {
+		if validPlanPeriod(in) {
+			t.Fatalf("validPlanPeriod(%q) = true, want false: the length overflows a duration", in)
+		}
+	}
+	for _, in := range []string{"365d", "3650d", "36500d"} {
+		if !validPlanPeriod(in) {
+			t.Fatalf("validPlanPeriod(%q) = false, want true: it is inside the ceiling", in)
+		}
+	}
+}
+
 func TestValidatePlanRefusesAnUnknownPeriod(t *testing.T) {
 	plan := model.Plan{
 		ID: "p-1", Name: "p-1", DurationDays: 30, Period: "monthly", Status: planStatusActive,

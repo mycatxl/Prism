@@ -513,7 +513,7 @@ func validPlanPeriod(period string) bool {
 		return false
 	}
 	days, err := strconv.Atoi(digits)
-	return err == nil && days > 0
+	return err == nil && days > 0 && days <= maxExpiryDays
 }
 
 func defaultPlanStatus(status string) string {
