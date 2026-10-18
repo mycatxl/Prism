@@ -48,7 +48,13 @@ type systemEnvConfigResponse struct {
 	MetricLatencyBinOverflowMS                      int             `json:"metric_latency_bin_overflow_ms"`
 	ProxyTokenSet                                   bool            `json:"proxy_token_set"`
 	ProxyTokenWeak                                  bool            `json:"proxy_token_weak"`
-	AuthVersion                                     string          `json:"auth_version"`
+	// AuthVersion is the session cookie's schema version. It is not the
+	// sign-up policy; that one is `registration` below.
+	AuthVersion string `json:"auth_version"`
+
+	// Registration is the deployment's PRISM_REGISTRATION policy. The panel
+	// shows it as the value a cleared runtime override falls back to.
+	Registration string `json:"registration"`
 }
 
 // PanelEgressProvider supplies the panel server's own egress observation for
@@ -160,6 +166,7 @@ func systemEnvConfigSnapshot(envCfg *config.EnvConfig) *systemEnvConfigResponse 
 		MetricLatencyBinOverflowMS:                      envCfg.MetricLatencyBinOverflowMS,
 		ProxyTokenSet:                                   proxyTokenSet,
 		ProxyTokenWeak:                                  proxyTokenSet && config.IsWeakToken(envCfg.ProxyToken),
+		Registration:                                    string(envCfg.Registration),
 		AuthVersion:                                     string(envCfg.AuthVersion),
 	}
 }

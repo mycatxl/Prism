@@ -42,6 +42,8 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 
 空的 `PRISM_REGISTRATION` 按关闭处理——读不到策略时不开门。密码至少 12 位，用户名 3–64 字符。
 
+**面板可以覆盖这个部署策略。**管理台「系统设置 → 账户注册」写的是运行时配置 `registration_mode`（`system_config` 表，`PATCH /api/v1/system/config`）：非空且合法时优先于 `PRISM_REGISTRATION`，保存即生效、无需重启，注册接口和登录页的注册入口读的是同一份解析结果。留空表示不覆盖、回到环境变量——这是把决定权交还部署侧的唯一方式，所以面板上的「改回跟随部署环境」提交的是空字符串，而不是当前看到的值。旧部署升级后该字段为空，行为与升级前完全一致。
+
 邀请码在管理台的「邀请码管理」页创建：可绑定套餐、限制使用次数、设置有效期与备注。兑换是**一个条件 UPDATE**：状态、有效期、剩余次数三条一起判，因此两个并发请求不会各自拿到最后一次使用机会。若建号失败，事务回滚，次数不会被白吃。
 
 拒绝语义是刻意统一的：**未知、已撤销、已过期、已用尽四种情况返回同一句话**，否则这个端点就成了枚举有效邀请码的工具。
@@ -104,7 +106,7 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 | 套餐管理 | `/admin/plans` | `GET|POST|PATCH|DELETE /api/v1/admin/plans` |
 | 邀请码管理 | `/admin/invites` | `GET|POST|DELETE /api/v1/admin/invites` |
 | 用量统计 | `/admin/usage` | `GET /api/v1/admin/usage/*`（含按套餐分布）、`GET /api/v1/admin/alerts` |
-| 系统设置 | `/admin/settings` | `GET|PATCH /api/v1/system/config` |
+| 系统设置 | `/admin/settings` | `GET|PATCH /api/v1/system/config`（注册准入、保留周期、纯净度阈值）、`GET /api/v1/system/config/env`（部署侧注册策略） |
 
 租户自助面板（登录即可）：
 

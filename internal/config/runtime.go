@@ -56,6 +56,11 @@ type RuntimeConfig struct {
 	UsageRetentionDays int         `json:"usage_retention_days"`
 	PurityBands        PurityBands `json:"purity_bands"`
 
+	// RegistrationMode is the console's override of the deployment's
+	// self-service sign-up policy. Empty means "follow PRISM_REGISTRATION";
+	// a valid mode set here wins and takes effect on the next request.
+	RegistrationMode RegistrationMode `json:"registration_mode"`
+
 	// Usage alerts. These are the settings the alert scanner reads: how much of
 	// a plan's quota one account may spend inside a short window before the
 	// console reports it, over how many minutes that window is measured, and how
@@ -229,4 +234,18 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		AlertWindowMinutes:            DefaultAlertWindowMinutes,
 		AlertRetentionDays:            DefaultAlertRetentionDays,
 	}
+}
+
+// EffectiveRegistrationMode resolves the console override against the
+// deployment's environment policy. An empty or unreadable override inherits
+// the fallback, and an unreadable fallback fails closed to off: a deployment
+// that cannot name a policy must not advertise a sign-up door.
+func (c *RuntimeConfig) EffectiveRegistrationMode(fallback RegistrationMode) RegistrationMode {
+	if c != nil && c.RegistrationMode.Valid() {
+		return c.RegistrationMode
+	}
+	if fallback.Valid() {
+		return fallback
+	}
+	return RegistrationOff
 }

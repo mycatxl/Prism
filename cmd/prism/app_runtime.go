@@ -872,17 +872,19 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 			RequireAdminTOTP: func() bool { return a.envCfg.RequireAdminTOTP },
 			// The console reads the same policy as the register endpoint, so
 			// it offers the form exactly when that endpoint would accept it.
-			RegistrationMode: func() config.RegistrationMode { return a.envCfg.Registration },
+			// The panel may override the deployment's policy at runtime; the
+			// environment value is the fallback once that override is cleared.
+			RegistrationMode: a.effectiveRegistrationMode,
 			Logf:             log.Printf,
 		},
 		Handlers: &api.AuthHandlers{
 			Sessions: sessionService,
 			Accounts: cpService,
-			// Self-service sign-up: the policy comes from the environment,
-			// because who may create an account is a deployment decision rather
-			// than something the console should be able to open by itself.
+			// Self-service sign-up: the runtime config owns the override and
+			// the environment owns the fallback, so opening or closing the
+			// door is an operational decision the console can make live.
 			Registration:     cpService,
-			RegistrationMode: func() config.RegistrationMode { return a.envCfg.Registration },
+			RegistrationMode: a.effectiveRegistrationMode,
 			Logf:             log.Printf,
 		},
 	}
@@ -1033,6 +1035,24 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	a.endpointManager = endpointManager
 
 	return nil
+}
+
+// effectiveRegistrationMode answers who may sign up right now. The console's
+// stored override wins when it holds a mode the service understands; otherwise
+// the deployment's PRISM_REGISTRATION applies. Resolving through the runtime
+// snapshot is what makes a panel change take effect on the next request instead
+// of the next restart, and an unreadable deployment value fails closed to off.
+func (a *prismApp) effectiveRegistrationMode() config.RegistrationMode {
+	if a == nil {
+		return config.RegistrationOff
+	}
+	// A nil env config is a construction bug rather than a policy, and the
+	// answer has to be the same one a broken policy gets: closed.
+	fallback := config.RegistrationOff
+	if a.envCfg != nil {
+		fallback = a.envCfg.Registration
+	}
+	return runtimeConfigSnapshot(a.runtimeCfg).EffectiveRegistrationMode(fallback)
 }
 
 // usageSeedRetry bounds the startup seed: how many times the persisted

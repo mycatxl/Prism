@@ -133,3 +133,38 @@ func TestRuntimeConfigTenantSettingsFromOldRow(t *testing.T) {
 	assertEqual(t, "UsageRetentionDays", RetentionDays(cfg.UsageRetentionDays, DefaultUsageRetentionDays), DefaultUsageRetentionDays)
 	assertEqual(t, "PurityBands", cfg.PurityBands.Normalized(), DefaultPurityBands())
 }
+
+// TestEffectiveRegistrationMode covers the resolution the console and the
+// register endpoint share: an override the service understands wins, an empty
+// or unreadable override defers to the deployment, and an unreadable deployment
+// value fails closed. Failing closed is the point - a typo in PRISM_REGISTRATION
+// must never open self-service sign-up by accident.
+func TestEffectiveRegistrationMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		override RegistrationMode
+		fallback RegistrationMode
+		want     RegistrationMode
+	}{
+		{"no override follows env", "", RegistrationInvite, RegistrationInvite},
+		{"override wins", RegistrationOpen, RegistrationOff, RegistrationOpen},
+		{"override closes an open deployment", RegistrationOff, RegistrationOpen, RegistrationOff},
+		{"valid override outranks an unreadable env", RegistrationOpen, "banana", RegistrationOpen},
+		{"no override and no env", "", "", RegistrationOff},
+		{"unreadable env fails closed", RegistrationOpen, "banana", RegistrationOpen},
+		{"both unreadable fails closed", "banana", "banana", RegistrationOff},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &RuntimeConfig{RegistrationMode: tc.override}
+			assertEqual(t, "EffectiveRegistrationMode", cfg.EffectiveRegistrationMode(tc.fallback), tc.want)
+		})
+	}
+
+	// The stored config is read on every sign-up through a pointer that may not
+	// be populated yet during boot; a nil receiver must not decide the door is
+	// open.
+	var nilCfg *RuntimeConfig
+	assertEqual(t, "nil config", nilCfg.EffectiveRegistrationMode(RegistrationOpen), RegistrationOpen)
+	assertEqual(t, "nil config, no env", nilCfg.EffectiveRegistrationMode(""), RegistrationOff)
+}

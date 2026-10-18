@@ -408,6 +408,27 @@ func TestSystemEnvConfig_OK(t *testing.T) {
 	}
 }
 
+// TestSystemEnvConfigSnapshot_RegistrationPolicy keeps the deployment policy
+// visible to the console: the panel names the fallback a cleared runtime
+// override returns to, and it must not have to guess it.
+func TestSystemEnvConfigSnapshot_RegistrationPolicy(t *testing.T) {
+	snap := systemEnvConfigSnapshot(&config.EnvConfig{Registration: config.RegistrationInvite})
+	if snap == nil {
+		t.Fatal("snapshot is nil for a non-nil env config")
+	}
+	if snap.Registration != string(config.RegistrationInvite) {
+		t.Fatalf("registration: got %q, want %q", snap.Registration, config.RegistrationInvite)
+	}
+	// A cleared field means "no policy", and the console reads that as the off
+	// default rather than as an invitation to guess.
+	if snap := systemEnvConfigSnapshot(&config.EnvConfig{}); snap.Registration != "" {
+		t.Fatalf("empty registration: got %q, want empty", snap.Registration)
+	}
+	if snap := systemEnvConfigSnapshot(nil); snap != nil {
+		t.Fatalf("nil env config: got %+v, want nil", snap)
+	}
+}
+
 func TestSystemEnvConfig_RequiresAuth(t *testing.T) {
 	srv := newTestServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/config/env", nil)

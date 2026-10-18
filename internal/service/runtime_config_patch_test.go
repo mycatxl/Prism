@@ -455,3 +455,88 @@ func TestPatchRuntimeConfig_EgressTraceURLTakesEffect(t *testing.T) {
 		t.Fatalf("persisted egress_trace_url: got %q, want %q", persisted.EgressTraceURL, target)
 	}
 }
+
+func TestPatchRuntimeConfig_RegistrationModeOverrideAndClear(t *testing.T) {
+	h := newPatchHarness(t)
+
+	// A deployment that never set PRISM_REGISTRATION stores no override, so the
+	// console must start with the field empty rather than guessing a policy.
+	if got := h.runtimeCfg.Load().RegistrationMode; got != "" {
+		t.Fatalf("default registration_mode: got %q, want empty", got)
+	}
+
+	updated, err := h.cp.PatchRuntimeConfig([]byte(`{"registration_mode":"invite"}`))
+	if err != nil {
+		t.Fatalf("PatchRuntimeConfig(invite): %v", err)
+	}
+	if updated.RegistrationMode != config.RegistrationInvite {
+		t.Fatalf("patched registration_mode: got %q, want %q", updated.RegistrationMode, config.RegistrationInvite)
+	}
+	// The console reads the atomic pointer on the next sign-up, so the live
+	// value is what decides whether the door is open - not the persisted row.
+	if live := h.runtimeCfg.Load().RegistrationMode; live != config.RegistrationInvite {
+		t.Fatalf("runtime pointer registration_mode: got %q, want %q", live, config.RegistrationInvite)
+	}
+	persisted, _, err := h.engine.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	if persisted.RegistrationMode != config.RegistrationInvite {
+		t.Fatalf("persisted registration_mode: got %q, want %q", persisted.RegistrationMode, config.RegistrationInvite)
+	}
+
+	// An empty value means "follow the deployment again", which is the only way
+	// back to the environment policy without editing the database by hand.
+	cleared, err := h.cp.PatchRuntimeConfig([]byte(`{"registration_mode":""}`))
+	if err != nil {
+		t.Fatalf("PatchRuntimeConfig(clear): %v", err)
+	}
+	if cleared.RegistrationMode != "" {
+		t.Fatalf("cleared registration_mode: got %q, want empty", cleared.RegistrationMode)
+	}
+	if live := h.runtimeCfg.Load().RegistrationMode; live != "" {
+		t.Fatalf("runtime pointer after clear: got %q, want empty", live)
+	}
+	persisted, _, err = h.engine.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig after clear: %v", err)
+	}
+	if persisted.RegistrationMode != "" {
+		t.Fatalf("persisted after clear: got %q, want empty", persisted.RegistrationMode)
+	}
+}
+
+func TestPatchRuntimeConfig_InvalidRegistrationModeRejected(t *testing.T) {
+	h := newPatchHarness(t)
+
+	if _, err := h.cp.PatchRuntimeConfig([]byte(`{"registration_mode":"invite"}`)); err != nil {
+		t.Fatalf("seed PatchRuntimeConfig: %v", err)
+	}
+	original := cloneRuntimeConfig(h.runtimeCfg.Load())
+
+	// One unknown value must not take the retention settings in the same body
+	// down with it: the whole patch is rejected before anything is persisted.
+	_, err := h.cp.PatchRuntimeConfig([]byte(`{"registration_mode":"banana","usage_retention_days":90}`))
+	if err == nil {
+		t.Fatal("expected validation error for invalid registration_mode")
+	}
+	assertServiceErrorCode(t, err, "INVALID_ARGUMENT")
+
+	after := cloneRuntimeConfig(h.runtimeCfg.Load())
+	if !reflect.DeepEqual(after, original) {
+		t.Fatalf("in-memory config changed on invalid patch\nbefore=%+v\nafter=%+v", original, after)
+	}
+	persisted, ver, err := h.engine.GetSystemConfig()
+	if err != nil {
+		t.Fatalf("GetSystemConfig: %v", err)
+	}
+	if ver != 1 {
+		t.Fatalf("version changed on invalid patch: got %d, want 1", ver)
+	}
+	if persisted.RegistrationMode != config.RegistrationInvite {
+		t.Fatalf("persisted registration_mode changed: got %q, want %q", persisted.RegistrationMode, config.RegistrationInvite)
+	}
+	if persisted.UsageRetentionDays != original.UsageRetentionDays {
+		t.Fatalf("persisted usage_retention_days changed: got %d, want %d", persisted.UsageRetentionDays, original.UsageRetentionDays)
+	}
+}

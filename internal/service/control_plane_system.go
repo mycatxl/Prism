@@ -208,6 +208,7 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"alert_usage_ratio":                        true,
 	"alert_window_minutes":                     true,
 	"alert_retention_days":                     true,
+	"registration_mode":                        true,
 }
 
 var platformPatchAllowedFields = map[string]bool{
@@ -265,6 +266,7 @@ func parseRuntimeConfigPatch(patchJSON json.RawMessage, out *config.RuntimeConfi
 	if err := dec.Decode(out); err != nil {
 		return invalidArg("validation failed: " + err.Error())
 	}
+	out.RegistrationMode = config.RegistrationMode(strings.TrimSpace(string(out.RegistrationMode)))
 	return nil
 }
 
@@ -345,6 +347,9 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	// cleared field cannot silently stop the egress probe.
 	if _, verr := parseHTTPAbsoluteURL("egress_trace_url", strings.TrimSpace(cfg.EgressTraceURL)); verr != nil {
 		return verr
+	}
+	if mode := cfg.RegistrationMode; mode != "" && !mode.Valid() {
+		return invalidArg("registration_mode: must be off, invite, open, or empty")
 	}
 	if cfg.MaxConsecutiveFailures < 0 {
 		return invalidArg("max_consecutive_failures: must be non-negative")
