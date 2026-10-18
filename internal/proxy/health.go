@@ -5,6 +5,7 @@ import (
 
 	"prism/internal/node"
 	"prism/internal/routing"
+	"prism/internal/safego"
 )
 
 // HealthRecorder abstracts passive health feedback reporting.
@@ -22,9 +23,15 @@ func recordPassiveResultAsync(health HealthRecorder, route routing.RouteResult, 
 	if health == nil {
 		return
 	}
+	// Health recording is bookkeeping on the request path: a panic in it must
+	// not take the process down after the response has already been served.
 	if recorder, ok := health.(passiveHealthRecorder); ok {
-		go recorder.RecordPassiveResult(route.PlatformID, route.NodeHash, success)
+		safego.Go("a passive health result", func() {
+			recorder.RecordPassiveResult(route.PlatformID, route.NodeHash, success)
+		})
 		return
 	}
-	go health.RecordResult(route.NodeHash, success)
+	safego.Go("a health result", func() {
+		health.RecordResult(route.NodeHash, success)
+	})
 }

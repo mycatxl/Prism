@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"prism/internal/intel/store"
+
+	"prism/internal/safego"
 )
 
 // Provider queue timing of
@@ -99,15 +101,15 @@ func (p *providerPool) sync() {
 		}
 		p.running[spec.ProviderID] = struct{}{}
 		p.manager.wg.Add(1)
-		go func(id string) {
+		safego.Go("a provider worker", func() {
 			defer p.manager.wg.Done()
 			defer func() {
 				p.mu.Lock()
-				delete(p.running, id)
+				delete(p.running, spec.ProviderID)
 				p.mu.Unlock()
 			}()
-			p.workerLoop(id)
-		}(spec.ProviderID)
+			p.workerLoop(spec.ProviderID)
+		})
 	}
 }
 

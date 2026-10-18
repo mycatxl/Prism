@@ -16,6 +16,7 @@ import (
 	"prism/internal/outbound"
 	"prism/internal/platform"
 	"prism/internal/routing"
+	"prism/internal/safego"
 )
 
 // PlatformLookup provides read-only access to platforms.
@@ -448,7 +449,9 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		nodeHashRaw = route.NodeHash
 		lifecycle.setRouteResult(route)
 		if p.health != nil {
-			go p.health.RecordLatency(nodeHashRaw, domain, nil)
+			safego.Go("a reverse latency record", func() {
+				p.health.RecordLatency(nodeHashRaw, domain, nil)
+			})
 		}
 		transport = p.outboundHTTPTransport(routed)
 	}

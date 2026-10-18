@@ -122,14 +122,14 @@ func mergeErrorChannels(channels ...<-chan error) <-chan error {
 		if channel == nil {
 			continue
 		}
-		go func(ch <-chan error) {
-			for err := range ch {
+		safego.Go("an admin error relay", func() {
+			for err := range channel {
 				select {
 				case merged <- err:
 				default:
 				}
 			}
-		}(channel)
+		})
 	}
 	return merged
 }

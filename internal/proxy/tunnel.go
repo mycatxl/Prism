@@ -17,6 +17,7 @@ import (
 	"prism/internal/netutil"
 	"prism/internal/outbound"
 	"prism/internal/routing"
+	"prism/internal/safego"
 )
 
 type tunnelDeps struct {
@@ -115,7 +116,9 @@ func prepareConnectTunnel(
 	domain := netutil.ExtractDomain(target)
 	nodeHashRaw := routed.Route.NodeHash
 	if deps.health != nil {
-		go deps.health.RecordLatency(nodeHashRaw, domain, nil)
+		safego.Go("a tunnel latency record", func() {
+			deps.health.RecordLatency(nodeHashRaw, domain, nil)
+		})
 	}
 
 	rawConn, err := routed.Outbound.DialContext(ctx, "tcp", M.ParseSocksaddr(target))

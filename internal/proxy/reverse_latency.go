@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"prism/internal/node"
+	"prism/internal/safego"
 )
 
 type reverseLatencyReporter struct {
@@ -60,5 +61,7 @@ func (r *reverseLatencyReporter) reportSince(start time.Time) {
 	if latency <= 0 {
 		latency = time.Nanosecond
 	}
-	go r.health.RecordLatency(r.hash, r.domain, &latency)
+	safego.Go("a reverse latency record", func() {
+		r.health.RecordLatency(r.hash, r.domain, &latency)
+	})
 }

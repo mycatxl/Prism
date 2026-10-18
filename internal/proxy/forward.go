@@ -14,6 +14,7 @@ import (
 	"prism/internal/netutil"
 	"prism/internal/outbound"
 	"prism/internal/routing"
+	"prism/internal/safego"
 )
 
 // ForwardProxyConfig holds dependencies for the forward proxy.
@@ -353,7 +354,9 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		hasRoute = true
 		lifecycle.setRouteResult(route)
 		if p.health != nil {
-			go p.health.RecordLatency(route.NodeHash, netutil.ExtractDomain(r.Host), nil)
+			safego.Go("a forward latency record", func() {
+				p.health.RecordLatency(route.NodeHash, netutil.ExtractDomain(r.Host), nil)
+			})
 		}
 		transport = p.outboundHTTPTransport(routed)
 	}

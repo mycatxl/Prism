@@ -14,6 +14,7 @@ import (
 	"prism/internal/keys"
 	"prism/internal/outbound"
 	"prism/internal/routing"
+	"prism/internal/safego"
 )
 
 const (
@@ -298,7 +299,7 @@ func startSocks5HandshakePhase(baseCtx context.Context, conn net.Conn) *socks5Ha
 		stopCh: make(chan struct{}),
 		done:   make(chan struct{}),
 	}
-	go phase.run(baseCtx)
+	safego.Go("a socks5 handshake phase", func() { phase.run(baseCtx) })
 	return phase
 }
 

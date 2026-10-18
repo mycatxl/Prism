@@ -101,11 +101,11 @@ func (c *EphemeralCleaner) sweepWithHook(betweenScans func()) {
 	for _, item := range ephemeralSubs {
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(id string, sub *subscription.Subscription) {
+		safego.Go("an ephemeral subscription sweep", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			c.sweepOneSubscription(id, sub, now, betweenScans)
-		}(item.id, item.sub)
+			c.sweepOneSubscription(item.id, item.sub, now, betweenScans)
+		})
 	}
 	wg.Wait()
 }

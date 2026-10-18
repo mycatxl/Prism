@@ -195,7 +195,7 @@ func (s *SubscriptionScheduler) runUpdatesWithWorkerLimit(subs []*subscription.S
 
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(sub *subscription.Subscription) {
+		safego.Go("a subscription update", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			select {
@@ -204,7 +204,7 @@ func (s *SubscriptionScheduler) runUpdatesWithWorkerLimit(subs []*subscription.S
 			default:
 			}
 			s.UpdateSubscription(sub)
-		}(sub)
+		})
 	}
 	wg.Wait()
 }

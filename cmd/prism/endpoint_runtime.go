@@ -138,7 +138,7 @@ func (m *endpointRuntimeManager) ApplyEndpoint(endpoint model.Endpoint) error {
 		m.startRuntimeLocked(runtime)
 	}
 	if old != nil {
-		go stopManagedEndpoint(old, 5*time.Second)
+		safego.Go("an endpoint stop", func() { stopManagedEndpoint(old, 5*time.Second) })
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func (m *endpointRuntimeManager) RemoveEndpoint(id string) {
 	if runtime != nil {
 		// Release the port before returning so a following start can rebind it.
 		_ = runtime.listener.Close()
-		go stopManagedEndpoint(runtime, 5*time.Second)
+		safego.Go("an endpoint stop", func() { stopManagedEndpoint(runtime, 5*time.Second) })
 	}
 }
 
@@ -246,13 +246,13 @@ func (m *endpointRuntimeManager) Shutdown(ctx context.Context) error {
 	var wg sync.WaitGroup
 	for _, runtime := range runtimes {
 		wg.Add(1)
-		go func(runtime *managedEndpointRuntime) {
+		safego.Go("an endpoint shutdown", func() {
 			defer wg.Done()
 			if err := runtime.server.Shutdown(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				errCh <- err
 			}
 			_ = runtime.listener.Close()
-		}(runtime)
+		})
 	}
 	wg.Wait()
 	close(errCh)

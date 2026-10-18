@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"prism/internal/proxy"
+	"prism/internal/safego"
 )
 
 // RuntimeStatsProvider supplies node-pool/platform/lease/latency stats from
@@ -156,17 +157,20 @@ func NewManager(cfg ManagerConfig) *Manager {
 
 // Start launches background tickers for realtime sampling and bucket flushing.
 func (m *Manager) Start() {
+	// Each sampler is a long-lived loop: one that panics must end only that
+	// sampler, not the process and not the other three. The loops own their
+	// wg.Done themselves, so the wrapper must not add a second one.
 	m.wg.Add(1)
-	go m.throughputLoop()
+	safego.Go("the metrics throughput sampler", m.throughputLoop)
 
 	m.wg.Add(1)
-	go m.connectionsLoop()
+	safego.Go("the metrics connections sampler", m.connectionsLoop)
 
 	m.wg.Add(1)
-	go m.leasesLoop()
+	safego.Go("the metrics leases sampler", m.leasesLoop)
 
 	m.wg.Add(1)
-	go m.bucketLoop()
+	safego.Go("the metrics bucket flusher", m.bucketLoop)
 }
 
 // Stop signals background workers to stop, flushes any remaining bucket data, and waits.

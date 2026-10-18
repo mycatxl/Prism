@@ -97,11 +97,11 @@ func (c *LeaseCleaner) sweep() {
 
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(platID string, state *PlatformRoutingState) {
+		safego.Go("a lease sweep for one platform", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			c.sweepPlatformState(platID, state, nowNs)
-		}(item.platID, item.state)
+			c.sweepPlatformState(item.platID, item.state, nowNs)
+		})
 	}
 	wg.Wait()
 }

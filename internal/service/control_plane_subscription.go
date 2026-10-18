@@ -11,6 +11,7 @@ import (
 
 	"prism/internal/model"
 	"prism/internal/node"
+	"prism/internal/safego"
 	"prism/internal/state"
 	"prism/internal/subscription"
 	"prism/internal/topology"
@@ -508,7 +509,7 @@ func (s *ControlPlaneService) UpdateSubscription(id string, patchJSON json.RawMe
 		s.Scheduler.SetSubscriptionEnabled(sub, newEnabled)
 	}
 	if urlChanged || contentChanged {
-		go s.Scheduler.UpdateSubscription(sub)
+		safego.Go("a subscription update", func() { s.Scheduler.UpdateSubscription(sub) })
 	}
 
 	r := s.subToResponse(sub)

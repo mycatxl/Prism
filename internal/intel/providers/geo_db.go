@@ -42,6 +42,7 @@ import (
 	"github.com/oschwald/maxminddb-golang"
 
 	"prism/internal/netutil"
+	"prism/internal/safego"
 )
 
 // Vendor endpoints of the offline databases. The download base URLs
@@ -434,7 +435,8 @@ func (m *GeoManager) Start() {
 	}
 	m.startOnce.Do(func() {
 		m.wg.Add(1)
-		go m.loop()
+		// loop owns its wg.Done; the wrapper only adds the panic boundary.
+		safego.Go("the geoip database download loop", m.loop)
 	})
 }
 

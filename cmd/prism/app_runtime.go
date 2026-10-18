@@ -785,7 +785,9 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 				"period usage is counted from zero for now, which hands every user a second allowance "+
 				"until a re-seed succeeds - the process keeps trying every %s",
 			seedRetry.attempts, seedErr, usage.DefaultFlushInterval)
-		go reseedUsageUntilApplied(accountingCtx, a.usageCounters, engine, usage.DefaultFlushInterval, usage.DefaultLogf)
+		safego.Go("the usage re-seed", func() {
+			reseedUsageUntilApplied(accountingCtx, a.usageCounters, engine, usage.DefaultFlushInterval, usage.DefaultLogf)
+		})
 	} else if seeded > 0 {
 		usage.DefaultLogf("Usage accounting: restored period usage for %d subscription(s)", seeded)
 	}

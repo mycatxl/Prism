@@ -16,6 +16,7 @@ import (
 	"prism/internal/netutil"
 	"prism/internal/node"
 	"prism/internal/platform"
+	"prism/internal/safego"
 	"prism/internal/subscription"
 )
 
@@ -527,11 +528,11 @@ func (p *GlobalNodePool) notifyAllPlatformsDirty(hash node.Hash) {
 	for _, plat := range platforms {
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(plat *platform.Platform) {
+		safego.Go("a platform rebuild", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			plat.NotifyDirty(hash, getEntry, subLookup, p.geoLookup, p.qualityLookup)
-		}(plat)
+		})
 	}
 	wg.Wait()
 }
@@ -573,7 +574,7 @@ func (p *GlobalNodePool) RebuildAllPlatforms() {
 	for _, plat := range platforms {
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(plat *platform.Platform) {
+		safego.Go("a platform full rebuild", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
 			// instrumentQuality only reads the pool field under platMu.RLock and
@@ -581,7 +582,7 @@ func (p *GlobalNodePool) RebuildAllPlatforms() {
 			// platforms do not share mutable state.
 			p.instrumentQuality(plat)
 			plat.FullRebuild(poolRange, subLookup, p.geoLookup, p.qualityLookup)
-		}(plat)
+		})
 	}
 	wg.Wait()
 }

@@ -4,6 +4,8 @@ import (
 	"net"
 	"sync/atomic"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // tlsLatencyConn wraps a net.Conn to measure the round trip between the first
@@ -75,7 +77,7 @@ func (c *tlsLatencyConn) Read(b []byte) (int, error) {
 			if startNano > 0 {
 				latency := time.Duration(time.Now().UnixNano() - startNano)
 				if c.onLatency != nil {
-					go c.onLatency(latency)
+					safego.Go("a TLS latency callback", func() { c.onLatency(latency) })
 				}
 			}
 		}

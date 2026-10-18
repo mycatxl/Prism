@@ -4,6 +4,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // CacheFlushWorker periodically flushes dirty sets to cache.db.
@@ -57,7 +59,8 @@ func NewCacheFlushWorker(
 // Start launches the background flush goroutine.
 func (w *CacheFlushWorker) Start() {
 	w.wg.Add(1)
-	go w.run()
+	// run owns its wg.Done; the wrapper only adds the panic boundary.
+	safego.Go("the cache flush worker", w.run)
 }
 
 // Stop signals the worker to stop and performs a final flush.

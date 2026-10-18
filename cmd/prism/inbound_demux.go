@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"prism/internal/api"
+	"prism/internal/safego"
 )
 
 var errHalfCloseUnsupported = errors.New("half-close unsupported")
@@ -71,9 +72,9 @@ func (s *inboundDemuxServer) Serve(ln net.Listener) error {
 	s.baseCtx, s.cancelBase = context.WithCancel(context.Background())
 	s.mu.Unlock()
 
-	go func() {
+	safego.Go("the demux HTTP serve loop", func() {
 		_ = s.httpServer.Serve(s.httpListener)
-	}()
+	})
 	defer s.httpListener.Close()
 
 	var tempDelay time.Duration
@@ -95,7 +96,7 @@ func (s *inboundDemuxServer) Serve(ln net.Listener) error {
 			_ = conn.Close()
 			continue
 		}
-		go s.handleAcceptedConn(conn)
+		safego.Go("a demux connection", func() { s.handleAcceptedConn(conn) })
 	}
 }
 
@@ -173,10 +174,10 @@ func (s *inboundDemuxServer) Shutdown(ctx context.Context) error {
 	s.closeActiveConns()
 
 	waitDone := make(chan struct{})
-	go func() {
+	safego.Go("the demux worker wait", func() {
 		s.workerWG.Wait()
 		close(waitDone)
-	}()
+	})
 
 	select {
 	case <-waitDone:

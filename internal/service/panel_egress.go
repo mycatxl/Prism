@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"prism/internal/intel/egress"
+
+	"prism/internal/safego"
 )
 
 // ------------------------------------------------------------------
@@ -104,7 +106,7 @@ func (p *PanelEgress) Snapshot() PanelEgressSnapshot {
 	p.mu.Unlock()
 
 	if trigger {
-		go p.fetch()
+		safego.Go("a panel egress fetch", p.fetch)
 	}
 	return snapshot
 }

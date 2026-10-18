@@ -557,10 +557,10 @@ func (m *Manager) ensureWorkers(target int) {
 			continue
 		}
 		m.wg.Add(1)
-		go func(idx int) {
+		safego.Go("an intel job worker", func() {
 			defer m.wg.Done()
-			m.workerLoop(idx)
-		}(current)
+			m.workerLoop(current)
+		})
 	}
 }
 

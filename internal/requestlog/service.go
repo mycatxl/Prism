@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"prism/internal/proxy"
+	"prism/internal/safego"
 )
 
 // Service provides an async request log writer.
@@ -60,7 +61,8 @@ func (s *Service) Start() {
 		s.repo.setReadBarrier(s.FlushNow)
 	}
 	s.wg.Add(1)
-	go s.flushLoop()
+	// flushLoop owns its wg.Done; the wrapper only adds the panic boundary.
+	safego.Go("the request log flush loop", s.flushLoop)
 }
 
 // Stop signals the flush loop to stop, drains remaining entries, and returns.

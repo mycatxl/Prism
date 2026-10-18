@@ -124,11 +124,11 @@ func (r *ScheduledRotator) sweep() {
 
 		sem <- struct{}{}
 		wg.Add(1)
-		go func(platID string, interval time.Duration, stickyTTLNs int64, state *PlatformRoutingState) {
+		safego.Go("a platform lease rotation", func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			r.rotatePlatformLeases(platID, interval, stickyTTLNs, state, nowNs)
-		}(info.platID, info.interval, info.stickyTTLNs, info.state)
+			r.rotatePlatformLeases(info.platID, info.interval, info.stickyTTLNs, info.state, nowNs)
+		})
 	}
 	wg.Wait()
 }
