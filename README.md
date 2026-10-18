@@ -54,7 +54,6 @@ its `X-Forwarded-Proto: https`. Without that entry the request is plaintext HTTP
 from Prism's point of view, and the session cookie is issued only for a loopback
 plaintext request - a remote panel over a proxy that is not listed cannot log in.
 
-Container deployment uses `Dockerfile` and `docker-compose.yml.example`, which
 Container deployment uses `Dockerfile` and `docker-compose.yml.example`, which documents the volume layout, the container user and the health check. A tagged release publishes a multi-arch image to [`ghcr.io/mycatxl/prism`](https://github.com/mycatxl/Prism/pkgs/container/prism); `docker-compose.yml.example` pins the release it deploys.
 
 ## Configuration
@@ -65,8 +64,8 @@ when the line is absent. `./bin/prism check-config` prints the effective
 configuration with every secret masked, one row per setting, and the last column
 says where the value came from: `env` (process environment or `./.env`),
 `legacy` (the deprecated `RESIN_` spelling), `empty` (set but empty, so the
-default applies) or `default`. A test keeps that table and `.env.example` in
-step with the loader.
+default applies) or `default`. A test keeps that table and both example files
+in step with every variable a non-test file reads.
 
 Several switches are on by default: `PRISM_DENY_PRIVATE_NODES`,
 `PRISM_DIRECT_DENY_PRIVATE`, `PRISM_BLOCKED_DESTINATION_PORTS=25,465,587` and
