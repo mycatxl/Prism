@@ -113,7 +113,7 @@ func (s *ControlPlaneService) SelfOverview(userID string, nowNs int64) (SelfOver
 	}
 	overview.UsageDaily = usage
 
-	platforms, err := s.reachablePlatforms(userID, keys, plan)
+	platforms, err := s.reachablePlatforms(keys, plan)
 	if err != nil {
 		return SelfOverview{}, err
 	}
@@ -215,40 +215,39 @@ func (s *ControlPlaneService) ListUserAccessKeys(userID string) ([]AccessKeyView
 
 // reachablePlatforms resolves the platforms a user may connect through.
 //
-// Three sets meet here: the plan's platform list, the key's own narrowing, and -
-// when neither restricts anything - every platform the deployment knows. The
-// union of the keys is what the user can actually use, which is what the access
-// guide on the other side of this call is for.
-func (s *ControlPlaneService) reachablePlatforms(userID string, keys []model.AccessKey, plan model.Plan) ([]SelfPlatform, error) {
+// The answer is the union over the user's active keys of what each key allows,
+// which is what the access guide on the other side of this call is for. A key
+// allows its own platform list when it has one, otherwise the plan's list, and
+// an empty effective list allows every platform the deployment knows - the same
+// rule the data plane applies in keys.KeyState.AllowsPlatform. Taking the
+// intersection instead would report nothing for a user holding two keys that
+// cover different platforms, and skipping a key with no platform list would
+// hide every platform from a user whose plan has none either.
+func (s *ControlPlaneService) reachablePlatforms(keys []model.AccessKey, plan model.Plan) ([]SelfPlatform, error) {
 	names, err := s.platformNames()
 	if err != nil {
 		return nil, err
 	}
 
 	allowed := make(map[string]bool)
-	for _, id := range plan.Platforms {
-		allowed[id] = true
-	}
-	if len(allowed) == 0 {
-		for id := range names {
+	for _, key := range keys {
+		if key.Status != model.KeyStatusActive {
+			continue
+		}
+		effective := key.Platforms
+		if len(effective) == 0 {
+			effective = plan.Platforms
+		}
+		if len(effective) == 0 {
+			for id := range names {
+				allowed[id] = true
+			}
+			continue
+		}
+		for _, id := range effective {
 			allowed[id] = true
 		}
 	}
-
-	// A key narrower than the plan can only shrink the set, never grow it.
-	narrowed := false
-	for _, key := range keys {
-		if key.Status != model.KeyStatusActive || len(key.Platforms) == 0 {
-			continue
-		}
-		narrowed = true
-		for id := range allowed {
-			if !containsString(key.Platforms, id) {
-				delete(allowed, id)
-			}
-		}
-	}
-	_ = narrowed
 
 	result := make([]SelfPlatform, 0, len(allowed))
 	for id := range allowed {
@@ -261,13 +260,4 @@ func (s *ControlPlaneService) reachablePlatforms(userID string, keys []model.Acc
 		return result[i].PlatformID < result[j].PlatformID
 	})
 	return result, nil
-}
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
