@@ -197,7 +197,7 @@ export function OverviewPage() {
                 <EmptyState
                   title={t("暂无有效订阅")}
                   hint={t(
-                    "当前账号暂未分配套餐。可以自己购买，也可以联系运营人员分配。",
+                    "这里显示当前生效中的套餐。套餐到期后不会自行恢复，购买或由运营人员分配后才会重新生效。",
                   )}
                   action={
                     <Button variant="primary" asChild>

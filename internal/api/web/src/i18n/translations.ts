@@ -1507,7 +1507,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "自动续费": "Auto-renew",
   "到期前 7 天自动从余额扣 {{price}} USDT 续期一个周期，余额不足时不扣款。": "Seven days before expiry, {{price}} USDT is taken from the balance to extend one period. Nothing is charged when the balance is short.",
   "该套餐未定价，无法自动续费，请联系运营人员。": "This plan has no price, so it cannot renew itself. Contact the operator.",
-  "当前账号暂未分配套餐。可以自己购买，也可以联系运营人员分配。": "This account has no plan yet. You can buy one, or ask the operator to assign one.",
+  "这里显示当前生效中的套餐。套餐到期后不会自行恢复，购买或由运营人员分配后才会重新生效。": "This shows the plan in force right now. An expired plan does not come back on its own: buy one, or have an operator assign one.",
   "租约已释放": "Lease released",
   "充值暂不可用": "On-chain deposits are unavailable",
   "管理员尚未配置收款地址，请使用兑换码充值。": "No receiving address is configured. Use a redeem code instead.",
