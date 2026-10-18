@@ -1,10 +1,13 @@
 package node
 
 import (
+	"encoding/json"
 	"net/netip"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"prism/internal/testutil"
 )
@@ -401,5 +404,207 @@ func TestNodeEntry_GetRegion_UsesStoredThenGeoIPFallback(t *testing.T) {
 	}
 	if geoLookupCalled {
 		t.Fatal("geo lookup should not be called when stored region exists")
+	}
+}
+
+// Protocol names and display details are rendered into the UI and matched by
+// node filters, and both the engine type name and the transport name come from
+// untrusted subscription content. These tests pin the mapping and the bound.
+func TestNormalizeProtocolName(t *testing.T) {
+	cases := []struct {
+		name     string
+		engine   string
+		typeName string
+		want     string
+	}{
+		{"singbox type is lowercased", EngineSingbox, "Trojan", "trojan"},
+		{"singbox type is trimmed", EngineSingbox, "  vless  ", "vless"},
+		{"singbox ss is left alone", EngineSingbox, "ss", "ss"},
+		{"mihomo ss becomes shadowsocks", EngineMihomo, "ss", "shadowsocks"},
+		{"mihomo socks5 becomes socks", EngineMihomo, "socks5", "socks"},
+		{"mihomo keeps other names", EngineMihomo, "vmess", "vmess"},
+		{"mihomo mapping is applied after folding", EngineMihomo, "SS", "shadowsocks"},
+		{"empty stays empty", EngineSingbox, "", ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := normalizeProtocolName(testCase.engine, testCase.typeName)
+			if got != testCase.want {
+				t.Errorf("normalizeProtocolName(%q, %q) = %q, want %q",
+					testCase.engine, testCase.typeName, got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestNormalizeProtocolName_BoundsWithoutSplittingRunes pins that the bound
+// counts characters. It used to slice the byte string at 32, which for a name of
+// 33 CJK characters cut the eleventh character in half and produced invalid
+// UTF-8 in the value filters match against.
+func TestNormalizeProtocolName_BoundsWithoutSplittingRunes(t *testing.T) {
+	got := normalizeProtocolName(EngineSingbox, strings.Repeat("中", 33))
+	if !utf8.ValidString(got) {
+		t.Fatalf("result = %q, want valid UTF-8", got)
+	}
+	if runes := utf8.RuneCountInString(got); runes != 32 {
+		t.Errorf("rune count = %d, want 32", runes)
+	}
+	if want := strings.Repeat("中", 32); got != want {
+		t.Errorf("result = %q, want %q", got, want)
+	}
+}
+
+// TestNormalizeProtocolName_KeepsShortMultiByteNames is the other side of that
+// rule: 20 CJK characters are 60 bytes, so a byte bound would have truncated a
+// name that is within the limit.
+func TestNormalizeProtocolName_KeepsShortMultiByteNames(t *testing.T) {
+	name := strings.Repeat("中", 20)
+	if got := normalizeProtocolName(EngineSingbox, name); got != name {
+		t.Errorf("result = %q, want it unchanged", got)
+	}
+}
+
+func TestNormalizeProtocolTransport(t *testing.T) {
+	cases := map[string]string{
+		"":            "",
+		"tcp":         "",
+		"TCP":         "",
+		"  ":          "",
+		" splithttp ": "xhttp",
+		"ws":          "ws",
+		"grpc":        "grpc",
+		"HTTP":        "http",
+	}
+	for raw, want := range cases {
+		if got := normalizeProtocolTransport(raw); got != want {
+			t.Errorf("normalizeProtocolTransport(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestNormalizeProtocolTransport_BoundsUnknownNames pins the bound on the
+// default branch: an unknown transport name is copied into the node detail, so
+// it must not carry an unbounded string into storage and the UI.
+func TestNormalizeProtocolTransport_BoundsUnknownNames(t *testing.T) {
+	if got := normalizeProtocolTransport(strings.Repeat("x", 500)); len(got) != 32 {
+		t.Errorf("length = %d, want 32", len(got))
+	}
+}
+
+func TestProtocolDetailFor(t *testing.T) {
+	longType := strings.Repeat("中", 40)
+	cases := []struct {
+		name string
+		doc  NodeDoc
+		want string
+	}{
+		{
+			"plain outbound",
+			NodeDoc{Engine: EngineSingbox, Type: "Trojan", Main: json.RawMessage(`{"type":"trojan"}`)},
+			"trojan",
+		},
+		{
+			"transport detail",
+			NodeDoc{Engine: EngineSingbox, Type: "vless",
+				Main: json.RawMessage(`{"type":"vless","transport":{"type":"splithttp"}}`)},
+			"vless+xhttp",
+		},
+		{
+			"tcp transport adds nothing",
+			NodeDoc{Engine: EngineSingbox, Type: "vless",
+				Main: json.RawMessage(`{"type":"vless","transport":{"type":"tcp"}}`)},
+			"vless",
+		},
+		{
+			"reality detail",
+			NodeDoc{Engine: EngineSingbox, Type: "vless",
+				Main: json.RawMessage(`{"type":"vless","tls":{"reality":{"enabled":true}}}`)},
+			"vless+reality",
+		},
+		{
+			"transport and reality",
+			NodeDoc{Engine: EngineSingbox, Type: "vless",
+				Main: json.RawMessage(`{"type":"vless","transport":{"type":"ws"},"tls":{"reality":{"enabled":true}}}`)},
+			"vless+ws+reality",
+		},
+		{
+			"reality disabled",
+			NodeDoc{Engine: EngineSingbox, Type: "vless",
+				Main: json.RawMessage(`{"type":"vless","tls":{"reality":{"enabled":false}}}`)},
+			"vless",
+		},
+		{
+			"chain names its first dependency",
+			NodeDoc{Engine: EngineSingbox, Type: "trojan", Chain: true,
+				Main: json.RawMessage(`{"type":"trojan"}`),
+				Deps: []json.RawMessage{json.RawMessage(`{"type":"Socks"}`)}},
+			"trojan+socks",
+		},
+		{
+			"chain without a readable dependency",
+			NodeDoc{Engine: EngineSingbox, Type: "trojan", Chain: true,
+				Main: json.RawMessage(`{"type":"trojan"}`),
+				Deps: []json.RawMessage{json.RawMessage(`{"tag":"x"}`)}},
+			"trojan",
+		},
+		{
+			// The dependency name is untrusted too, so it is bounded like the
+			// main type instead of being copied whole.
+			"chain bounds its dependency name",
+			NodeDoc{Engine: EngineSingbox, Type: "trojan", Chain: true,
+				Main: json.RawMessage(`{"type":"trojan"}`),
+				Deps: []json.RawMessage{json.RawMessage(`{"type":"` + longType + `"}`)}},
+			"trojan+" + strings.Repeat("中", 32),
+		},
+		{
+			"mihomo base name",
+			NodeDoc{Engine: EngineMihomo, Type: "ss", Main: json.RawMessage(`{"type":"ss"}`)},
+			"shadowsocks",
+		},
+		{
+			"empty type has no detail",
+			NodeDoc{Engine: EngineSingbox, Type: "", Main: json.RawMessage(`{}`)},
+			"",
+		},
+		{
+			"main that is not an object",
+			NodeDoc{Engine: EngineSingbox, Type: "trojan", Main: json.RawMessage(`[]`)},
+			"trojan",
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := protocolDetailFor(testCase.doc); got != testCase.want {
+				t.Errorf("protocolDetailFor() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestBoundProtocolToken(t *testing.T) {
+	if got := boundProtocolToken(""); got != "" {
+		t.Errorf("boundProtocolToken(\"\") = %q, want \"\"", got)
+	}
+	short := strings.Repeat("a", 32)
+	if got := boundProtocolToken(short); got != short {
+		t.Errorf("a name of exactly the limit was changed: %q", got)
+	}
+	if got := boundProtocolToken(strings.Repeat("a", 33)); got != short {
+		t.Errorf("length = %d, want 32", len(got))
+	}
+}
+
+func TestGetLastEgressUpdate(t *testing.T) {
+	entry := &NodeEntry{}
+	if got := entry.GetLastEgressUpdate(); !got.IsZero() {
+		t.Errorf("GetLastEgressUpdate() = %v, want the zero time before any observation", got)
+	}
+	entry.LastEgressUpdate.Store(1_700_000_000_000_000_000)
+	got := entry.GetLastEgressUpdate()
+	if got.IsZero() {
+		t.Fatal("GetLastEgressUpdate() = zero time, want the stored instant")
+	}
+	if got.Location().String() != "UTC" {
+		t.Errorf("location = %v, want UTC", got.Location())
 	}
 }

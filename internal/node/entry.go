@@ -113,10 +113,7 @@ func NewNodeEntry(hash Hash, rawOptions json.RawMessage, createdAt time.Time, ma
 // normalizeProtocolName maps an engine type name onto the unified protocol
 // name used by filters and the UI.
 func normalizeProtocolName(engine string, typeName string) string {
-	name := strings.ToLower(strings.TrimSpace(typeName))
-	if len(name) > 32 {
-		name = name[:32]
-	}
+	name := boundProtocolToken(strings.ToLower(strings.TrimSpace(typeName)))
 	if engine != EngineMihomo {
 		return name
 	}
@@ -130,13 +127,25 @@ func normalizeProtocolName(engine string, typeName string) string {
 	}
 }
 
+// boundProtocolToken bounds a protocol name taken from untrusted content. The
+// bound counts characters rather than bytes, so a multi-byte name is never cut
+// in half into invalid UTF-8.
+func boundProtocolToken(value string) string {
+	const limit = 32
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
+}
+
 // protocolDetailFor renders the display detail of a node document.
 func protocolDetailFor(doc NodeDoc) string {
 	base := normalizeProtocolName(doc.Engine, doc.Type)
 	if doc.Chain {
 		if len(doc.Deps) > 0 {
 			if depType, err := TypeOfObject(doc.Deps[0]); err == nil && depType != "" {
-				return base + "+" + strings.ToLower(depType)
+				return base + "+" + normalizeProtocolName(doc.Engine, depType)
 			}
 		}
 		return base
@@ -172,13 +181,13 @@ func protocolDetailFor(doc NodeDoc) string {
 // normalizeProtocolTransport maps sing-box transport names onto the share-link
 // spelling used in UI details.
 func normalizeProtocolTransport(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
+	switch name := strings.ToLower(strings.TrimSpace(raw)); name {
 	case "", "tcp":
 		return ""
 	case "splithttp":
 		return "xhttp"
 	default:
-		return strings.ToLower(strings.TrimSpace(raw))
+		return boundProtocolToken(name)
 	}
 }
 
