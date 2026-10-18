@@ -456,5 +456,5 @@ func NewServerWithAddress(
 
 // Handler returns the underlying http.Handler for testing.
 func (s *Server) Handler() http.Handler {
-	return s.mux
+	return PanicRecoveryMiddleware(s.mux)
 }

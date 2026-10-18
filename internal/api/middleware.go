@@ -1,7 +1,9 @@
 package api
 
 import (
+	"log"
 	"net/http"
+	"runtime/debug"
 	"time"
 )
 
@@ -62,4 +64,60 @@ func hasRequestBody(r *http.Request) bool {
 		return false
 	}
 	return r.ContentLength != 0
+}
+
+// PanicRecoveryMiddleware turns a panicking handler into the same JSON error
+// every other failure produces.
+//
+// Without it net/http closes the connection and writes nothing, so the caller
+// gets a transport error where the API contract promises a body, and the stack
+// goes to the server's error log through the default handler - which is the one
+// path that does not go through the audit recorder.
+//
+// The stack is logged rather than returned: a panic message can carry a
+// credential or a SQL fragment, and the response is the one place a caller can
+// read it. The reply is the generic internal error, byte for byte the same as
+// any other 500, so a caller cannot tell a panic from a database failure.
+//
+// It is installed once, in Handler, so every route is covered - including the
+// ones added later.
+func PanicRecoveryMiddleware(next http.Handler) http.Handler {
+	if next == nil {
+		next = http.NotFoundHandler()
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			// A client that hung up makes the handler panic with
+			// http.ErrAbortHandler, which is the documented way to abort a
+			// response. Repanicking lets net/http do exactly that instead of
+			// writing a 500 into a connection nobody is reading.
+			if recovered == http.ErrAbortHandler {
+				panic(recovered)
+			}
+			log.Printf("api: recovered a panic serving %s %s: %v\n%s",
+				requestMethod(r), requestPath(r), recovered, debug.Stack())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal error")
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requestMethod and requestPath keep the recovery log readable when the panic
+// happens before the request was validated - r itself may be nil there.
+func requestMethod(r *http.Request) string {
+	if r == nil {
+		return "?"
+	}
+	return r.Method
+}
+
+func requestPath(r *http.Request) string {
+	if r == nil || r.URL == nil {
+		return "?"
+	}
+	return r.URL.Path
 }
