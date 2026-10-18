@@ -79,8 +79,11 @@ type PeriodReset struct {
 	mu sync.Mutex
 	// warned remembers, per subscription id, the period value that was already
 	// reported as unrecognized. A pass runs every minute, and a plan whose
-	// period is a typo would otherwise log a warning forever. It is only
-	// touched from RunOnce, which holds mu.
+	// period is a typo would otherwise log a warning forever.
+	//
+	// Each pass drops the entries of the subscriptions it no longer lists, so a
+	// subscription that was deleted does not stay for the life of the process.
+	// It is only touched from RunOnce, which holds mu.
 	warned map[string]string
 }
 
@@ -130,6 +133,20 @@ func (p *PeriodReset) RunOnce(nowNs int64) (PeriodResetResult, error) {
 	if err != nil {
 		return result, fmt.Errorf("list subscriptions: %w", err)
 	}
+
+	// The warning memory is per subscription, and subscriptions come and go, so
+	// a pass that finds one gone drops what it remembered about it.
+	listed := make(map[string]struct{}, len(subs))
+	for _, sub := range subs {
+		listed[sub.ID] = struct{}{}
+	}
+	defer func() {
+		for id := range p.warned {
+			if _, ok := listed[id]; !ok {
+				delete(p.warned, id)
+			}
+		}
+	}()
 
 	for _, sub := range subs {
 		if sub.Status != model.SubscriptionStatusActive {

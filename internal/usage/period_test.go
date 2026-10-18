@@ -607,3 +607,36 @@ func TestPeriodReset_PeriodNamesAreNormalized(t *testing.T) {
 		})
 	}
 }
+
+// The warning memory is per subscription, and subscriptions come and go. A
+// subscription that is deleted must not stay in the map for the life of the
+// process, which is what an accumulating map would do.
+func TestPeriodReset_ForgetsWarningsForSubscriptionsThatAreGone(t *testing.T) {
+	store := newFakePeriodStore()
+	store.plans["p-1"] = &model.Plan{ID: "p-1", Period: "monthly"}
+	now := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+	start := now.Add(-48 * time.Hour)
+
+	var subs []model.UserSubscription
+	for i := 0; i < 50; i++ {
+		subs = append(subs, activePeriodSub(fmt.Sprintf("s-%d", i), fmt.Sprintf("u-%d", i), "p-1", start.UnixNano()))
+	}
+	store.subs = subs
+
+	reset := &PeriodReset{Store: store, Logf: func(string, ...any) {}}
+	if _, err := reset.RunOnce(now.UnixNano()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := len(reset.warned); got != len(subs) {
+		t.Fatalf("the warning memory holds %d subscriptions, want %d", got, len(subs))
+	}
+
+	// Every subscription is gone, so the next pass has nothing to remember.
+	store.subs = nil
+	if _, err := reset.RunOnce(now.UnixNano()); err != nil {
+		t.Fatalf("RunOnce: %v", err)
+	}
+	if got := len(reset.warned); got != 0 {
+		t.Fatalf("the warning memory still holds %d subscriptions after all of them were removed", got)
+	}
+}
