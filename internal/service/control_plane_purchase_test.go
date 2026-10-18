@@ -254,14 +254,14 @@ func TestSelfPurchase_RefusesUnpricedAndDisabledPlans(t *testing.T) {
 	creditUser(t, cp, userID, 100_000_000, nowNs)
 
 	free := mustPlan(t, cp, pricedPlanInput("Granted", 0), nowNs)
-	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: free.ID}, nowNs); err == nil {
+	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: free.ID, RequestID: "free-1"}, nowNs); err == nil {
 		t.Fatal("an unpriced plan must not be purchasable")
 	}
 
 	disabled := pricedPlanInput("Off", 5_000_000)
 	disabled.Status = planStatusDisabled
 	off := mustPlan(t, cp, disabled, nowNs)
-	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: off.ID}, nowNs); err == nil {
+	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: off.ID, RequestID: "off-1"}, nowNs); err == nil {
 		t.Fatal("a disabled plan must not be purchasable")
 	}
 }
@@ -478,7 +478,7 @@ func TestSetAutoRenew_SurvivesApplyToExisting(t *testing.T) {
 	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
 	creditUser(t, cp, userID, 12_000_000, nowNs)
 
-	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "buy-1"}, nowNs)
 	if err != nil {
 		t.Fatalf("purchase: %v", err)
 	}
@@ -517,7 +517,7 @@ func TestRenewDueSubscriptions_ChargesOncePerPeriod(t *testing.T) {
 	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
 	creditUser(t, cp, userID, 12_000_000, nowNs)
 
-	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "buy-2"}, nowNs)
 	if err != nil {
 		t.Fatalf("purchase: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestRenewDueSubscriptions_ReportsShortOfFunds(t *testing.T) {
 	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
 	creditUser(t, cp, userID, 5_000_000, nowNs)
 
-	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "buy-3"}, nowNs)
 	if err != nil {
 		t.Fatalf("purchase: %v", err)
 	}
@@ -838,7 +838,7 @@ func TestRenewDueSubscriptions_DoesNotRebuyAPlanShorterThanTheLead(t *testing.T)
 	plan := mustPlan(t, cp, in, nowNs)
 	creditUser(t, cp, userID, 10_000_000, nowNs)
 
-	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs)
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "buy-4"}, nowNs)
 	if err != nil {
 		t.Fatalf("purchase: %v", err)
 	}
@@ -888,5 +888,45 @@ func TestRenewalWindowNs_CapsAtThePeriod(t *testing.T) {
 	}
 	if got := renewalWindowNs(renewalLeadTimeNs, 0); got != renewalLeadTimeNs {
 		t.Fatalf("a duration of zero keeps the lead time: got %d", got)
+	}
+}
+
+// A purchase without an idempotency key is refused before anything is written.
+// The repository accepts an empty key for the operator's path, where a caller
+// means every call to settle; a client's retry must not mean that, because the
+// purchase inserts a new subscription and expires the previous one, so a second
+// call collides with nothing and charges again.
+func TestSelfPurchase_RequiresAnIdempotencyKey(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 10_000_000, nowNs)
+
+	if _, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID}, nowNs); err == nil {
+		t.Fatalf("a purchase without a request_id has to be refused")
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 10_000_000 {
+		t.Fatalf("a refused purchase must not charge: %d, %v", balance, err)
+	}
+}
+
+// A renewal without one is refused for the same reason: the period index stops
+// a retry that overlaps, but a retry after the first committed reads the new
+// period and would be charged as a second renewal.
+func TestSelfRenew_RequiresAnIdempotencyKey(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 20_000_000, nowNs)
+
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "req-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	if _, err := cp.SelfRenew(userID, RenewInput{SubscriptionID: purchased.Subscription.ID}, nowNs); err == nil {
+		t.Fatalf("a renewal without a request_id has to be refused")
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 15_000_000 {
+		t.Fatalf("a refused renewal must not charge: %d, %v", balance, err)
 	}
 }

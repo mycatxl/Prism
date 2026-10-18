@@ -145,7 +145,14 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 	if planID == "" {
 		return PurchaseResultView{}, invalidArg("plan_id: required")
 	}
+	// The idempotency key is required here even though the repository accepts
+	// an empty one for the operator's path. A client that omits it turns every
+	// retry into a second charge: the purchase inserts a new subscription and
+	// expires the previous one, so nothing else in the transaction collides.
 	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return PurchaseResultView{}, invalidArg("request_id: required")
+	}
 	if len(requestID) > maxPurchaseRequestID {
 		return PurchaseResultView{}, invalidArg("request_id: too long")
 	}
@@ -255,7 +262,13 @@ func (s *ControlPlaneService) SelfRenew(userID string, in RenewInput, nowNs int6
 	if subscriptionID == "" {
 		return PurchaseResultView{}, invalidArg("subscription_id: required")
 	}
+	// Required for the same reason as SelfPurchase: the period index catches a
+	// retry that overlaps, but a retry after the first one committed reads a
+	// new period and would be charged as a second renewal.
 	requestID := strings.TrimSpace(in.RequestID)
+	if requestID == "" {
+		return PurchaseResultView{}, invalidArg("request_id: required")
+	}
 	if len(requestID) > maxPurchaseRequestID {
 		return PurchaseResultView{}, invalidArg("request_id: too long")
 	}
