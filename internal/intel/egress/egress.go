@@ -146,7 +146,7 @@ func (p *Probe) Run(ctx context.Context, hash node.Hash) (Result, error) {
 		MaxBodyBytes: maxTraceBytes,
 	})
 	if err != nil {
-		return Result{}, fmt.Errorf("%w: %v", ErrNoIPv4, err)
+		return Result{}, fmt.Errorf("%w: %w", ErrNoIPv4, err)
 	}
 	trace, err := ParseTrace(body)
 	if err != nil {

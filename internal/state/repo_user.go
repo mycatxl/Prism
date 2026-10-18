@@ -2,6 +2,7 @@ package state
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -60,7 +61,7 @@ func scanUser(row interface{ Scan(...any) error }) (model.User, error) {
 func (r *StateRepo) GetUser(id string) (*model.User, error) {
 	row := r.db.QueryRow("SELECT "+userColumns+" FROM users WHERE id = ?", id)
 	u, err := scanUser(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -74,7 +75,7 @@ func (r *StateRepo) GetUser(id string) (*model.User, error) {
 func (r *StateRepo) GetUserByName(username string) (*model.User, error) {
 	row := r.db.QueryRow("SELECT "+userColumns+" FROM users WHERE username = ?", username)
 	u, err := scanUser(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -225,7 +226,7 @@ func scanPlan(row interface{ Scan(...any) error }) (model.Plan, error) {
 func (r *StateRepo) GetPlan(id string) (*model.Plan, error) {
 	row := r.db.QueryRow("SELECT "+planColumns+" FROM plans WHERE id = ?", id)
 	p, err := scanPlan(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -595,7 +596,7 @@ func scanUserSubscription(row interface{ Scan(...any) error }) (model.UserSubscr
 func (r *StateRepo) GetUserSubscription(id string) (*model.UserSubscription, error) {
 	row := r.db.QueryRow("SELECT "+userSubscriptionColumns+" FROM user_subscriptions WHERE id = ?", id)
 	s, err := scanUserSubscription(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -612,7 +613,7 @@ func (r *StateRepo) GetActiveUserSubscription(userID string) (*model.UserSubscri
 		userID, model.SubscriptionStatusActive,
 	)
 	s, err := scanUserSubscription(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -806,7 +807,7 @@ func scanAccessKey(row interface{ Scan(...any) error }) (model.AccessKey, error)
 func (r *StateRepo) GetAccessKey(id string) (*model.AccessKey, error) {
 	row := r.db.QueryRow("SELECT "+accessKeyColumns+" FROM access_keys WHERE id = ?", id)
 	k, err := scanAccessKey(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -1101,7 +1102,7 @@ func (r *StateRepo) GetSession(idHash string) (*model.Session, error) {
 	`, idHash)
 	var s model.Session
 	err := row.Scan(&s.IDHash, &s.UserID, &s.CreatedAtNs, &s.ExpiresAtNs, &s.IP, &s.UA)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {

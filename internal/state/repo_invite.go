@@ -2,6 +2,7 @@ package state
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"prism/internal/model"
@@ -41,7 +42,7 @@ func (r *StateRepo) InsertInvite(inv model.Invite) error {
 func (r *StateRepo) GetInvite(id string) (*model.Invite, error) {
 	row := r.db.QueryRow("SELECT "+inviteColumns+" FROM invites WHERE id = ?", id)
 	inv, err := scanInvite(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -55,7 +56,7 @@ func (r *StateRepo) GetInvite(id string) (*model.Invite, error) {
 func (r *StateRepo) GetInviteByCode(code string) (*model.Invite, error) {
 	row := r.db.QueryRow("SELECT "+inviteColumns+" FROM invites WHERE code = ?", code)
 	inv, err := scanInvite(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
@@ -185,7 +186,7 @@ func (r *StateRepo) RedeemInviteAndInsertUser(code string, nowNs int64, u model.
 func (r *StateRepo) getInviteByCodeLocked(code string) (*model.Invite, error) {
 	row := r.db.QueryRow("SELECT "+inviteColumns+" FROM invites WHERE code = ?", code)
 	inv, err := scanInvite(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {

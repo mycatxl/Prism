@@ -47,7 +47,7 @@ func CompileRegexFilters(regexFilters []string) (node.TagFilter, error) {
 
 		c, err := regexp.Compile(pattern)
 		if err != nil {
-			return node.TagFilter{}, fmt.Errorf("regex_filters[%d]: invalid regex: %v", i, err)
+			return node.TagFilter{}, fmt.Errorf("regex_filters[%d]: invalid regex: %w", i, err)
 		}
 		switch kind {
 		case '*':

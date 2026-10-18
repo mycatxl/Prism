@@ -59,7 +59,7 @@ func (r *StateRepo) GetSystemConfig() (*config.RuntimeConfig, int, error) {
 	var configJSON string
 	var version int
 	if err := row.Scan(&configJSON, &version); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, 0, nil
 		}
 		return nil, 0, fmt.Errorf("scan system_config: %w", err)
@@ -250,7 +250,7 @@ func (r *StateRepo) GetPlatformName(id string) (string, error) {
 	row := r.db.QueryRow(`SELECT name FROM platforms WHERE id = ?`, id)
 	var name string
 	if err := row.Scan(&name); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", ErrNotFound
 		}
 		return "", err
@@ -279,7 +279,7 @@ func (r *StateRepo) GetPlatform(id string) (*model.Platform, error) {
 		&qualityPolicyJSON, &scheduledRotationEnabled, &p.ScheduledRotationIntervalNs,
 		&rotationAvoidPreviousIP, &ipTypesJSON, &purityBandsJSON,
 		&subscriptionFiltersJSON, &protocolsJSON, &p.UpdatedAtNs); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -544,7 +544,7 @@ func (r *StateRepo) GetEndpoint(id string) (*model.Endpoint, error) {
 		FROM endpoints WHERE id = ?
 	`, id)
 	endpoint, err := scanEndpoint(row.Scan)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {

@@ -335,7 +335,7 @@ func TestUpdateTenantUser_HoldsTheLockAcrossItsWrites(t *testing.T) {
 		go func() { competing <- cp.SetAccountStatus(other.ID, model.UserStatusDisabled, nowNs+1) }()
 		select {
 		case err := <-competing:
-			return "", fmt.Errorf("a competing account write finished while the patch was still running: %v", err)
+			return "", fmt.Errorf("a competing account write finished while the patch was still running: %w", err)
 		case <-time.After(200 * time.Millisecond):
 		}
 		return "$argon2id$patched", nil

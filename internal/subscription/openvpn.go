@@ -2,6 +2,7 @@ package subscription
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -97,7 +98,7 @@ func appendOpenVPNProfiles(profiles []openVPNBundleProfile, report *parseReport)
 				Detail: err.Error(),
 			}
 			var parseErr *node.OpenVPNParseError
-			if asOpenVPNParseError(err, &parseErr) {
+			if errors.As(err, &parseErr) {
 				skip.Reason = parseErr.Reason
 				skip.Detail = parseErr.Detail
 			}
@@ -122,15 +123,4 @@ func appendOpenVPNProfiles(profiles []openVPNBundleProfile, report *parseReport)
 		})
 	}
 	return nodes
-}
-
-// asOpenVPNParseError unwraps a *node.OpenVPNParseError without importing errors
-// into every call site.
-func asOpenVPNParseError(err error, target **node.OpenVPNParseError) bool {
-	parseErr, ok := err.(*node.OpenVPNParseError)
-	if !ok {
-		return false
-	}
-	*target = parseErr
-	return true
 }

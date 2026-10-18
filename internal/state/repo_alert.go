@@ -109,7 +109,7 @@ func (r *StateRepo) AcknowledgeAlert(id string, nowNs int64) (model.Alert, error
 
 	row := r.db.QueryRow("SELECT "+alertColumns+" FROM alerts WHERE id = ?", id)
 	a, err := scanAlert(row)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return model.Alert{}, ErrNotFound
 	}
 	if err != nil {
