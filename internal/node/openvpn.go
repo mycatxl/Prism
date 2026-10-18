@@ -221,6 +221,16 @@ var openVPNMappedDirectives = map[string]bool{
 	"route-nopull":          true,
 	"auth-user-pass":        true,
 	"peer-fingerprint":      true,
+	// OpenVPN's own client run flags. Prism always dials as a client, so these
+	// describe behaviour that is already implied and must not surface as
+	// dropped options in the parse report.
+	"client":       true,
+	"tls-client":   true,
+	"pull":         true,
+	"nobind":       true,
+	"persist-key":  true,
+	"persist-tun":  true,
+	"auth-nocache": true,
 }
 
 // openVPNMaterialDirectives are the directives that carry key material inline.
@@ -530,7 +540,10 @@ func (b *openVPNBuilder) applyMode(directives map[string][]openVPNDirective) err
 	}
 	// Fact: the endpoint refuses to build without a CA or a fingerprint, so
 	// the profile is validated here instead of failing later in the runtime.
-	fingerprints := openVPNFingerprints(directives)
+	fingerprints, err := openVPNFingerprints(directives)
+	if err != nil {
+		return err
+	}
 	if len(fingerprints) > 0 {
 		b.tls["peer_fingerprint"] = fingerprints
 	}
@@ -538,10 +551,10 @@ func (b *openVPNBuilder) applyMode(directives map[string][]openVPNDirective) err
 		return openVPNErrorf(ReasonInvalid,
 			"tls mode requires an inline <ca> block or a peer-fingerprint")
 	}
-	if err := b.applyControlWrap(directives); err != nil {
+	if err = b.applyControlWrap(directives); err != nil {
 		return err
 	}
-	if err := b.applyTLSNames(directives); err != nil {
+	if err = b.applyTLSNames(directives); err != nil {
 		return err
 	}
 	return b.applyTLSVersions(directives)
@@ -585,20 +598,45 @@ func (b *openVPNBuilder) applyStaticKeyMode(directives map[string][]openVPNDirec
 	return nil
 }
 
-func openVPNFingerprints(directives map[string][]openVPNDirective) []string {
+// openVPNFingerprints converts --peer-fingerprint values into the form the
+// runtime pins against: one lower-case SHA-256 digest per entry with the
+// OpenVPN colon separators removed. The runtime accepts an entry only when it
+// is a whole 64-character digest, so a digest split on its colons would never
+// match a peer certificate.
+func openVPNFingerprints(directives map[string][]openVPNDirective) ([]string, error) {
 	var fingerprints []string
 	for _, entry := range directives["peer-fingerprint"] {
 		for _, argument := range entry.args {
-			for _, part := range strings.FieldsFunc(argument, func(r rune) bool { return r == ':' || r == ' ' }) {
-				normalized := strings.ToLower(strings.TrimSpace(part))
+			for _, token := range strings.Fields(argument) {
+				normalized := strings.ToLower(strings.ReplaceAll(token, ":", ""))
 				if normalized == "" {
 					continue
+				}
+				if !openVPNIsSHA256Digest(normalized) {
+					return nil, openVPNErrorf(ReasonInvalid,
+						"peer-fingerprint %s: expected a SHA-256 fingerprint of 64 hexadecimal characters", token)
 				}
 				fingerprints = append(fingerprints, normalized)
 			}
 		}
 	}
-	return fingerprints
+	return fingerprints, nil
+}
+
+// openVPNIsSHA256Digest reports whether value is a bare 64-character
+// lower-case hexadecimal SHA-256 digest.
+func openVPNIsSHA256Digest(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, digit := range value {
+		isDecimal := digit >= '0' && digit <= '9'
+		isHexLetter := digit >= 'a' && digit <= 'f'
+		if !isDecimal && !isHexLetter {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *openVPNBuilder) applyControlWrap(directives map[string][]openVPNDirective) error {
