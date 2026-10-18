@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"prism/internal/intel/store"
+
+	"prism/internal/safego"
 )
 
 // NodeCensus enumerates the node hashes the pool still knows about. The
@@ -217,10 +219,10 @@ func (m *Manager) Start() {
 	}
 
 	m.wg.Add(1)
-	go func() {
+	safego.Go("the intel job schedule loop", func() {
 		defer m.wg.Done()
 		m.scheduleLoop()
-	}()
+	})
 }
 
 // Stop shuts the pool down and waits for in-flight items to finish.

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"prism/internal/platform"
+	"prism/internal/safego"
 	"prism/internal/scanloop"
 )
 
@@ -39,10 +40,10 @@ func newScheduledRotatorWithIntervals(router *Router, pool PoolAccessor, minInte
 
 func (r *ScheduledRotator) Start() {
 	r.wg.Add(1)
-	go func() {
+	safego.Go("the scheduled rotator", func() {
 		defer r.wg.Done()
 		scanloop.Run(r.stopCh, r.minInterval, r.jitterRange, r.sweep)
-	}()
+	})
 }
 
 func (r *ScheduledRotator) Stop() {

@@ -33,6 +33,7 @@ import (
 	"prism/internal/proxy"
 	"prism/internal/requestlog"
 	"prism/internal/routing"
+	"prism/internal/safego"
 	"prism/internal/service"
 	"prism/internal/state"
 	"prism/internal/tron"
@@ -1428,10 +1429,13 @@ func shutdownBlocking(name string, stop func()) {
 		return
 	}
 	done := make(chan struct{})
-	go func() {
+	// A component that panics while shutting down must not take the process
+	// down before the remaining components are stopped: the timeout below is
+	// what keeps the sequence moving, and a panic here would skip it.
+	safego.Go("the "+name+" shutdown", func() {
 		defer close(done)
 		stop()
-	}()
+	})
 	select {
 	case <-done:
 	case <-time.After(shutdownStepTimeout):

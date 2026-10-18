@@ -3,6 +3,8 @@ package service
 import (
 	"sync"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // UsageAlertScanInterval is how often a deployment looks for a subscription that
@@ -45,14 +47,18 @@ func StartUsageAlertScanner(cp *ControlPlaneService, interval time.Duration, log
 			case <-stop:
 				return
 			case <-ticker.C:
-				created, err := cp.ScanUsageAlerts(time.Now().UnixNano())
-				if err != nil {
-					logf("usage alert scan failed: %v", err)
-					continue
-				}
-				if created > 0 {
-					logf("usage alerts: %d new alert(s)", created)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick retries, exactly as it does after a failed pass.
+				safego.Run("the usage alert scan", func() {
+					created, err := cp.ScanUsageAlerts(time.Now().UnixNano())
+					if err != nil {
+						logf("usage alert scan failed: %v", err)
+						return
+					}
+					if created > 0 {
+						logf("usage alerts: %d new alert(s)", created)
+					}
+				})
 			}
 		}
 	}()

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"prism/internal/model"
+	"prism/internal/safego"
 	"prism/internal/state"
 )
 
@@ -331,16 +332,20 @@ func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf f
 			case <-stop:
 				return
 			case <-ticker.C:
-				nowNs := time.Now().UnixNano()
-				if _, err := cp.SweepDeposits(nowNs); err != nil {
-					logf("[service] sweep deposits: %v", err)
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), interval)
-				_, err := cp.ScanDeposits(ctx, nowNs)
-				cancel()
-				if err != nil {
-					logf("[service] scan deposits: %v", err)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick retries, exactly as it does after a failed pass.
+				safego.Run("the deposit scan", func() {
+					nowNs := time.Now().UnixNano()
+					if _, err := cp.SweepDeposits(nowNs); err != nil {
+						logf("[service] sweep deposits: %v", err)
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), interval)
+					_, err := cp.ScanDeposits(ctx, nowNs)
+					cancel()
+					if err != nil {
+						logf("[service] scan deposits: %v", err)
+					}
+				})
 			}
 		}
 	}()

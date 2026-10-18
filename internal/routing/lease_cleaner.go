@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
+	"prism/internal/safego"
 	"prism/internal/scanloop"
 )
 
@@ -37,10 +38,10 @@ func newLeaseCleanerWithIntervals(router *Router, minInterval, jitterRange time.
 
 func (c *LeaseCleaner) Start() {
 	c.wg.Add(1)
-	go func() {
+	safego.Go("the lease cleaner", func() {
 		defer c.wg.Done()
 		scanloop.Run(c.stopCh, c.minInterval, c.jitterRange, c.sweep)
-	}()
+	})
 }
 
 func (c *LeaseCleaner) Stop() {

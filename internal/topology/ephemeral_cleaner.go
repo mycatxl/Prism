@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"prism/internal/node"
+	"prism/internal/safego"
 	"prism/internal/scanloop"
 	"prism/internal/subscription"
 )
@@ -43,10 +44,10 @@ func (c *EphemeralCleaner) SetOnNodeEvicted(fn func(subID string, hash node.Hash
 // Start launches the background cleaner goroutine.
 func (c *EphemeralCleaner) Start() {
 	c.wg.Add(1)
-	go func() {
+	safego.Go("the ephemeral cleaner", func() {
 		defer c.wg.Done()
 		scanloop.Run(c.stopCh, scanloop.DefaultMinInterval, scanloop.DefaultJitterRange, c.sweep)
-	}()
+	})
 }
 
 // Stop signals the cleaner to stop and waits for it to finish. It is

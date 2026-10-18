@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"prism/internal/api"
+	"prism/internal/safego"
 )
 
 // adminListener is the optional independent management listener configured
@@ -48,13 +49,16 @@ func startAdminListener(addr string, apiHandler http.Handler) (*adminListener, e
 		errCh:  make(chan error, 1),
 	}
 	log.Printf("Prism admin listener starting on %s (management plane only: /ui, /api, /healthz)", listener.Addr().String())
-	go func() {
+	// The management listener is the whole point of this listener: a panic in
+	// its serve loop has to reach the caller as a fatal error rather than
+	// vanish with the goroutine.
+	safego.Go("the admin listener serve loop", func() {
 		if err := l.server.Serve(listener); err != nil &&
 			!errors.Is(err, http.ErrServerClosed) &&
 			!errors.Is(err, net.ErrClosed) {
 			l.errCh <- fmt.Errorf("admin listener: %w", err)
 		}
-	}()
+	})
 	return l, nil
 }
 

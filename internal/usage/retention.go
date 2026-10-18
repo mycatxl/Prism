@@ -16,6 +16,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // Retention windows and the scheduling defaults.
@@ -174,18 +176,22 @@ func (r *Retention) Start() func() {
 		for {
 			select {
 			case <-ticker.C:
-				result, err := r.RunOnce(time.Now().UnixNano())
-				if err != nil {
-					// A pass that fails is retried on the next tick: the
-					// summary is one transaction, so a failure left the hourly
-					// rows where they were with nothing folded from them.
-					r.logf("usage: retention pass failed: %v", err)
-					continue
-				}
-				if result.Summarized > 0 || result.HourlyRemoved > 0 || result.DailyRemoved > 0 {
-					r.logf("usage: summarized %d hourly rows, removed %d hourly and %d daily rows",
-						result.Summarized, result.HourlyRemoved, result.DailyRemoved)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick retries, exactly as it does after a failed pass.
+				safego.Run("a usage retention pass", func() {
+					result, err := r.RunOnce(time.Now().UnixNano())
+					if err != nil {
+						// A pass that fails is retried on the next tick: the
+						// summary is one transaction, so a failure left the
+						// hourly rows where they were with nothing folded.
+						r.logf("usage: retention pass failed: %v", err)
+						return
+					}
+					if result.Summarized > 0 || result.HourlyRemoved > 0 || result.DailyRemoved > 0 {
+						r.logf("usage: summarized %d hourly rows, removed %d hourly and %d daily rows",
+							result.Summarized, result.HourlyRemoved, result.DailyRemoved)
+					}
+				})
 			case <-done:
 				return
 			}

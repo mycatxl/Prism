@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"prism/internal/intel/jobs"
+
+	"prism/internal/safego"
 )
 
 // SubscriptionAutoIntel is the per-subscription input of the automatic
@@ -167,10 +169,10 @@ func (q *autoEnqueueQueue) start() {
 		return
 	}
 	q.wg.Add(1)
-	go func() {
+	safego.Go("the intel auto-enqueue loop", func() {
 		defer q.wg.Done()
 		q.loop()
-	}()
+	})
 }
 
 func (q *autoEnqueueQueue) stop() {

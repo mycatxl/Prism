@@ -17,6 +17,8 @@ import (
 	"github.com/sagernet/sing/service"
 
 	mDNS "github.com/miekg/dns"
+
+	"prism/internal/safego"
 )
 
 const (
@@ -355,10 +357,12 @@ func (t *secureDNSFailoverTransport) Exchange(ctx context.Context, message *mDNS
 }
 
 func (t *secureDNSFailoverTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
-	go func() {
+	// The caller is a DNS exchange with a callback; a panic in one upstream
+	// exchange must reach the callback as a failure, not kill the resolver.
+	safego.Go("a secure DNS exchange", func() {
 		response, err := t.Exchange(ctx, message)
 		callback(response, err)
-	}()
+	})
 }
 
 func (t *secureDNSFailoverTransport) Reset() {

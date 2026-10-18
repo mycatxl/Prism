@@ -15,6 +15,7 @@ import (
 	"github.com/oschwald/maxminddb-golang"
 
 	"prism/internal/quality"
+	"prism/internal/safego"
 )
 
 // ---------------------------------------------------------------------------
@@ -600,11 +601,11 @@ func (r *TorRegistry) maybeRefresh() {
 	r.refreshing = true
 	r.nextRefresh = now.Add(torRefreshMinGap)
 	r.mu.Unlock()
-	go func() {
+	safego.Go("a tor registry refresh", func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		_ = r.Refresh(ctx)
-	}()
+	})
 }
 
 // TorProviderOptions configures the torproject offline provider.

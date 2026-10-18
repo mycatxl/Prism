@@ -16,6 +16,7 @@ import (
 	"github.com/puzpuzpuz/xsync/v4"
 	"prism/internal/netutil"
 	"prism/internal/node"
+	"prism/internal/safego"
 	"prism/internal/scanloop"
 	"prism/internal/topology"
 )
@@ -320,10 +321,12 @@ func (m *ProbeManager) Start() {
 
 	for i := 0; i < m.workerCount; i++ {
 		m.wg.Add(1)
-		go func() {
+		// A panicking task must end that task, not the worker and not the
+		// process: the queue behind it still has work.
+		safego.Go("a probe worker", func() {
 			defer m.wg.Done()
 			m.runProbeWorker()
-		}()
+		})
 	}
 }
 

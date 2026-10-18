@@ -5,6 +5,8 @@ package scanloop
 import (
 	"math/rand/v2"
 	"time"
+
+	"prism/internal/safego"
 )
 
 const (
@@ -39,6 +41,7 @@ func Run(stopCh <-chan struct{}, minInterval, jitterRange time.Duration, fn func
 			return
 		case <-timer.C:
 		}
-		fn()
+		// One pass at a time: a panic inside fn ends that pass, not the loop.
+		safego.Run("a periodic scan", fn)
 	}
 }

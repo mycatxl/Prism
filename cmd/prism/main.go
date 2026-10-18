@@ -26,6 +26,7 @@ import (
 	"prism/internal/proxy"
 	"prism/internal/requestlog"
 	"prism/internal/routing"
+	"prism/internal/safego"
 	"prism/internal/state"
 	"prism/internal/subscription"
 	"prism/internal/topology"
@@ -876,12 +877,14 @@ func warmupBootstrapOutbounds(
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
-		go func() {
+		// One node that cannot be built must not take the whole startup
+		// down: the remaining nodes still have to come up.
+		safego.Go("an outbound init worker", func() {
 			defer wg.Done()
 			for h := range hashCh {
 				outboundMgr.EnsureNodeOutbound(h)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	log.Printf("Parallel outbound init complete (%d workers)", workers)

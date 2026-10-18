@@ -17,6 +17,7 @@ import (
 
 	"prism/internal/config"
 	"prism/internal/model"
+	"prism/internal/safego"
 )
 
 // Audit logging.
@@ -411,14 +412,18 @@ func StartAuditPrunerWithRetention(store AuditLogStore, interval time.Duration, 
 		for {
 			select {
 			case <-ticker.C:
-				removed, err := PruneAuditLogsWithRetention(store, readRetention())
-				if err != nil {
-					log.Printf("audit: retention prune failed: %v", err)
-					continue
-				}
-				if removed > 0 {
-					log.Printf("audit: retention prune removed %d entries", removed)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick retries, exactly as it does after a failed pass.
+				safego.Run("an audit retention prune", func() {
+					removed, err := PruneAuditLogsWithRetention(store, readRetention())
+					if err != nil {
+						log.Printf("audit: retention prune failed: %v", err)
+						return
+					}
+					if removed > 0 {
+						log.Printf("audit: retention prune removed %d entries", removed)
+					}
+				})
 			case <-done:
 				return
 			}

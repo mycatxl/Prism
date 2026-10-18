@@ -14,6 +14,7 @@ import (
 	"prism/internal/api"
 	"prism/internal/model"
 	"prism/internal/proxy"
+	"prism/internal/safego"
 	"prism/internal/service"
 )
 
@@ -200,13 +201,15 @@ func (m *endpointRuntimeManager) startRuntimeLocked(runtime *managedEndpointRunt
 	endpoint := runtime.current()
 	m.statuses[endpoint.ID] = service.EndpointRuntimeStatus{State: "active"}
 	log.Printf("Endpoint %s starting on %s", endpoint.ID, formatListenAddress(m.listenAddress, endpoint.Port))
-	go func() {
+	// An endpoint's serve loop is its own: a panic inside one endpoint must
+	// not take the other endpoints, or the management plane, down with it.
+	safego.Go("an endpoint serve loop", func() {
 		err := runtime.server.Serve(runtime.listener)
 		if err == nil || errors.Is(err, http.ErrServerClosed) || errors.Is(err, net.ErrClosed) {
 			return
 		}
 		m.handleRuntimeError(runtime, err)
-	}()
+	})
 }
 
 func (m *endpointRuntimeManager) handleRuntimeError(runtime *managedEndpointRuntime, err error) {

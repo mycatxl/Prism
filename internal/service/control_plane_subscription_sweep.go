@@ -3,6 +3,8 @@ package service
 import (
 	"sync"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // SubscriptionSweepInterval is how often a deployment closes out the
@@ -119,14 +121,18 @@ func StartSubscriptionExpirySweeper(cp *ControlPlaneService, interval time.Durat
 			case <-stop:
 				return
 			case <-ticker.C:
-				expired, err := cp.SweepExpiredSubscriptions(time.Now().UnixNano())
-				if err != nil {
-					logf("subscription expiry sweep failed: %v", err)
-					continue
-				}
-				if expired > 0 {
-					logf("subscriptions expired: %d closed out", expired)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick retries, exactly as it does after a failed pass.
+				safego.Run("the subscription expiry sweep", func() {
+					expired, err := cp.SweepExpiredSubscriptions(time.Now().UnixNano())
+					if err != nil {
+						logf("subscription expiry sweep failed: %v", err)
+						return
+					}
+					if expired > 0 {
+						logf("subscriptions expired: %d closed out", expired)
+					}
+				})
 			}
 		}
 	}()

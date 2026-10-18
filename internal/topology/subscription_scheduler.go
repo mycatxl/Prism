@@ -11,6 +11,7 @@ import (
 
 	"prism/internal/netutil"
 	"prism/internal/node"
+	"prism/internal/safego"
 	"prism/internal/scanloop"
 	"prism/internal/subscription"
 )
@@ -136,10 +137,10 @@ func (s *SubscriptionScheduler) ForceRefreshAll() {
 // The goroutine is tracked by scheduler waitgroup so Stop() waits for exit.
 func (s *SubscriptionScheduler) ForceRefreshAllAsync() {
 	s.wg.Add(1)
-	go func() {
+	safego.Go("a subscription force refresh", func() {
 		defer s.wg.Done()
 		s.ForceRefreshAll()
-	}()
+	})
 }
 
 func (s *SubscriptionScheduler) tick() {

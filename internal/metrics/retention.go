@@ -5,6 +5,8 @@ import (
 	"log"
 	"sync"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // RetentionPolicy bounds the persisted metrics history.
@@ -149,7 +151,7 @@ func StartRetentionPruner(repo *MetricsRepo, policy RetentionPolicy, interval ti
 	done := make(chan struct{})
 	var once sync.Once
 
-	prune := func() {
+	pruneOnce := func() {
 		removed, err := repo.PruneExpired(policy, time.Now().Unix(), RetentionPruneBatch)
 		if err != nil {
 			log.Printf("[metrics] retention prune failed: %v", err)
@@ -159,6 +161,10 @@ func StartRetentionPruner(repo *MetricsRepo, policy RetentionPolicy, interval ti
 			log.Printf("[metrics] retention prune removed %d bucket rows", removed)
 		}
 	}
+
+	// One pass at a time: a panic inside a pass ends that pass, not the
+	// prune loop and not the process.
+	prune := func() { safego.Run("a metrics retention prune", pruneOnce) }
 
 	go func() {
 		prune()

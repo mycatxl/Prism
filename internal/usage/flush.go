@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"prism/internal/model"
+	"prism/internal/safego"
 )
 
 // Flush scheduling defaults.
@@ -329,12 +330,14 @@ func (f *Flusher) Start(ctx context.Context) {
 // process open.
 func (f *Flusher) flushOnShutdown() {
 	done := make(chan struct{})
-	go func() {
+	// The final flush is the last chance to record the last window: a panic
+	// in it must still close done so the caller's timeout below applies.
+	safego.Go("the final usage flush", func() {
 		defer close(done)
 		if _, err := f.FlushOnce(0); err != nil {
 			f.logf("final usage flush failed: %v", err)
 		}
-	}()
+	})
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):

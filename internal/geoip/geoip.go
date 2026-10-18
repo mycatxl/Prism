@@ -21,6 +21,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"prism/internal/netutil"
+	"prism/internal/safego"
 )
 
 // GeoReader abstracts the GeoIP database reader (e.g., maxminddb reader).
@@ -185,20 +186,20 @@ func (s *Service) Start() error {
 		// trigger an immediate background update.
 		if s.isStale(info.ModTime()) {
 			log.Println("[geoip] database is stale, triggering background update")
-			go func() {
+			safego.Go("a geoip startup update", func() {
 				if err := s.UpdateNow(); err != nil {
 					log.Printf("[geoip] startup update failed: %v", err)
 				}
-			}()
+			})
 		}
 	} else if os.IsNotExist(err) {
 		// No local database at all — download immediately in background.
 		log.Println("[geoip] no local database found, triggering background download")
-		go func() {
+		safego.Go("a geoip initial download", func() {
 			if err := s.UpdateNow(); err != nil {
 				log.Printf("[geoip] initial download failed: %v", err)
 			}
-		}()
+		})
 	} else {
 		return fmt.Errorf("geoip: stat db %s: %w", dbPath, err)
 	}

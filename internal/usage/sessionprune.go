@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"prism/internal/safego"
 )
 
 // DefaultSessionPruneInterval is how often expired console sessions are swept.
@@ -83,16 +85,20 @@ func (p *SessionPruner) Start() func() {
 		for {
 			select {
 			case <-ticker.C:
-				removed, err := p.RunOnce(time.Now().UnixNano())
-				if err != nil {
-					// A failed pass needs no retry of its own: the rows are
-					// still there, and the next tick tries again.
-					p.logf("usage: session prune failed: %v", err)
-					continue
-				}
-				if removed > 0 {
-					p.logf("usage: pruned %d expired session(s)", removed)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick tries again, exactly as it does after a failed pass.
+				safego.Run("the usage session prune", func() {
+					removed, err := p.RunOnce(time.Now().UnixNano())
+					if err != nil {
+						// A failed pass needs no retry of its own: the rows
+						// are still there, and the next tick tries again.
+						p.logf("usage: session prune failed: %v", err)
+						return
+					}
+					if removed > 0 {
+						p.logf("usage: pruned %d expired session(s)", removed)
+					}
+				})
 			case <-done:
 				return
 			}

@@ -24,6 +24,8 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"prism/internal/intel/jobs"
+
+	"prism/internal/safego"
 )
 
 const (
@@ -125,10 +127,10 @@ func (r *refreshScheduler) start() {
 		return
 	}
 	r.wg.Add(1)
-	go func() {
+	safego.Go("the intel refresh scheduler", func() {
 		defer r.wg.Done()
 		r.loop()
-	}()
+	})
 }
 
 func (r *refreshScheduler) stop() {

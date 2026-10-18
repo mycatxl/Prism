@@ -7,6 +7,7 @@ import (
 
 	"prism/internal/platform"
 	"prism/internal/routing"
+	"prism/internal/safego"
 )
 
 // A user's own view of their sticky leases.
@@ -145,15 +146,19 @@ func StartRenewalSweeper(cp *ControlPlaneService, interval time.Duration, logf f
 			case <-stop:
 				return
 			case <-ticker.C:
-				result, err := cp.RenewDueSubscriptions(time.Now().UnixNano())
-				if err != nil {
-					logf("subscription renewal sweep failed: %v", err)
-					continue
-				}
-				if result.Renewed > 0 || result.ShortOfFunds > 0 || result.Failed > 0 {
-					logf("subscriptions renewed: %d charged, %d short of funds, %d failed",
-						result.Renewed, result.ShortOfFunds, result.Failed)
-				}
+				// A panic inside one pass must not end the loop: the next
+				// tick retries, exactly as it does after a failed pass.
+				safego.Run("the subscription renewal sweep", func() {
+					result, err := cp.RenewDueSubscriptions(time.Now().UnixNano())
+					if err != nil {
+						logf("subscription renewal sweep failed: %v", err)
+						return
+					}
+					if result.Renewed > 0 || result.ShortOfFunds > 0 || result.Failed > 0 {
+						logf("subscriptions renewed: %d charged, %d short of funds, %d failed",
+							result.Renewed, result.ShortOfFunds, result.Failed)
+					}
+				})
 			}
 		}
 	}()

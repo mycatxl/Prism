@@ -17,6 +17,7 @@ import (
 	"prism/internal/intel/store"
 	"prism/internal/node"
 	"prism/internal/quality"
+	"prism/internal/safego"
 )
 
 // parseNodeHash decodes the canonical 32-character hex node hash used as the
@@ -550,7 +551,7 @@ func (s *Service) startSweeper() {
 		s.lastSweepNs.Store(s.clock.Now().UTC().UnixNano())
 	}
 	s.sweepWG.Add(1)
-	go func() {
+	safego.Go("the intel assessment sweep", func() {
 		defer s.sweepWG.Done()
 		ticker := time.NewTicker(s.sweepInterval)
 		defer ticker.Stop()
@@ -566,7 +567,7 @@ func (s *Service) startSweeper() {
 				cancel()
 			}
 		}
-	}()
+	})
 }
 
 // Stop shuts the executor down, stops the sweep and drains the egress observer.
@@ -702,10 +703,10 @@ func (o *egressObserver) Start() {
 		return
 	}
 	o.wg.Add(1)
-	go func() {
+	safego.Go("the intel egress observer writer", func() {
 		defer o.wg.Done()
 		o.writeLoop()
-	}()
+	})
 }
 
 // Stop drains the queue and waits for the writer.
