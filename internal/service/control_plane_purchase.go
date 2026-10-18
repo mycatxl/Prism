@@ -341,6 +341,14 @@ func (s *ControlPlaneService) SetAutoRenew(userID, subscriptionID string, autoRe
 	if row.UserID != userID {
 		return SubscriptionView{}, notFound("subscription not found")
 	}
+	// The sweep only ever reads an active row that carries an expiry
+	// (ListRenewableSubscriptions), so switching this on for anything else
+	// answers 200 for a renewal that can never happen - the customer believes
+	// the plan looks after itself and finds it lapsed. Turning the switch off
+	// stays allowed for every row: clearing a stale flag is how it is tidied up.
+	if autoRenew && (row.Status != model.SubscriptionStatusActive || row.ExpiresAtNs <= 0) {
+		return SubscriptionView{}, invalidArg("subscription_id: only an active subscription that expires can renew itself")
+	}
 	if err := s.Engine.SetSubscriptionAutoRenew(row.ID, autoRenew); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return SubscriptionView{}, notFound("subscription not found")

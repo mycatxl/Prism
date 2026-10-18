@@ -955,3 +955,51 @@ func TestAssignSubscription_StartsAFreshAllowance(t *testing.T) {
 		t.Fatalf("an assigned plan must start from zero in memory: got %d", got)
 	}
 }
+
+// The sweep only ever reads an active row that carries an expiry, so answering
+// 200 for the switch on anything else sells a renewal that can never happen:
+// the customer reads "on", stops thinking about it, and finds the plan lapsed.
+func TestSetAutoRenew_RefusesARowTheSweepCannotSee(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Monthly", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 10_000_000, nowNs)
+
+	purchased, err := cp.SelfPurchase(userID, PurchaseInput{PlanID: plan.ID, RequestID: "buy-1"}, nowNs)
+	if err != nil {
+		t.Fatalf("purchase: %v", err)
+	}
+	expiredID := purchased.Subscription.ID
+	nowNs += int64(31) * 24 * 60 * 60 * 1_000_000_000
+	if _, err := cp.SweepExpiredSubscriptions(nowNs); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if _, err := cp.SetAutoRenew(userID, expiredID, true); err == nil {
+		t.Fatalf("an expired subscription cannot be told to renew itself: the sweep never reads it")
+	}
+	// Clearing the switch stays possible: a stale flag still has to be tidyable.
+	if view, err := cp.SetAutoRenew(userID, expiredID, false); err != nil {
+		t.Fatalf("clear the switch: %v", err)
+	} else if view.AutoRenew {
+		t.Fatalf("the switch has to read back off")
+	}
+
+	// A plan with no expiry never runs out, so the sweep skips it too
+	// (expires_at_ns > 0) and the switch would be just as inert.
+	snapshot, err := planSnapshotJSON(plan)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	forever := model.UserSubscription{
+		ID: "us_forever", UserID: userID, PlanID: plan.ID,
+		PlanSnapshotJSON: snapshot,
+		StartsAtNs:       nowNs, ExpiresAtNs: 0, PeriodStartNs: nowNs,
+		Status: model.SubscriptionStatusActive,
+	}
+	if err := cp.Engine.UpsertUserSubscription(forever); err != nil {
+		t.Fatalf("seed a subscription without an expiry: %v", err)
+	}
+	if _, err := cp.SetAutoRenew(userID, "us_forever", true); err == nil {
+		t.Fatalf("a subscription that never expires has nothing to renew")
+	}
+}
