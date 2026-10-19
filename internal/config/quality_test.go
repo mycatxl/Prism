@@ -31,23 +31,24 @@ func TestLoadQualityConfig_IgnoresDeprecatedQueueSize(t *testing.T) {
 }
 
 // TestLoadQualityConfig_StillValidatesLiveSettings is the control: the settings
-// that are actually consumed keep their bounds.
+// that are actually consumed keep their bounds, while a deprecated one cannot
+// abort startup with a value nothing reads.
 func TestLoadQualityConfig_StillValidatesLiveSettings(t *testing.T) {
-	t.Setenv("PRISM_QUALITY_QUEUE_SIZE", "99999") // ignored, must not matter
-	t.Setenv("PRISM_QUALITY_WORKERS", "9")
-	if _, err := LoadQualityConfig(); err == nil {
-		t.Error("PRISM_QUALITY_WORKERS=9 was accepted; the live bound is 1..8")
+	for _, raw := range []string{"9", "0", "not-a-number"} {
+		t.Setenv("PRISM_QUALITY_WORKERS", raw)
+		if _, err := LoadQualityConfig(); err != nil {
+			t.Errorf("PRISM_QUALITY_WORKERS=%q rejected: %v; the variable is deprecated, so it must be ignored", raw, err)
+		}
 	}
-
-	t.Setenv("PRISM_QUALITY_WORKERS", "4")
-	if _, err := LoadQualityConfig(); err != nil {
-		t.Errorf("PRISM_QUALITY_WORKERS=4 rejected: %v", err)
-	}
-
 	t.Setenv("PRISM_QUALITY_WORKERS", "")
+
 	t.Setenv("PRISM_QUALITY_DAILY_LIMIT", "901")
 	if _, err := LoadQualityConfig(); err == nil {
 		t.Error("PRISM_QUALITY_DAILY_LIMIT=901 was accepted; the live bound is 1..900")
+	}
+	t.Setenv("PRISM_QUALITY_DAILY_LIMIT", "80")
+	if _, err := LoadQualityConfig(); err != nil {
+		t.Errorf("PRISM_QUALITY_DAILY_LIMIT=80 rejected: %v", err)
 	}
 }
 

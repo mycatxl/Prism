@@ -397,6 +397,9 @@ func LoadEnvConfig() (*EnvConfig, error) {
 		if cfg.ProxyToken == "api" || cfg.ProxyToken == "healthz" || cfg.ProxyToken == "ui" {
 			errs = append(errs, "PRISM_PROXY_TOKEN must not be reserved keyword: api, healthz, ui")
 		}
+		if isPlaceholderProxyToken(cfg.ProxyToken) {
+			errs = append(errs, "PRISM_PROXY_TOKEN is still the placeholder from the example files; generate one with prism init (or openssl rand -hex 32) and set that")
+		}
 	}
 
 	if proxyTokenEmpty && !allowInsecureListen && !isLoopbackListenAddress(cfg.ListenAddress) {
@@ -412,6 +415,7 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	if cfg.ListenAddress == "" {
 		errs = append(errs, "PRISM_LISTEN_ADDRESS must not be empty")
 	}
+	validateListenHost("PRISM_LISTEN_ADDRESS", cfg.ListenAddress, &errs)
 	validateOptionalListenAddress("PRISM_ADMIN_LISTEN", cfg.AdminListen, &errs)
 
 	validatePort("PRISM_PORT", cfg.ProxyPort, &errs)
@@ -503,6 +507,18 @@ func LoadEnvConfig() (*EnvConfig, error) {
 			errs = append(errs, "PRISM_EGRESS_TRACE_URL: must be an http/https absolute URL")
 		}
 	}
+	// Deposit settings. The scanner compares all three against what the chain
+	// reports, so a typo in an address or a missing scheme on the endpoint does
+	// not fail loudly: it matches nothing, or every poll errors, and the operator
+	// sees a wallet that never receives a payment it did receive.
+	if cfg.USDTAddress != "" {
+		validateTRONAddress("PRISM_USDT_ADDRESS", cfg.USDTAddress, &errs)
+	}
+	validateTRONAddress("PRISM_USDT_CONTRACT", cfg.USDTContract, &errs)
+	if u, err := url.ParseRequestURI(cfg.TronGridEndpoint); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		errs = append(errs, "PRISM_TRONGRID_ENDPOINT: must be an http/https absolute URL")
+	}
+	validateProxyBypassRules(cfg.ProxyBypassRules, &errs)
 	if cfg.ResourceFetchTimeout <= 0 {
 		errs = append(errs, "PRISM_RESOURCE_FETCH_TIMEOUT must be positive")
 	}
@@ -882,6 +898,89 @@ func validateTrustedProxy(value string) error {
 		return fmt.Errorf("must be an IP address or CIDR, got %q", value)
 	}
 	return nil
+}
+
+// tronBase58 is the alphabet of a base58 TRON account address.
+const tronBase58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+// validateTRONAddress rejects a value that is not a mainnet TRON account
+// address: 34 base58 characters with a leading T.
+//
+// The deposit scanner compares these values against what the chain reports, byte
+// for byte. A typo therefore does not fail loudly - it matches nothing, every
+// deposit stays uncredited, and the operator sees a wallet that never receives
+// anything. Rejecting the shape at load time is the only visible moment.
+func validateTRONAddress(name, value string, errs *[]string) {
+	if len(value) != 34 || !strings.HasPrefix(value, "T") {
+		*errs = append(*errs, name+": must be a 34-character mainnet TRON address starting with T")
+		return
+	}
+	for _, r := range value {
+		if !strings.ContainsRune(tronBase58, r) {
+			*errs = append(*errs, name+": is not base58, so it cannot be a TRON address")
+			return
+		}
+	}
+}
+
+// validateProxyBypassRules checks every PRISM_PROXY_BYPASS entry at load time.
+//
+// The matcher (internal/proxy) treats anything it cannot parse as an exact host
+// name, and an exact host name spelled "10.0.0.0/33" can never match. A rule
+// that silently does nothing sends traffic that was meant to go direct out
+// through a node instead, which changes the egress IP the far end sees, so a
+// malformed entry stops the start-up rather than being dropped.
+func validateProxyBypassRules(rules []string, errs *[]string) {
+	for i, raw := range rules {
+		rule := strings.TrimSpace(raw)
+		if rule == "" {
+			*errs = append(*errs, fmt.Sprintf("PRISM_PROXY_BYPASS[%d] must not be empty", i))
+			continue
+		}
+		if strings.EqualFold(rule, "<local>") {
+			continue
+		}
+		if strings.Contains(rule, "/") {
+			if _, err := netip.ParsePrefix(strings.Trim(rule, "[]")); err != nil {
+				*errs = append(*errs, fmt.Sprintf("PRISM_PROXY_BYPASS[%d]: %q is a CIDR that does not parse", i, rule))
+			}
+			continue
+		}
+		if strings.ContainsAny(rule, " \t") {
+			*errs = append(*errs, fmt.Sprintf("PRISM_PROXY_BYPASS[%d]: %q must not contain whitespace", i, rule))
+		}
+	}
+}
+
+// validateListenHost rejects a listen address that carries more than a host.
+//
+// The variable is a host; the port comes from PRISM_PORT. A value like
+// "0.0.0.0:2260" only fails later, inside net.JoinHostPort at bind time, after
+// check-config has already printed it as the effective setting.
+func validateListenHost(name, value string, errs *[]string) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		// The empty case has its own, older message.
+		return
+	}
+	if strings.Contains(trimmed, "://") || strings.Contains(trimmed, "/") {
+		*errs = append(*errs, name+": must be a host, without a scheme or a path")
+		return
+	}
+	if _, _, err := net.SplitHostPort(trimmed); err == nil {
+		*errs = append(*errs, name+": must be a host without a port, because PRISM_PORT sets the port")
+	}
+}
+
+// isPlaceholderProxyToken reports whether the token is the literal value the
+// shipped example files carry.
+//
+// "replace-with-your-random-proxy-token" is 36 characters of allowed characters,
+// so copying the line from .env.example or deploy/backend.env.example passed
+// every check and started a gateway on a credential that is written down in a
+// public repository.
+func isPlaceholderProxyToken(token string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(token)), "replace-with")
 }
 
 func validatePort(name string, value int, errs *[]string) {

@@ -23,6 +23,7 @@ import (
 	"prism/internal/buildinfo"
 	"prism/internal/config"
 	"prism/internal/model"
+	"prism/internal/outbound"
 	"prism/internal/state"
 )
 
@@ -495,6 +496,10 @@ func printEnvConfig(w io.Writer, cfg *config.EnvConfig) {
 		{name: "PRISM_PROXY_TRANSPORT_RESPONSE_HEADER_TIMEOUT", value: cfg.ProxyTransportResponseHeaderTimeout.String()},
 		{name: "PRISM_PROXY_TRANSPORT_TLS_HANDSHAKE_TIMEOUT", value: cfg.ProxyTransportTLSHandshakeTimeout.String()},
 		{name: "PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT", value: cfg.ProxyTransportDialTimeout.String()},
+		// Read by the embedded sing-box runtime rather than by the loader
+		// (internal/outbound), so this row reports what that runtime resolves -
+		// including the refusal, when the value is one it would not start with.
+		{name: "PRISM_MAX_ENDPOINTS", value: formatMaxEndpoints()},
 		{name: "# --- request log ---"},
 		{name: "PRISM_REQUEST_LOG_QUEUE_SIZE", value: strconv.Itoa(cfg.RequestLogQueueSize)},
 		{name: "PRISM_REQUEST_LOG_QUEUE_FLUSH_BATCH_SIZE", value: strconv.Itoa(cfg.RequestLogQueueFlushBatchSize)},
@@ -512,11 +517,23 @@ func printEnvConfig(w io.Writer, cfg *config.EnvConfig) {
 		{name: "PRISM_METRIC_LATENCY_BIN_WIDTH_MS", value: strconv.Itoa(cfg.MetricLatencyBinWidthMS)},
 		{name: "PRISM_METRIC_LATENCY_BIN_OVERFLOW_MS", value: strconv.Itoa(cfg.MetricLatencyBinOverflowMS)},
 		{name: "# --- exit quality ---"},
-		{name: "PRISM_QUALITY_ENABLED", value: strconv.FormatBool(cfg.Quality.Enabled)},
 		{name: "PRISM_QUALITY_API_KEY", value: maskSecret(cfg.Quality.APIKey)},
 		{name: "PRISM_QUALITY_DAILY_LIMIT", value: strconv.Itoa(cfg.Quality.DailyLimit)},
-		{name: "PRISM_QUALITY_WORKERS", value: strconv.Itoa(cfg.Quality.Workers)},
 		{name: "PRISM_ABUSEIPDB_API_KEY", value: maskSecret(cfg.Quality.AbuseAPIKey)},
+		// Provider credentials the intel pipeline reads for itself
+		// (internal/intel/providers/settings.go). Without these rows an operator
+		// diagnosing "why is this deployment not scoring exits" cannot see
+		// whether the key they set ever reached the process.
+		{name: "PRISM_IPQS_API_KEY", value: maskSecret(os.Getenv("PRISM_IPQS_API_KEY"))},
+		{name: "PRISM_IPAPI_IS_API_KEY", value: maskSecret(os.Getenv("PRISM_IPAPI_IS_API_KEY"))},
+		{name: "PRISM_MAXMIND_ACCOUNT_ID", value: maskSecret(os.Getenv("PRISM_MAXMIND_ACCOUNT_ID"))},
+		{name: "PRISM_MAXMIND_LICENSE_KEY", value: maskSecret(os.Getenv("PRISM_MAXMIND_LICENSE_KEY"))},
+		{name: "PRISM_IPINFO_TOKEN", value: maskSecret(os.Getenv("PRISM_IPINFO_TOKEN"))},
+		// Deprecated and ignored. intel_enabled and intel_node_workers are what
+		// the running pipeline reads, so a value here is reported as ignored
+		// rather than as an effective setting.
+		{name: "PRISM_QUALITY_ENABLED", value: "(deprecated, ignored)"},
+		{name: "PRISM_QUALITY_WORKERS", value: "(deprecated, ignored)"},
 		{name: "PRISM_QUALITY_QUEUE_SIZE", value: "(deprecated, ignored)"},
 	}
 	fmt.Fprintln(w, "# Prism effective configuration (secrets masked)")
@@ -572,6 +589,17 @@ func formatPortList(ports []int) string {
 		parts = append(parts, strconv.Itoa(port))
 	}
 	return strings.Join(parts, ",")
+}
+
+// formatMaxEndpoints renders PRISM_MAX_ENDPOINTS as the embedded runtime
+// resolves it, so a value that runtime would refuse to start with is never
+// printed as if it had taken effect.
+func formatMaxEndpoints() string {
+	resolved, err := outbound.MaxEndpointsFromEnv()
+	if err != nil {
+		return "invalid (must be a positive integer)"
+	}
+	return strconv.FormatInt(resolved, 10)
 }
 
 // formatStringValue renders an empty string setting as "(empty)" so a blank

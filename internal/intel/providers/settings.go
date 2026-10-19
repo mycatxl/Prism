@@ -152,10 +152,13 @@ type envBinding struct {
 	config     map[string]string
 }
 
-// envBindings is the migration table of PRISM_QUALITY_ENABLED and
-// PRISM_QUALITY_WORKERS are handled by the runtime configuration
-// (intel_enabled / intel_node_workers), and PRISM_QUALITY_QUEUE_SIZE is
-// ignored with a deprecation warning.
+// envBindings is the migration table of provider credentials and limits: the
+// environment seeds a setting once, and the console owns it afterwards.
+//
+// The quality module's own switches (PRISM_QUALITY_ENABLED,
+// PRISM_QUALITY_WORKERS, PRISM_QUALITY_QUEUE_SIZE) are not part of it. They are
+// deprecated and ignored: intel_enabled and intel_node_workers are what decide
+// whether those jobs run and how many of them run at once.
 var envBindings = map[string]envBinding{
 	"proxycheck":       {apiKey: "PRISM_QUALITY_API_KEY", dailyLimit: "PRISM_QUALITY_DAILY_LIMIT"},
 	"abuseipdb":        {apiKey: "PRISM_ABUSEIPDB_API_KEY"},
@@ -165,9 +168,18 @@ var envBindings = map[string]envBinding{
 	"ipinfo_lite":      {config: map[string]string{"token": "PRISM_IPINFO_TOKEN"}},
 }
 
-// DeprecatedQualityQueueSizeEnv is ignored; the queue size follows
-// intel_node_workers.
-const DeprecatedQualityQueueSizeEnv = "PRISM_QUALITY_QUEUE_SIZE"
+// Deprecated quality variables are still recognised, but only so an operator
+// who carried one over from an older deployment is told it does nothing instead
+// of quietly running with a setting that never applied.
+const (
+	// DeprecatedQualityQueueSizeEnv is ignored; the queue size follows
+	// intel_node_workers.
+	DeprecatedQualityQueueSizeEnv = "PRISM_QUALITY_QUEUE_SIZE"
+	// DeprecatedQualityEnabledEnv is ignored; intel_enabled is the switch.
+	DeprecatedQualityEnabledEnv = "PRISM_QUALITY_ENABLED"
+	// DeprecatedQualityWorkersEnv is ignored; intel_node_workers sizes the pool.
+	DeprecatedQualityWorkersEnv = "PRISM_QUALITY_WORKERS"
+)
 
 // DefaultSetting builds the spec-default setting of one provider, optionally
 // seeded from the environment.
@@ -299,9 +311,14 @@ func SeedSettings(store SettingsStore, specs []Spec, env EnvSource, nowNs int64)
 		existing[row.ProviderID] = struct{}{}
 	}
 	var warnings []string
-	if strings.TrimSpace(env(DeprecatedQualityQueueSizeEnv)) != "" {
-		warnings = append(warnings, DeprecatedQualityQueueSizeEnv+
-			" is deprecated and ignored; the provider queue is bounded by intel_node_workers")
+	for _, deprecated := range []struct{ name, detail string }{
+		{DeprecatedQualityQueueSizeEnv, "the provider queue is bounded by intel_node_workers"},
+		{DeprecatedQualityEnabledEnv, "intel_enabled decides whether the quality jobs run"},
+		{DeprecatedQualityWorkersEnv, "intel_node_workers sizes the worker pool"},
+	} {
+		if strings.TrimSpace(env(deprecated.name)) != "" {
+			warnings = append(warnings, deprecated.name+" is deprecated and ignored; "+deprecated.detail)
+		}
 	}
 	written := 0
 	for _, spec := range specs {

@@ -8,12 +8,20 @@ import (
 	"time"
 )
 
+// QualityConfig is the part of the quality pipeline that reads Prism-only
+// environment variables.
+//
+// PRISM_QUALITY_ENABLED and PRISM_QUALITY_WORKERS used to be parsed here. They
+// never reached the running pipeline: the switches that actually decide whether
+// the intel jobs run are the runtime settings intel_enabled and
+// intel_node_workers. A value set in the environment therefore did nothing while
+// `prism check-config` printed it as if it did. They are no longer read, and they
+// are deprecated with a warning where the provider settings are seeded - the same
+// treatment PRISM_QUALITY_QUEUE_SIZE already gets.
 type QualityConfig struct {
-	Enabled     bool
 	APIKey      string
 	AbuseAPIKey string
 	DailyLimit  int
-	Workers     int
 	QueueSize   int
 	Timeout     time.Duration
 	CacheTTL    time.Duration
@@ -21,20 +29,15 @@ type QualityConfig struct {
 
 func LoadQualityConfig() (QualityConfig, error) {
 	cfg := QualityConfig{
-		Enabled: true, APIKey: strings.TrimSpace(qualityEnv("PRISM_QUALITY_API_KEY")),
+		APIKey:      strings.TrimSpace(qualityEnv("PRISM_QUALITY_API_KEY")),
 		AbuseAPIKey: strings.TrimSpace(qualityEnv("PRISM_ABUSEIPDB_API_KEY")),
-		DailyLimit:  80, Workers: 2, QueueSize: 4096,
-		Timeout: 10 * time.Second, CacheTTL: 24 * time.Hour,
+		DailyLimit:  80,
+		QueueSize:   4096,
+		Timeout:     10 * time.Second,
+		CacheTTL:    24 * time.Hour,
 	}
 	if cfg.APIKey != "" {
 		cfg.DailyLimit = 900
-	}
-	if value := qualityEnv("PRISM_QUALITY_ENABLED"); value != "" {
-		enabled, err := strconv.ParseBool(value)
-		if err != nil {
-			return cfg, fmt.Errorf("PRISM_QUALITY_ENABLED must be a boolean")
-		}
-		cfg.Enabled = enabled
 	}
 	for _, setting := range []struct {
 		name     string
@@ -42,7 +45,6 @@ func LoadQualityConfig() (QualityConfig, error) {
 		min, max int
 	}{
 		{"PRISM_QUALITY_DAILY_LIMIT", &cfg.DailyLimit, 1, 900},
-		{"PRISM_QUALITY_WORKERS", &cfg.Workers, 1, 8},
 	} {
 		if raw := qualityEnv(setting.name); raw != "" {
 			value, err := strconv.Atoi(raw)
@@ -52,11 +54,12 @@ func LoadQualityConfig() (QualityConfig, error) {
 			*setting.value = value
 		}
 	}
-	// PRISM_QUALITY_QUEUE_SIZE is deprecated and ignored: the provider queue is
-	// bounded by intel_node_workers. It is deliberately NOT validated here -
-	// rejecting a value the process never uses would turn a harmless leftover
-	// variable from an older deployment into a startup failure. The deprecation
-	// warning is emitted where the setting is actually seeded
+	// PRISM_QUALITY_ENABLED, PRISM_QUALITY_WORKERS and PRISM_QUALITY_QUEUE_SIZE
+	// are deprecated and ignored: intel_enabled decides whether the quality jobs
+	// run, and intel_node_workers sizes them. They are deliberately NOT validated
+	// here - rejecting a value the process never uses would turn a harmless
+	// leftover variable from an older deployment into a startup failure. The
+	// deprecation warning is emitted where the provider settings are seeded
 	// (internal/intel/providers/settings.go).
 	// Anonymous requests share a provider quota by public source IP. Leave
 	// headroom for other clients and never attempt to bypass that limit.

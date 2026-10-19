@@ -66,7 +66,9 @@ func TestCheckConfigCoversEveryLoaderVariable(t *testing.T) {
 		"PRISM_PROXY_TOKEN=***\t[env]",
 		"PRISM_EGRESS_TRACE_URL=(empty)\t[empty]",
 		"PRISM_ENFORCE_STRONG_TOKENS=true\t[default]",
-		"PRISM_QUALITY_WORKERS=2\t[default]",
+		// A deprecated switch is still reported, and reported as ignored: the
+		// report never claims an effect a variable does not have.
+		"PRISM_QUALITY_WORKERS=(deprecated, ignored)\t[default]",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("check-config output is missing %q", want)
@@ -162,6 +164,8 @@ func allEnvVariables(t *testing.T) []string {
 // copy, so there is nothing for the assertions below to match.
 var deprecatedEnvVariables = map[string]bool{
 	"PRISM_QUALITY_QUEUE_SIZE": true,
+	"PRISM_QUALITY_ENABLED":    true,
+	"PRISM_QUALITY_WORKERS":    true,
 }
 
 // TestBothEnvironmentExamplesDocumentEveryVariable pins the promise README makes

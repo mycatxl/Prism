@@ -914,9 +914,9 @@ func TestQualityVariablesHaveNoResinFallback(t *testing.T) {
 	if cfg.Quality.APIKey != "" || cfg.Quality.AbuseAPIKey != "" {
 		t.Fatal("RESIN_QUALITY_* must not feed the Prism quality configuration")
 	}
-	if !cfg.Quality.Enabled {
-		t.Fatal("RESIN_QUALITY_ENABLED must not disable the Prism quality module")
-	}
+	// RESIN_QUALITY_ENABLED cannot disable quality either: the variable is gone
+	// from Prism entirely. intel_enabled, a runtime setting, is the switch, and
+	// no environment spelling reaches it.
 }
 
 // --- deviations X1 / X2: token semantics ---
@@ -1020,5 +1020,41 @@ func TestEmptyProxyTokenRequiresLoopbackAdminListen(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PRISM_ADMIN_LISTEN") {
 		t.Fatalf("the error must name the listener, got: %v", err)
+	}
+}
+
+// TestLoadEnvConfig_RejectsValuesThatWouldFailSilently pins the load-time checks
+// on the values Prism compares against the outside world.
+//
+// Every one of them fails without a word at run time: a mistyped deposit address
+// matches no transfer, a CIDR that does not parse falls back to an exact host
+// name that can never match, a listen address carrying a port fails only inside
+// net.JoinHostPort at bind time, and the placeholder shipped in the example files
+// is long enough and plain enough to pass every other token check.
+func TestLoadEnvConfig_RejectsValuesThatWouldFailSilently(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"deposit address too short", "PRISM_USDT_ADDRESS", "TQn9Y2khEsLJW1ChVWFMSMeRDow5Kcb"},
+		{"contract outside base58", "PRISM_USDT_CONTRACT", "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj60"},
+		{"endpoint without a scheme", "PRISM_TRONGRID_ENDPOINT", "api.trongrid.io"},
+		{"bypass prefix out of range", "PRISM_PROXY_BYPASS", "10.0.0.0/33"},
+		{"listen address carrying a port", "PRISM_LISTEN_ADDRESS", "127.0.0.1:2260"},
+		{"the example placeholder token", "PRISM_PROXY_TOKEN", "replace-with-your-random-proxy-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envs := requiredEnvs()
+			envs[tc.key] = tc.value
+			setEnvs(t, envs)
+			_, err := LoadEnvConfig()
+			if err == nil {
+				t.Fatalf("%s=%q was accepted, but nothing checks it again at run time", tc.key, tc.value)
+			}
+			if !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("the error must name %s, got: %v", tc.key, err)
+			}
+		})
 	}
 }

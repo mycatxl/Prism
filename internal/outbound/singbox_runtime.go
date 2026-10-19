@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -53,6 +54,13 @@ type SingboxRuntime struct {
 // NewSingboxRuntime starts an embedded sing-box instance with Prism's secure
 // node DNS chain. The caller must call Close when done.
 func NewSingboxRuntime(cfg SingboxBuilderConfig) (*SingboxRuntime, error) {
+	// The endpoint budget is resolved before anything starts, so a value the
+	// runtime cannot honour fails the start-up instead of being quietly
+	// replaced by a default the operator never asked for.
+	maxEndpoints, err := MaxEndpointsFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	ctx := include.Context(context.Background())
 	registry, ok := service.FromContext[adapter.DNSTransportRegistry](ctx).(*dns.TransportRegistry)
 	if !ok {
@@ -103,21 +111,26 @@ func NewSingboxRuntime(cfg SingboxBuilderConfig) (*SingboxRuntime, error) {
 		ctx:          ctx,
 		inst:         inst,
 		logger:       inst.LogFactory().NewLogger("prism-outbound"),
-		maxEndpoints: resolveMaxEndpoints(),
+		maxEndpoints: maxEndpoints,
 	}, nil
 }
 
-// resolveMaxEndpoints reads PRISM_MAX_ENDPOINTS with a bound and a default.
-func resolveMaxEndpoints() int64 {
-	raw := os.Getenv(envMaxEndpoints)
+// MaxEndpointsFromEnv resolves PRISM_MAX_ENDPOINTS.
+//
+// An unset variable is the shipped default. Anything set has to be a positive
+// count: the budget bounds how many endpoint nodes can be active at once, so a
+// value the runtime silently replaced with a default would leave the operator
+// running under a limit they never chose and never saw.
+func MaxEndpointsFromEnv() (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(envMaxEndpoints))
 	if raw == "" {
-		return defaultMaxEndpoints
+		return defaultMaxEndpoints, nil
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value <= 0 {
-		return defaultMaxEndpoints
+		return 0, fmt.Errorf("%s must be a positive integer, got %q", envMaxEndpoints, raw)
 	}
-	return value
+	return value, nil
 }
 
 // DNSTransportManager returns the DNS transport manager of the embedded
