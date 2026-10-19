@@ -6,6 +6,7 @@ import { Badge, type BadgeProps } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { formatRelativeTime } from "../../lib/time";
 import { createIntelJob } from "../jobs/api";
 import { IPTypeBadge } from "./quality/QualityDetails";
@@ -241,7 +242,7 @@ export function NodeIntelPanel({ intel, nodeHash, ready, notify }: {
       </Button>
       {jobCreated && (
         <Button asChild variant="ghost" size="sm">
-          <Link to="/jobs">{t("查看检测任务")}</Link>
+          <Link to={opsPaths.jobs}>{t("查看检测任务")}</Link>
         </Button>
       )}
     </div>

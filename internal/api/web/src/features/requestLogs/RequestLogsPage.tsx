@@ -19,6 +19,7 @@ import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { formatDateTime } from "../../lib/time";
 import { getSystemConfig } from "../systemConfig/api";
 import { getRequestLog, getRequestLogPayloads, listRequestLogs } from "./api";
@@ -676,7 +677,7 @@ export function RequestLogsPage() {
         meta={
           !configQuery.isLoading && configQuery.data ? (
             <Link
-              to="/system-config"
+              to={opsPaths.config}
               className="flex shrink-0 items-center transition-opacity hover:opacity-80"
             >
               <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
@@ -897,7 +898,7 @@ export function RequestLogsPage() {
                         <TDClip className="text-xs" title={`${log.node_tag || "-"} · ${egress}`}>
                           {log.node_tag ? (
                             <Link
-                              to={`/nodes?tag_keyword=${encodeURIComponent(log.node_tag)}`}
+                              to={`${opsPaths.nodes}?tag_keyword=${encodeURIComponent(log.node_tag)}`}
                               title={t("在节点池搜索 {{tag}}", { tag: log.node_tag })}
                               className="text-signal-deep hover:underline"
                               onClick={(event) => event.stopPropagation()}

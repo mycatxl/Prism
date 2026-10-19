@@ -5,6 +5,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, logout } from "../lib/api-client";
 import { cn } from "../lib/cn";
 import { navigationFor } from "../lib/navigation";
+import { ACCOUNT, OPS_ROOT, isCurrentPath, isExactPath, isWithinNamespace } from "../lib/paths";
 import { isAdminRole } from "../lib/roles";
 import { useAuthStore, clearSession } from "../features/auth/auth-store";
 import { getEnvConfig } from "../features/systemConfig/api";
@@ -56,9 +57,13 @@ export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteReady, setPaletteReady] = useState(false);
 
-  // Instance health and the environment dump are operator surfaces: a tenant is
-  // refused both by the role gate, so the shell must not ask.
+  // The console answers in two namespaces (src/lib/paths.ts): `/ops/*` is the
+  // operator surface, `/me/*` and `/account` are the customer's. The instance
+  // probes and the verdict they produce belong to the operator surface only —
+  // they are refused to a tenant by the role gate, and an operator reading their
+  // own account is not looking at the instance.
   const isAdmin = isAdminRole(session.user?.role);
+  const operatorSurface = isAdmin && isWithinNamespace(location.pathname, OPS_ROOT);
   // The operator rail names management paths, so it is fetched rather than
   // bundled: a tenant's browser never holds them. Until it arrives the rail is
   // empty for an operator and shows the self-service set for a tenant.
@@ -75,18 +80,18 @@ export function AppShell() {
     queryFn: getSystemInfo,
     refetchInterval: 30_000,
     retry: false,
-    enabled: isAdmin,
+    enabled: operatorSurface,
   });
   const env = useQuery({
     queryKey: ["system-config-env", "shell"],
     queryFn: getEnvConfig,
     staleTime: 30_000,
-    enabled: isAdmin,
+    enabled: operatorSurface,
   });
 
   const unauthorized = info.error instanceof ApiError && info.error.status === 401;
-  const disconnected = !online || (isAdmin && info.isError);
-  const weakTokens = isAdmin && env.data && !env.data.proxy_token_set;
+  const disconnected = !online || (operatorSurface && info.isError);
+  const weakTokens = operatorSurface && env.data && !env.data.proxy_token_set;
 
   // A route change is a new page: focus its heading so a keyboard or screen
   // reader starts at the top of the document, not where the previous page left
@@ -133,13 +138,14 @@ export function AppShell() {
   };
 
   /*
-   * The status is stated in words, always. A tenant has no instance probe to
-   * read, so their line reports what this browser can know — whether it can reach
-   * the server — instead of borrowing the operator's verdict. "Connecting…" shown
+   * The status is stated in words, always. Outside the operator namespace there
+   * is no instance probe to read — a tenant is refused one, and `/me` and
+   * `/account` are that customer's own pages — so the line reports what this
+   * browser can know: whether it can reach the server. "Connecting…" shown
    * forever was the old behaviour, and an unknown status reading as a pending one
    * is exactly the failure this line exists to avoid.
    */
-  const status = !isAdmin
+  const status = !operatorSurface
     ? online
       ? { text: t("服务已连接"), tone: "live" as const }
       : { text: t("当前处于离线状态"), tone: "warn" as const }
@@ -168,7 +174,7 @@ export function AppShell() {
     if (item.section && !sections.includes(item.section)) sections.push(item.section);
   }
   const current = navItems
-    .filter((item) => location.pathname === item.path || location.pathname.startsWith(`${item.path}/`))
+    .filter((item) => isCurrentPath(location.pathname, item.path))
     .sort((a, b) => b.path.length - a.path.length)[0];
   const username = session.user?.username ?? "";
 
@@ -239,7 +245,7 @@ export function AppShell() {
                 <span className="shell-account__role">{isAdmin ? t("管理控制台") : t("用户中心")}</span>
               </MenuLabel>
               <MenuSeparator />
-              <MenuItem onSelect={() => navigate("/account-security")}>
+              <MenuItem onSelect={() => navigate(ACCOUNT)}>
                 <span>{t("账户安全")}</span>
                 <ShieldCheck size={14} aria-hidden />
               </MenuItem>
@@ -272,7 +278,7 @@ export function AppShell() {
 
         <div className="shell-nav__scroll">
           {navItems.map((item, index) => {
-            const active = location.pathname === item.path || location.pathname.startsWith(`${item.path}/`);
+            const active = isCurrentPath(location.pathname, item.path);
             const opensGroup = Boolean(item.section) && navItems[index - 1]?.section !== item.section;
             const ordinal = String(sections.indexOf(item.section) + 1).padStart(2, "0");
             return (
@@ -288,6 +294,9 @@ export function AppShell() {
                 <NavLink
                   to={item.path}
                   aria-current={active ? "page" : undefined}
+                  // The router's own match writes `aria-current`; a namespace root
+                  // is an exact address, so it must not claim every page beneath it.
+                  end={isExactPath(item.path)}
                   className={cn("shell-nav__link", active && "is-active")}
                 >
                   {t(item.label)}

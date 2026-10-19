@@ -14,6 +14,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { mePaths } from "../../lib/paths";
 import { formatMicro } from "../../lib/money";
 import { getBalance, redeemCode } from "./api";
 import type { BalanceEntry } from "./types";
@@ -163,7 +164,7 @@ export function BalancePanel() {
               <span>{redeemMutation.isPending ? t("兑换中...") : t("兑换")}</span>
             </Button>
             <Button variant="secondary" asChild title={t("转入 USDT (TRC20) 充值")}>
-              <Link to="/me/deposit">
+              <Link to={mePaths.deposit}>
                 <Wallet size={14} />
                 <span>{t("链上充值")}</span>
               </Link>

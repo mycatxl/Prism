@@ -10,6 +10,7 @@ import { Stat, StatStrip } from "../../components/ui/StatStrip";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { listAuditLogs } from "../audit/api";
+import { opsPaths } from "../../lib/paths";
 import type { AuditLogEntry } from "../audit/types";
 import { listIntelJobs } from "../jobs/api";
 import type { IntelJob } from "../jobs/types";
@@ -134,7 +135,7 @@ export function WorkbenchPage() {
           area: t("平台"),
           subject: platform.name,
           reason: t("没有可路由节点，请求会按未命中策略处理"),
-          to: `/platforms/${platform.id}`,
+          to: `${opsPaths.platforms}/${platform.id}`,
         });
       }
     }
@@ -146,7 +147,7 @@ export function WorkbenchPage() {
           area: t("订阅源"),
           subject: subscription.name,
           reason: subscription.last_error,
-          to: "/subscriptions",
+          to: opsPaths.subscriptions,
         });
       }
     }
@@ -157,7 +158,7 @@ export function WorkbenchPage() {
         area: t("节点"),
         subject: t("{{count}} 个节点", { count: circuitOpen }),
         reason: t("被动熔断已暂停这些节点"),
-        to: "/nodes",
+        to: opsPaths.nodes,
       });
     }
     for (const job of jobs.data?.items ?? []) {
@@ -168,7 +169,7 @@ export function WorkbenchPage() {
           area: t("检测任务"),
           subject: job.id.slice(0, 8),
           reason: t("{{count}} 项检测失败", { count: job.failed }),
-          to: "/jobs",
+          to: opsPaths.jobs,
         });
       }
     }
@@ -179,7 +180,7 @@ export function WorkbenchPage() {
         area: t("出口"),
         subject: t("{{count}} 个出口未评估", { count: unassessed }),
         reason: t("没有 IP 类型与纯净度，按条件的平台不会选中它"),
-        to: "/nodes",
+        to: opsPaths.nodes,
       });
     }
     return items.sort((a, b) => LEVEL_ORDER[a.level] - LEVEL_ORDER[b.level]);
@@ -232,7 +233,7 @@ export function WorkbenchPage() {
       header: t("平台"),
       width: "minmax(0,1.4fr)",
       cell: (row) => (
-        <Link to={`/platforms/${row.platform.id}`} className="link-quiet font-medium text-ink">
+        <Link to={`${opsPaths.platforms}/${row.platform.id}`} className="link-quiet font-medium text-ink">
           {row.platform.name}
         </Link>
       ),
@@ -332,9 +333,9 @@ export function WorkbenchPage() {
             <div className="panel-body">
               <ol className="flex flex-col">
                 {[
-                  { step: "01", title: t("导入订阅"), hint: t("订阅提供节点，节点提供出口。"), to: "/subscriptions" },
-                  { step: "02", title: t("建一个平台"), hint: t("平台是接入用户名里的一段，客户端按它路由。"), to: "/platforms" },
-                  { step: "03", title: t("跑一次检测"), hint: t("检测给出出口地区、IP 类型与纯净度。"), to: "/jobs" },
+                  { step: "01", title: t("导入订阅"), hint: t("订阅提供节点，节点提供出口。"), to: opsPaths.subscriptions },
+                  { step: "02", title: t("建一个平台"), hint: t("平台是接入用户名里的一段，客户端按它路由。"), to: opsPaths.platforms },
+                  { step: "03", title: t("跑一次检测"), hint: t("检测给出出口地区、IP 类型与纯净度。"), to: opsPaths.jobs },
                 ].map((item) => (
                   <li
                     key={item.step}
@@ -419,7 +420,7 @@ export function WorkbenchPage() {
                   title={t("检测任务")}
                   meta={jobs.data ? t("运行 {{running}} · 排队 {{queued}}", { running, queued }) : undefined}
                   actions={
-                    <Link to="/jobs" className="link-quiet text-xs text-ink-soft">
+                    <Link to={opsPaths.jobs} className="link-quiet text-xs text-ink-soft">
                       {t("全部任务")}
                     </Link>
                   }
@@ -465,7 +466,7 @@ export function WorkbenchPage() {
                   hint: t("平台是接入用户名里的一段，先建一个平台，客户端才能连上来。"),
                   action: (
                     <Button asChild size="sm" variant="primary">
-                      <Link to="/platforms">{t("新建")}</Link>
+                      <Link to={opsPaths.platforms}>{t("新建")}</Link>
                     </Button>
                   ),
                 }}
@@ -521,7 +522,7 @@ export function WorkbenchPage() {
                   title={t("最近变更")}
                   meta={events.data ? t("{{count}} 条", { count: events.data.items.length }) : undefined}
                   actions={
-                    <Link to="/audit" className="link-quiet text-xs text-ink-soft">
+                    <Link to={opsPaths.audit} className="link-quiet text-xs text-ink-soft">
                       {t("审计日志")}
                     </Link>
                   }

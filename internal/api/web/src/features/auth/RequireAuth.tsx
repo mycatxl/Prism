@@ -1,8 +1,10 @@
 import { useEffect, useState, type ReactElement } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuthStore } from "./auth-store";
-import { fetchSession } from "../../lib/api-client";
 import { LoadingState } from "../../components/ui/QueryState";
+import { fetchSession } from "../../lib/api-client";
+import { ACCOUNT } from "../../lib/paths";
+import { isAccountPath } from "../../lib/roles";
 
 type RequireAuthProps = {
   children: ReactElement;
@@ -32,8 +34,8 @@ export function RequireAuth({ children }: RequireAuthProps) {
   }, [session.auth_required, session.authenticated]);
 
   if (session.authenticated || !session.auth_required) {
-    if (session.must_enrol_totp && location.pathname !== "/account-security") {
-      return <Navigate to="/account-security?enrol=1" replace />;
+    if (session.must_enrol_totp && !isAccountPath(location.pathname)) {
+      return <Navigate to={`${ACCOUNT}?enrol=1`} replace />;
     }
     return children;
   }

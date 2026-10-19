@@ -23,6 +23,7 @@ import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
 import {
   cleanupSubscriptionCircuitOpenNodes,
@@ -1004,7 +1005,7 @@ export function SubscriptionPage() {
                           >
                             <Button asChild variant="ghost" size="icon" title={t("预览节点池")}>
                               <Link
-                                to={`/nodes?subscription_id=${encodeURIComponent(subscription.id)}`}
+                                to={`${opsPaths.nodes}?subscription_id=${encodeURIComponent(subscription.id)}`}
                                 aria-label={t("预览订阅 {{name}} 的节点池", {
                                   name: subscription.name,
                                 })}

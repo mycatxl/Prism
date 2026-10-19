@@ -10,7 +10,7 @@ import { Button } from "./ui/Button";
  *
  * It points at the one action that is always correct here - go back to where
  * this session belongs - rather than apologising or explaining routing. The
- * destination follows the role: sending a tenant to /dashboard would land them
+ * destination follows the role: sending a tenant to `/ops` would land them on a
  * on a management route, which is not theirs and answers not-found again.
  */
 export function NotFoundPage() {

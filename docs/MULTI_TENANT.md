@@ -97,17 +97,21 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 
 ## 8. 页面清单
 
+
+控制台分两个命名空间：运营面在 `/ops/*`，租户自助面在 `/me/*`，个人账号（改密码、二次验证）在 `/account`。两套外壳共用同一套组件与设计令牌，但导航表彼此独立——租户的浏览器不会下载运营面的路由表，服务端对越权请求一律 404（见上文角色闸门）。
 管理台（仅管理员）：
 
 | 页面 | 路径 | 主要接口 |
 | --- | --- | --- |
-| 用户管理 | `/admin/users` | `GET|POST /api/v1/admin/users` |
-| 用户详情 | `/admin/users/:id` | 用户 CRUD、密钥、订阅、单用户用量 |
-| 套餐管理 | `/admin/plans` | `GET|POST|PATCH|DELETE /api/v1/admin/plans` |
-| 邀请码管理 | `/admin/invites` | `GET|POST|DELETE /api/v1/admin/invites` |
-| 兑换码管理 | `/admin/redeem-codes` | `GET|POST /api/v1/admin/redeem-codes`（生成时明文只出现一次，列表只给 `code_hint`）、`DELETE /api/v1/admin/redeem-codes/{id}` |
-| 用量统计 | `/admin/usage` | `GET /api/v1/admin/usage/*`（含按套餐分布）、`GET /api/v1/admin/alerts` |
-| 系统设置 | `/admin/settings` | `GET|PATCH /api/v1/system/config`（注册准入、保留周期、纯净度阈值）、`GET /api/v1/system/config/env`（部署侧注册策略） |
+| 用户管理 | `/ops/users` | `GET|POST /api/v1/admin/users` |
+| 用户详情 | `/ops/users/:id` | 用户 CRUD、密钥、订阅、单用户用量 |
+| 套餐管理 | `/ops/plans` | `GET|POST|PATCH|DELETE /api/v1/admin/plans` |
+| 邀请码管理 | `/ops/invites` | `GET|POST|DELETE /api/v1/admin/invites` |
+| 兑换码管理 | `/ops/redeem-codes` | `GET|POST /api/v1/admin/redeem-codes`（生成时明文只出现一次，列表只给 `code_hint`）、`DELETE /api/v1/admin/redeem-codes/{id}` |
+| 用量统计 | `/ops/usage` | `GET /api/v1/admin/usage/*`（含按套餐分布）、`GET /api/v1/admin/alerts` |
+| 系统设置 | `/ops/settings` | `GET|PATCH /api/v1/system/config`（注册准入、保留周期、纯净度阈值）、`GET /api/v1/system/config/env`（部署侧注册策略） |
+
+其余运营页同在 `/ops/*` 下：`/ops`（总览）、`/ops/nodes`（节点池）、`/ops/subscriptions`（订阅源）、`/ops/jobs`（检测任务）、`/ops/platforms`（平台，详情 `/ops/platforms/:id`）、`/ops/endpoints`（接入点）、`/ops/rules`（请求头规则）、`/ops/request-logs`（请求日志）、`/ops/resources`（资源）、`/ops/config`（运行参数）、`/ops/audit`（审计日志）。旧路径（`/dashboard`、`/nodes`、`/admin/users`、`/system-config`、`/account-security` 等）在控制台内会重定向到新路径，只为书签与历史日志里的旧链接保留。
 
 租户自助面板（登录即可）：
 
@@ -131,7 +135,7 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 
 **充值要配置才有。** 不设 `PRISM_USDT_ADDRESS` 时链上充值是关的：`GET /api/v1/me/deposit` 返回 `enabled:false`，控制台据此隐藏充值页而不是显示一个坏掉的页面，`POST /api/v1/me/deposits` 明确回「链上充值未配置」。这个地址是你自己的钱包，服务只读链、不持私钥、不碰资金。合约 `PRISM_USDT_CONTRACT`（默认 Tether 的 TRC20 USDT）与端点 `PRISM_TRONGRID_ENDPOINT`（默认 `https://api.trongrid.io`）都有默认值，`PRISM_TRONGRID_API_KEY` 可选——但匿名调用会被 TronGrid 限流到扫描器几乎跟不上，生产部署应当配一个。
 
-**兑换码不是邀请码。** 邀请码（`/admin/invites`）建的是账号、按绑定的套餐授予订阅，落在注册路径上；兑换码（`/admin/redeem-codes`）给的是余额，落在已登录的自助路径上。两者都拒绝枚举，但一个是「注册时花掉」，一个是「充值后自己拿去买」。
+**兑换码不是邀请码。** 邀请码（`/ops/invites`）建的是账号、按绑定的套餐授予订阅，落在注册路径上；兑换码（`/ops/redeem-codes`）给的是余额，落在已登录的自助路径上。两者都拒绝枚举，但一个是「注册时花掉」，一个是「充值后自己拿去买」。
 
 **回归证据**：`scripts/billing.sh`（`make billing`，CI 每次都跑）用一个假的 TronGrid 把整条链路走一遍——建带价套餐、建邀请、注册、开充值意向、假链上转账、余额入账、用余额购买、重放购买、打开自动续费；接口层的正反两面在 `internal/api/balance_e2e_test.go` 与 `internal/api/deposit_e2e_test.go`。
 

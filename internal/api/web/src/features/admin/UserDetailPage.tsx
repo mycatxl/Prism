@@ -35,6 +35,7 @@ import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { copyToClipboard } from "../../lib/clipboard";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { UserBalancePanel } from "./UserBalancePanel";
 import {
   createSubscription,
@@ -170,7 +171,7 @@ export function UserDetailPage() {
   if (userError || !user) {
     return (
       <div className="space-y-4">
-        <Button variant="secondary" onClick={() => navigate("/admin/users")}>
+        <Button variant="secondary" onClick={() => navigate(opsPaths.users)}>
           <ArrowLeft size={14} />
           <span>{t("返回用户列表")}</span>
         </Button>
@@ -194,7 +195,7 @@ export function UserDetailPage() {
       <div>
         <Button
           variant="ghost"
-          onClick={() => navigate("/admin/users")}
+          onClick={() => navigate(opsPaths.users)}
           className="mb-2 -ml-2 text-ink-soft hover:text-ink"
         >
           <ArrowLeft size={14} />

@@ -1,6 +1,10 @@
 import { Navigate, useLocation } from "react-router-dom";
+import { opsPaths } from "../lib/paths";
 
-/** `/quality` predates the nodes page's view tabs; the parameters are carried across. */
+/**
+ * `/ops/quality` predates the nodes page's view tabs; the parameters are carried
+ * across. The path comes from `opsPaths` like every other address in the console.
+ */
 export function LegacyQualityRedirect() {
   const location = useLocation();
   const previous = new URLSearchParams(location.search);
@@ -13,5 +17,5 @@ export function LegacyQualityRedirect() {
     const value = previous.get(oldKey);
     if (value) next.set(newKey, value);
   }
-  return <Navigate to={"/nodes?" + next.toString()} replace />;
+  return <Navigate to={`${opsPaths.nodes}?${next.toString()}`} replace />;
 }

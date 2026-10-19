@@ -11,6 +11,7 @@ import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { apiRequest } from "../../lib/api-client";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import type {
   HistoryAccessLatencyResponse,
   HistoryLeaseLifetimeResponse,
@@ -858,7 +859,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
             hint={t("当前实时值")}
           />
           <Link
-            to={`/platforms/${encodeURIComponent(platform.id)}?tab=ops#platform-lease-management`}
+            to={`${opsPaths.platforms}/${encodeURIComponent(platform.id)}?tab=ops#platform-lease-management`}
             className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-signal-deep"
           >
             <Link2 size={13} aria-hidden />
@@ -881,7 +882,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
             hint={`${t("出口 IP")} ${formatCount(snapshotNodePool?.egress_ip_count ?? 0)}`}
           />
           <Link
-            to={`/nodes?platform_id=${encodeURIComponent(platform.id)}`}
+            to={`${opsPaths.nodes}?platform_id=${encodeURIComponent(platform.id)}`}
             className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-signal-deep"
           >
             <Link2 size={13} aria-hidden />

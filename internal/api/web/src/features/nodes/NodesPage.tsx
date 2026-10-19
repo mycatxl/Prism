@@ -47,6 +47,7 @@ import { useToast } from "../../hooks/useToast";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { formatDateTime } from "../../lib/time";
 import { listPlatforms } from "../platforms/api";
 import { listSubscriptions } from "../subscriptions/api";
@@ -619,7 +620,7 @@ export function NodesPage() {
                 </MenuContent>
               </Menu>
               <Button asChild variant="secondary">
-                <Link to="/subscriptions?create=1">{t("导入节点")}</Link>
+                <Link to={`${opsPaths.subscriptions}?create=1`}>{t("导入节点")}</Link>
               </Button>
             </>
           }
@@ -738,7 +739,7 @@ export function NodesPage() {
             ) : null}
             {bulkJobID ? (
               <Button asChild variant="ghost" size="sm">
-                <Link to="/jobs">{t("查看检测任务")}</Link>
+                <Link to={opsPaths.jobs}>{t("查看检测任务")}</Link>
               </Button>
             ) : null}
             <div className="nodes-toolbar__pagination ml-auto flex flex-wrap items-center gap-2">
@@ -1117,7 +1118,7 @@ export function NodesPage() {
                       {t("清除筛选")}
                     </Button>
                     <Button asChild>
-                      <Link to="/subscriptions?create=1">{t("添加订阅")}</Link>
+                      <Link to={`${opsPaths.subscriptions}?create=1`}>{t("添加订阅")}</Link>
                     </Button>
                   </div>
                 }
@@ -1424,7 +1425,7 @@ export function NodesPage() {
                           className="flex flex-wrap items-center justify-between gap-3 py-2"
                           key={tag.subscription_id + tag.tag}
                         >
-                          <Link to={`/subscriptions?selected=${tag.subscription_id}`}>
+                          <Link to={`${opsPaths.subscriptions}?selected=${tag.subscription_id}`}>
                             {tag.subscription_name}
                           </Link>
                           <span className="text-sm text-ink-soft">{tag.tag}</span>

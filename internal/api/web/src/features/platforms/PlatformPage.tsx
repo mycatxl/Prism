@@ -19,6 +19,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { formatGoDuration } from "../../lib/time";
 import { createPlatform, listPlatforms } from "./api";
 import {
@@ -204,7 +205,7 @@ export function PlatformPage() {
       setCreateModalOpen(false);
       createForm.reset();
       showToast("success", t("平台 {{name}} 创建成功", { name: created.name }));
-      navigate(`/platforms/${created.id}`);
+      navigate(`${opsPaths.platforms}/${created.id}`);
     },
     onError: (error) => {
       showToast("error", formatPlatformMutationError(error));
@@ -325,7 +326,7 @@ export function PlatformPage() {
                   </THead>
                   <TBody>
                     {platforms.map((platform) => {
-                      const open = () => navigate(`/platforms/${platform.id}`);
+                      const open = () => navigate(`${opsPaths.platforms}/${platform.id}`);
                       const policy = t(
                         platform.id === ZERO_UUID
                           ? "内置平台"

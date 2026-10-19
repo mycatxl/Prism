@@ -6,6 +6,7 @@ import { Button } from "../../../components/ui/Button";
 import { Panel, PanelBody, PanelHeader, SectionTitle } from "../../../components/ui/Panel";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
 import { useI18n } from "../../../i18n";
+import { opsPaths } from "../../../lib/paths";
 import { formatDateTime, formatRelativeTime } from "../../../lib/time";
 import type { QualityEvidence, QualitySummary } from "./types";
 import { assessmentReasons, evidenceFor, inspectionErrorLabel, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, useQualityTime, verdictLabels } from "./presentation";
@@ -323,7 +324,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </section>}
 
     {nodeHash ? <IPPureReviewPanel key={nodeHash + ":" + nodeIP} nodeHash={nodeHash} nodeIP={nodeIP} ready={nodeReady} /> : <div className="space-y-1 border-t border-rule pt-3">
-      <Link className="inline-flex items-center gap-1 text-sm" to={"/nodes?egress_ip=" + encodeURIComponent(summary?.ip || "")}>{t("查看此出口的节点")}<ArrowUpRight size={12} aria-hidden /></Link>
+      <Link className="inline-flex items-center gap-1 text-sm" to={`${opsPaths.nodes}?egress_ip=${encodeURIComponent(summary?.ip || "")}`}>{t("查看此出口的节点")}<ArrowUpRight size={12} aria-hidden /></Link>
       <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("纯净度评分需要经目标节点查询，可在节点详情中直接复核。")}</p>
     </div>}
   </div>;

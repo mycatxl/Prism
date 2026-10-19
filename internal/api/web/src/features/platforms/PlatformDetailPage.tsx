@@ -21,6 +21,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
 import {
   clearAllPlatformLeases,
@@ -379,7 +380,7 @@ export function PlatformDetailPage() {
     onSuccess: async (deleted) => {
       await queryClient.invalidateQueries({ queryKey: ["platforms"] });
       showToast("success", t("平台 {{name}} 已删除", { name: deleted.name }));
-      navigate("/platforms", { replace: true });
+      navigate(opsPaths.platforms, { replace: true });
     },
     onError: (error) => {
       showToast("error", formatApiErrorMessage(error, t));
@@ -462,7 +463,7 @@ export function PlatformDetailPage() {
             }
             actions={
               <>
-                <Button variant="secondary" size="sm" onClick={() => navigate("/platforms")}>
+                <Button variant="secondary" size="sm" onClick={() => navigate(opsPaths.platforms)}>
                   <ArrowLeft size={15} />
                   {t("返回列表")}
                 </Button>

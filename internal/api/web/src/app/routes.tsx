@@ -1,11 +1,12 @@
 import { lazy, Suspense } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { AppShell } from "../components/AppShell";
 import { NotFoundPage } from "../components/NotFoundPage";
 import { LoadingState } from "../components/ui/QueryState";
 import { RequireAuth } from "../features/auth/RequireAuth";
 import { useAuthStore } from "../features/auth/auth-store";
 import { useI18n } from "../i18n";
+import { ACCOUNT, OPS_ROOT, legacyTargetFor, mePaths } from "../lib/paths";
 import { isAdminRole, homePathFor } from "../lib/roles";
 import { Page } from "./page";
 
@@ -26,9 +27,9 @@ function HomeRedirect() {
 }
 
 /**
- * The management route table, loaded only for an operator.
+ * The operator route table, loaded only for an operator.
  *
- * A tenant session never requests this chunk, so the management paths are not in
+ * A tenant session never requests this chunk, so the operator paths are not in
  * the JavaScript it holds — see admin-routes.tsx. That is defence in depth, not
  * the control: the server refuses every management request from a tenant
  * whatever the client does (internal/api/rolegate.go).
@@ -38,11 +39,11 @@ const LazyAdminRoutes = lazy(() =>
 );
 
 /**
- * The catch-all for a path outside the self-service surface.
+ * The operator surface, mounted at `OPS_ROOT` (`/ops/*`).
  *
  * An operator gets the management table. A tenant gets the ordinary not-found
- * page, which is what the server answers for a management path they may not
- * use — a distinct refusal would confirm which paths exist.
+ * page, which is what the server answers for a management path they may not use
+ * — a distinct refusal would confirm which paths exist.
  *
  * The loading placeholder must not be the not-found page: it would flash for
  * every first visit to a management route, and a slow chunk would read as a
@@ -61,6 +62,22 @@ function AdminSurface() {
       <LazyAdminRoutes />
     </Suspense>
   );
+}
+
+/**
+ * The catch-all: an address outside both namespaces.
+ *
+ * An old address is moved to where its page lives now — the table is
+ * `legacyRedirects` in src/lib/paths.ts, and the part of the path that names a
+ * detail (an id) and the search string are carried across with it. Anything the
+ * table does not name is the operator surface, which answers a tenant with the
+ * ordinary not-found page, and `/ops/*` handles the namespace itself above.
+ */
+function FallbackRoute() {
+  const { pathname, search } = useLocation();
+  const target = legacyTargetFor(pathname);
+  if (target) return <Navigate to={`${target}${search}`} replace />;
+  return <AdminSurface />;
 }
 
 export function AppRoutes() {
@@ -90,14 +107,15 @@ export function AppRoutes() {
         }
       >
         <Route path="/" element={<HomeRedirect />} />
-        <Route path="/me" element={<Page><MeOverviewPage /></Page>} />
-        <Route path="/me/keys" element={<Page><MeKeysPage /></Page>} />
-        <Route path="/me/guide" element={<Page><MeGuidePage /></Page>} />
-        <Route path="/me/plans" element={<Page><MePlansPage /></Page>} />
-        <Route path="/me/leases" element={<Page><MeLeasesPage /></Page>} />
-        <Route path="/me/deposit" element={<Page><MeDepositPage /></Page>} />
-        <Route path="/account-security" element={<Page><AccountSecurityPage /></Page>} />
-        <Route path="*" element={<AdminSurface />} />
+        <Route path={mePaths.overview} element={<Page><MeOverviewPage /></Page>} />
+        <Route path={mePaths.keys} element={<Page><MeKeysPage /></Page>} />
+        <Route path={mePaths.guide} element={<Page><MeGuidePage /></Page>} />
+        <Route path={mePaths.plans} element={<Page><MePlansPage /></Page>} />
+        <Route path={mePaths.leases} element={<Page><MeLeasesPage /></Page>} />
+        <Route path={mePaths.deposit} element={<Page><MeDepositPage /></Page>} />
+        <Route path={ACCOUNT} element={<Page><AccountSecurityPage /></Page>} />
+        <Route path={`${OPS_ROOT}/*`} element={<AdminSurface />} />
+        <Route path="*" element={<FallbackRoute />} />
       </Route>
     </Routes>
   );

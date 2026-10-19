@@ -3,6 +3,7 @@ import { CornerDownLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { NavigationItem } from "../lib/navigation";
+import { ACCOUNT } from "../lib/paths";
 import { useTheme } from "../lib/theme";
 import { useI18n } from "../i18n";
 
@@ -95,7 +96,7 @@ export function CommandPalette({
           >
             <span className="min-w-0 flex-1 truncate">{t("切换语言")}</span>
           </Command.Item>
-          <Command.Item value={t("账户安全")} onSelect={() => run(() => navigate("/account-security"))} className={row}>
+          <Command.Item value={t("账户安全")} onSelect={() => run(() => navigate(ACCOUNT))} className={row}>
             <span className="min-w-0 flex-1 truncate">{t("账户安全")}</span>
           </Command.Item>
           <Command.Item value={t("退出登录")} onSelect={() => run(onSignOut)} className={row}>

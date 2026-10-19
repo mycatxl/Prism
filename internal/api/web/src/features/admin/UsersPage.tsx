@@ -18,6 +18,7 @@ import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import { createUser, deleteUser, listPlans, listUsers, updateUser } from "./api";
 import type { AdminPlan, AdminUser, CreateUserInput } from "./types";
 
@@ -234,7 +235,7 @@ export function UsersPage() {
                       <TR
                         key={user.id}
                         className="cursor-pointer hover:bg-hover"
-                        onClick={() => navigate(`/admin/users/${user.id}`)}
+                        onClick={() => navigate(`${opsPaths.users}/${user.id}`)}
                       >
                         <TD>
                           <TDClip className="font-semibold text-ink">

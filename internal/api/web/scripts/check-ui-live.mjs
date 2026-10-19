@@ -38,42 +38,102 @@ if (!existsSync(binary))
 // whose browser lives somewhere else, so no home directory is hard-coded here.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
 
-// The destinations the panel offers, in the order the rail lists them.
+// ---------------------------------------------------------------------------
+// The console's addresses, read from the one file that declares them
+// ---------------------------------------------------------------------------
+
+/*
+ * `src/lib/paths.ts` is the single source of truth: the router, the rail and every
+ * in-page link reference it, so this script reads it too. The sweep below then
+ * cannot pass against a rail that names paths the console no longer serves, and
+ * the retired addresses are derived from the same table, which is what makes
+ * "every route renders" also prove that an old address still lands on its page.
+ */
+const pathsSource = readFileSync(new URL("../src/lib/paths.ts", import.meta.url), "utf8");
+const namespace = {};
+for (const match of pathsSource.matchAll(/export const (OPS_ROOT|ME_ROOT|ACCOUNT)\s*=\s*"([^"]*)"/g)) {
+  namespace[match[1]] = match[2];
+}
+for (const name of ["OPS_ROOT", "ME_ROOT", "ACCOUNT"]) {
+  if (!namespace[name]) throw new Error(`check-ui-live: src/lib/paths.ts declares no ${name}`);
+}
+
+const readRecord = (name) => {
+  const body = new RegExp(`export const ${name}[^=]*=\\s*\\{([\\s\\S]*?)\\n\\};`).exec(pathsSource)?.[1];
+  if (body === undefined) throw new Error(`check-ui-live: src/lib/paths.ts declares no ${name} record`);
+  const entries = new Map();
+  for (const line of body.split("\n")) {
+    const row = /^\s*(?:"([^"]+)"|(\w+)):\s*(.+?),?\s*$/.exec(line);
+    if (row) entries.set(row[1] ?? row[2], row[3]);
+  }
+  if (entries.size === 0) throw new Error(`check-ui-live: the ${name} record in src/lib/paths.ts is empty`);
+  return entries;
+};
+const opsPaths = readRecord("opsPaths");
+const mePaths = readRecord("mePaths");
+const legacyRedirects = readRecord("legacyRedirects");
+
+/** Resolves a value from paths.ts: a literal, a `template`, a constant or a record entry. */
+const resolvePath = (source) => {
+  const expr = String(source).trim().replace(/,$/, "");
+  const literal = /^"([^"]*)"$/.exec(expr);
+  if (literal) return literal[1];
+  const template = /^`([^`]*)`$/.exec(expr);
+  if (template) {
+    const text = template[1].replace(/\$\{(\w+)\}/g, (whole, name) => namespace[name] ?? whole);
+    if (text.includes("${")) throw new Error(`check-ui-live: cannot resolve ${expr} in src/lib/paths.ts`);
+    return text;
+  }
+  if (expr in namespace) return namespace[expr];
+  const member = /^(\w+)\.(\w+)$/.exec(expr);
+  if (member && { opsPaths, mePaths, legacyRedirects }[member[1]]?.has(member[2])) {
+    return resolvePath({ opsPaths, mePaths, legacyRedirects }[member[1]].get(member[2]));
+  }
+  throw new Error(`check-ui-live: cannot resolve ${expr} in src/lib/paths.ts`);
+};
+/** The absolute path of one record entry, and the browser address the panel serves. */
+const recordPath = (record, key) => resolvePath(record.get(key));
+const ui = (path) => `/ui${path}`;
+
+// The destinations the panel offers, in the order the rail lists them: the
+// operator namespace, then the account page every session shares.
 const RAIL_PATHS = [
-  "/ui/dashboard",
-  "/ui/nodes",
-  "/ui/subscriptions",
-  "/ui/platforms",
-  "/ui/jobs",
-  "/ui/request-logs",
-  "/ui/endpoints",
-  "/ui/rules",
-  "/ui/resources",
-  "/ui/system-config",
-  "/ui/audit",
-  // The management console the tenant API added, and the account surface every
-  // session reaches: one more destination per page, in the order the rail
-  // groups them (管理, then 账号).
-  "/ui/admin/users",
-  "/ui/admin/plans",
-  "/ui/admin/invites",
-  "/ui/admin/redeem-codes",
-  "/ui/admin/usage",
-  "/ui/admin/settings",
-  "/ui/account-security",
-];
+  "dashboard",
+  "nodes",
+  "subscriptions",
+  "jobs",
+  "platforms",
+  "plans",
+  "users",
+  "invites",
+  "redeemCodes",
+  "usage",
+  "endpoints",
+  "rules",
+  "requestLogs",
+  "config",
+  "settings",
+  "resources",
+  "audit",
+].map((key) => ui(recordPath(opsPaths, key)));
+RAIL_PATHS.push(ui(namespace.ACCOUNT));
 
 // What a tenant session gets instead: the self-service destinations, which an
-// operator never sees, plus the account surface both roles share.
-const TENANT_RAIL = [
-  "/ui/me",
-  "/ui/me/keys",
-  "/ui/me/guide",
-  "/ui/me/plans",
-  "/ui/me/leases",
-  "/ui/me/deposit",
-  "/ui/account-security",
-];
+// operator never sees, plus the account page both roles share.
+const TENANT_RAIL = ["overview", "keys", "guide", "plans", "leases", "deposit"].map((key) =>
+  ui(recordPath(mePaths, key)),
+);
+TENANT_RAIL.push(ui(namespace.ACCOUNT));
+
+/*
+ * Every retired address, the page it lands on, and whether its search string is
+ * expected to survive the move. `/quality` is in this list although it is not in
+ * the redirect table: its redirect is the page's own component
+ * (src/app/legacy-quality-redirect.tsx), which rewrites the query on purpose, and
+ * an old bookmark of it is just as reachable.
+ */
+const LEGACY_REDIRECTS = [...legacyRedirects].map(([from, to]) => [ui(from), ui(resolvePath(to)), true]);
+LEGACY_REDIRECTS.push(["/ui/quality", ui(recordPath(opsPaths, "nodes")), false]);
 
 // Class tokens the redesign deleted. A trailing dash means "prefix". `card` is
 // matched as a whole token, because the kit's own utilities are named around it.
@@ -146,8 +206,11 @@ const INK = lightToken("ink");
 
 const LOCALE = "zh-CN";
 const ADMIN_USER = "admin";
-const DASHBOARD = "/ui/dashboard";
-const NODES = "/ui/nodes";
+const DASHBOARD = ui(recordPath(opsPaths, "dashboard"));
+const NODES = ui(recordPath(opsPaths, "nodes"));
+const SUBSCRIPTIONS = ui(recordPath(opsPaths, "subscriptions"));
+const USAGE = ui(recordPath(opsPaths, "usage"));
+const AUDIT = ui(recordPath(opsPaths, "audit"));
 
 /*
  * The heading `src/components/ErrorBoundary.tsx` renders when a route throws.
@@ -372,7 +435,7 @@ check("backend boots, inventory imports and the panel signs in", async ({ origin
   await page.locator("#username").fill(ADMIN_USER);
   await page.locator("#password").fill(adminPassword);
   await page.locator('form button[type="submit"]').click();
-  await page.waitForURL(/\/ui\/dashboard$/, { timeout: 15000 });
+  await page.waitForURL((url) => url.pathname === DASHBOARD, { timeout: 15000 });
 
   // The session lives in an HttpOnly cookie, so nothing that grants access may
   // be left behind in the storage a script on the page can read.
@@ -398,6 +461,33 @@ check("every route renders without a page or console error", async ({ origin, pa
     if (crashed) failures.push(`${path}: the error boundary rendered 界面渲染失败 (${crashed})`);
     await quiet(page);
     for (const message of errors.drain()) failures.push(`${path}: ${message.text}`);
+  }
+
+  /*
+   * A retired address is not a dead one: every path the console used to answer at
+   * has to land on the page that replaced it, with the query it carried. This is
+   * the reachability half of the two-namespace move — an old bookmark, a link in a
+   * ticket or a stale `next=` in a sign-in URL is still a working entry point.
+   */
+  for (const [from, to, keepsSearch] of LEGACY_REDIRECTS) {
+    errors.reset(from);
+    // A query on the old address is part of the link (`/nodes?subscription_id=…`),
+    // so it has to arrive with it; `/quality` is the one page that rewrites it.
+    await page.goto(origin + from + (keepsSearch ? "?keep=1" : ""));
+    const moved = await page
+      .waitForURL((url) => url.pathname === to, { timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!moved) {
+      failures.push(`${from}: landed on ${new URL(page.url()).pathname}, not on ${to}`);
+      continue;
+    }
+    if (keepsSearch && new URL(page.url()).search !== "?keep=1") {
+      failures.push(`${from}: the query string was dropped on the way to ${to}`);
+    }
+    if (!(await rendered(page))) failures.push(`${from}: ${to} rendered no page heading`);
+    await quiet(page);
+    for (const message of errors.drain()) failures.push(`${from}: ${message.text}`);
   }
   assert.deepEqual(failures, [], "routes that did not render cleanly:\n  " + failures.join("\n  "));
 });
@@ -436,7 +526,7 @@ check("legacy node envelopes do not crash the node pool", async ({ origin, page,
     });
   });
   try {
-    errors.reset("/ui/nodes legacy envelope");
+    errors.reset(`${NODES} legacy envelope`);
     await page.goto(origin + NODES + "?legacy_smoke=1");
     await rendered(page);
     await page.waitForTimeout(250);
@@ -490,8 +580,8 @@ check("the usage alert queue renders and clears an alert", async ({ origin, page
     });
   });
   try {
-    errors.reset("/ui/admin/usage alert queue");
-    await page.goto(origin + "/ui/admin/usage");
+    errors.reset(`${USAGE} alert queue`);
+    await page.goto(origin + USAGE);
     await rendered(page);
     const main = page.locator("main");
     await main.getByText("ui-alert-tenant").first().waitFor({ timeout: 5000 });
@@ -522,7 +612,7 @@ check("the design tokens are the ones actually applied", async ({ origin, page }
   // A data cell is mono by construction (Table.tsx TDNum + design.css .cell-num).
   // The class the cell actually carries is the one in Table.tsx; reading it from
   // there would couple this file to the source, so it is spelled out here.
-  await page.goto(origin + "/ui/subscriptions");
+  await page.goto(origin + SUBSCRIPTIONS);
   await rendered(page);
   await page.locator("td.cell-num").first().waitFor({ state: "attached", timeout: 15000 });
   const cell = await page.evaluate(() => {
@@ -556,7 +646,7 @@ check("the rail reaches every destination and marks the current one", async ({ o
   assert.equal(await rail.locator('a[aria-current="page"]:visible').count(), 1, "exactly one destination is current");
 
   await rail.locator(`a[href="${NODES}"]:visible`).click();
-  await page.waitForURL(/\/ui\/nodes$/);
+  await page.waitForURL((url) => url.pathname === NODES);
   const nodesLink = rail.locator(`a[href="${NODES}"][aria-current="page"]:visible`);
   await nodesLink.waitFor({ state: "attached", timeout: 15000 });
   assert.equal(await rail.locator('a[aria-current="page"]:visible').count(), 1, "exactly one destination is current");
@@ -599,7 +689,7 @@ check("the command palette opens from the keyboard, filters and routes", async (
   await page.locator("[cmdk-input]").fill("审计日志");
   await page.waitForFunction(() => document.querySelectorAll("[cmdk-item]").length === 1, null, { timeout: 5000 });
   await page.keyboard.press("Enter");
-  await page.waitForURL(/\/ui\/audit$/);
+  await page.waitForURL((url) => url.pathname === AUDIT);
   await palette.waitFor({ state: "hidden", timeout: 15000 });
 
   await page.keyboard.press("Control+k");

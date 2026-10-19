@@ -1,7 +1,14 @@
 import type { NavigationItem } from "./navigation";
+import { opsPaths } from "./paths";
 
 /**
  * The operator's destinations, grouped by the object they act on.
+ *
+ * Every address is read from `opsPaths` (src/lib/paths.ts), so the rail, the
+ * route table and the pages themselves cannot drift apart: the console used to
+ * serve this half of the product from two conventions at once (`/admin/*` for six
+ * pages and the root for the rest), and this table is where that split used to be
+ * visible.
  *
  * Loaded dynamically, for an admin session only — see navigation.ts. Every entry
  * here names a management route, and the server refuses those to a tenant
@@ -20,26 +27,26 @@ import type { NavigationItem } from "./navigation";
  * `总览` carries no section: it is the front door, not a category.
  */
 export const adminItems: NavigationItem[] = [
-  { label: "总览", path: "/dashboard", section: "", adminOnly: true },
+  { label: "总览", path: opsPaths.dashboard, section: "", adminOnly: true },
 
-  { label: "节点", path: "/nodes", section: "节点池", adminOnly: true },
-  { label: "订阅源", path: "/subscriptions", section: "节点池", adminOnly: true },
-  { label: "检测任务", path: "/jobs", section: "节点池", adminOnly: true },
+  { label: "节点", path: opsPaths.nodes, section: "节点池", adminOnly: true },
+  { label: "订阅源", path: opsPaths.subscriptions, section: "节点池", adminOnly: true },
+  { label: "检测任务", path: opsPaths.jobs, section: "节点池", adminOnly: true },
 
-  { label: "平台", path: "/platforms", section: "售卖", adminOnly: true },
-  { label: "套餐", path: "/admin/plans", section: "售卖", adminOnly: true },
+  { label: "平台", path: opsPaths.platforms, section: "售卖", adminOnly: true },
+  { label: "套餐", path: opsPaths.plans, section: "售卖", adminOnly: true },
 
-  { label: "用户", path: "/admin/users", section: "客户", adminOnly: true },
-  { label: "邀请码", path: "/admin/invites", section: "客户", adminOnly: true },
-  { label: "兑换码", path: "/admin/redeem-codes", section: "客户", adminOnly: true },
-  { label: "用量", path: "/admin/usage", section: "客户", adminOnly: true },
+  { label: "用户", path: opsPaths.users, section: "客户", adminOnly: true },
+  { label: "邀请码", path: opsPaths.invites, section: "客户", adminOnly: true },
+  { label: "兑换码", path: opsPaths.redeemCodes, section: "客户", adminOnly: true },
+  { label: "用量", path: opsPaths.usage, section: "客户", adminOnly: true },
 
-  { label: "接入点", path: "/endpoints", section: "接入", adminOnly: true },
-  { label: "请求头规则", path: "/rules", section: "接入", adminOnly: true },
-  { label: "请求日志", path: "/request-logs", section: "接入", adminOnly: true },
+  { label: "接入点", path: opsPaths.endpoints, section: "接入", adminOnly: true },
+  { label: "请求头规则", path: opsPaths.rules, section: "接入", adminOnly: true },
+  { label: "请求日志", path: opsPaths.requestLogs, section: "接入", adminOnly: true },
 
-  { label: "运行参数", path: "/system-config", section: "系统", adminOnly: true },
-  { label: "策略与准入", path: "/admin/settings", section: "系统", adminOnly: true },
-  { label: "资源", path: "/resources", section: "系统", adminOnly: true },
-  { label: "审计日志", path: "/audit", section: "系统", adminOnly: true },
+  { label: "运行参数", path: opsPaths.config, section: "系统", adminOnly: true },
+  { label: "策略与准入", path: opsPaths.settings, section: "系统", adminOnly: true },
+  { label: "资源", path: opsPaths.resources, section: "系统", adminOnly: true },
+  { label: "审计日志", path: opsPaths.audit, section: "系统", adminOnly: true },
 ];

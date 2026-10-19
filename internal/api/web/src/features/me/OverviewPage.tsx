@@ -26,6 +26,7 @@ import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { newRequestID } from "../../lib/idempotency";
 import { formatMicro } from "../../lib/money";
+import { mePaths } from "../../lib/paths";
 import { getOverview, getSessions, renew, revokeSession, setAutoRenew } from "./api";
 import { BalancePanel } from "./BalancePanel";
 import type { SubscriptionView } from "./types";
@@ -184,7 +185,7 @@ export function OverviewPage() {
                     </Button>
                   )}
                   <Button variant="secondary" size="sm" asChild>
-                    <Link to="/me/plans">
+                    <Link to={mePaths.plans}>
                       <ShoppingCart size={14} />
                       <span>{t("购买套餐")}</span>
                     </Link>
@@ -201,7 +202,7 @@ export function OverviewPage() {
                   )}
                   action={
                     <Button variant="primary" asChild>
-                      <Link to="/me/plans">
+                      <Link to={mePaths.plans}>
                         <ShoppingCart size={14} />
                         <span>{t("购买套餐")}</span>
                       </Link>

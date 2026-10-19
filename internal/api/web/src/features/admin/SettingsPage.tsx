@@ -29,6 +29,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { fetchSession } from "../../lib/api-client";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { opsPaths } from "../../lib/paths";
 import {
   getDefaultSystemConfig,
   getSystemConfig,
@@ -539,7 +540,7 @@ function SettingsFormContent({
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-control border border-rule bg-paper-inset px-3.5 py-2.5 text-xs text-ink-soft">
                   <span>{t("邀请码在邀请管理里创建，可以预先绑定套餐。")}</span>
                   <Link
-                    to="/admin/invites"
+                    to={opsPaths.invites}
                     className="action inline-flex items-center gap-1 font-medium text-accent hover:text-accent-deep"
                   >
                     {t("管理邀请码")}
