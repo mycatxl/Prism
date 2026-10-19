@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -210,15 +211,15 @@ func decodePathSegmentV1(segment string) (string, *ProxyError) {
 	return decoded, nil
 }
 
-func (p *ReverseProxy) parsePath(rawPath string) (*parsedPath, *ProxyError) {
-	return p.parsePathV1(rawPath)
+func (p *ReverseProxy) parsePath(rawPath string, addr netip.Addr) (*parsedPath, *ProxyError) {
+	return p.parsePathV1(rawPath, addr)
 }
 
 // parsePathV1 parses reverse proxy path using V1 identity rules.
 //
 // rawPath must be r.URL.EscapedPath (not r.URL.Path) to preserve escaped
 // delimiters in trailing path segments.
-func (p *ReverseProxy) parsePathV1(rawPath string) (*parsedPath, *ProxyError) {
+func (p *ReverseProxy) parsePathV1(rawPath string, addr netip.Addr) (*parsedPath, *ProxyError) {
 	path := strings.TrimPrefix(rawPath, "/")
 	if path == "" {
 		return nil, ErrAuthFailed
@@ -236,7 +237,7 @@ func (p *ReverseProxy) parsePathV1(rawPath string) (*parsedPath, *ProxyError) {
 	var keyState *keys.KeyState
 	if keys.IsCredentialShape(token) {
 		if p.accessKeys != nil {
-			keyState = p.accessKeys.VerifyCredential(token)
+			keyState = p.accessKeys.VerifyCredential(token, addr)
 		}
 		if keyState == nil {
 			return nil, ErrAuthFailed
@@ -322,7 +323,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		detailCfg = provider.reverseDetailCaptureConfig()
 	}
 
-	parsed, perr := p.parsePath(r.URL.EscapedPath())
+	parsed, perr := p.parsePath(r.URL.EscapedPath(), clientAddr(r))
 	if perr != nil {
 		if perr == ErrAuthFailed {
 			if guardProxyAuthFailure(w, r, p.authGuard) {

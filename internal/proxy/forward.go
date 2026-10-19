@@ -174,7 +174,7 @@ func (p *ForwardProxy) authenticateV1(r *http.Request) (proxyIdentity, *ProxyErr
 		return proxyIdentity{}, ErrAuthRequired
 	}
 
-	identity, state, isKey := splitAccessKeyCredential(p.accessKeys, credential)
+	identity, state, isKey := splitAccessKeyCredential(p.accessKeys, credential, clientAddr(r))
 	if isKey {
 		if state == nil {
 			return proxyIdentity{}, ErrAuthFailed

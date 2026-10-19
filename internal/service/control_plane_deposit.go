@@ -251,13 +251,13 @@ func (s *ControlPlaneService) ScanDeposits(ctx context.Context, nowNs int64) (in
 	if err != nil {
 		return 0, err
 	}
-	transfers, err := s.Tron.TransfersSince(ctx, address, watermarkMs, 200)
+	page, err := s.Tron.TransfersSince(ctx, address, watermarkMs, 200)
 	if err != nil {
 		return 0, err
 	}
 
 	credited := 0
-	for _, transfer := range transfers {
+	for _, transfer := range page.Transfers {
 		if transfer.AmountMicro < depositMinMicro {
 			continue
 		}
@@ -290,13 +290,16 @@ func (s *ControlPlaneService) ScanDeposits(ctx context.Context, nowNs int64) (in
 
 	// Advance past everything that was read, so the next poll starts where this
 	// one stopped. Matched transfers already advanced it inside their own
-	// transaction; this covers the unmatched ones.
-	if len(transfers) > 0 {
-		newest := transfers[len(transfers)-1].BlockTSMs
-		if newest > watermarkMs {
-			if err := s.Engine.AdvanceChainCursor(depositCursorName, newest, nowNs); err != nil {
-				return credited, err
-			}
+	// transaction; this covers everything else on the page.
+	//
+	// The watermark is the raw page's newest row, not the newest transfer that
+	// survived the client-side filters. A page of transfers out of this address
+	// survives as nothing, and advancing on survivors would leave the cursor
+	// standing still on that page for ever - the whole deposit scan would then
+	// stop noticing money that had already arrived.
+	if page.NewestRawMs > watermarkMs {
+		if err := s.Engine.AdvanceChainCursor(depositCursorName, page.NewestRawMs, nowNs); err != nil {
+			return credited, err
 		}
 	}
 	return credited, nil

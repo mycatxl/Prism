@@ -32,6 +32,20 @@ type Transfer struct {
 	BlockTSMs int64
 }
 
+// TransferPage is one server page of the account's TRC20 history together with
+// the block time of its newest row *before* any filtering.
+//
+// The deposit cursor advances on NewestRawMs rather than on the newest
+// surviving transfer. A page holds rows the scanner deliberately drops -
+// transfers out of the watched address, other event types, values it cannot
+// decode - and a cursor that advanced only past surviving rows would stop
+// moving whenever a whole page survived as nothing. The scan would then re-read
+// the same page for ever and everything behind it would stay invisible.
+type TransferPage struct {
+	Transfers   []Transfer
+	NewestRawMs int64
+}
+
 // Client talks to TronGrid's V1 account API.
 type Client struct {
 	baseURL  string
@@ -58,7 +72,8 @@ func NewClient(baseURL, apiKey, contract string) *Client {
 }
 
 // TransfersSince returns confirmed transfers to address with a block time at or
-// after minTimestampMs, oldest first.
+// after minTimestampMs, oldest first, together with the raw page's own newest
+// timestamp.
 //
 // min_timestamp is inclusive on TronGrid's side, so a record exactly on the
 // watermark comes back again; the transaction id makes that harmless. The
@@ -72,9 +87,9 @@ func NewClient(baseURL, apiKey, contract string) *Client {
 // than the newest page unreachable for good. The rows are sorted here as well,
 // so the "oldest first" contract holds even against an endpoint that ignores
 // the parameter.
-func (c *Client) TransfersSince(ctx context.Context, address string, minTimestampMs int64, limit int) ([]Transfer, error) {
+func (c *Client) TransfersSince(ctx context.Context, address string, minTimestampMs int64, limit int) (TransferPage, error) {
 	if address == "" {
-		return nil, fmt.Errorf("tron: no address to watch")
+		return TransferPage{}, fmt.Errorf("tron: no address to watch")
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 200
@@ -93,7 +108,7 @@ func (c *Client) TransfersSince(ctx context.Context, address string, minTimestam
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return nil, fmt.Errorf("tron: build request: %w", err)
+		return TransferPage{}, fmt.Errorf("tron: build request: %w", err)
 	}
 	if c.apiKey != "" {
 		req.Header.Set("TRON-PRO-API-KEY", c.apiKey)
@@ -102,16 +117,16 @@ func (c *Client) TransfersSince(ctx context.Context, address string, minTimestam
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("tron: query transfers: %w", err)
+		return TransferPage{}, fmt.Errorf("tron: query transfers: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 	if err != nil {
-		return nil, fmt.Errorf("tron: read transfers: %w", err)
+		return TransferPage{}, fmt.Errorf("tron: read transfers: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tron: query transfers: status %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return TransferPage{}, fmt.Errorf("tron: query transfers: status %d: %s", resp.StatusCode, truncate(string(body), 200))
 	}
 
 	var payload struct {
@@ -124,16 +139,22 @@ func (c *Client) TransfersSince(ctx context.Context, address string, minTimestam
 			Value         string `json:"value"`
 			TokenInfo     struct {
 				Address  string `json:"address"`
-				Decimals int    `json:"decimals"`
+				Decimals *int   `json:"decimals"`
 			} `json:"token_info"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, fmt.Errorf("tron: decode transfers: %w", err)
+		return TransferPage{}, fmt.Errorf("tron: decode transfers: %w", err)
 	}
 
-	out := make([]Transfer, 0, len(payload.Data))
+	page := TransferPage{Transfers: make([]Transfer, 0, len(payload.Data))}
 	for _, row := range payload.Data {
+		// The raw watermark moves on every row the page returns, including the
+		// ones dropped below: that is what keeps the scan from freezing on a
+		// page whose rows all belong to somebody else.
+		if row.BlockTS > page.NewestRawMs {
+			page.NewestRawMs = row.BlockTS
+		}
 		if row.Type != "" && row.Type != "Transfer" {
 			continue
 		}
@@ -143,22 +164,82 @@ func (c *Client) TransfersSince(ctx context.Context, address string, minTimestam
 		if row.TokenInfo.Address != "" && !strings.EqualFold(row.TokenInfo.Address, c.contract) {
 			continue
 		}
-		amount, err := strconv.ParseInt(row.Value, 10, 64)
-		if err != nil {
-			// A value that does not fit int64 is not a plausible USDT amount;
-			// skipping it is safer than saturating to a wrong number.
+		// The scale of the amount is the token's, not ours: a contract that
+		// reports 18 decimals sends values 10^12 times larger than the micro
+		// units every other part of Prism counts in. A token_info without a
+		// scale is the configured USDT contract, whose scale is the micro unit.
+		decimals := microDecimals
+		if row.TokenInfo.Decimals != nil {
+			decimals = *row.TokenInfo.Decimals
+		}
+		movable, ok := toMicro(row.Value, decimals)
+		if !ok {
+			// Either the value is too large to represent or the token carries
+			// finer precision than one micro unit. Crediting a rounded number
+			// would credit an amount the chain never transferred, so the row is
+			// left alone.
 			continue
 		}
-		out = append(out, Transfer{
+		page.Transfers = append(page.Transfers, Transfer{
 			TxID:        row.TransactionID,
 			From:        row.From,
 			To:          row.To,
-			AmountMicro: amount,
+			AmountMicro: movable,
 			BlockTSMs:   row.BlockTS,
 		})
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].BlockTSMs < out[j].BlockTSMs })
-	return out, nil
+	sort.SliceStable(page.Transfers, func(i, j int) bool { return page.Transfers[i].BlockTSMs < page.Transfers[j].BlockTSMs })
+	return page, nil
+}
+
+// microDecimals is the scale every amount inside Prism is carried in: USDT's own
+// six decimal places.
+const microDecimals = 6
+
+// toMicro converts a raw token amount, as the digit string the chain reports it,
+// into the micro units every other part of Prism counts in.
+//
+// The arithmetic walks the string rather than an int64 because a token with more
+// decimals than USDT overflows int64 long before it overflows a wallet: 100 of an
+// 18-decimal token is 10^20 raw units, which ParseInt refuses. It answers false
+// when the value cannot be represented exactly, so the caller can leave the row
+// alone instead of crediting a number the chain never moved.
+func toMicro(raw string, decimals int) (int64, bool) {
+	if decimals < 0 || decimals > 24 {
+		return 0, false
+	}
+	digits := strings.TrimSpace(raw)
+	if digits == "" {
+		return 0, false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			// A token amount is an unsigned integer written in base ten;
+			// anything else is not an amount this scanner may credit.
+			return 0, false
+		}
+	}
+	if decimals <= microDecimals {
+		digits += strings.Repeat("0", microDecimals-decimals)
+	} else {
+		cut := decimals - microDecimals
+		if len(digits) <= cut {
+			// Below one micro unit. Zero is exact; anything else is not.
+			if strings.Trim(digits, "0") == "" {
+				return 0, true
+			}
+			return 0, false
+		}
+		if tail := digits[len(digits)-cut:]; strings.Trim(tail, "0") != "" {
+			return 0, false
+		}
+		digits = digits[:len(digits)-cut]
+	}
+	value, err := strconv.ParseInt(digits, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func truncate(s string, max int) string {

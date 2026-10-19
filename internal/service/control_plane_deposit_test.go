@@ -388,6 +388,52 @@ func TestScanDepositsSkipsUnknownAmountsAndAdvancesCursor(t *testing.T) {
 	}
 }
 
+// A page holding only transfers this wallet sent still has to move the cursor.
+//
+// TronGrid reports both directions for the account, so an operator who pays out
+// of the deposit wallet fills its page with outgoing rows. Advancing the
+// watermark only past rows addressed to us would freeze the scan on that page
+// and every later deposit would stay invisible for ever.
+func TestScanDepositsAdvancesCursorPastForeignTransfers(t *testing.T) {
+	cp, nowNs := newDepositTestService(t)
+	blockMs := nowNs/1_000_000 + 1_000
+	chain := &fakeChain{transfers: []fakeTransfer{{
+		txID:     "tx-outgoing",
+		amount:   5_000_000,
+		blockMs:  blockMs,
+		to:       "TSomeoneElseAltogether",
+		contract: config.DefaultUSDTContract,
+	}}}
+	srv := httptest.NewServer(chain.handler(t))
+	t.Cleanup(srv.Close)
+	cp.Tron = tron.NewClient(srv.URL, "", cp.EnvCfg.USDTContract)
+
+	credited, err := cp.ScanDeposits(context.Background(), nowNs)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if credited != 0 {
+		t.Fatalf("credited: got %d, want 0", credited)
+	}
+	cursor, err := cp.Engine.ChainCursor(depositCursorName)
+	if err != nil {
+		t.Fatalf("cursor: %v", err)
+	}
+	if cursor != blockMs {
+		t.Fatalf("cursor: got %d, want %d (a page of foreign rows must still move it)", cursor, blockMs)
+	}
+
+	// With the cursor advanced, the next poll asks from that watermark instead
+	// of re-reading the same page.
+	chain.transfers = nil
+	if _, err := cp.ScanDeposits(context.Background(), nowNs); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if len(chain.queries) != 2 || chain.queries[1] != fmt.Sprintf("%d", blockMs) {
+		t.Fatalf("second query min_timestamp: got %v, want %d", chain.queries, blockMs)
+	}
+}
+
 // Dust below the minimum is ignored rather than credited.
 func TestScanDepositsIgnoresDust(t *testing.T) {
 	cp, nowNs := newDepositTestService(t)

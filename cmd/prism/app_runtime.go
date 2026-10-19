@@ -651,6 +651,9 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		GeoIP:          a.geoSvc,
 		MatcherRuntime: a.accountMatcher,
 		Intel:          a.intelSvc,
+		// The service logs what a response cannot report, such as a data-plane
+		// publish that failed after a charge was committed.
+		Logf: log.Printf,
 	}
 
 	// audit retention runs once a day. The window is read from the runtime
@@ -910,6 +913,10 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		keyVerifier,
 		cpService,
 		int64(a.envCfg.APIMaxBodyBytes),
+		// The token-path route is a data-plane entry point, so it resolves the
+		// client address exactly like the proxy entry points do: a key pinned
+		// to an allowlist must see the real client behind a trusted proxy.
+		proxy.ProxyClientIP,
 	)
 
 	proxyEvents := a.buildProxyEvents()

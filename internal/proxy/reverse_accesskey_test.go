@@ -16,7 +16,7 @@ func TestReverseParsePath_AcceptsAnAccessKey(t *testing.T) {
 		events:     NoOpEventEmitter{},
 	}
 
-	parsed, err := rp.parsePath("/" + fx.credential + "/myplat:acct/https/example.com/path")
+	parsed, err := rp.parsePath("/"+fx.credential+"/myplat:acct/https/example.com/path", testClientAddr)
 	if err != nil {
 		t.Fatalf("an access key was refused: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestReverseParsePath_StillAcceptsTheGlobalToken(t *testing.T) {
 		events:     NoOpEventEmitter{},
 	}
 
-	parsed, err := rp.parsePath("/global-token/myplat:acct/https/example.com/path")
+	parsed, err := rp.parsePath("/global-token/myplat:acct/https/example.com/path", testClientAddr)
 	if err != nil {
 		t.Fatalf("the global token was refused: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestReverseParsePath_RejectsARevokedKeyRatherThanFallingBack(t *testing.T) 
 		events:     NoOpEventEmitter{},
 	}
 
-	if _, err := rp.parsePath("/" + revoked + "/plat:acct/https/example.com/path"); err != ErrAuthFailed {
+	if _, err := rp.parsePath("/"+revoked+"/plat:acct/https/example.com/path", testClientAddr); err != ErrAuthFailed {
 		t.Fatalf("a revoked key produced %v, want ErrAuthFailed", err)
 	}
 }
@@ -92,7 +92,7 @@ func TestReverseParsePath_RejectsBothWhenNeitherMatches(t *testing.T) {
 	}
 	for name, segment := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := rp.parsePath("/" + segment + "/plat:acct/https/example.com/path"); err != ErrAuthFailed {
+			if _, err := rp.parsePath("/"+segment+"/plat:acct/https/example.com/path", testClientAddr); err != ErrAuthFailed {
 				t.Fatalf("got %v, want ErrAuthFailed", err)
 			}
 		})
@@ -109,7 +109,7 @@ func TestReverseParsePath_AcceptsAKeyWhenAuthenticationIsDisabled(t *testing.T) 
 		events:     NoOpEventEmitter{},
 	}
 
-	parsed, err := rp.parsePath("/" + fx.credential + "/plat:acct/https/example.com/path")
+	parsed, err := rp.parsePath("/"+fx.credential+"/plat:acct/https/example.com/path", testClientAddr)
 	if err != nil {
 		t.Fatalf("a key was refused with authentication disabled: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestReverseParsePath_RejectsAKeyShapedSegmentWithoutAVerifier(t *testing.T)
 	fx := newKeyFixture(t)
 	rp := &ReverseProxy{token: "", events: NoOpEventEmitter{}}
 
-	if _, err := rp.parsePath("/" + fx.credential + "/plat:acct/https/example.com/path"); err != ErrAuthFailed {
+	if _, err := rp.parsePath("/"+fx.credential+"/plat:acct/https/example.com/path", testClientAddr); err != ErrAuthFailed {
 		t.Fatalf("got %v, want ErrAuthFailed", err)
 	}
 }

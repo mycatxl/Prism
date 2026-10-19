@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -106,7 +107,7 @@ type keyVerifierStub struct {
 	state      *keys.KeyState
 }
 
-func (v keyVerifierStub) VerifyCredential(credential string) *keys.KeyState {
+func (v keyVerifierStub) VerifyCredential(credential string, _ netip.Addr) *keys.KeyState {
 	if credential == v.credential {
 		return v.state
 	}

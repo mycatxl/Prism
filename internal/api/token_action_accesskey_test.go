@@ -73,7 +73,7 @@ func TestTokenAction_AcceptsAnAccessKey(t *testing.T) {
 	seedTokenActionParentLease(t, cp, platformID)
 
 	verifier, credential := tokenActionKeyFixture(t, "user-1", []string{platformID})
-	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20)
+	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20, nil)
 
 	rec := doTokenJSONRequest(t, handler, http.MethodPost,
 		"/"+credential+"/api/v1/"+platformName+"/actions/inherit-lease",
@@ -91,7 +91,7 @@ func TestTokenAction_StillAcceptsTheGlobalToken(t *testing.T) {
 	seedTokenActionParentLease(t, cp, platformID)
 
 	verifier, _ := tokenActionKeyFixture(t, "user-1", nil)
-	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20)
+	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20, nil)
 
 	rec := doTokenJSONRequest(t, handler, http.MethodPost,
 		"/tok/api/v1/"+platformName+"/actions/inherit-lease",
@@ -117,7 +117,7 @@ func TestTokenAction_RejectsARevokedKeyRatherThanFallingBack(t *testing.T) {
 	}
 	revoked := keys.FormatCredential(revokedID, revokedSecret)
 
-	handler := NewTokenActionHandler(revoked, verifier, cp, 1<<20)
+	handler := NewTokenActionHandler(revoked, verifier, cp, 1<<20, nil)
 	rec := doTokenJSONRequest(t, handler, http.MethodPost,
 		"/"+revoked+"/api/v1/"+platformName+"/actions/inherit-lease",
 		map[string]any{"parent_account": "parent-account", "new_account": "new-account"})
@@ -139,7 +139,7 @@ func TestTokenAction_KeyCannotReachAnotherPlatform(t *testing.T) {
 	seedTokenActionParentLease(t, cp, otherID)
 
 	verifier, credential := tokenActionKeyFixture(t, "user-1", []string{allowedID})
-	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20)
+	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20, nil)
 
 	rec := doTokenJSONRequest(t, handler, http.MethodPost,
 		"/"+credential+"/api/v1/"+otherName+"/actions/inherit-lease",
@@ -160,7 +160,7 @@ func TestTokenAction_KeyActionIsAuditedUnderTheKey(t *testing.T) {
 	seedTokenActionParentLease(t, cp, platformID)
 
 	verifier, credential := tokenActionKeyFixture(t, "user-1", nil)
-	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20)
+	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20, nil)
 
 	rec := doTokenJSONRequest(t, handler, http.MethodPost,
 		"/"+credential+"/api/v1/"+platformName+"/actions/inherit-lease",

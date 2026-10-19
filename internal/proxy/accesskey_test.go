@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"net/netip"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestAccessKeyVerifier_AcceptsAValidCredential(t *testing.T) {
 	fx := newKeyFixture(t)
 	verifier := NewAccessKeyVerifier(fx.store, fx.pepper)
 
-	state := verifier.VerifyCredential(fx.credential)
+	state := verifier.VerifyCredential(fx.credential, testClientAddr)
 	if state == nil {
 		t.Fatal("a valid credential was rejected")
 	}
@@ -109,7 +110,7 @@ func TestAccessKeyVerifier_RejectsEverythingElse(t *testing.T) {
 	verifier := NewAccessKeyVerifier(fx.store, fx.pepper)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if state := verifier.VerifyCredential(tc.credential); state != nil {
+			if state := verifier.VerifyCredential(tc.credential, testClientAddr); state != nil {
 				t.Fatalf("VerifyCredential(%q) resolved %q, want nil", tc.credential, state.KeyID)
 			}
 		})
@@ -141,7 +142,7 @@ func TestAccessKeyVerifier_RejectsTheWrongScope(t *testing.T) {
 	}
 
 	verifier := NewAccessKeyVerifier(fx.store, fx.pepper)
-	if state := verifier.VerifyCredential(keys.FormatCredential(adminKeyID, adminSecret)); state != nil {
+	if state := verifier.VerifyCredential(keys.FormatCredential(adminKeyID, adminSecret), testClientAddr); state != nil {
 		t.Fatalf("an admin-scoped key was accepted on the data plane")
 	}
 }
@@ -189,7 +190,7 @@ func TestAccessKeyVerifier_RejectsUnusableKeys(t *testing.T) {
 			}
 
 			verifier := NewAccessKeyVerifier(store, pepper)
-			if state := verifier.VerifyCredential(keys.FormatCredential(keyID, secret)); state != nil {
+			if state := verifier.VerifyCredential(keys.FormatCredential(keyID, secret), testClientAddr); state != nil {
 				t.Fatalf("an unusable key was accepted")
 			}
 		})
@@ -212,7 +213,7 @@ func TestAccessKeyVerifier_DegradesWithoutDependencies(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if state := tc.verifier.VerifyCredential(fx.credential); state != nil {
+			if state := tc.verifier.VerifyCredential(fx.credential, testClientAddr); state != nil {
 				t.Fatal("an unconfigured verifier accepted a credential")
 			}
 		})
@@ -225,7 +226,7 @@ func TestAccessKeyVerifier_DegradesWithoutDependencies(t *testing.T) {
 func TestAccessKeyVerifier_DoesNotTouchTheStoreForForeignValues(t *testing.T) {
 	verifier := NewAccessKeyVerifier(keys.NewStore(), nil)
 	for _, value := range []string{"", "global-token", "pk_not-a-key", "pk_zz_zz"} {
-		if state := verifier.VerifyCredential(value); state != nil {
+		if state := verifier.VerifyCredential(value, testClientAddr); state != nil {
 			t.Fatalf("VerifyCredential(%q) resolved a key", value)
 		}
 	}
@@ -233,7 +234,7 @@ func TestAccessKeyVerifier_DoesNotTouchTheStoreForForeignValues(t *testing.T) {
 
 func TestProxyIdentity_CarriesTheKeyWhenPresent(t *testing.T) {
 	fx := newKeyFixture(t)
-	state := NewAccessKeyVerifier(fx.store, fx.pepper).VerifyCredential(fx.credential)
+	state := NewAccessKeyVerifier(fx.store, fx.pepper).VerifyCredential(fx.credential, testClientAddr)
 	if state == nil {
 		t.Fatal("fixture credential was rejected")
 	}
@@ -250,5 +251,57 @@ func TestProxyIdentity_CarriesTheKeyWhenPresent(t *testing.T) {
 	tokenIdentity := proxyIdentity{PlatformName: "plat", Account: "acct"}
 	if tokenIdentity.Key != nil {
 		t.Fatal("the global-token identity must not carry a key")
+	}
+}
+
+// testClientAddr is the source address the fixture keys are used from. The keys
+// that pin an allowlist include it.
+var testClientAddr = netip.MustParseAddr("203.0.113.7")
+
+// A key pinned to a source-address list must only work from that list, and the
+// refusal is the same nil an unknown credential gets: a caller must not learn
+// that a key exists at some other address.
+func TestAccessKeyVerifier_EnforcesTheIPAllowlist(t *testing.T) {
+	pepper := testPepper(t)
+	keyID, secret, err := keys.GenerateCredential()
+	if err != nil {
+		t.Fatalf("keys.GenerateCredential: %v", err)
+	}
+	accessKey := model.AccessKey{
+		ID:          keyID,
+		UserID:      "u-1",
+		SecretHash:  pepper.HashSecret(secret),
+		IPAllowlist: []string{"203.0.113.0/24", "198.51.100.9"},
+		Scope:       model.KeyScopeProxy,
+		Status:      model.KeyStatusActive,
+	}
+	user := model.User{ID: "u-1", Username: "u-1", Role: model.UserRoleUser, Status: model.UserStatusActive}
+	store := keys.NewStore()
+	if err := store.Load(
+		[]model.AccessKey{accessKey},
+		map[string]model.User{"u-1": user},
+		map[string]keys.PlanSnapshot{"u-1": {Status: model.SubscriptionStatusActive}},
+	); err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	verifier := NewAccessKeyVerifier(store, pepper)
+	credential := keys.FormatCredential(keyID, secret)
+
+	for _, tc := range []struct {
+		name string
+		addr netip.Addr
+		want bool
+	}{
+		{"inside the prefix", netip.MustParseAddr("203.0.113.7"), true},
+		{"the listed single host", netip.MustParseAddr("198.51.100.9"), true},
+		{"outside every entry", netip.MustParseAddr("192.0.2.1"), false},
+		{"an unresolved address", netip.Addr{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := verifier.VerifyCredential(credential, tc.addr)
+			if got := state != nil; got != tc.want {
+				t.Fatalf("VerifyCredential from %v resolved=%v, want %v", tc.addr, got, tc.want)
+			}
+		})
 	}
 }

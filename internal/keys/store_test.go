@@ -1,6 +1,7 @@
 package keys
 
 import (
+	"net/netip"
 	"sync"
 	"testing"
 	"time"
@@ -381,5 +382,57 @@ func TestStore_Range(t *testing.T) {
 	})
 	if count != 1 {
 		t.Errorf("Range must stop on false, visited %d", count)
+	}
+}
+
+func TestKeyState_AllowsIP(t *testing.T) {
+	now := time.Now().UnixNano()
+	build := func(allowlist []string) *KeyState {
+		key := testKey("k-1", "u-1")
+		key.IPAllowlist = allowlist
+		return newKeyState(key, testUser("u-1"), PlanSnapshot{
+			Status:      model.SubscriptionStatusActive,
+			ExpiresAtNs: now + int64(time.Hour),
+		})
+	}
+
+	open := build(nil)
+	if !open.AllowsIP(netip.MustParseAddr("192.0.2.33")) {
+		t.Error("a key without an allowlist must accept any address")
+	}
+	if !open.AllowsIP(netip.Addr{}) {
+		t.Error("a key without an allowlist must not be refused for an unparsable address")
+	}
+
+	pinned := build([]string{" 10.0.0.0/8 ", "192.0.2.7", "2001:db8::/32"})
+	cases := []struct {
+		name string
+		addr netip.Addr
+		want bool
+	}{
+		{"inside a prefix", netip.MustParseAddr("10.9.8.7"), true},
+		{"a listed address", netip.MustParseAddr("192.0.2.7"), true},
+		{"inside an IPv6 prefix", netip.MustParseAddr("2001:db8::1"), true},
+		{"another address", netip.MustParseAddr("192.0.2.8"), false},
+		{"the zero address", netip.Addr{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pinned.AllowsIP(tc.addr); got != tc.want {
+				t.Fatalf("AllowsIP(%v) = %v, want %v", tc.addr, got, tc.want)
+			}
+		})
+	}
+
+	// A list the service accepted but this parser cannot read must still
+	// restrict: the key is closed, not opened.
+	garbled := build([]string{"not-an-address"})
+	if garbled.AllowsIP(netip.MustParseAddr("10.0.0.1")) {
+		t.Error("an unparsable allowlist must deny rather than allow everything")
+	}
+
+	var nilState *KeyState
+	if nilState.AllowsIP(netip.MustParseAddr("10.0.0.1")) {
+		t.Error("a nil key state must deny")
 	}
 }

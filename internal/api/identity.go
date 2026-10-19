@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -81,7 +82,10 @@ type SessionResolver interface {
 // automation key must not be able to mint more keys or change a password.
 type AdminKeyResolver interface {
 	// VerifyAdminKey resolves an admin-scope credential to its owner.
-	VerifyAdminKey(credential string) (AdminKeyIdentity, bool)
+	// VerifyAdminKey resolves an admin-scope credential to its owner. clientAddr
+	// is the request's source address, which the key's own IP allowlist is
+	// checked against.
+	VerifyAdminKey(credential string, clientAddr netip.Addr) (AdminKeyIdentity, bool)
 }
 
 // AdminKeyIdentity is what an admin key resolves to.
@@ -251,7 +255,7 @@ func (i *Identity) resolveAdminKey(r *http.Request) (Actor, bool) {
 	if !ok {
 		return Actor{}, false
 	}
-	identity, ok := i.AdminKeys.VerifyAdminKey(credential)
+	identity, ok := i.AdminKeys.VerifyAdminKey(credential, i.clientAddr(r))
 	if !ok {
 		return Actor{}, false
 	}
@@ -262,6 +266,16 @@ func (i *Identity) resolveAdminKey(r *http.Request) (Actor, bool) {
 	}, true
 }
 
+// clientAddr names the source address of a request for the per-key IP
+// allowlist, using the same trusted-proxy rule the auth-failure limiter applies.
+// Without a limiter only the peer address is read, which is the strictest
+// reading: an allowlisted key then refuses the request.
+func (i *Identity) clientAddr(r *http.Request) netip.Addr {
+	if i == nil || i.FailureLimiter == nil {
+		return requestClientAddr(r, nil)
+	}
+	return requestClientAddr(r, i.FailureLimiter.ClientIP)
+}
 func (i *Identity) requiresAdminTOTP() bool {
 	return i.RequireAdminTOTP != nil && i.RequireAdminTOTP()
 }

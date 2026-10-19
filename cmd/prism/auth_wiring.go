@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/netip"
 	"time"
 
 	"prism/internal/api"
@@ -21,7 +22,7 @@ import (
 // person.
 type adminKeyResolver struct {
 	verifier interface {
-		VerifyCredential(credential string) *keys.KeyState
+		VerifyCredential(credential string, clientAddr netip.Addr) *keys.KeyState
 	}
 }
 
@@ -30,11 +31,11 @@ type adminKeyResolver struct {
 // Every failure answers the same way. A caller must not be able to tell a
 // revoked key from one that exists but has the wrong scope: the difference would
 // tell them they had found a real key id.
-func (r adminKeyResolver) VerifyAdminKey(credential string) (api.AdminKeyIdentity, bool) {
+func (r adminKeyResolver) VerifyAdminKey(credential string, clientAddr netip.Addr) (api.AdminKeyIdentity, bool) {
 	if r.verifier == nil {
 		return api.AdminKeyIdentity{}, false
 	}
-	state := r.verifier.VerifyCredential(credential)
+	state := r.verifier.VerifyCredential(credential, clientAddr)
 	if state == nil {
 		return api.AdminKeyIdentity{}, false
 	}
@@ -43,6 +44,12 @@ func (r adminKeyResolver) VerifyAdminKey(credential string) (api.AdminKeyIdentit
 	// reach the administrator surface, and a proxy key held by an administrator
 	// must not either.
 	if state.Scope != model.KeyScopeAdmin || state.UserRole != model.UserRoleAdmin {
+		return api.AdminKeyIdentity{}, false
+	}
+	// A key pinned to a source-address list must be used from it, whoever the
+	// resolver is: this is the one place an admin key becomes an actor, so the
+	// rule is repeated here rather than assumed from the verifier.
+	if !state.AllowsIP(clientAddr) {
 		return api.AdminKeyIdentity{}, false
 	}
 	if !state.Usable(time.Now().UnixNano()) {

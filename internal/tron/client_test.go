@@ -40,9 +40,16 @@ func TestTransfersSinceFiltersToAddressAndContract(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL, "test-key", testContract)
-	got, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
+	page, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
 	if err != nil {
 		t.Fatalf("TransfersSince: %v", err)
+	}
+	got := page.Transfers
+	// The raw watermark is the last row TronGrid returned, not the last row
+	// this client kept: that Approval event is on the page, so the cursor has to
+	// clear it even though nothing was credited from it.
+	if page.NewestRawMs != 1700000004000 {
+		t.Fatalf("raw watermark: got %d, want 1700000004000", page.NewestRawMs)
 	}
 	if len(got) != 1 {
 		t.Fatalf("transfers: got %d, want 1 (%+v)", len(got), got)
@@ -132,10 +139,11 @@ func TestTransfersSinceReturnsOldestFirst(t *testing.T) {
 	defer srv.Close()
 
 	client := NewClient(srv.URL, "", testContract)
-	got, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
+	page, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
 	if err != nil {
 		t.Fatalf("TransfersSince: %v", err)
 	}
+	got := page.Transfers
 	want := []string{"tx-oldest", "tx-middle", "tx-newest"}
 	if len(got) != len(want) {
 		t.Fatalf("transfers: got %d, want %d", len(got), len(want))
@@ -147,5 +155,86 @@ func TestTransfersSinceReturnsOldestFirst(t *testing.T) {
 	}
 	if newest := got[len(got)-1].BlockTSMs; newest != 1700000003000 {
 		t.Fatalf("newest block time: got %d, want 1700000003000", newest)
+	}
+}
+
+// A page whose rows all belong to somebody else must still move the watermark.
+//
+// This endpoint reports the account's transfers in both directions, so a wallet
+// that also sends USDT fills its own page with outgoing rows. A watermark that
+// only advanced past rows addressed to us would stand still on such a page for
+// ever, and every later deposit would stay invisible.
+func TestTransfersSinceAdvancesPastAPageOfForeignTransfers(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"transaction_id":"tx-out-1","block_timestamp":1700000001000,
+				 "from":"` + testAddress + `","to":"TSOMEWHERE",
+				 "type":"Transfer","value":"1000000",
+				 "token_info":{"address":"` + testContract + `","decimals":6}},
+				{"transaction_id":"tx-out-2","block_timestamp":1700000002000,
+				 "from":"` + testAddress + `","to":"TSOMEWHERE",
+				 "type":"Transfer","value":"2000000",
+				 "token_info":{"address":"` + testContract + `","decimals":6}}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "", testContract)
+	page, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
+	if err != nil {
+		t.Fatalf("TransfersSince: %v", err)
+	}
+	if len(page.Transfers) != 0 {
+		t.Fatalf("transfers: got %d, want 0 (both rows are outgoing)", len(page.Transfers))
+	}
+	if page.NewestRawMs != 1700000002000 {
+		t.Fatalf("raw watermark: got %d, want 1700000002000", page.NewestRawMs)
+	}
+}
+
+// The amount is scaled by the token's own decimals, never assumed to be USDT's.
+func TestTransfersSinceScalesAmountsByTokenDecimals(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"data": [
+				{"transaction_id":"tx-18-decimals","block_timestamp":1700000001000,
+				 "from":"TFROM","to":"` + testAddress + `","type":"Transfer",
+				 "value":"100000000000000000000",
+				 "token_info":{"address":"` + testContract + `","decimals":18}},
+				{"transaction_id":"tx-sub-micro","block_timestamp":1700000002000,
+				 "from":"TFROM","to":"` + testAddress + `","type":"Transfer",
+				 "value":"123456789",
+				 "token_info":{"address":"` + testContract + `","decimals":9}},
+				{"transaction_id":"tx-whole","block_timestamp":1700000003000,
+				 "from":"TFROM","to":"` + testAddress + `","type":"Transfer",
+				 "value":"25000000",
+				 "token_info":{"address":"` + testContract + `","decimals":6}}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	client := NewClient(srv.URL, "", testContract)
+	page, err := client.TransfersSince(context.Background(), testAddress, 1700000000000, 200)
+	if err != nil {
+		t.Fatalf("TransfersSince: %v", err)
+	}
+	if len(page.Transfers) != 2 {
+		t.Fatalf("transfers: got %d, want 2 (the sub-micro row cannot be credited exactly): %+v",
+			len(page.Transfers), page.Transfers)
+	}
+	if got := page.Transfers[0]; got.TxID != "tx-18-decimals" || got.AmountMicro != 100_000_000 {
+		t.Fatalf("18-decimal amount: got %q %d, want tx-18-decimals 100000000", got.TxID, got.AmountMicro)
+	}
+	if got := page.Transfers[1]; got.TxID != "tx-whole" || got.AmountMicro != 25_000_000 {
+		t.Fatalf("6-decimal amount: got %q %d, want tx-whole 25000000", got.TxID, got.AmountMicro)
+	}
+	// The dropped row still belongs to the page: the watermark must clear it.
+	if page.NewestRawMs != 1700000003000 {
+		t.Fatalf("raw watermark: got %d, want 1700000003000", page.NewestRawMs)
 	}
 }

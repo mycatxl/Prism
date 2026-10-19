@@ -413,7 +413,7 @@ func (s *Socks5Inbound) authenticateUserPass(conn net.Conn, reader *bufio.Reader
 	// rather than retried as a token.
 	var keyState *keys.KeyState
 	if keys.IsCredentialShape(string(password)) {
-		keyState = s.verifyAccessKeyPassword(string(password))
+		keyState = s.verifyAccessKeyPassword(conn, string(password))
 		if keyState == nil {
 			_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
 			return "", "", nil, false
@@ -438,11 +438,14 @@ func (s *Socks5Inbound) authenticateUserPass(conn net.Conn, reader *bufio.Reader
 // verifyAccessKeyPassword resolves the password field as an access key. It
 // answers nil when there is no verifier, when the value is not key-shaped, and
 // when the key does not verify; the caller has already established the shape.
-func (s *Socks5Inbound) verifyAccessKeyPassword(password string) *keys.KeyState {
+//
+// conn is the client connection: a key with an IP allowlist is checked against
+// the peer address, which for SOCKS5 is the only source of one.
+func (s *Socks5Inbound) verifyAccessKeyPassword(conn net.Conn, password string) *keys.KeyState {
 	if s.accessKeys == nil {
 		return nil
 	}
-	return s.accessKeys.VerifyCredential(password)
+	return s.accessKeys.VerifyCredential(password, connPeerAddr(conn))
 }
 
 func containsSocks5Method(methods []byte, candidate byte) bool {

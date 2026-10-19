@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"net"
+	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -22,7 +25,11 @@ import (
 // try the key path first, and an ordinary token simply falls through to the
 // token comparison.
 type AccessKeyVerifier interface {
-	VerifyCredential(credential string) *keys.KeyState
+	// VerifyCredential returns the key the credential names, or nil.
+	//
+	// clientAddr is where the request came from; the key's own IP allowlist is
+	// checked against it, and the zero Addr satisfies no allowlist.
+	VerifyCredential(credential string, clientAddr netip.Addr) *keys.KeyState
 }
 
 // keyVerifier is the production verifier: the in-memory key store plus the
@@ -53,7 +60,7 @@ func NewAccessKeyVerifier(store *keys.Store, pepper *auth.Pepper) AccessKeyVerif
 //
 // The secret is verified before the key's own state is examined, so a disabled
 // or expired key costs an attacker the same work as a live one.
-func (v *keyVerifier) VerifyCredential(credential string) *keys.KeyState {
+func (v *keyVerifier) VerifyCredential(credential string, clientAddr netip.Addr) *keys.KeyState {
 	if v == nil || v.store == nil || v.pepper == nil {
 		return nil
 	}
@@ -77,6 +84,12 @@ func (v *keyVerifier) VerifyCredential(credential string) *keys.KeyState {
 	if !state.Usable(v.now()) {
 		return nil
 	}
+	// The allowlist is part of the credential's validity, not a later policy
+	// step, so it is checked here and answers the same nil as a bad secret: a
+	// caller cannot tell "wrong address" from "wrong credential".
+	if !state.AllowsIP(clientAddr) {
+		return nil
+	}
 	return state
 }
 
@@ -93,7 +106,7 @@ func (v *keyVerifier) VerifyCredential(credential string) *keys.KeyState {
 // isKey separates "no key here, carry on with the global token" from "a key was
 // named and did not verify", which the caller must refuse. Collapsing the two
 // would let a revoked key be retried as a token.
-func splitAccessKeyCredential(verifier AccessKeyVerifier, credential string) (identity string, state *keys.KeyState, isKey bool) {
+func splitAccessKeyCredential(verifier AccessKeyVerifier, credential string, clientAddr netip.Addr) (identity string, state *keys.KeyState, isKey bool) {
 	if verifier == nil {
 		return credential, nil, false
 	}
@@ -102,12 +115,12 @@ func splitAccessKeyCredential(verifier AccessKeyVerifier, credential string) (id
 		if !keys.IsCredentialShape(token) {
 			return credential, nil, false
 		}
-		return credential[:idx], verifier.VerifyCredential(token), true
+		return credential[:idx], verifier.VerifyCredential(token, clientAddr), true
 	}
 	if !keys.IsCredentialShape(credential) {
 		return credential, nil, false
 	}
-	return "", verifier.VerifyCredential(credential), true
+	return "", verifier.VerifyCredential(credential, clientAddr), true
 }
 
 // proxyIdentity is what an inbound request authenticated as.
@@ -120,4 +133,37 @@ type proxyIdentity struct {
 	PlatformName string
 	Account      string
 	Key          *keys.KeyState
+}
+
+// clientAddr resolves the source address of a proxy request for the per-key
+// allowlist check.
+//
+// It reads the same address the auth-failure limiter buckets on (see
+// ProxyClientIP), so a key restricted to a list sees the real client and not
+// the reverse proxy in front of it. An address that does not parse stays
+// invalid, and an allowlisted key then refuses the request.
+func clientAddr(r *http.Request) netip.Addr {
+	addr, err := netip.ParseAddr(ProxyClientIP(r))
+	if err != nil {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
+}
+
+// connPeerAddr is the client address of a raw TCP connection. SOCKS5 has no
+// forwarded-header concept, so the peer is the client: an allowlisted key is
+// checked against the address the socket actually came from.
+func connPeerAddr(conn net.Conn) netip.Addr {
+	if conn == nil || conn.RemoteAddr() == nil {
+		return netip.Addr{}
+	}
+	host, _, err := net.SplitHostPort(conn.RemoteAddr().String())
+	if err != nil {
+		host = conn.RemoteAddr().String()
+	}
+	addr, err := netip.ParseAddr(strings.Trim(strings.TrimSpace(host), "[]"))
+	if err != nil {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
 }

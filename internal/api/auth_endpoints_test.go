@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -88,7 +89,7 @@ type fakeAdminKeys struct {
 	identity   AdminKeyIdentity
 }
 
-func (f fakeAdminKeys) VerifyAdminKey(credential string) (AdminKeyIdentity, bool) {
+func (f fakeAdminKeys) VerifyAdminKey(credential string, _ netip.Addr) (AdminKeyIdentity, bool) {
 	if credential != f.credential || f.credential == "" {
 		return AdminKeyIdentity{}, false
 	}

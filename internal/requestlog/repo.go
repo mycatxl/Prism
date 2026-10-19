@@ -175,7 +175,14 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 
 		if hasPayload == 1 {
 			if _, err := insertPayload.Exec(id, e.ReqHeaders, e.ReqBody, e.RespHeaders, e.RespBody); err != nil {
+				// The log row is written but its payload is not, so the flag has
+				// to follow it: a reader that trusts payload_present=1 would
+				// show an empty payload as if the request had carried none.
 				log.Printf("[requestlog] warning: payload insert failed for id=%q: %v", id, err)
+				if _, clearErr := tx.Exec(
+					`UPDATE request_logs SET payload_present = 0 WHERE id = ?`, id); clearErr != nil {
+					log.Printf("[requestlog] warning: clear payload flag failed for id=%q: %v", id, clearErr)
+				}
 			}
 		}
 		inserted++

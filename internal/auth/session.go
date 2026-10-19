@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Session parameters.
@@ -208,9 +209,18 @@ type SessionRecord struct {
 // client sending a megabyte of header should not be able to grow the table.
 const maxUserAgentBytes = 256
 
+// truncateUserAgent bounds a user-agent string on a rune boundary.
+//
+// Cutting at a byte offset would split a multi-byte character and store an
+// invalid string that no reader can render, so the cut backs off to the start
+// of the rune it landed in.
 func truncateUserAgent(ua string) string {
 	if len(ua) <= maxUserAgentBytes {
 		return ua
 	}
-	return ua[:maxUserAgentBytes]
+	cut := maxUserAgentBytes
+	for cut > 0 && !utf8.RuneStart(ua[cut]) {
+		cut--
+	}
+	return ua[:cut]
 }

@@ -202,8 +202,13 @@ func (p *providerPool) runOnce(provider string, spec ProviderQueueSpec) time.Dur
 		// A row without a usable address is settled without a request, so it
 		// must not spend a unit either.
 		for _, item := range items {
-			_ = m.store.FailProviderItem(ctx, provider, item.IP, item.Attempts+1, now,
-				"UNSUPPORTED_IP", true)
+			// The row is settled without a request, so a failure here leaves it
+			// queued forever with nothing to show where it went: log it rather
+			// than drop it.
+			if err := m.store.FailProviderItem(ctx, provider, item.IP, item.Attempts+1, now,
+				"UNSUPPORTED_IP", true); err != nil {
+				m.logf("[intel] provider %s: mark %s unsupported failed: %v", provider, item.IP, err)
+			}
 		}
 		return providerIdleSleep
 	}

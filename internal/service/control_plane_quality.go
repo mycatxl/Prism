@@ -908,7 +908,10 @@ func (s *ControlPlaneService) ippureEvidence(ctx context.Context, ip string) (*q
 	}
 	ev, err := intel.EvidenceFromRow(row)
 	if err != nil {
-		return nil, nil
+		// A cached row that cannot be decoded is a broken record, not an
+		// absence of evidence: answering nil would tell the caller the address
+		// had never been inspected.
+		return nil, internal("decode evidence", err)
 	}
 	return &ev, nil
 }

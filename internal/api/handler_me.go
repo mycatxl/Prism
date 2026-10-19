@@ -133,6 +133,12 @@ func HandleMeCreateKey(cp *service.ControlPlaneService) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		// Minting a credential is credential management, so it has to come from
+		// a console session: a stolen automation key must not be able to issue
+		// itself a data-plane key that outlives it.
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.AccessKeyInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
@@ -155,6 +161,12 @@ func HandleMeDeleteKey(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := meActor(w, r)
 		if !ok {
+			return
+		}
+		// Deleting a credential is credential management as well, and the same
+		// rule applies as on the create path: an automation key must not be able
+		// to revoke the keys its owner actually uses.
+		if !requireSessionActor(w, actor) {
 			return
 		}
 		keyID := PathParam(r, "keyID")

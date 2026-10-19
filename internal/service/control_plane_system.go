@@ -105,7 +105,10 @@ type ControlPlaneService struct {
 	// Tron reads confirmed USDT transfers for the deposit listener. It is nil
 	// when no receiving address is configured, which is a supported state:
 	// on-chain deposits are then simply off.
-	Tron          *tron.Client
+	Tron *tron.Client
+	// Logf records events a response cannot report. It is optional: nil means
+	// stay quiet, and every caller has to work without it.
+	Logf          func(string, ...any)
 	configMu      sync.Mutex
 	configVersion int
 	endpointMu    sync.RWMutex
@@ -485,4 +488,14 @@ func validateIntelConfig(cfg *config.RuntimeConfig) *ServiceError {
 		return invalidArg("intel_refresh_schedule: " + err.Error())
 	}
 	return nil
+}
+
+// logf reports one event the request cannot carry, such as a data-plane publish
+// that failed after a charge was already committed. A nil logger stays silent,
+// which is what the management-only deployments and the tests use.
+func (s *ControlPlaneService) logf(format string, args ...any) {
+	if s == nil || s.Logf == nil {
+		return
+	}
+	s.Logf(format, args...)
 }

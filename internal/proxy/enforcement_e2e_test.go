@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -25,7 +26,7 @@ type mutableKeyStore struct {
 	state *keys.KeyState
 }
 
-func (s *mutableKeyStore) VerifyCredential(credential string) *keys.KeyState {
+func (s *mutableKeyStore) VerifyCredential(credential string, _ netip.Addr) *keys.KeyState {
 	if credential != testCredential {
 		return nil
 	}

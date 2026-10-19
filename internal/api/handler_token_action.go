@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"prism/internal/keys"
@@ -24,7 +25,10 @@ type inheritLeaseRequest struct {
 // lets both credentials coexist while access keys are rolled out.
 type TokenActionKeyResolver interface {
 	// VerifyCredential returns the key the credential names, or nil.
-	VerifyCredential(credential string) *keys.KeyState
+	//
+	// clientAddr is where the request came from; the key's own IP allowlist is
+	// checked against it, and the zero Addr satisfies no allowlist.
+	VerifyCredential(credential string, clientAddr netip.Addr) *keys.KeyState
 }
 
 // NewTokenActionHandler returns the handler for token-path actions.
@@ -38,7 +42,10 @@ type TokenActionKeyResolver interface {
 //
 // The token position accepts either an access key or the transitional global
 // proxy token. keys may be nil, in which case only the token is accepted.
-func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver, cp *service.ControlPlaneService, apiMaxBodyBytes int64) http.Handler {
+// clientIP names the request's client address for the per-key IP allowlist;
+// cmd/prism passes proxy.ProxyClientIP, and a nil one reads the peer address
+// only.
+func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver, cp *service.ControlPlaneService, apiMaxBodyBytes int64, clientIP func(*http.Request) string) http.Handler {
 	if cp == nil {
 		return http.NotFoundHandler()
 	}
@@ -46,7 +53,7 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 	mux := http.NewServeMux()
 	mux.Handle("POST /{token}/api/v1/{platform}/actions/inherit-lease", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		token := PathParam(r, "token")
-		identity, ok := resolveTokenActionIdentity(r, token, proxyToken, keyResolver)
+		identity, ok := resolveTokenActionIdentity(r, token, proxyToken, keyResolver, clientIP)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -135,12 +142,13 @@ func resolveTokenActionIdentity(
 	token string,
 	proxyToken string,
 	keyResolver TokenActionKeyResolver,
+	clientIP func(*http.Request) string,
 ) (tokenActionIdentity, bool) {
 	if keys.IsCredentialShape(token) {
 		if keyResolver == nil {
 			return tokenActionIdentity{}, false
 		}
-		state := keyResolver.VerifyCredential(token)
+		state := keyResolver.VerifyCredential(token, requestClientAddr(r, clientIP))
 		if state == nil {
 			return tokenActionIdentity{}, false
 		}
@@ -169,4 +177,27 @@ func platformIDByName(cp *service.ControlPlaneService, name string) (string, boo
 		return "", false
 	}
 	return plat.ID, true
+}
+
+// requestClientAddr resolves the source address of a token-path request for the
+// per-key IP allowlist.
+//
+// clientIP is the same rule the proxy entry points apply - cmd/prism passes
+// proxy.ProxyClientIP - so a deployment behind a trusted proxy sees the real
+// client. A handler built without one reads the peer address only, which is the
+// strictest reading: an address that does not parse leaves the Addr invalid,
+// and an allowlisted key then refuses the request.
+func requestClientAddr(r *http.Request, clientIP func(*http.Request) string) netip.Addr {
+	if r == nil {
+		return netip.Addr{}
+	}
+	host := hostOnly(r.RemoteAddr)
+	if clientIP != nil {
+		host = clientIP(r)
+	}
+	addr, err := netip.ParseAddr(strings.Trim(strings.TrimSpace(host), "[]"))
+	if err != nil {
+		return netip.Addr{}
+	}
+	return addr.Unmap()
 }

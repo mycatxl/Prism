@@ -12,6 +12,8 @@ package keys
 
 import (
 	"fmt"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
@@ -63,9 +65,15 @@ type KeyState struct {
 	Status      string
 	ExpiresAtNs int64
 	Platforms   []string
-	UserStatus  string
-	UserRole    string
-	Plan        PlanSnapshot
+	// AllowlistSet records that a source-address allowlist was configured for
+	// this key, and Allowlist holds it in parsed form. They are separate so a
+	// list whose every entry failed to parse still restricts instead of
+	// silently opening the key up.
+	AllowlistSet bool
+	Allowlist    []netip.Prefix
+	UserStatus   string
+	UserRole     string
+	Plan         PlanSnapshot
 }
 
 // Usable reports whether the key may be used at all: the key itself must be
@@ -126,6 +134,63 @@ func (k *KeyState) AllowsPlatform(platformID string) bool {
 		}
 	}
 	return false
+}
+
+// AllowsIP reports whether a client address may use this key.
+//
+// An unset allowlist allows every address, which is what keeps a deployment
+// that never configured one unchanged. A set allowlist denies everything it
+// cannot match, and that includes an address that is not a valid IP at all: a
+// key restricted to a list must fail closed rather than fall through to "no
+// restriction".
+func (k *KeyState) AllowsIP(addr netip.Addr) bool {
+	if k == nil {
+		return false
+	}
+	if !k.AllowlistSet {
+		return true
+	}
+	if !addr.IsValid() {
+		return false
+	}
+	addr = addr.Unmap()
+	for _, prefix := range k.Allowlist {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseAllowlist turns the stored source-address list into prefixes.
+//
+// A plain address becomes a single-host prefix so one matcher covers both
+// forms. An entry that does not parse is dropped here; the caller keeps the
+// restriction closed through AllowlistSet, so a list this parser cannot read
+// denies rather than allows.
+func parseAllowlist(values []string) []netip.Prefix {
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(value, "/") {
+			prefix, err := netip.ParsePrefix(value)
+			if err != nil {
+				continue
+			}
+			prefixes = append(prefixes, prefix.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(strings.Trim(value, "[]"))
+		if err != nil {
+			continue
+		}
+		addr = addr.Unmap()
+		prefixes = append(prefixes, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return prefixes
 }
 
 // Store holds every active key.
@@ -192,6 +257,10 @@ func newKeyState(key model.AccessKey, user model.User, plan PlanSnapshot) *KeySt
 	}
 	if len(key.Platforms) > 0 {
 		state.Platforms = append([]string(nil), key.Platforms...)
+	}
+	if len(key.IPAllowlist) > 0 {
+		state.AllowlistSet = true
+		state.Allowlist = parseAllowlist(key.IPAllowlist)
 	}
 	return state
 }

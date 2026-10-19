@@ -227,9 +227,13 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 		}
 		// The new plan is in force from the next request rather than the next
 		// restart.
-		if err := s.republishUserKeys(userID); err != nil {
-			return PurchaseResultView{}, err
-		}
+	}
+	// The publish runs on a replay too, and a failure is logged rather than
+	// returned: the charge is committed by now, so an error here would tell the
+	// client a purchase it paid for did not happen, while the refresh is exactly
+	// what makes its retry heal a plan that is still stale.
+	if err := s.republishUserKeys(userID); err != nil {
+		s.logf("purchase: republish keys for %s (request %s) failed: %v", userID, requestID, err)
 	}
 
 	view := PurchaseResultView{
@@ -491,9 +495,12 @@ func (s *ControlPlaneService) renewOneWithPlan(sub model.UserSubscription, plan 
 		if s.Usage != nil {
 			s.Usage.ResetUser(sub.UserID)
 		}
-		if err := s.republishUserKeys(sub.UserID); err != nil {
-			return state.PurchaseResult{}, false, err
-		}
+	}
+	// The renewal is charged by this point, so a publish failure is logged and
+	// the renewal stands - the same reasoning as the purchase path - and the
+	// publish runs on a replay too, so a retry heals a stale plan.
+	if err := s.republishUserKeys(sub.UserID); err != nil {
+		s.logf("renew: republish keys for %s (request %s) failed: %v", sub.UserID, requestID, err)
 	}
 	return result, true, nil
 }

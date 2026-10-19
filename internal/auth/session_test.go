@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // A session id is a bearer token, so it has to be unguessable: high entropy,
@@ -291,5 +292,31 @@ func TestSessionContractNames(t *testing.T) {
 	}
 	if CSRFHeaderName != "X-Prism-CSRF" {
 		t.Errorf("CSRFHeaderName = %q", CSRFHeaderName)
+	}
+}
+
+// A user-agent longer than the bound is cut on a rune boundary: the stored
+// value has to stay valid UTF-8, because a session list renders it.
+func TestTruncateUserAgent_KeepsValidUTF8(t *testing.T) {
+	// Three bytes per character, so the byte bound lands inside a rune.
+	ua := strings.Repeat("汉", maxUserAgentBytes)
+	got := truncateUserAgent(ua)
+	if len(got) > maxUserAgentBytes {
+		t.Fatalf("truncated to %d bytes, want at most %d", len(got), maxUserAgentBytes)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncation produced invalid UTF-8: %q", got)
+	}
+	if want := maxUserAgentBytes / 3 * 3; len(got) != want {
+		t.Fatalf("kept %d bytes, want %d (the last whole rune)", len(got), want)
+	}
+
+	// A short string and one that fits exactly are untouched.
+	if short := "curl/8.0"; truncateUserAgent(short) != short {
+		t.Errorf("a short user-agent was modified")
+	}
+	exact := strings.Repeat("a", maxUserAgentBytes)
+	if truncateUserAgent(exact) != exact {
+		t.Errorf("a user-agent of exactly the bound was modified")
 	}
 }
