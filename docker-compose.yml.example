@@ -36,9 +36,9 @@ services:
     # use it, and pin the release you intend (`latest` follows the newest
     # non-prerelease release). Bump this line with every release you deploy: it
     # is the version an operator actually runs, so it must never lag the
-    # published tags (v0.4.1 is the current one).
+    # published tags (v0.4.2 is the current one).
     # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
-    image: ghcr.io/mycatxl/prism:0.4.1
+    image: ghcr.io/mycatxl/prism:0.4.2
     container_name: prism
     restart: unless-stopped
     environment:
