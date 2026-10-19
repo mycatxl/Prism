@@ -58,6 +58,41 @@ export type EnvConfig = {
   proxy_token_set: boolean;
   proxy_token_weak: boolean;
   auth_version: string;
+  /**
+   * The deployment's PRISM_REGISTRATION policy, which is what a runtime override
+   * falls back to. It sits on the env endpoint, not on the runtime config.
+   */
+  registration: string;
 };
 
-export type RuntimeConfigPatch = Partial<RuntimeConfig>;
+/**
+ * The four purity thresholds the server accepts (internal/config/runtime.go
+ * PurityBands). Anything below `mixed` is the `poor` *result* band; it is not
+ * configurable.
+ */
+export type PurityBands = {
+  excellent: number;
+  clean: number;
+  fair: number;
+  mixed: number;
+};
+
+/** The sign-up policies the server accepts (internal/config RegistrationMode). */
+export type RegistrationMode = "off" | "invite" | "open";
+
+/**
+ * Everything GET /api/v1/system/config answers: the runtime form's fields *and*
+ * the operator policy (retention windows, purity bands, sign-up mode). They are
+ * different slices of one response, read by different pages, so they share one
+ * type - and therefore one fetch and one cache entry.
+ */
+export type SystemConfigView = RuntimeConfig & {
+  audit_retention_days?: number;
+  usage_retention_days?: number;
+  purity_bands?: PurityBands;
+  /** `""` clears the panel override; absent means this server carries none. */
+  registration_mode?: string;
+};
+
+/** A PATCH body: any subset of what the same url answers. */
+export type RuntimeConfigPatch = Partial<SystemConfigView>;

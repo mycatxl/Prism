@@ -21,7 +21,7 @@ import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { newRequestID } from "../../lib/idempotency";
 import { formatMicro } from "../../lib/money";
-import { getBalance, getPlans, purchase } from "./api";
+import { BALANCE_LEDGER_LIMIT, getBalance, getPlans, meBalanceQueryKey, purchase } from "./api";
 import type { PurchasablePlan } from "./types";
 
 /** periodLabel names a rollover window in the reader's language. */
@@ -64,9 +64,12 @@ export function PlansPage() {
     queryFn: getPlans,
   });
 
+  // Same key and same limit as the account overview's balance panel: one cache
+  // entry, so the two pages can never disagree about the remaining balance, and
+  // the ledger length is fixed by the constant rather than by whoever asked last.
   const balanceQuery = useQuery({
-    queryKey: ["me-balance"],
-    queryFn: () => getBalance(1),
+    queryKey: meBalanceQueryKey,
+    queryFn: () => getBalance(BALANCE_LEDGER_LIMIT),
   });
 
   const plans = plansQuery.data?.items ?? [];

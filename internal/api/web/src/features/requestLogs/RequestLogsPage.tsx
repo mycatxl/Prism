@@ -21,7 +21,7 @@ import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { formatDateTime } from "../../lib/time";
-import { getSystemConfig } from "../systemConfig/api";
+import { getSystemConfig, SYSTEM_CONFIG_QUERY_KEY, SYSTEM_CONFIG_STALE_MS } from "../systemConfig/api";
 import { getRequestLog, getRequestLogPayloads, listRequestLogs } from "./api";
 import type { RequestLogItem, RequestLogListFilters } from "./types";
 
@@ -453,9 +453,11 @@ export function RequestLogsPage() {
   const { toasts, dismissToast } = useToast();
 
   const configQuery = useQuery({
-    queryKey: ["system-config"],
+    // The shared key: this page reads one flag off the config, and a page-local
+    // key meant the same url was fetched twice and invalidated twice.
+    queryKey: SYSTEM_CONFIG_QUERY_KEY,
     queryFn: getSystemConfig,
-    staleTime: 60_000,
+    staleTime: SYSTEM_CONFIG_STALE_MS,
   });
 
   // The text filters are debounced as a unit, so one keystroke is never one request.

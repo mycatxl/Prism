@@ -17,7 +17,10 @@ import { useI18n } from "../../i18n";
 const formSchema = z.object({
   username: z.string().trim().min(1, "请输入用户名"),
   password: z.string().min(1, "请输入密码"),
-  totp: z.string().trim().refine((value) => value === "" || /^\\d{6}$/.test(value), "请输入 6 位验证码"),
+  // One backslash, not two: `\\d` would be the escape for a literal backslash
+  // followed by a literal "d", so every real six-digit code would be rejected
+  // before handleSubmit ever ran.
+  totp: z.string().trim().refine((value) => value === "" || /^\d{6}$/.test(value), "请输入 6 位验证码"),
 });
 
 type LoginFormInput = z.infer<typeof formSchema>;

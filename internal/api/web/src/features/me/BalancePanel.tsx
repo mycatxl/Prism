@@ -16,7 +16,7 @@ import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { mePaths } from "../../lib/paths";
 import { formatMicro } from "../../lib/money";
-import { getBalance, redeemCode } from "./api";
+import { BALANCE_LEDGER_LIMIT, getBalance, meBalanceQueryKey, redeemCode } from "./api";
 import type { BalanceEntry } from "./types";
 
 const NANOS_PER_MILLI = 1_000_000;
@@ -70,9 +70,12 @@ export function BalancePanel() {
   const [code, setCode] = useState("");
   const [invalid, setInvalid] = useState(false);
 
+  // The limit is in the key: this panel needs the movements, the plans page only
+  // needs the total, and one shared entry would hand one of them the other's
+  // list length.
   const balanceQuery = useQuery({
-    queryKey: ["me-balance"],
-    queryFn: () => getBalance(50),
+    queryKey: meBalanceQueryKey,
+    queryFn: () => getBalance(BALANCE_LEDGER_LIMIT),
   });
 
   const redeemMutation = useMutation({

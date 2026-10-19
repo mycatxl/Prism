@@ -13,13 +13,14 @@ import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
-import { createUser, deleteUser, listPlans, listUsers, updateUser } from "./api";
+import { adminPlansQueryKey, createUser, deleteUser, listPlans, listUsers, updateUser } from "./api";
 import type { AdminPlan, AdminUser, CreateUserInput } from "./types";
 
 const PAGE_SIZE = 20;
@@ -47,6 +48,10 @@ export function UsersPage() {
   const { toasts, showToast, dismissToast } = useToast();
 
   const [search, setSearch] = useState("");
+  // The input binds to the raw value; the request and its cache key use the
+  // settled one, so one keystroke is never one request and no character typed is
+  // dropped while the value is still settling.
+  const settledSearch = useDebouncedValue(search);
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");
   const [offset, setOffset] = useState(0);
@@ -56,13 +61,13 @@ export function UsersPage() {
 
   const queryParams = useMemo(
     () => ({
-      q: search.trim() || undefined,
+      q: settledSearch.trim() || undefined,
       status: statusFilter === "all" ? undefined : statusFilter,
       role: roleFilter === "all" ? undefined : roleFilter,
       limit: PAGE_SIZE,
       offset,
     }),
-    [search, statusFilter, roleFilter, offset],
+    [settledSearch, statusFilter, roleFilter, offset],
   );
 
   const {
@@ -78,7 +83,7 @@ export function UsersPage() {
   });
 
   const { data: plansData } = useQuery({
-    queryKey: ["admin-plans-list"],
+    queryKey: adminPlansQueryKey,
     queryFn: () => listPlans(),
   });
 

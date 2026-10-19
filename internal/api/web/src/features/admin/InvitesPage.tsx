@@ -22,7 +22,7 @@ import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { copyToClipboard } from "../../lib/clipboard";
 import { formatApiErrorMessage } from "../../lib/error-message";
-import { createInvite, deleteInvite, listInvites, listPlans } from "./api";
+import { adminPlansQueryKey, createInvite, deleteInvite, listInvites, listPlans } from "./api";
 import type { AdminInvite, AdminPlan, CreateInviteInput } from "./types";
 
 const PAGE_SIZE = 20;
@@ -66,7 +66,7 @@ export function InvitesPage() {
   });
 
   const { data: plansData } = useQuery({
-    queryKey: ["admin-plans-list"],
+    queryKey: adminPlansQueryKey,
     queryFn: () => listPlans(),
   });
 

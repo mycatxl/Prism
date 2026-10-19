@@ -10,7 +10,7 @@ import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { readMigratedValue, removeStoredValues } from "../../lib/storage";
-import { getEnvConfig } from "../systemConfig/api";
+import { getEnvConfig, SYSTEM_ENV_CONFIG_QUERY_KEY, SYSTEM_ENV_STALE_MS } from "../systemConfig/api";
 
 const PROXY_TOKEN_STORAGE_KEY = "prism.proxy-session-token";
 const LEGACY_PROXY_TOKEN_KEYS = ["prismx.proxy-session-token"];
@@ -204,10 +204,13 @@ export function PlatformAccessPanel({
   const [target, setTarget] = useState("https://api.ipify.org");
   const [endpointOverride, setEndpointOverride] = useState("");
 
+  // The shared env entry: this panel reads two fields off it under the same key
+  // every other reader uses, so the url is fetched once and a save elsewhere can
+  // refresh it instead of leaving this copy behind.
   const envQuery = useQuery({
-    queryKey: ["system-env-config"],
+    queryKey: SYSTEM_ENV_CONFIG_QUERY_KEY,
     queryFn: getEnvConfig,
-    staleTime: 60_000,
+    staleTime: SYSTEM_ENV_STALE_MS,
   });
 
   const env = envQuery.data ?? null;

@@ -301,7 +301,6 @@ export function NodesPage() {
     native: params.get("native") || "",
     asn: params.get("asn") || "",
     country: params.get("country") || "",
-    check: params.get("check") || "",
     enabled: mode === "disabled" ? false : mode !== "all" ? true : undefined,
     has_outbound:
       mode === "error"
@@ -318,6 +317,17 @@ export function NodesPage() {
   } as const;
   // The URL keeps the raw text of every filter (inputs bind to it); the API
   // query converts the intel filters to their typed form.
+  //
+  // `check` is repeatable and therefore not part of `filter`: a single-value
+  // object cannot hold it, and reading only `params.get("check")` would drop the
+  // second rule. It lives in the query key instead (see `checksKey`), because a
+  // key that ignores it would leave the table on the previous result set while
+  // the picker already showed two chips.
+  // The picker and the API read the same repeatable parameter, so both stay in
+  // sync with the URL - including an entry typed before the picker existed.
+  const selectedChecks = params.getAll("check").map((value) => value.trim()).filter(Boolean);
+  // Sorted, so the same set picked in a different order is not a new query.
+  const checksKey = [...selectedChecks].sort().join("|");
   const nodeQuery: NodeListQuery = {
     ...filter,
     purity_min: optionalInteger(filter.purity_min),
@@ -327,18 +337,15 @@ export function NodesPage() {
     verdict: filter.verdict || undefined,
     confidence_min: filter.confidence_min || undefined,
     country: filter.country || undefined,
-    check: params.getAll("check").map((value) => value.trim()).filter(Boolean),
+    check: selectedChecks,
   };
-  // The picker and the API read the same repeatable parameter, so both stay in
-  // sync with the URL - including an entry typed before the picker existed.
-  const selectedChecks = params.getAll("check").map((value) => value.trim()).filter(Boolean);
   const qualityStatus = useQuery({
     queryKey: ["quality", "status"],
     queryFn: getQualityStatus,
     refetchInterval: query => qualityPollingInterval(query.state.data),
   });
   const nodesQuery = useQuery({
-    queryKey: ["nodes", filter],
+    queryKey: ["nodes", filter, checksKey],
     queryFn: ({ signal }) => listNodes(nodeQuery, signal),
     enabled: view === "nodes",
     placeholderData: (previous) => previous,

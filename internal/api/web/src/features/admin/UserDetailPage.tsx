@@ -38,6 +38,7 @@ import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { UserBalancePanel } from "./UserBalancePanel";
 import {
+  adminPlansQueryKey,
   createSubscription,
   createUserKey,
   deleteUserKey,
@@ -119,7 +120,7 @@ export function UserDetailPage() {
   });
 
   const { data: plansData } = useQuery({
-    queryKey: ["admin-plans-list"],
+    queryKey: adminPlansQueryKey,
     queryFn: () => listPlans(),
   });
 

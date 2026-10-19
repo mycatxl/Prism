@@ -19,6 +19,21 @@ export async function getOverview(): Promise<SelfOverview> {
   return apiRequest<SelfOverview>("/api/v1/me/overview");
 }
 
+/**
+ * The ledger length the balance view is fetched with. It belongs to the query
+ * key: a page that renders the movements and a page that only needs the total
+ * must not share one cache entry, or one of them silently gets the other's
+ * list length.
+ */
+export const BALANCE_LEDGER_LIMIT = 50;
+
+/**
+ * The single cache entry for the caller's balance and ledger. Every invalidate
+ * in the panel, the overview and the plan purchase uses the ["me-balance"]
+ * prefix, so it keeps matching this entry without knowing the limit.
+ */
+export const meBalanceQueryKey = ["me-balance", BALANCE_LEDGER_LIMIT] as const;
+
 export async function getBalance(limit?: number): Promise<BalanceView> {
   const query = limit && limit > 0 ? `?limit=${limit}` : "";
   return apiRequest<BalanceView>(`/api/v1/me/balance${query}`);

@@ -23,7 +23,7 @@ import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatMicro, formatMicroCompact, parseAmountToMicro } from "../../lib/money";
-import { createPlan, deletePlan, listPlans, updatePlan } from "./api";
+import { adminPlansQueryKey, createPlan, deletePlan, listPlans, updatePlan } from "./api";
 import {
   BITS_PER_MBPS,
   BYTES_PER_GB,
@@ -81,7 +81,7 @@ export function PlansPage() {
     refetch,
     isFetching,
   } = useQuery({
-    queryKey: ["admin-plans"],
+    queryKey: adminPlansQueryKey,
     queryFn: () => listPlans(),
   });
 
@@ -90,7 +90,7 @@ export function PlansPage() {
     onSuccess: () => {
       showToast("success", t("套餐已删除"));
       setDeleteTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin-plans"] });
+      void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey });
     },
     onError: (err) => {
       showToast("error", formatApiErrorMessage(err, t));
@@ -287,7 +287,7 @@ export function PlansPage() {
           );
           setFormOpen(false);
           setEditingPlan(null);
-          void queryClient.invalidateQueries({ queryKey: ["admin-plans"] });
+          void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey });
         }}
       />
 

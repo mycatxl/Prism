@@ -10,6 +10,7 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryS
 import { Sheet } from "../../components/ui/Sheet";
 import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
@@ -41,6 +42,9 @@ function isFallbackRule(rule: Rule): boolean {
 export function RulesPage() {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
+  // The input binds to the raw text so nothing typed is lost; the request and
+  // its cache key use the settled value, so one keystroke is never one request.
+  const settledSearch = useDebouncedValue(search);
   const [selectedPrefix, setSelectedPrefix] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -56,8 +60,8 @@ export function RulesPage() {
   const queryClient = useQueryClient();
 
   const rulesQuery = useQuery({
-    queryKey: ["header-rules", search],
-    queryFn: () => listRules(search),
+    queryKey: ["header-rules", settledSearch],
+    queryFn: () => listRules(settledSearch),
     refetchInterval: 30_000,
   });
 

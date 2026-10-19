@@ -8,7 +8,7 @@ import { navigationFor } from "../lib/navigation";
 import { ACCOUNT, OPS_ROOT, isCurrentPath, isExactPath, isWithinNamespace } from "../lib/paths";
 import { isAdminRole } from "../lib/roles";
 import { useAuthStore, clearSession } from "../features/auth/auth-store";
-import { getEnvConfig } from "../features/systemConfig/api";
+import { getEnvConfig, SYSTEM_ENV_CONFIG_QUERY_KEY, SYSTEM_ENV_STALE_MS } from "../features/systemConfig/api";
 import { SYSTEM_INFO_QUERY_KEY, getSystemInfo } from "../features/systemInfo/api";
 import { useI18n } from "../i18n";
 import { LanguageSwitcher } from "./LanguageSwitcher";
@@ -82,10 +82,14 @@ export function AppShell() {
     retry: false,
     enabled: operatorSurface,
   });
+  // The shared env entry. It used to carry a "shell" suffix, which meant the
+  // console fetched the same url for itself and could not be refreshed by a save
+  // on another page; the reader here still refetches on an explicit invalidate,
+  // which is the only way these boot-time values ever change.
   const env = useQuery({
-    queryKey: ["system-config-env", "shell"],
+    queryKey: SYSTEM_ENV_CONFIG_QUERY_KEY,
     queryFn: getEnvConfig,
-    staleTime: 30_000,
+    staleTime: SYSTEM_ENV_STALE_MS,
     enabled: operatorSurface,
   });
 

@@ -30,7 +30,17 @@ import { cn } from "../../lib/cn";
 import { useToast } from "../../hooks/useToast";
 import i18next, { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
-import { getEnvConfig, patchSystemConfig, getSystemConfig, getDefaultSystemConfig } from "./api";
+import {
+  getDefaultSystemConfig,
+  getEnvConfig,
+  getSystemConfig,
+  patchSystemConfig,
+  SYSTEM_CONFIG_DEFAULT_QUERY_KEY,
+  SYSTEM_CONFIG_QUERY_KEY,
+  SYSTEM_CONFIG_STALE_MS,
+  SYSTEM_ENV_CONFIG_QUERY_KEY,
+  SYSTEM_ENV_STALE_MS,
+} from "./api";
 import type { RuntimeConfig, RuntimeConfigPatch } from "./types";
 
 type RuntimeConfigForm = {
@@ -370,22 +380,25 @@ export function SystemConfigPage() {
   const { toasts, showToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
 
+  // The keys and the windows come from ./api: the same two urls are read by the
+  // shell, the request log and the platform panel, and one cache entry per url is
+  // what keeps a save from leaving any of them on the previous values.
   const configQuery = useQuery({
-    queryKey: ["system-config"],
+    queryKey: SYSTEM_CONFIG_QUERY_KEY,
     queryFn: getSystemConfig,
-    staleTime: 30_000,
+    staleTime: SYSTEM_CONFIG_STALE_MS,
   });
 
   const defaultConfigQuery = useQuery({
-    queryKey: ["system-config-default"],
+    queryKey: SYSTEM_CONFIG_DEFAULT_QUERY_KEY,
     queryFn: getDefaultSystemConfig,
-    staleTime: 30_000,
+    staleTime: SYSTEM_CONFIG_STALE_MS,
   });
 
   const envConfigQuery = useQuery({
-    queryKey: ["system-config-env"],
+    queryKey: SYSTEM_ENV_CONFIG_QUERY_KEY,
     queryFn: getEnvConfig,
-    staleTime: Infinity, // Env config does not change at runtime
+    staleTime: SYSTEM_ENV_STALE_MS,
   });
 
   const baseline = configQuery.data ?? null;
@@ -448,7 +461,9 @@ export function SystemConfigPage() {
       return { updated, changedCount };
     },
     onSuccess: ({ updated, changedCount }) => {
-      queryClient.setQueryData(["system-config"], updated);
+      // The save answers with the new object, so the shared entry is written
+      // instead of being left for the next mount to discover as stale.
+      queryClient.setQueryData(SYSTEM_CONFIG_QUERY_KEY, updated);
       setDraftForm(null);
       setCustomPatchText(null);
       showToast("success", t("配置已更新（{{count}} 项变更）", { count: changedCount }));

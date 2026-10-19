@@ -5,9 +5,6 @@ import type {
   AdminKey,
   AdminPlan,
   AdminSubscription,
-  AdminSystemConfig,
-  AdminSystemConfigPatch,
-  AdminSystemEnvConfig,
   AdminUsageAlertItem,
   AdminUsageAlertsResponse,
   AdminUsageDailyResponse,
@@ -40,6 +37,14 @@ function toQueryString(params: Record<string, string | number | undefined | null
 // ---------------------------------------------------------------------------
 // 套餐 /api/v1/admin/plans
 // ---------------------------------------------------------------------------
+
+/**
+ * The single cache entry for the admin plan list. The plans page edits it and
+ * the create-user, invite and user-detail pickers read it; giving those pickers
+ * a key of their own kept them on the old name and price until the short
+ * staleTime happened to expire, so every reader shares this one.
+ */
+export const adminPlansQueryKey = ["admin-plans"] as const;
 
 export async function listPlans(): Promise<{ items: AdminPlan[] }> {
   return apiRequest<{ items: AdminPlan[] }>("/api/v1/admin/plans");
@@ -398,31 +403,4 @@ export async function getUserUsage(
   return apiRequest<AdminUsageDailyResponse>(
     `/api/v1/admin/users/${encodeURIComponent(userId)}/usage${qs}`,
   );
-}
-
-// ---------------------------------------------------------------------------
-// 设置 /api/v1/system/config
-// ---------------------------------------------------------------------------
-
-export async function getSystemConfig(): Promise<AdminSystemConfig> {
-  return apiRequest<AdminSystemConfig>("/api/v1/system/config");
-}
-
-export async function updateSystemConfig(
-  patch: AdminSystemConfigPatch,
-): Promise<AdminSystemConfig> {
-  return apiRequest<AdminSystemConfig>("/api/v1/system/config", {
-    method: "PATCH",
-    body: patch,
-  });
-}
-
-export async function getDefaultSystemConfig(): Promise<AdminSystemConfig> {
-  return apiRequest<AdminSystemConfig>("/api/v1/system/config/default");
-}
-
-// The deployment's own configuration. The console cannot change it, but it needs
-// the values to explain what a cleared runtime override falls back to.
-export async function getSystemEnvConfig(): Promise<AdminSystemEnvConfig> {
-  return apiRequest<AdminSystemEnvConfig>("/api/v1/system/config/env");
 }

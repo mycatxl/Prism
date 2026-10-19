@@ -15,6 +15,7 @@ import { Switch } from "../../components/ui/Switch";
 import { Table, TableWrap, TBody, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
@@ -156,6 +157,10 @@ export function PlatformPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
+  // The input binds to the raw value; the request is built from the settled one,
+  // so one keystroke is never one request while typing still never loses a
+  // character.
+  const settledSearch = useDebouncedValue(search);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(24);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -171,12 +176,12 @@ export function PlatformPage() {
   };
 
   const platformsQuery = useQuery({
-    queryKey: ["platforms", "page", page, pageSize, search],
+    queryKey: ["platforms", "page", page, pageSize, settledSearch],
     queryFn: () =>
       listPlatforms({
         limit: pageSize,
         offset: page * pageSize,
-        keyword: search,
+        keyword: settledSearch,
       }),
     refetchInterval: 30_000,
     placeholderData: (prev) => prev,

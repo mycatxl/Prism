@@ -30,17 +30,32 @@ import { useI18n } from "../../i18n";
 import { fetchSession } from "../../lib/api-client";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
+// The canonical client for these endpoints lives in the system config feature:
+// the console writes and reads the same two urls the system config page does, so
+// they share its cache keys instead of keeping a second copy of the same GET.
 import {
   getDefaultSystemConfig,
+  getEnvConfig,
   getSystemConfig,
-  getSystemEnvConfig,
-  updateSystemConfig,
-} from "./api";
-import type {
-  AdminSystemConfig,
-  AdminSystemConfigPatch,
-  RegistrationMode,
-} from "./types";
+  patchSystemConfig,
+  SYSTEM_CONFIG_DEFAULT_QUERY_KEY,
+  SYSTEM_CONFIG_QUERY_KEY,
+  SYSTEM_CONFIG_STALE_MS,
+  SYSTEM_ENV_CONFIG_QUERY_KEY,
+  SYSTEM_ENV_STALE_MS,
+} from "../systemConfig/api";
+import type { RegistrationMode, RuntimeConfigPatch, SystemConfigView } from "../systemConfig/types";
+
+/*
+ * The slice of the shared system config this page reads. GET /api/v1/system/config
+ * answers one object; the runtime form edits its runtime fields while this page
+ * edits the policy fields beside them, so the two share the type - and, because
+ * of that, the cache entry - without either pretending to own the whole thing.
+ */
+type SettingsPolicyView = Pick<
+  SystemConfigView,
+  "audit_retention_days" | "usage_retention_days" | "purity_bands" | "registration_mode"
+>;
 
 // MAX_RETENTION_DAYS mirrors config.MaxRetentionDays on the server: a longer
 // window overflows the nanosecond offset the prune subtracts from now, which
@@ -87,14 +102,20 @@ export function SettingsPage() {
    */
   const { toasts, showToast, dismissToast } = useToast();
 
+  // Same keys, same query functions and same windows as the system config page
+  // and the shell: this page edits two slices of one object, and a key of its own
+  // made the console fetch the same url again while a save here left the copies
+  // other pages were reading untouched.
   const configQuery = useQuery({
-    queryKey: ["admin-system-config"],
+    queryKey: SYSTEM_CONFIG_QUERY_KEY,
     queryFn: getSystemConfig,
+    staleTime: SYSTEM_CONFIG_STALE_MS,
   });
 
   const defaultQuery = useQuery({
-    queryKey: ["admin-system-config-default"],
+    queryKey: SYSTEM_CONFIG_DEFAULT_QUERY_KEY,
     queryFn: getDefaultSystemConfig,
+    staleTime: SYSTEM_CONFIG_STALE_MS,
   });
 
   /*
@@ -103,8 +124,9 @@ export function SettingsPage() {
    * returns to, and that value is not in the runtime config.
    */
   const envQuery = useQuery({
-    queryKey: ["admin-system-env-config"],
-    queryFn: getSystemEnvConfig,
+    queryKey: SYSTEM_ENV_CONFIG_QUERY_KEY,
+    queryFn: getEnvConfig,
+    staleTime: SYSTEM_ENV_STALE_MS,
   });
 
   if (configQuery.isLoading || defaultQuery.isLoading || envQuery.isLoading) {
@@ -143,7 +165,7 @@ export function SettingsPage() {
     );
   }
 
-  const config = configQuery.data ?? {
+  const config: SettingsPolicyView = configQuery.data ?? {
     audit_retention_days: 90,
     // The shipped window: 90 days for audit logs, 400 for usage (internal/config).
     usage_retention_days: 400,
@@ -194,8 +216,8 @@ function SettingsFormContent({
   onRefetch,
   showToast,
 }: {
-  config: AdminSystemConfig;
-  defaultConfig: AdminSystemConfig;
+  config: SettingsPolicyView;
+  defaultConfig: SettingsPolicyView;
   envRegistration: string;
   envKnown: boolean;
   onRefetch: () => void;
@@ -249,11 +271,13 @@ function SettingsFormContent({
   const [errorMsg, setErrorMsg] = useState("");
 
   const updateMutation = useMutation({
-    mutationFn: (patch: AdminSystemConfigPatch) => updateSystemConfig(patch),
+    mutationFn: (patch: RuntimeConfigPatch) => patchSystemConfig(patch),
     onSuccess: (_data, variables) => {
       showToast("success", t("系统设置已更新"));
       setErrorMsg("");
-      void queryClient.invalidateQueries({ queryKey: ["admin-system-config"] });
+      // The one shared entry: the system config page, the request log and the
+      // shell all read this url, and the save has to reach every one of them.
+      void queryClient.invalidateQueries({ queryKey: SYSTEM_CONFIG_QUERY_KEY });
       // The console reads the sign-up policy from its own session; without this
       // the page keeps advertising the previous door until the next reload.
       if (variables.registration_mode !== undefined) {
@@ -320,7 +344,7 @@ function SettingsFormContent({
    * patch built from the whole form would rewrite settings this page never
    * showed — and would pin a registration override the operator never asked for.
    */
-  const patch: AdminSystemConfigPatch = {};
+  const patch: RuntimeConfigPatch = {};
   if (auditDirty) patch.audit_retention_days = auditValue as number;
   if (usageDirty) patch.usage_retention_days = usageValue as number;
   if (purityDirty) {
