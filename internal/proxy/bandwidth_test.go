@@ -89,10 +89,12 @@ func TestBandwidthTable_ReserveCapsTheCreditAfterIdle(t *testing.T) {
 
 // A plan without a bandwidth limit installs nothing, so the read and write
 // paths keep their one comparison and no table is touched.
+// A plan without a bandwidth limit installs nothing, so the read and write
+// paths keep their one comparison and no table is touched.
 func TestCountingConn_ThrottleToIgnoresAnUnlimitedPlan(t *testing.T) {
 	conn := newAttributedCountingConn(&bandwidthStubConn{}, nil, nil)
 	same := conn.throttleTo(bandwidthTestKey(0))
-	if same != conn || conn.bandwidth != nil || conn.bandwidthRateBps != 0 || conn.bandwidthKey != "" {
+	if same != conn || conn.bandwidth != nil {
 		t.Fatalf("an unlimited plan must leave the connection untouched: %+v", conn)
 	}
 }
@@ -100,11 +102,25 @@ func TestCountingConn_ThrottleToIgnoresAnUnlimitedPlan(t *testing.T) {
 func TestCountingConn_ThrottleToInstallsThePlan(t *testing.T) {
 	conn := newAttributedCountingConn(&bandwidthStubConn{}, nil, nil)
 	conn.throttleTo(bandwidthTestKey(2_000_000))
-	if conn.bandwidth != sharedBandwidth {
-		t.Fatalf("the key's schedule has to be the shared table")
+	if conn.bandwidth == nil || conn.bandwidth.table != sharedBandwidth {
+		t.Fatalf("the key's schedule has to be the shared table: %+v", conn.bandwidth)
 	}
-	if conn.bandwidthRateBps != 2_000_000 || conn.bandwidthKey != "k-bw" {
-		t.Fatalf("the plan's rate and the key's budget were not installed: %+v", conn)
+	if conn.bandwidth.rateBps != 2_000_000 || conn.bandwidth.name != "k-bw" {
+		t.Fatalf("the plan's rate and the key's budget were not installed: %+v", conn.bandwidth)
+	}
+	// The gate has to be able to give up its wait when the connection closes,
+	// or a closed tunnel would hold its relay goroutine for the whole remainder.
+	if conn.bandwidth.stopped == nil {
+		t.Fatal("the connection's gate has no early-release probe")
+	}
+	if conn.bandwidth.stopped() {
+		t.Fatal("an open connection reports itself as closed")
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if !conn.bandwidth.stopped() {
+		t.Fatal("a closed connection does not release its throttle")
 	}
 }
 
@@ -113,7 +129,10 @@ func TestCountingConn_ThrottleToInstallsThePlan(t *testing.T) {
 func TestCountingConn_ChargesBothDirections(t *testing.T) {
 	table := &bandwidthTable{}
 	stub := &bandwidthStubConn{}
-	conn := &countingConn{Conn: stub, bandwidth: table, bandwidthRateBps: 1_000_000, bandwidthKey: "k-bw"}
+	conn := &countingConn{
+		Conn:      stub,
+		bandwidth: &bandwidthGate{table: table, name: "k-bw", rateBps: 1_000_000},
+	}
 	// The clock is not injected into countingConn, so the assertions are about
 	// the schedule moving rather than about the delay it returns.
 	if _, err := conn.Write([]byte("hello")); err != nil {

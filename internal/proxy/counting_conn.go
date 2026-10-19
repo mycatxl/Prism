@@ -42,11 +42,9 @@ type countingConn struct {
 	attribution *keyAttribution
 
 	// bandwidth is the key's byte schedule, installed only when its plan
-	// limits bandwidth. A nil table is the unlimited path and costs the read
+	// limits bandwidth. A nil gate is the unlimited path and costs the read
 	// and write paths one comparison each.
-	bandwidth        *bandwidthTable
-	bandwidthRateBps int64
-	bandwidthKey     string
+	bandwidth *bandwidthGate
 
 	pendingRead  atomic.Int64
 	pendingWrite atomic.Int64

@@ -473,9 +473,32 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The tail of a partial report step is flushed on every exit path, including
 	// the one that unwinds through httputil's ErrAbortHandler panic.
 	defer quota.flushReports()
-	if egressBodyCounter != nil && quota != nil {
-		r.Body = newQuotaReadCloser(egressBodyCounter, quota)
+
+	// The plan's bandwidth limit is charged on the two bodies this proxy copies:
+	// the client's request body on its way upstream and the upstream response
+	// body on its way back. It cannot be charged on the connection the way a
+	// tunnel charges its socket - this proxy's transports are pooled per node, so
+	// a connection serves many requests and cannot be said to belong to one key -
+	// which is why the gate sits on the bodies instead. It stops waiting as soon
+	// as the request's context ends, so a transfer cancelled mid-throttle
+	// releases its goroutine within one step.
+	//
+	// A 101 response is deliberately left unwrapped here: httputil pumps an
+	// upgraded exchange through resp.Body itself and needs it to stay an
+	// io.ReadWriteCloser (see ModifyResponse).
+	bandwidth := newBandwidthGate(parsed.Key, func() bool { return streamCtx.Err() != nil })
+	if egressBodyCounter != nil {
+		var body io.ReadCloser = egressBodyCounter
+		if quota != nil {
+			body = newQuotaReadCloser(egressBodyCounter, quota)
+		}
+		r.Body = throttleBody(body, bandwidth)
 	}
+	// Set by the error handler when the allowance cut the exchange before any
+	// response existed. The deferred accounting below then leaves NetOK alone:
+	// a request that was answered with a refusal did not complete successfully,
+	// unlike a stream that was cut after it had already started delivering.
+	quotaRefusedBeforeResponse := false
 
 	proxy := &httputil.ReverseProxy{
 		// Rewrite, not the deprecated Director: it runs after the hop-by-hop
@@ -505,11 +528,31 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		Transport: transport,
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
+			// The allowance can end the round trip in two shapes, and they are
+			// the same event. If the cancel lands before the transport looks at
+			// the stream again it surfaces as context.Canceled; if the transport
+			// was inside a body read, the stream's own error surfaces instead
+			// and looks like a transport failure. Consulting the allowance first
+			// answers both the same way, and it has to be answered: nothing has
+			// been written yet, so returning silently would leave net/http to
+			// finish the exchange as "200, empty body" and the request log to
+			// record a success for a request that was in fact refused. The
+			// client is told what happened and the log names the cut; the node
+			// is not blamed, because it was given no chance to carry anything.
+			if quota.Exceeded() {
+				quotaRefusedBeforeResponse = true
+				lifecycle.setProxyError(ErrQuotaExceeded)
+				lifecycle.setUpstreamError("reverse_roundtrip_quota", err)
+				lifecycle.setHTTPStatus(ErrQuotaExceeded.HTTPCode)
+				writeProxyError(rw, ErrQuotaExceeded)
+				return
+			}
 			proxyErr := classifyUpstreamError(err)
 			if proxyErr == nil {
-				// context.Canceled — no health recording, silently close.
-				// Treat as net-ok for request-log semantics when canceled
-				// before upstream response.
+				// context.Canceled with the allowance untouched: the client went
+				// away. Nobody is left to read an answer, so the exchange stays
+				// silent and keeps the net-ok semantics every path before this
+				// one has always had.
 				lifecycle.setNetOK(true)
 				return
 			}
@@ -576,6 +619,10 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				} else {
 					resp.Body = ingressBodyCounter
 				}
+				// The response body is the ingress copy this proxy makes, so it
+				// is where the key's bandwidth limit applies to it. A 101 body
+				// is not wrapped: see the branch above.
+				resp.Body = throttleBody(resp.Body, bandwidth)
 			} else if detailCfg.Enabled {
 				respHeaders, respHeadersLen, respHeadersTruncated := captureHeadersWithLimit(resp.Header, detailCfg.RespHeadersMaxBytes, accountHeaders...)
 				lifecycle.setRespHeadersCaptured(respHeaders, respHeadersLen, respHeadersTruncated)
@@ -636,10 +683,15 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lifecycle.addEgressBytes(upgradedStreamCounter.TotalWrite())
 			}
 		}
-		if quota.Exceeded() {
+		if quota.Exceeded() && !quotaRefusedBeforeResponse {
 			// The transfer was cut on purpose: the key ran out of allowance.
 			// The upstream carried what it was given, so it is not marked
 			// failed, and the cut is visible in the request log.
+			//
+			// A cut that happened before any response existed is excluded: the
+			// error handler has already recorded it as a refused request, and
+			// re-stating it as a network success here would put a net_ok=true
+			// log line on a request the client saw fail.
 			lifecycle.setProxyError(ErrQuotaExceeded)
 			lifecycle.setNetOK(true)
 		}
