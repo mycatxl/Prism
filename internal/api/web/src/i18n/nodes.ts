@@ -17,6 +17,8 @@ export const NODES_TRANSLATIONS: Record<string, string> = {
   // 节点行标签（NodesPage 的“地区 / 网络类型”列）。
   "地区 / 网络类型": "Region / network type",
   网络类型: "Network type",
+  // 节点列表的排序项与“名称”列头：标签由数组/函数参数间接传给 t()。
+  节点名称: "Node name",
   // 节点导出菜单（GET /api/v1/nodes/export）。
   导出: "Export",
   按当前筛选导出: "Export current filter",

@@ -124,7 +124,3 @@ export async function openDeposit(amountMicro: number): Promise<DepositIntent> {
 export async function getDepositIntents(): Promise<DepositIntentsResponse> {
   return apiRequest<DepositIntentsResponse>("/api/v1/me/deposits");
 }
-
-export async function getDepositIntent(id: string): Promise<DepositIntent> {
-  return apiRequest<DepositIntent>(`/api/v1/me/deposits/${encodeURIComponent(id)}`);
-}

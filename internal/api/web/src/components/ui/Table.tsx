@@ -38,9 +38,13 @@ export function THead({ className, ...rest }: HTMLAttributes<HTMLTableSectionEle
 /**
  * Sticky column head in micro-caps; opaque, because a head that shows rows through
  * itself is a head nobody can read.
+ *
+ * `scope="col"` is the default: every head in this console heads a column, and a
+ * cell a screen reader cannot tie to a column is a cell read as a naked value. A
+ * caller that really heads a row passes its own `scope` and wins.
  */
-export function TH({ className, ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
-  return <th className={className} {...rest} />;
+export function TH({ className, scope = "col", ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
+  return <th scope={scope} className={className} {...rest} />;
 }
 
 export function TBody({ className, ...rest }: HTMLAttributes<HTMLTableSectionElement>) {

@@ -98,12 +98,6 @@ export async function fetchSession(signal?: AbortSignal): Promise<SessionInfo> {
   return session;
 }
 
-/** Whether this deployment requires a logged-in console session. */
-export async function fetchAuthMode(signal?: AbortSignal): Promise<boolean> {
-  const session = await fetchSession(signal);
-  return session.auth_required;
-}
-
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { method = "GET", body, signal } = options;
   if (method !== "GET" && typeof navigator !== "undefined" && !navigator.onLine) {

@@ -20,7 +20,7 @@ export type WorldFeature = {
   properties: {
     /** ISO 3166-1 alpha-2, empty for the three territories that have none. */
     iso: string;
-    /** The ECharts region key: the ISO code, or the territory name. */
+    /** The region key the map joins on: the ISO code, or the territory name. */
     name: string;
     zh: string;
   };

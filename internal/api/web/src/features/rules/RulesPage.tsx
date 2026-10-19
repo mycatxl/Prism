@@ -299,7 +299,13 @@ export function RulesPage() {
                       </TDClip>
                       <TD className="text-right">
                         <div className="flex items-center justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-                          <Button size="icon" variant="ghost" onClick={() => openDrawerForRule(rule)} title={t("编辑")}>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => openDrawerForRule(rule)}
+                            title={t("编辑")}
+                            aria-label={t("编辑")}
+                          >
                             <Pencil size={14} />
                           </Button>
                           <Button
@@ -309,6 +315,7 @@ export function RulesPage() {
                             onClick={() => void handleDelete(rule)}
                             disabled={isDeletePending || isFallbackRule(rule)}
                             title={isFallbackRule(rule) ? t('兜底规则 "*" 不可删除') : t("删除")}
+                            aria-label={isFallbackRule(rule) ? t('兜底规则 "*" 不可删除') : t("删除")}
                           >
                             <Trash2 size={14} />
                           </Button>

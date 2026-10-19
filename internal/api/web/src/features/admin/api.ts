@@ -52,10 +52,6 @@ export async function createPlan(input: PlanWrite): Promise<AdminPlan> {
   });
 }
 
-export async function getPlan(id: string): Promise<AdminPlan> {
-  return apiRequest<AdminPlan>(`/api/v1/admin/plans/${encodeURIComponent(id)}`);
-}
-
 export async function updatePlan(id: string, patch: PlanPatch): Promise<AdminPlan> {
   return apiRequest<AdminPlan>(`/api/v1/admin/plans/${encodeURIComponent(id)}`, {
     method: "PATCH",
@@ -149,27 +145,6 @@ export async function createUserKey(
   });
 }
 
-export type UpdateUserKeyPatch = {
-  name?: string;
-  platforms?: string[];
-  ip_allowlist?: string[];
-  status?: string;
-};
-
-export async function updateUserKey(
-  userId: string,
-  keyId: string,
-  patch: UpdateUserKeyPatch,
-): Promise<AdminKey> {
-  return apiRequest<AdminKey>(
-    `/api/v1/admin/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(keyId)}`,
-    {
-      method: "PATCH",
-      body: patch,
-    },
-  );
-}
-
 export async function deleteUserKey(userId: string, keyId: string): Promise<void> {
   return apiRequest<void>(
     `/api/v1/admin/users/${encodeURIComponent(userId)}/keys/${encodeURIComponent(keyId)}`,
@@ -233,7 +208,6 @@ export async function deleteSubscription(id: string): Promise<void> {
     method: "DELETE",
   });
 }
-export const updateUserSubscription = updateSubscription;
 
 // ---------------------------------------------------------------------------
 // 邀请码 /api/v1/admin/invites
@@ -374,8 +348,6 @@ export async function getUsagePlatforms(
   const qs = toQueryString(params);
   return apiRequest<AdminUsagePlatformsResponse>(`/api/v1/admin/usage/platforms${qs}`);
 }
-export const getUsageByUser = getUsageUsers;
-export const getUsageByPlatform = getUsagePlatforms;
 
 export type GetUsagePlansParams = {
   days?: number;

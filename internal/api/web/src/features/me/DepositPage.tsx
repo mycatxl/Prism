@@ -166,17 +166,21 @@ export function DepositPage() {
 
       <Panel>
         <PanelBody className="flex flex-col gap-4">
-          <Fieldset label={t("充值金额 (USDT)")} hint={`${t("最小")} ${formatMicro(minMicro)} USDT`}>
+          <Fieldset
+            label={t("充值金额 (USDT)")}
+            htmlFor="deposit-amount"
+            hint={`${t("最小")} ${formatMicro(minMicro)} USDT`}
+          >
             <Input
+              id="deposit-amount"
               inputMode="decimal"
               value={amount}
               placeholder={formatMicro(minMicro)}
+              invalid={amountTooSmall || undefined}
               onChange={(event) => setAmount(event.target.value)}
             />
           </Fieldset>
-          {amountTooSmall ? (
-            <p className="text-sm text-[var(--p-danger)]">{t("低于最小充值额")}</p>
-          ) : null}
+          {amountTooSmall ? <p className="text-sm text-alert">{t("低于最小充值额")}</p> : null}
           <div>
             <Button
               variant="primary"
@@ -202,7 +206,7 @@ export function DepositPage() {
           />
           <PanelBody className="flex flex-col gap-4">
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-[var(--p-text-muted)]">{t("收款地址")}</span>
+              <span className="text-xs text-ink-faint">{t("收款地址")}</span>
               <CopyRow
                 value={info.address}
                 label={t("复制")}
@@ -210,7 +214,7 @@ export function DepositPage() {
               />
             </div>
             <div className="flex flex-col gap-1">
-              <span className="text-xs text-[var(--p-text-muted)]">{t("转账金额 (USDT)")}</span>
+              <span className="text-xs text-ink-faint">{t("转账金额 (USDT)")}</span>
               <CopyRow
                 value={formatMicro(activeIntent.amount_micro)}
                 label={t("复制")}
@@ -234,7 +238,7 @@ export function DepositPage() {
             ) : null}
             {activeIntent.status === "paid" ? <p className="text-sm">{t("已到账，余额已更新")}</p> : null}
 
-            <p className="text-xs text-[var(--p-text-muted)]">
+            <p className="text-xs text-ink-faint">
               {t("只支持 TRC20 网络的 USDT，转错网络或金额将无法自动入账。")}
             </p>
           </PanelBody>

@@ -6,8 +6,8 @@ import { cn } from "../../lib/cn";
  * Dialog states:
  *   default   the overlay's `bg-ink/45` scrim over the page, with the content's
  *             overlay surface centred on top of it
- *   hover     per control: a `DialogClose` composed with `Button` carries the
- *             button's own hover, and the primitive adds none of its own
+ *   hover     per control: a `DialogPrimitive.Close` composed with `Button`
+ *             carries the button's own hover, and the primitive adds none of its own
  *   focus     Radix traps focus inside the content and returns it to whatever
  *             opened the dialog when it closes; the surface itself draws no ring
  *             (the controls inside it do)
@@ -31,18 +31,12 @@ import { cn } from "../../lib/cn";
  */
 export const DialogRoot = DialogPrimitive.Root;
 
-/** A control that opens the dialog. Compose it with `Button asChild`. */
-export const DialogTrigger = DialogPrimitive.Trigger;
-
 /**
  * The portal. The content exists in the DOM only while the dialog is open, which
  * is the whole reason a dashboard can mount a second chart inside a dialog
  * without paying for it on every page load.
  */
 export const DialogPortal = DialogPrimitive.Portal;
-
-/** Closes the dialog. Compose it with `Button asChild` and give it a label. */
-export const DialogClose = DialogPrimitive.Close;
 
 /**
  * The scrim: a dimmed, slightly blurred wash over the page, so the surface on top

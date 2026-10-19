@@ -33,10 +33,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   clearSession: () => set({ session: anonymousSession }),
 }));
 
-export function getSession(): SessionInfo {
-  return useAuthStore.getState().session;
-}
-
 export function setSession(session: SessionInfo): void {
   useAuthStore.getState().setSession(session);
 }

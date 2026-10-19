@@ -244,3 +244,93 @@ test("every Chinese label-map value has a dictionary entry", () => {
     `${missing.length} Chinese literal(s) sit in an object value with no dictionary entry, so they stay Chinese in English mode:\n${missing.map((m) => "  " + m).join("\n")}`,
   );
 });
+
+/*
+ * A fourth shape, and the one none of the rules above can see: the Chinese value
+ * is consumed *indirectly*. `[["tag", "节点名称"], …].map(([value, label]) =>
+ * t(label))` and `sortableTH("tag", "节点名称")` both hand the text to a `t()` in
+ * another expression, so it is neither a `t()` argument at its own site nor a
+ * `key: value` pair, and both earlier rules walked past it — the node table's sort
+ * control and its first column stayed Chinese in English mode.
+ *
+ * The rule is stated on the text instead of on the syntax: a plain Chinese literal
+ * that does not contain `${}` must be an argument to `t()`, a dictionary key, or an
+ * entry in COMPOSED_FRAGMENT_ALLOW. A composed template is skipped on purpose — it
+ * is built at runtime and could never be looked up as written. The allow-list is
+ * what keeps this from becoming a false-alarm machine: a fragment that is matched
+ * rather than rendered is listed once, with the reason.
+ */
+const COMPOSED_FRAGMENT_ALLOW = new Set([
+  // A `startsWith` sentinel: it is sliced to recover the token and the sentence the
+  // operator sees is "暂不支持的 Content-Encoding: {{token}}".
+  "暂不支持的 Content-Encoding: ",
+  // The same sentinel's suffix, matched with `endsWith`.
+  " 解压失败",
+]);
+
+const LITERAL = /(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`)/g;
+
+test("every Chinese literal is a t() key, a dictionary key, or a documented fragment", () => {
+  const keys = dictionaryKeys();
+  const used = callSites();
+  const offenders = [];
+  let scanned = 0;
+  const isSource = (p) => (p.endsWith(".tsx") || p.endsWith(".ts")) && !p.includes(`${sep}i18n${sep}`);
+  for (const path of filesIn(src, isSource)) {
+    stripComments(readFileSync(path, "utf8"))
+      .split("\n")
+      .forEach((line, index) => {
+        for (const match of line.matchAll(LITERAL)) {
+          const value = match[1] ?? match[2] ?? match[3] ?? "";
+          if (!CJK.test(value)) continue;
+          scanned += 1;
+          if (value.includes("${")) continue;
+          if (keys.has(value) || used.has(value) || COMPOSED_FRAGMENT_ALLOW.has(value)) continue;
+          offenders.push(`${relative(web, path)}:${index + 1}  ${JSON.stringify(value)}`);
+        }
+      });
+  }
+  assert.ok(
+    scanned > 1000,
+    `only ${scanned} Chinese literals were scanned, so the literal scan broke rather than the source being clean`,
+  );
+  assert.equal(
+    offenders.length,
+    0,
+    `${offenders.length} Chinese literal(s) are neither t() keys nor dictionary keys, so they render as Chinese in English mode:\n${offenders.map((o) => "  " + o).join("\n")}`,
+  );
+});
+
+/*
+ * The backend error-code map is dictionary data no `t()` literal names: the
+ * sentence is picked at runtime from `error.code` (`src/lib/error-message.ts`), so
+ * a sentence that never reached the English dictionary would surface as
+ * `CONFLICT: 请求参数有误…` in an English session — the same defect this file was
+ * written for, one indirection further out. The map is a single file, so it is read
+ * directly instead of inferred.
+ */
+test("every backend error-code sentence has an English entry", () => {
+  const keys = dictionaryKeys();
+  const path = join(i18n, "errors.ts");
+  const sentences = [];
+  stripComments(readFileSync(path, "utf8"))
+    .split("\n")
+    .forEach((line, index) => {
+      for (const match of line.matchAll(/"((?:[^"\\]|\\.)+)"/g)) {
+        if (!CJK.test(match[1])) continue;
+        sentences.push({ value: match[1], where: `${relative(web, path)}:${index + 1}` });
+      }
+    });
+  assert.ok(
+    sentences.length >= 10,
+    `only ${sentences.length} sentences were read from the error-code map, so the reader broke rather than the map being short`,
+  );
+  const missing = sentences.filter(({ value }) => !keys.has(value));
+  assert.equal(
+    missing.length,
+    0,
+    `${missing.length} error-code sentence(s) have no dictionary entry, so they stay Chinese in English mode:\n${missing
+      .map(({ value, where }) => `  ${JSON.stringify(value)}  <- ${where}`)
+      .join("\n")}`,
+  );
+});

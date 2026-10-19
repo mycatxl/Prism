@@ -48,7 +48,7 @@ let mapped = 0;
 for (const item of collection.features) {
   const iso = numericToAlpha2(item.id);
   if (iso) mapped += 1;
-  // ECharts joins a region by its `name`, so every feature needs one: the ISO
+  // The map joins a region by its `name`, so every feature needs one: the ISO
   // code where it exists, and the Natural Earth name for the three territories
   // that carry no assigned code (Kosovo, Somaliland, Northern Cyprus). Those
   // three simply never receive data.

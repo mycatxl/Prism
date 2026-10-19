@@ -4,9 +4,11 @@ import { useMemo, useState } from "react";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
+import { ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
+import { formatApiErrorMessage } from "../../lib/error-message";
 import { readMigratedValue, removeStoredValues } from "../../lib/storage";
 import { getEnvConfig } from "../systemConfig/api";
 
@@ -208,12 +210,7 @@ export function PlatformAccessPanel({
     staleTime: 60_000,
   });
 
-  const env = envQuery.data;
-  const proxyTokenSet = env?.proxy_token_set ?? true;
-  const inferredEndpoint = currentProxyEndpoint(env?.prism_port ?? 1080);
-  const endpoint = parseProxyEndpoint(endpointOverride) || inferredEndpoint;
-  const host = endpoint.host;
-  const scheme = endpoint.scheme;
+  const env = envQuery.data ?? null;
 
   const handleTokenChange = (value: string) => {
     setToken(value);
@@ -221,6 +218,16 @@ export function PlatformAccessPanel({
   };
 
   const urls = useMemo(() => {
+    if (!env) {
+      // No real config, no address. A made-up `:1080` and a made-up "token required"
+      // are both addresses an operator would copy and the proxy would refuse; the
+      // loading and failed states below cover this window instead.
+      return { httpForward: "", socksForward: "", reverseUrl: "", curlForward: "", curlReverse: "" };
+    }
+    const proxyTokenSet = env.proxy_token_set;
+    const endpoint = parseProxyEndpoint(endpointOverride) || currentProxyEndpoint(env.prism_port);
+    const host = endpoint.host;
+    const scheme = endpoint.scheme;
     const platform = platformName.trim() || "Default";
     const acc = account.trim();
     const tokenRaw = proxyTokenSet ? token.trim() : "";
@@ -264,8 +271,22 @@ export function PlatformAccessPanel({
     const curlReverse = reverseUrl ? `curl ${shellQuote(reverseUrl)}` : "";
 
     return { httpForward, socksForward, reverseUrl, curlForward, curlReverse };
-  }, [platformName, account, token, proxyTokenSet, host, scheme, target]);
+  }, [env, endpointOverride, platformName, account, token, target]);
 
+  if (envQuery.isError) {
+    return (
+      <ErrorState
+        message={formatApiErrorMessage(envQuery.error, t)}
+        onRetry={() => void envQuery.refetch()}
+      />
+    );
+  }
+  if (!env) {
+    return <LoadingState />;
+  }
+
+  const proxyTokenSet = env.proxy_token_set;
+  const inferredEndpoint = currentProxyEndpoint(env.prism_port);
   const copyLabel = t("复制");
   const copiedLabel = t("已复制");
   const tokenMissing = proxyTokenSet && !token.trim();

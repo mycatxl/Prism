@@ -470,7 +470,7 @@ export function SystemConfigPage() {
 
   const handleRestoreDefault = (key: keyof RuntimeConfigForm) => {
     if (!defaultBaseline || !baseline) {
-      showToast("error", "默认配置尚未加载");
+      showToast("error", t("默认配置尚未加载"));
       return;
     }
 

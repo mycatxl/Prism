@@ -195,12 +195,6 @@ export async function resetPlatform(id: string): Promise<Platform> {
   return normalizePlatform(data);
 }
 
-export async function rebuildPlatform(id: string): Promise<void> {
-  await apiRequest<{ status: "ok" }>(`${basePath}/${id}/actions/rebuild-routable-view`, {
-    method: "POST",
-  });
-}
-
 export async function listPlatformLeases(id: string, input: ListPlatformLeasesInput = {}): Promise<PageResponse<PlatformLease>> {
   const query = new URLSearchParams({
     limit: String(input.limit ?? 50),

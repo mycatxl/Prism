@@ -211,6 +211,7 @@ export function InvitesPage() {
                               size="icon"
                               onClick={() => handleCopy(invite.code, invite.id)}
                               title={t("复制邀请码")}
+                              aria-label={t("复制邀请码")}
                             >
                               {copiedId === invite.id ? (
                                 <Check size={14} className="text-signal" />
