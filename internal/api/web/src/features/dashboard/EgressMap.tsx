@@ -5,7 +5,6 @@ import { ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { useI18n } from "../../i18n";
 import { formatCount } from "./format";
 import type { ExitCountry } from "./exitCountries";
-import { useReducedMotion } from "./useReducedMotion";
 import {
   type WorldGeoJson,
   buildRegionCentroidIndex,
@@ -22,12 +21,26 @@ import {
  */
 const WIDTH = 960;
 const VIEW_BOX = "0 48 960 384";
-const MAX_FLOWS = 16;
 const MAX_DOTS = 60;
 
-export default function EgressMap({ countries, origin }: { countries: ExitCountry[]; origin?: string }) {
+/*
+ * One exit per country, drawn where the country is.
+ *
+ * This used to carry a second layer: arcs from the panel's own location to each
+ * country, with a travelling dash and a pulsing origin marker. It never ran. The
+ * only caller passed `origin=""`, so the origin point was null, so the arc, the
+ * flow and the pulse were never mounted - 30 lines of path arithmetic, two
+ * keyframes and a reduced-motion branch behind a prop nobody filled.
+ *
+ * It was not worth wiring up either. An arc from "here" to "there" needs a fact
+ * the server does not send: where this instance sits. The operator knows where
+ * their own machine is, so the arcs would be a diagram rather than a reading, and
+ * this page only shows what the API returns. What the map is for - the shape of
+ * the exit inventory, per country, with counts on hover - is the dots, and it is
+ * honest without the motion.
+ */
+export default function EgressMap({ countries }: { countries: ExitCountry[] }) {
   const { t, locale } = useI18n();
-  const reduced = useReducedMotion();
   const [geo, setGeo] = useState<WorldGeoJson | null>(null);
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -80,54 +93,21 @@ export default function EgressMap({ countries, origin }: { countries: ExitCountr
     return entry ? (locale === "en-US" ? entry.en : entry.zh) || iso : iso;
   };
 
-  const originIso = origin?.trim().toUpperCase() ?? "";
-  const originPoint = originIso ? place(originIso) : null;
   const dots = countries
     .slice(0, MAX_DOTS)
     .flatMap((country) => {
       const point = place(country.iso);
       return point ? [{ ...country, point }] : [];
     });
-  const flows = originPoint
-    ? dots.slice(0, MAX_FLOWS).map((dot, index) => {
-        const [x1, y1] = originPoint;
-        const [x2, y2] = dot.point;
-        const distance = Math.hypot(x2 - x1, y2 - y1);
-        const cx = (x1 + x2) / 2;
-        const cy = Math.min(y1, y2) - distance * 0.3;
-        return { key: dot.iso, d: `M${x1} ${y1} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${x2} ${y2}`, index };
-      })
-    : [];
 
   return (
     <svg className="exit-map" viewBox={VIEW_BOX} preserveAspectRatio="xMidYMid meet" role="img" aria-label={t("出口分布世界地图")}>
       <path className="exit-map__land" d={land} />
-      {flows.map((flow) => (
-        <path key={`arc-${flow.key}`} className="exit-map__arc" d={flow.d} />
-      ))}
-      {!reduced &&
-        flows.map((flow) => (
-          <path
-            key={`flow-${flow.key}`}
-            className="exit-map__flow"
-            d={flow.d}
-            pathLength={100}
-            style={{ animationDelay: `${(-flow.index * 0.37).toFixed(2)}s`, animationDuration: `${2.4 + (flow.index % 4) * 0.4}s` }}
-          />
-        ))}
       {dots.map((dot) => (
         <circle key={dot.iso} className="exit-map__node" cx={dot.point[0]} cy={dot.point[1]} r={dot.exits >= 50 ? 3 : 2.4}>
           <title>{`${nameOf(dot.iso)} · ${formatCount(dot.exits)} ${t("节点")} · ${t("健康")} ${formatCount(dot.healthy)}`}</title>
         </circle>
       ))}
-      {originPoint && (
-        <g>
-          {!reduced && <circle className="exit-map__pulse" cx={originPoint[0]} cy={originPoint[1]} r={9} />}
-          <circle className="exit-map__origin" cx={originPoint[0]} cy={originPoint[1]} r={3.6}>
-            <title>{`${t("本机")} · ${nameOf(originIso)}`}</title>
-          </circle>
-        </g>
-      )}
     </svg>
   );
 }

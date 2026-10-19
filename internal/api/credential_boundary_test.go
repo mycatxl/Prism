@@ -21,9 +21,10 @@ import (
 //
 //  1. An automation key may read the administration surface and may revoke, but
 //     it may not mint - not an account, not a password, not a key, not an
-//     invitation and not a redeem code. Every one of those is a credential (or
-//     the money behind one) whose lifetime is independent of the key's, which is
-//     what "outlives its revocation" means concretely.
+//     invitation, not a redeem code, and not the money or the time-limited
+//     entitlement behind one (a balance credit, a subscription, the plan that a
+//     subscription is measured against). Every one of those outlives the key
+//     that made it, which is what "outlives its revocation" means concretely.
 //  2. A blocked address is blocked on every route that spends the failure budget,
 //     sign-up included. It was not: the count went up and nothing ever read it.
 //  3. /ui/session.json answers from the session cookie alone. It sits outside the
@@ -220,6 +221,208 @@ func TestAdminRevocationEndpoints_AcceptAnAutomationKey(t *testing.T) {
 			t.Fatalf("DELETE %s with an automation key: status = %d, want 204 (body=%s)",
 				path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// TestAdminEntitlementWrites_RequireAConsoleSession covers the last five writes
+// on the operator surface that still answered an automation key: crediting a
+// balance, issuing a subscription, re-dating one, and creating or editing the
+// plan a subscription is measured against. None of them is a credential in the
+// literal sense, which is why they were missed - and why they belong here: each
+// one grants reach that belongs to an account rather than to the key, so
+// revoking the key does nothing at all to what it granted.
+func TestAdminEntitlementWrites_RequireAConsoleSession(t *testing.T) {
+	env := newTenantE2EEnv(t, config.RegistrationOff)
+	admin := env.session()
+	admin.mustLogin(tenantE2EAdminUser, tenantE2EAdminPassword)
+
+	// What the console grants first, so that every refusal below has something
+	// it would otherwise have changed.
+	planID := tenantCreatePlan(t, admin, 2)
+	rec := admin.do(http.MethodGet, "/api/v1/admin/plans/"+planID, nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	planBefore := decodeJSONMap(t, rec)
+
+	rec = admin.do(http.MethodPost, "/api/v1/admin/users", map[string]any{
+		"username":      tenantE2ETenantUser,
+		"password":      tenantE2ETenantPass,
+		"role":          "user",
+		"plan_id":       planID,
+		"duration_days": 30,
+	})
+	tenantAssertStatus(t, rec, http.StatusCreated)
+	created := decodeJSONMap(t, rec)
+	userID := tenantField(t, created, "id")
+	subscription := tenantNested(t, created, "subscription")
+	subID := tenantField(t, subscription, "id")
+	expiresBefore, _ := subscription["expires_at_ns"].(float64)
+	if expiresBefore <= 0 {
+		t.Fatalf("the console's subscription carries no expiry: %v", subscription)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{
+			// Money with no redeem code behind it: the row this would write
+			// is the balance itself, and it is spendable on a plan.
+			name:   "credit a balance",
+			method: http.MethodPost,
+			path:   "/api/v1/admin/users/" + userID + "/balance",
+			body:   map[string]any{"delta_micro": int64(50_000_000), "note": "credited-by-a-key"},
+		},
+		{
+			// The entitlement half: a plan and a term of the caller's
+			// choosing, carried by the account rather than by the key.
+			name:   "assign a subscription",
+			method: http.MethodPost,
+			path:   "/api/v1/admin/subscriptions",
+			body:   map[string]any{"user_id": userID, "plan_id": planID, "duration_days": 3650},
+		},
+		{
+			name:   "extend a subscription",
+			method: http.MethodPatch,
+			path:   "/api/v1/admin/subscriptions/" + subID,
+			body:   map[string]any{"extend_days": 3650},
+		},
+		{
+			// Creating is authoring the quota document, so it has to be shut
+			// too - otherwise the edit below is bypassed by minting a second
+			// plan instead of widening the first.
+			name:   "create a plan",
+			method: http.MethodPost,
+			path:   "/api/v1/admin/plans",
+			body: map[string]any{
+				"name":          "minted-by-a-key",
+				"traffic_bytes": int64(1) << 50,
+				"period":        "30d",
+				"max_keys":      999,
+				"duration_days": 36500,
+				"status":        "active",
+			},
+		},
+		{
+			// The sharpest one: apply_to_existing pushes the numbers onto
+			// the subscriptions that already exist, the key's own owner's
+			// account among them.
+			name:   "widen a plan and apply it to existing subscriptions",
+			method: http.MethodPatch,
+			path:   "/api/v1/admin/plans/" + planID,
+			body: map[string]any{
+				"traffic_bytes":     int64(1) << 50,
+				"max_keys":          999,
+				"price_micro":       int64(0),
+				"apply_to_existing": true,
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.doAsKey(tc.method, tc.path, tc.body)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 (body=%s)", rec.Code, rec.Body.String())
+			}
+			assertErrorCode(t, rec, "CREDENTIAL_MANAGEMENT_REQUIRES_SESSION")
+		})
+	}
+
+	// Nothing the key asked for happened, each check naming the thing that
+	// would have been granted.
+	rec = admin.do(http.MethodGet, "/api/v1/admin/users/"+userID+"/balance", nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	balance := decodeJSONMap(t, rec)
+	if got := balance["balance_micro"]; got != float64(0) {
+		t.Fatalf("balance after the key's refusal: got %v, want 0", got)
+	}
+	if ledger, _ := balance["ledger"].([]any); len(ledger) != 0 {
+		t.Fatalf("ledger rows written by a key: %v", ledger)
+	}
+
+	if got := len(tenantItems(t, admin.do(http.MethodGet, "/api/v1/admin/plans", nil))); got != 1 {
+		t.Fatalf("plans: got %d, want the 1 the console created", got)
+	}
+	rec = admin.do(http.MethodGet, "/api/v1/admin/plans/"+planID, nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	planAfter := decodeJSONMap(t, rec)
+	for _, field := range []string{"traffic_bytes", "max_keys", "price_micro", "duration_days"} {
+		if planAfter[field] != planBefore[field] {
+			t.Fatalf("plan %s after the key's refusal: got %v, want %v", field, planAfter[field], planBefore[field])
+		}
+	}
+
+	rec = admin.do(http.MethodGet, "/api/v1/admin/subscriptions?user_id="+userID, nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	subs := tenantItems(t, rec)
+	if len(subs) != 1 {
+		t.Fatalf("subscriptions: got %d, want the 1 the console assigned", len(subs))
+	}
+	if got, _ := subs[0]["expires_at_ns"].(float64); got != expiresBefore {
+		t.Fatalf("expiry after the key's refusals: got %v, want %v", got, expiresBefore)
+	}
+
+	// And the session does reach the same routes, with the semantics they had
+	// before the rule: the escalation the key was refused is real, which is
+	// why it needs the credential a person holds.
+	rec = admin.do(http.MethodPatch, "/api/v1/admin/plans/"+planID, map[string]any{
+		"traffic_bytes":     int64(20) << 30,
+		"max_keys":          4,
+		"apply_to_existing": true,
+	})
+	tenantAssertStatus(t, rec, http.StatusOK)
+	if got := decodeJSONMap(t, rec)["max_keys"]; got != float64(4) {
+		t.Fatalf("plan max_keys after the console's edit: got %v, want 4", got)
+	}
+	// apply_to_existing reached the subscription that already existed, which
+	// is the reach a key would have been handing itself.
+	rec = admin.do(http.MethodGet, "/api/v1/admin/subscriptions/"+subID, nil)
+	tenantAssertStatus(t, rec, http.StatusOK)
+	if got := decodeJSONMap(t, rec)["traffic_bytes"]; got != float64(int64(20)<<30) {
+		t.Fatalf("subscription snapshot after apply_to_existing: got %v, want %v", got, int64(20)<<30)
+	}
+
+	rec = admin.do(http.MethodPost, "/api/v1/admin/users/"+userID+"/balance", map[string]any{
+		"delta_micro": int64(2_500_000),
+		"note":        "adjust-by-the-console",
+	})
+	tenantAssertStatus(t, rec, http.StatusOK)
+	if got := decodeJSONMap(t, rec)["balance_micro"]; got != float64(2_500_000) {
+		t.Fatalf("balance after the console's credit: got %v, want 2500000", got)
+	}
+
+	rec = admin.do(http.MethodPost, "/api/v1/admin/plans", map[string]any{
+		"name":          "minted-by-the-console",
+		"platforms":     []string{},
+		"ip_tiers":      []string{},
+		"traffic_bytes": int64(5) << 30,
+		"period":        "30d",
+		"max_keys":      2,
+		"duration_days": 30,
+		"status":        "active",
+	})
+	tenantAssertStatus(t, rec, http.StatusCreated)
+	secondPlanID := tenantField(t, decodeJSONMap(t, rec), "id")
+
+	rec = admin.do(http.MethodPost, "/api/v1/admin/subscriptions", map[string]any{
+		"user_id":       userID,
+		"plan_id":       secondPlanID,
+		"duration_days": 30,
+	})
+	tenantAssertStatus(t, rec, http.StatusCreated)
+	assigned := decodeJSONMap(t, rec)
+	if got := tenantField(t, assigned, "plan_id"); got != secondPlanID {
+		t.Fatalf("assigned subscription plan: got %q, want %q", got, secondPlanID)
+	}
+	assignedID := tenantField(t, assigned, "id")
+	assignedExpiry, _ := assigned["expires_at_ns"].(float64)
+
+	rec = admin.do(http.MethodPatch, "/api/v1/admin/subscriptions/"+assignedID, map[string]any{
+		"extend_days": 30,
+	})
+	tenantAssertStatus(t, rec, http.StatusOK)
+	if got, _ := decodeJSONMap(t, rec)["expires_at_ns"].(float64); got <= assignedExpiry {
+		t.Fatalf("expiry after the console's extension: got %v, want later than %v", got, assignedExpiry)
 	}
 }
 

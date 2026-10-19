@@ -159,9 +159,25 @@ func HandleAdminGetUserBalance(cp *service.ControlPlaneService) http.HandlerFunc
 // This is the only movement with no external record behind it, so the note is
 // required and the acting operator is recorded with the row. A debit that would
 // take the balance negative is refused, not applied.
+//
+// A console session is required (requireSessionActor). A credit mints money in
+// the same sense a redeem code does - the row this writes is the balance - and
+// the account holding it can spend it on a plan with no code, card or payment
+// behind it. A key that could credit could therefore fund an account it
+// controls, and the funds would still be there after the key was deleted: a
+// balance is not a credential revocation reaches. Reading a balance and its
+// ledger stays open to a key (the GET next to this one), which is what a
+// reconciliation script actually needs, and so does redeeming a code.
 func HandleAdminAdjustUserBalance(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in struct {
 			DeltaMicro int64  `json:"delta_micro"`
 			Note       string `json:"note"`
@@ -170,11 +186,7 @@ func HandleAdminAdjustUserBalance(cp *service.ControlPlaneService) http.HandlerF
 			writeDecodeBodyError(w, err)
 			return
 		}
-		actorName := ""
-		if actor, ok := ActorFromContext(r.Context()); ok {
-			actorName = actor.Username
-		}
-		view, err := cp.AdjustBalance(PathParam(r, "id"), in.DeltaMicro, in.Note, actorName, adminNowNs())
+		view, err := cp.AdjustBalance(PathParam(r, "id"), in.DeltaMicro, in.Note, actor.Username, adminNowNs())
 		if err != nil {
 			writeServiceError(w, err)
 			return

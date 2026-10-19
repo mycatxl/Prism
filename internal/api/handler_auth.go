@@ -148,10 +148,12 @@ func (h *AuthHandlers) auditFailedLogin(r *http.Request) {
 // account - because revocation is not an escalation: it removes reach instead of
 // granting it, and an operator who notices a leaked key must be able to kill it
 // from a script without first finding a browser. What a key may never do is mint
-// the credential that then outlives it: opening an account, setting a password,
-// issuing or widening an access key, inviting an account, or minting a redeem
-// code. Every such handler calls this, so the rule is stated once here instead
-// of being restated, and forgotten, per route.
+// the credential, or the entitlement, that then outlives it: opening an account,
+// setting a password, issuing or widening an access key, inviting an account,
+// minting a redeem code, crediting a balance, assigning or extending a
+// subscription, or writing the plan a subscription is measured against. Every
+// such handler calls this, so the rule is stated once here instead of being
+// restated, and forgotten, per route.
 func requireSessionActor(w http.ResponseWriter, actor Actor) bool {
 	if actor.ViaSession {
 		return true

@@ -22,10 +22,11 @@ import (
 // What the role gate cannot tell apart is the two kinds of administrator: a
 // person at a console, and a script holding an admin-scope access key. The rule
 // that separates them lives in requireSessionActor (handler_auth.go): a key may
-// read this surface and it may revoke, but it may not mint a credential. The
-// handlers that would do the latter - create an account, set a password, issue
-// or widen a key - therefore call it right after resolving the actor, and it is
-// the reason each of them can be reached by a session only.
+// read this surface and it may revoke, but it may not mint a credential or the
+// entitlement behind one. The handlers that would do the latter - create an
+// account, set a password, issue or widen a key, write the plan an entitlement
+// is measured against - therefore call it right after resolving the actor, and
+// it is the reason each of them can be reached by a session only.
 
 // adminNowNs is the clock a tenant write is stamped with.
 //
@@ -101,9 +102,28 @@ func HandleAdminListPlans(cp *service.ControlPlaneService) http.HandlerFunc {
 }
 
 // HandleAdminCreatePlan implements POST /api/v1/admin/plans.
+//
+// A plan is not a record of anything that happened: it is the document every
+// subscription is measured against - traffic, concurrency, rps, bandwidth, how
+// many keys an account may hold, and the price - so writing one is authoring an
+// entitlement rather than using it.
+//
+// A console session is required (requireSessionActor), and it has to cover
+// creation as well as the edit below, or the rule would be bypassed by minting
+// a second plan instead of widening the first: a key could draft a plan with no
+// limits, and the first subscription that names it would grant the key's
+// numbers. Listing, reading and deleting plans stay open to a key, so a script
+// can still clean up after itself.
 func HandleAdminCreatePlan(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.PlanInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
@@ -136,9 +156,27 @@ func HandleAdminGetPlan(cp *service.ControlPlaneService) http.HandlerFunc {
 // The body is a merge patch. apply_to_existing is the one field that is an
 // instruction rather than a plan property: without it an edit changes what the
 // next subscription buys, and leaves the users already on the plan alone.
+//
+// A console session is required (requireSessionActor), and this is the sharpest
+// of the plan writes: apply_to_existing pushes the new numbers onto the
+// subscriptions that already exist, so one request raises the quota, the
+// concurrency and the key ceiling of every account on the plan - the key's own
+// owner among them. What it grants then belongs to those accounts and outlives
+// the key that granted it, which is the whole failure this rule exists for.
+// There is nothing to salvage by inspecting the patch: the same body can raise
+// the numbers as easily as lower them, so the endpoint needs a session.
+// Deleting the plan next to this one stays open to a key, because that is the
+// direction that removes reach.
 func HandleAdminUpdatePlan(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		patch, err := readRawBody(r)
 		if err != nil {
 			writeDecodeBodyError(w, err)

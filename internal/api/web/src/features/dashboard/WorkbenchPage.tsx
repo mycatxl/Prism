@@ -482,7 +482,7 @@ export function WorkbenchPage() {
                 <PanelBody className="flex flex-col gap-3">
                   {exits.data && facts.length > 0 ? (
                     <div className="overflow-hidden border-y border-rule">
-                      <EgressMap countries={countries} origin="" />
+                      <EgressMap countries={countries} />
                     </div>
                   ) : null}
                   {exits.isError && !exits.data ? (

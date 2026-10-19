@@ -81,9 +81,26 @@ type adminSubscriptionCreate struct {
 // Assigning opens the new subscription and expires whatever the user had, so a
 // customer never holds two live subscriptions and the keys that were narrowed
 // by the old plan are republished against the new one.
+//
+// A console session is required (requireSessionActor). A subscription is the
+// time-boxed half of an entitlement: it is what a plan's traffic, concurrency
+// and key ceilings are measured against, and the keys riding on it are the
+// reach itself. A key that could assign one could hand its own account a plan
+// and an end date of its choosing, and the result would not be tied to the key
+// in any way - the keys are published from the plan snapshot, not re-checked
+// against what granted them - so revoking the key would leave the subscription
+// it opened running. Listing, reading and deleting subscriptions stay open to
+// a key, because cleanup from a script is what those are for.
 func HandleAdminCreateSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in adminSubscriptionCreate
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
@@ -120,9 +137,24 @@ func HandleAdminGetSubscription(cp *service.ControlPlaneService) http.HandlerFun
 //
 // status, extend_days and expires_at_ns, and nothing else: the traffic counter
 // is a record of what happened, not a field an operator edits.
+//
+// A console session is required (requireSessionActor). Extending and re-dating
+// are the widening this patch exists for: either moves the end of an
+// entitlement further away, and status can put a lapsed one back into force. A
+// key that could call it could keep its own account in access indefinitely
+// without buying anything, and the extension carries nothing of the key's
+// lifetime, so deleting the key would not shorten it. Deleting the subscription
+// next to this one stays open to a key: that direction removes reach.
 func HandleAdminUpdateSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		patch, err := readRawBody(r)
 		if err != nil {
 			writeDecodeBodyError(w, err)
