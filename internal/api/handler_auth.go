@@ -30,6 +30,13 @@ type AccountService interface {
 	ConfirmTOTPEnrolment(id, secret, code string, nowNs int64) error
 	DisableTOTP(id string, nowNs int64) error
 	ChangeAccountPassword(userID, currentPassword, newPassword string, nowNs int64) error
+	// VerifyAccountPassword checks a password against the stored hash without
+	// changing anything. It is the comparison ChangeAccountPassword makes,
+	// exposed on its own for the writes that need the caller to prove they
+	// still know the password but are not changing it - removing a second
+	// factor. Kept here rather than re-implemented in the handler so there is
+	// exactly one argon2id comparison of a password in the product.
+	VerifyAccountPassword(userID, password string) error
 }
 
 // AuthHandlers serves the console's authentication endpoints.
@@ -135,6 +142,16 @@ func (h *AuthHandlers) auditFailedLogin(r *http.Request) {
 // do that is a key that can outlive its revocation. The rule is enforced here
 // rather than by the role gate, because both kinds of caller carry the
 // administrator role and only one of them is a person at a console.
+//
+// The boundary is drawn at forging a credential, not at using one. A key may
+// read the console and it may revoke - delete a key, end a session, close an
+// account - because revocation is not an escalation: it removes reach instead of
+// granting it, and an operator who notices a leaked key must be able to kill it
+// from a script without first finding a browser. What a key may never do is mint
+// the credential that then outlives it: opening an account, setting a password,
+// issuing or widening an access key, inviting an account, or minting a redeem
+// code. Every such handler calls this, so the rule is stated once here instead
+// of being restated, and forgotten, per route.
 func requireSessionActor(w http.ResponseWriter, actor Actor) bool {
 	if actor.ViaSession {
 		return true
@@ -509,7 +526,22 @@ func (h *AuthHandlers) HandleConfirmTOTPEnrolment() http.HandlerFunc {
 	}
 }
 
+// disableTOTPRequest is the body of POST /api/v1/auth/totp/disable.
+type disableTOTPRequest struct {
+	CurrentPassword string `json:"current_password"`
+}
+
 // HandleDisableTOTP removes the caller's second factor.
+//
+// The current password is required, and it is verified through the same path the
+// password change uses (VerifyAccountPassword, which is the argon2id comparison
+// ChangeAccountPassword makes) rather than by a second comparison written here.
+// Removing the factor is the one write that turns two credentials back into one,
+// so a session cookie on its own must not be enough to do it: a stolen cookie -
+// a shared machine, an XSS, a browser that was never closed - would otherwise be
+// a permanent downgrade of the account, taken without knowing a single secret it
+// was supposed to be protected by. The password is checked before the factor is
+// touched, so a wrong one changes nothing at all.
 func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := ActorFromContext(r.Context())
@@ -517,11 +549,30 @@ func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
 			return
 		}
+		// A key may not even ask: the refusal comes before an argon2id
+		// comparison is spent on its behalf.
 		if !requireSessionActor(w, actor) {
 			return
 		}
 		if h == nil || h.Accounts == nil {
 			WriteError(w, http.StatusServiceUnavailable, "ACCOUNTS_UNAVAILABLE", "account management is not configured")
+			return
+		}
+
+		var req disableTOTPRequest
+		if !decodeJSONBody(w, r, &req) {
+			return
+		}
+		// An absent password is not a special case: it fails the same
+		// comparison an empty header value would, and it is answered the same
+		// way, so nothing here can be probed for "did the field arrive".
+		switch err := h.Accounts.VerifyAccountPassword(actor.UserID, req.CurrentPassword); {
+		case errors.Is(err, service.ErrCurrentPasswordWrong):
+			WriteError(w, http.StatusForbidden, "PASSWORD_MISMATCH", "the current password is wrong")
+			return
+		case err != nil:
+			h.logf("api: could not verify the password of user %s before removing a second factor: %v", actor.UserID, err)
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not verify the password")
 			return
 		}
 

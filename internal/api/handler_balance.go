@@ -93,18 +93,30 @@ func HandleAdminListRedeemCodes(cp *service.ControlPlaneService) http.HandlerFun
 //
 // Codes come back in the response because that is the only time the plaintext
 // exists; nothing stores it. An operator minting a batch gets the batch.
+//
+// A console session is required (requireSessionActor). A redeem code is money in
+// a string: it credits a balance the moment any account spends it, so a key that
+// could mint one could mint funds for an account it controls, then sign in and
+// spend them without ever touching a key again. That is a balance whose origin
+// no longer traces back to a credential that can be revoked. Redeeming
+// (/me/redeem), listing and deleting codes stay available to a key, so a script
+// that settles a batch it was handed is unaffected.
 func HandleAdminCreateRedeemCodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.RedeemCodeInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
 			return
 		}
-		createdBy := ""
-		if actor, ok := ActorFromContext(r.Context()); ok {
-			createdBy = actor.Username
-		}
+		createdBy := actor.Username
 		created, err := cp.CreateRedeemCodes(in, createdBy, adminNowNs())
 		if err != nil {
 			writeServiceError(w, err)

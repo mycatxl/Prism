@@ -53,6 +53,11 @@ export function AccountSecurityPage() {
   const [totpCode, setTotpCode] = useState("");
   const [totpError, setTotpError] = useState("");
   const [totpMessage, setTotpMessage] = useState("");
+  // Removing the factor turns two credentials back into one, so the endpoint
+  // behind the button requires the current password. Collecting it here is the
+  // whole of the console's half: the server does the comparison, and a session
+  // cookie on its own cannot perform the downgrade.
+  const [disablePassword, setDisablePassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [enrolPromptSpent, setEnrolPromptSpent] = useState(false);
 
@@ -133,12 +138,20 @@ export function AccountSecurityPage() {
     }
   }
 
+  /*
+   * The current password goes with the request every time: the endpoint refuses
+   * without it, and a refusal here is shown in the panel rather than treated as
+   * a broken session.
+   */
   async function disableTotp() {
     setTotpError("");
     setTotpMessage("");
     setBusy(true);
     try {
-      await apiRequest<{ has_totp: boolean }>("/api/v1/auth/totp/disable", { method: "POST", body: {} });
+      await apiRequest<{ has_totp: boolean }>("/api/v1/auth/totp/disable", {
+        method: "POST",
+        body: { current_password: disablePassword },
+      });
       clearSession();
       navigate("/login?reauth=1", { replace: true });
     } catch (error) {
@@ -221,7 +234,20 @@ export function AccountSecurityPage() {
                   </div>
                 </div>
                 {totpError ? <ErrorState message={totpError} /> : null}
-                <Button variant="secondary" onClick={() => void disableTotp()} disabled={busy}>
+                <Fieldset
+                  label={t("当前密码")}
+                  hint={t("关闭双因素认证需要确认当前密码。")}
+                  htmlFor="disable-current-password"
+                >
+                  <Input
+                    id="disable-current-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={disablePassword}
+                    onChange={(event) => setDisablePassword(event.target.value)}
+                  />
+                </Fieldset>
+                <Button variant="secondary" onClick={() => void disableTotp()} disabled={busy || !disablePassword}>
                   <ShieldOff size={14} aria-hidden />
                   {t("停用双因素认证")}
                 </Button>

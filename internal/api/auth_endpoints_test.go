@@ -108,9 +108,12 @@ type fakeAccounts struct {
 	confirmErr   error
 	disableErr   error
 	changePwErr  error
+	verifyPwErr  error
 	changePwArgs []string
+	verifyPwArgs []string
 	disableCalls int
 	confirmCalls int
+	verifyCalls  int
 }
 
 func (f *fakeAccounts) GetAccount(string) (service.Account, error) {
@@ -140,6 +143,27 @@ func (f *fakeAccounts) ChangeAccountPassword(_, current, next string, _ int64) e
 	defer f.mu.Unlock()
 	f.changePwArgs = []string{current, next}
 	return f.changePwErr
+}
+
+// VerifyAccountPassword records the password it was handed, so a test can prove
+// the re-authentication on the second-factor removal goes through the account
+// service rather than through a comparison written in the handler.
+//
+// An empty password is refused the way the real comparison refuses it: no argon2id
+// hash of a real password matches the empty string, so a missing field can never
+// be the reason a check passes.
+func (f *fakeAccounts) VerifyAccountPassword(_, password string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.verifyCalls++
+	f.verifyPwArgs = []string{password}
+	if f.verifyPwErr != nil {
+		return f.verifyPwErr
+	}
+	if password == "" {
+		return service.ErrCurrentPasswordWrong
+	}
+	return nil
 }
 
 // --- identity middleware ------------------------------------------------------
@@ -933,9 +957,14 @@ func TestTOTPEnrolmentEndpoints(t *testing.T) {
 	})
 
 	t.Run("disable", func(t *testing.T) {
+		accounts := &fakeAccounts{}
 		sessions := &fakeSessions{revokedCount: 1}
-		h := newAuthHandlers(sessions, &fakeAccounts{})
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/totp/disable", nil)
+		h := newAuthHandlers(sessions, accounts)
+		// Removing the second factor now has to prove the caller still knows
+		// the password; see TestHandleDisableTOTP_RequiresTheCurrentPassword
+		// for the refusals.
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/totp/disable",
+			strings.NewReader(`{"current_password":"a-long-enough-password"}`))
 		req.Host = "127.0.0.1"
 		req = req.WithContext(contextWithActor(req.Context(), actor))
 		rec := httptest.NewRecorder()

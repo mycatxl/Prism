@@ -142,13 +142,20 @@ var publicPaths = map[string]bool{
 //
 // It fails closed: with no resolver configured nothing gets through, which is
 // what makes this safe to install before every account exists.
+//
+// The public paths return before the limiter check, on purpose: they are the
+// routes that spend their own budget, and each of them enforces the resulting
+// block itself - the login path through the session service, sign-up through
+// AuthHandlers.refuseIfBlocked. What this middleware must not do is answer 429
+// for a path it did not count, because that would give a caller a cheap way to
+// discover a block and would move the sign-in refusal away from the one place
+// that knows whether a second factor is still owed.
 func (i *Identity) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isPublicManagementPath(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
-
 		clientIP := ""
 		if i != nil && i.FailureLimiter != nil {
 			clientIP = i.FailureLimiter.ClientIP(r)
@@ -324,9 +331,20 @@ func isSafeMethod(method string) bool {
 // It never fails: an unauthenticated caller is the normal case for that file
 // (it is served before the login page renders), so a failure would turn the
 // console's first screen into an error.
+//
+// Only the session cookie is resolved here, never a bearer credential, and that
+// is a security boundary rather than an accident of implementation. /ui/ is
+// registered on the outer mux, outside Middleware (server.go), so a request to
+// this path gets none of what /api/ gives a credential: no failure counting, no
+// block for an address that has spent its budget, no audit row, no CSRF rule, no
+// role gate. Letting a bearer credential in would have made this file a free
+// oracle - "is this admin key still valid?" asked from an address that is already
+// blocked, as often as the asker likes, with nothing recorded anywhere. A session
+// cookie is the credential this file exists to report on, and it is the only one
+// it now accepts.
 func (i *Identity) sessionInfo(r *http.Request) sessionInfoForWebUI {
 	mode := i.registrationMode()
-	actor, ok := i.resolve(r)
+	actor, ok := i.resolveSession(r)
 	if !ok {
 		return sessionInfoForWebUI{Authenticated: false, RegistrationMode: string(mode)}
 	}

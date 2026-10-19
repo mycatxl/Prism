@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"prism/internal/auth"
@@ -52,6 +53,22 @@ func (h *AuthHandlers) registrationMode() config.RegistrationMode {
 // just chose a password to type it again is friction with no security value.
 func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// The block is checked first, and here rather than in the identity
+		// middleware, because sign-up is one of the two public paths that
+		// middleware lets through (identity.go: publicPaths) and the login
+		// path's block comes from the session service, which owns the same
+		// limiter and refuses before it reads anything. Sign-up has no such
+		// owner: it spent its budget through recordRegistrationFailure and
+		// then never asked the limiter again, so an address that had already
+		// been blocked for guessing invite codes could keep guessing - one
+		// indexed read per attempt, and an argon2id hash on every hit - and
+		// never see a 429. Answering it here keeps that rule in the one place
+		// that does the work, and leaves the middleware's contract (a public
+		// path is reachable without an identity) and the login path's
+		// behaviour exactly as they were.
+		if h.refuseIfBlocked(w, r) {
+			return
+		}
 		if !originAllowed(r) {
 			WriteError(w, http.StatusForbidden, "ORIGIN_REJECTED",
 				"a request from another site may not sign in or sign up")
@@ -137,15 +154,44 @@ func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 	}
 }
 
+// refuseIfBlocked answers 429 and reports true when the request's address has
+// spent its authentication failure budget.
+//
+// Sign-up needs it because the block it earns is enforced by a layer it never
+// reaches: the identity middleware lets the public paths past before it looks at
+// the limiter, and the login path gets its own refusal from the session service.
+// Without this check a blocked address was told "too many failed attempts" on
+// every management route while /auth/register kept answering at full cost -
+// which is the one route where an unauthenticated caller can make Prism work.
+//
+// The answer is the same one the middleware and the login path give: 429
+// RATE_LIMITED with a whole-second Retry-After. A limiter that was never built
+// blocks nothing, which is what a deployment without one gets.
+func (h *AuthHandlers) refuseIfBlocked(w http.ResponseWriter, r *http.Request) bool {
+	if h == nil || h.FailureLimiter == nil {
+		return false
+	}
+	blocked, retryAfter := h.FailureLimiter.Blocked(h.clientKey(r))
+	if !blocked {
+		return false
+	}
+	if retryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
+	}
+	WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many failed attempts; retry later")
+	return true
+}
+
 // recordRegistrationFailure counts a refused sign-up against the same limiter a
 // failed login is counted against.
 //
 // Registration is public and does real work before it can refuse: one indexed
 // read of the invite code and, for a code that works, an argon2id password hash.
-// Counting the refusal is what makes an address that keeps sending codes that do
-// not work end up blocked by the middleware that guards every other route;
-// without it, this would be the one unauthenticated way to make the server busy.
-//
+// Counting the refusal is what keeps the budget honest; the budget itself is
+// enforced at the top of HandleRegister (refuseIfBlocked), because sign-up is a
+// public path that the identity middleware deliberately lets past its own
+// limiter check. Without the two together, this would be the one unauthenticated
+// way to make the server busy forever.
 // One dimension is counted: the address the request came from, which is the same
 // dimension the login path counts. The account name in the body is deliberately
 // not counted, even though the login path counts the name it was given. Nothing

@@ -971,6 +971,10 @@ Note: Once enabled, requests without authentication information are rejected ins
     "After a change, every existing session of this account is invalidated immediately.",
   "修改密码": "Change password",
   "停用双因素认证": "Disable two-factor authentication",
+  // Disabling two-factor authentication asks for the current password now; the
+  // sentence says why a panel that already has a session still wants a secret.
+  "关闭双因素认证需要确认当前密码。":
+    "Confirm your current password to turn two-factor authentication off.",
   "两次输入的新密码不一致。": "The two new passwords do not match.",
   "双因素认证": "Two-factor authentication",
   "双因素认证已启用": "Two-factor authentication is on",

@@ -188,10 +188,51 @@ func (s *ControlPlaneService) ChangeAccountPassword(userID, currentPassword, new
 	if err != nil || user == nil {
 		return ErrAccountNotFound
 	}
-	if err := auth.VerifyPassword(user.PasswordHash, currentPassword); err != nil {
-		return ErrCurrentPasswordWrong
+	if err := s.verifyPasswordLocked(user, currentPassword); err != nil {
+		return err
 	}
 	return s.setPassword(user, newPassword, nowNs)
+}
+
+// VerifyAccountPassword checks a password against the account's stored hash
+// without writing anything.
+//
+// It exists for the writes that need the caller to prove they still know the
+// password while leaving it alone: removing a second factor is the one that
+// mattered, because a session cookie on its own must not be enough to downgrade
+// an account from two credentials to one. It goes through the same comparison
+// ChangeAccountPassword uses (verifyPasswordLocked), so a policy change - a
+// pepper, a different hash format - lands in both at once instead of leaving a
+// second, drifting copy of the check behind.
+//
+// The read is taken under userWriteMu for the same reason the change is: the row
+// must not be swapped between the read and the comparison, or a password that was
+// just rotated would still be accepted.
+func (s *ControlPlaneService) VerifyAccountPassword(userID, password string) error {
+	if s == nil || s.Engine == nil {
+		return errors.New("service: no state engine")
+	}
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
+
+	user, err := s.Engine.GetUser(userID)
+	if err != nil || user == nil {
+		return ErrAccountNotFound
+	}
+	return s.verifyPasswordLocked(user, password)
+}
+
+// verifyPasswordLocked compares a presented password against the hash on the row
+// it was read from.
+//
+// The caller holds userWriteMu. A failed comparison is always
+// ErrCurrentPasswordWrong: which half of the stored hash did not match is not
+// something a caller may learn.
+func (s *ControlPlaneService) verifyPasswordLocked(user *model.User, password string) error {
+	if err := auth.VerifyPassword(user.PasswordHash, password); err != nil {
+		return ErrCurrentPasswordWrong
+	}
+	return nil
 }
 
 // SetAccountPassword replaces an account's password without asking for the

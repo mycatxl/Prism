@@ -18,6 +18,14 @@ import (
 // reach it. The records the request acts on are named by the path, not by the
 // session, which is what makes the console able to manage somebody else's
 // account at all.
+//
+// What the role gate cannot tell apart is the two kinds of administrator: a
+// person at a console, and a script holding an admin-scope access key. The rule
+// that separates them lives in requireSessionActor (handler_auth.go): a key may
+// read this surface and it may revoke, but it may not mint a credential. The
+// handlers that would do the latter - create an account, set a password, issue
+// or widen a key - therefore call it right after resolving the actor, and it is
+// the reason each of them can be reached by a session only.
 
 // adminNowNs is the clock a tenant write is stamped with.
 //
@@ -182,14 +190,39 @@ func HandleAdminListUsers(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
+// adminActor resolves the caller of an administrative write, or answers 401.
+//
+// The role gate already refused an anonymous request, but the handlers that
+// follow with requireSessionActor hand it an Actor, and a decision taken on an
+// unresolved actor would be a decision about nobody. It is the same resolution
+// the self-service surface makes (meActor); it is named for the surface it
+// serves because the rule applied to the answer differs.
+func adminActor(w http.ResponseWriter, r *http.Request) (Actor, bool) {
+	return meActor(w, r)
+}
+
 // HandleAdminCreateUser implements POST /api/v1/admin/users.
 //
 // plan_id is optional. Given one, the account is opened with a subscription
 // attached in the same call, because that is what an operator is doing when
 // they add a customer: the account is useless without access.
+//
+// A console session is required (requireSessionActor), and this is the handler
+// that made the rule necessary: the body may carry a password, and the role it
+// may carry is admin. An administrator's access key that could call this could
+// open an account it controls, sign into it through /auth/login, and go on using
+// the console as that account - a console session is a credential separate from
+// the key, so revoking the key would revoke nothing at all.
 func HandleAdminCreateUser(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.TenantUserInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
@@ -235,9 +268,23 @@ type adminUserPatch struct {
 // that account: those are the consequences worth stating, and the service is
 // where they are enforced. The response is the full detail, so the console
 // re-renders from what was actually stored rather than from what it sent.
+//
+// A console session is required (requireSessionActor), for a sharper reason than
+// on the create path: this patch can set an arbitrary account's password and its
+// role. An administrator's key that could call this could reset the password of
+// the account it is already authenticated as, sign in with it, and keep a session
+// that no key revocation reaches - the reset is exactly the "revocation does not
+// work" case, because the session it buys is independent of every key on record.
 func HandleAdminUpdateUser(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var patch adminUserPatch
 		if err := DecodeBody(r, &patch); err != nil {
 			writeDecodeBodyError(w, err)
@@ -277,6 +324,12 @@ func HandleAdminUpdateUser(cp *service.ControlPlaneService) http.HandlerFunc {
 //
 // Deleting an account takes its access keys out of the running store as well,
 // which is why this is a service call and not a row delete.
+//
+// It deliberately does not require a session (compare HandleAdminCreateUser).
+// Closing an account is revocation, and revocation is not an escalation: it takes
+// reach away instead of granting any, and an operator who spots a rogue key must
+// be able to kill what it made from a script. The same holds for the key-delete
+// handlers below.
 func HandleAdminDeleteUser(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := cp.DeleteTenantUser(PathParam(r, "id")); err != nil {
@@ -308,9 +361,21 @@ func HandleAdminListUserKeys(cp *service.ControlPlaneService) http.HandlerFunc {
 // is stored, so the console has to show it once and tell the user to keep it.
 // The key is published to the running store before the response is written, so
 // a key that was handed out already works.
+//
+// A console session is required (requireSessionActor). This is the shortest path
+// from an automation credential to one that survives its revocation: a key that
+// could call this could issue another key - an admin-scope one, to its own owner
+// - and that copy would keep working after the first was deleted.
 func HandleAdminCreateUserKey(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.AccessKeyInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
@@ -333,9 +398,22 @@ func HandleAdminCreateUserKey(cp *service.ControlPlaneService) http.HandlerFunc 
 //
 // Narrowing a key - its platforms, its allowlist - reaches the running store on
 // the spot, so a change means the next request from that key sees it.
+//
+// A console session is required (requireSessionActor): a patch is a widening
+// operation as well as a narrowing one - scopes, platforms and the address
+// allowlist are all in the body - so a key could otherwise edit its own limits,
+// or another key's, and make itself outlive the revocation that was meant to
+// bound it.
 func HandleAdminUpdateUserKey(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		patch, err := readRawBody(r)
 		if err != nil {
 			writeDecodeBodyError(w, err)
@@ -352,6 +430,13 @@ func HandleAdminUpdateUserKey(cp *service.ControlPlaneService) http.HandlerFunc 
 
 // HandleAdminDeleteUserKey implements
 // DELETE /api/v1/admin/users/{id}/keys/{keyID}.
+//
+// No session is required, on purpose. Deleting a key is revocation, the one
+// write an automation credential must be able to make without a browser: the key
+// being deleted is often the compromised one, and a holder of a leaked admin key
+// that cannot revoke anything is a leak nobody can stop from the automation that
+// noticed it. It grants no reach - it removes reach - so it cannot outlive
+// anything by making the caller stronger.
 func HandleAdminDeleteUserKey(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := cp.DeleteAccessKey(PathParam(r, "id"), PathParam(r, "keyID")); err != nil {

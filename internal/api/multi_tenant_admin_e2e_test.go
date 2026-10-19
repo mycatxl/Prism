@@ -32,6 +32,11 @@ const (
 	tenantE2ETenantUser    = "tenant-one"
 	tenantE2ETenantPass    = "tenant-one-password"
 	tenantE2EPlanName      = "starter"
+	// tenantE2EAdminKey is the automation credential the identity middleware
+	// accepts in this walk. It resolves to the same account as the console
+	// sign-in, which is what makes the two kinds of administrator comparable:
+	// same role, same account, different kind of credential.
+	tenantE2EAdminKey = "pk_tenant_e2e_admin"
 )
 
 type tenantE2EEnv struct {
@@ -39,6 +44,11 @@ type tenantE2EEnv struct {
 	server *Server
 	cp     *service.ControlPlaneService
 	keys   *keys.Store
+	// identity is the same value the server mounted, kept so a test can ask
+	// what /ui/session.json answers without going through a browser.
+	identity *Identity
+	// adminID is the account the automation key resolves to.
+	adminID string
 }
 
 // newTenantE2EEnv builds the leanest deployment that still answers every
@@ -84,15 +94,27 @@ func newTenantE2EEnv(t *testing.T, mode config.RegistrationMode) *tenantE2EEnv {
 		Conns:   usage.NewConnRegistry(),
 		Limiter: usage.NewLimiter(counters),
 	}
-	if _, err := cp.CreateAccount(tenantE2EAdminUser, tenantE2EAdminPassword, model.UserRoleAdmin, time.Now().UnixNano()); err != nil {
+	admin, err := cp.CreateAccount(tenantE2EAdminUser, tenantE2EAdminPassword, model.UserRoleAdmin, time.Now().UnixNano())
+	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
 
 	sessions := &auth.Service{Store: engine, Pepper: pepper, Logf: func(string, ...any) {}}
+	// The automation credential resolves to the same account as the console
+	// sign-in, so a test can hold role and account constant and vary only the
+	// kind of credential the request arrived with.
+	identity := &Identity{
+		Sessions: sessions,
+		AdminKeys: fakeAdminKeys{
+			credential: tenantE2EAdminKey,
+			identity:   AdminKeyIdentity{KeyID: "k-tenant-e2e", UserID: admin.ID, Role: model.UserRoleAdmin},
+		},
+		Logf: func(string, ...any) {},
+	}
 	authDeps := &AuthDeps{
 		Issuer:    "Prism",
 		Blocklist: NewLoginBlocklist(nil),
-		Identity:  &Identity{Sessions: sessions, Logf: func(string, ...any) {}},
+		Identity:  identity,
 		Handlers: &AuthHandlers{
 			Sessions:         sessions,
 			Accounts:         cp,
@@ -110,7 +132,33 @@ func newTenantE2EEnv(t *testing.T, mode config.RegistrationMode) *tenantE2EEnv {
 		StartedAt: time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC),
 	}, runtimeCfg, cp.EnvCfg, cp, 1<<20, nil, nil, nil, authDeps)
 
-	return &tenantE2EEnv{t: t, server: srv, cp: cp, keys: keyStore}
+	return &tenantE2EEnv{t: t, server: srv, cp: cp, keys: keyStore, identity: identity, adminID: admin.ID}
+}
+
+// doAsKey performs a request with the automation credential instead of a console
+// session: no cookie, no CSRF token, just the bearer header a script sends.
+func (e *tenantE2EEnv) doAsKey(method, path string, body any) *httptest.ResponseRecorder {
+	e.t.Helper()
+
+	var reader io.Reader
+	if body != nil {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			e.t.Fatalf("marshal body: %v", err)
+		}
+		reader = bytes.NewReader(raw)
+	}
+
+	req := httptest.NewRequest(method, path, reader)
+	req.Host = "127.0.0.1:8080"
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	}
+	req.Header.Set("Authorization", "Bearer "+tenantE2EAdminKey)
+
+	rec := httptest.NewRecorder()
+	e.server.Handler().ServeHTTP(rec, req)
+	return rec
 }
 
 func (e *tenantE2EEnv) session() *tenantE2ESession {

@@ -208,10 +208,20 @@ func HandleMeSessions(cp *service.ControlPlaneService) http.HandlerFunc {
 //
 // The console sends back the opaque id it was given. Ownership is part of the
 // delete, so an id belonging to somebody else removes nothing.
+//
+// A console session is required, for the same reason HandleMeDeleteKey requires
+// one: ending a session is credential management. The address below is the
+// caller's own, so this is not an escalation either - but the write is one an
+// automation key has no business making against its owner's logins, and an admin
+// key that could end the sessions of the person using the console could lock
+// them out of the very place they would go to revoke that key.
 func HandleMeRevokeSession(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := meActor(w, r)
 		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
 			return
 		}
 		sessionID := PathParam(r, "sessionID")

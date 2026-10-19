@@ -177,18 +177,30 @@ func HandleAdminListInvites(cp *service.ControlPlaneService) http.HandlerFunc {
 // The code comes back in the response because it is the only time it is
 // minted; the row keeps it in the clear, since an operator has to be able to
 // read a code out to the person they are letting in.
+//
+// A console session is required (requireSessionActor). An invitation is a
+// credential in everything but name: it is the one string that buys an account,
+// and an account buys a console session. A key that could mint one could open a
+// registration with it, sign in, and hold an identity whose lifetime has nothing
+// to do with the key's - which is the exact shape of "a key that outlives its
+// revocation". The cost to automation is deliberate and small: a script can still
+// list, read and delete invites, and the interactive flow is a console page.
 func HandleAdminCreateInvite(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.InviteInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
 			return
 		}
-		createdBy := ""
-		if actor, ok := ActorFromContext(r.Context()); ok {
-			createdBy = actor.Username
-		}
+		createdBy := actor.Username
 		view, err := cp.CreateInvite(in, createdBy, adminNowNs())
 		if err != nil {
 			writeServiceError(w, err)
