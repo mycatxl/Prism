@@ -146,10 +146,14 @@ test-web:
 	$(NPM) --prefix $(WEB_DIR) run check:kit
 	$(NPM) --prefix $(WEB_DIR) run check:responsive
 
-# The browser-driven checks. They need Playwright's browser binaries, which no
-# workflow installs (CI has no browser step), so this is a local/on-demand target
-# rather than part of `verify`. Install them once with:
-#   npx --prefix internal/api/web playwright install chromium
+# The browser-driven checks: boots bin/prism in an isolated environment and
+# drives Chromium against the panel it serves
+# (internal/api/web/scripts/check-ui-live.mjs). They need Playwright's browser
+# binaries, which a fresh checkout does not have, so this is not part of
+# `verify`. CI installs them in its own step and runs this target (see
+# .github/workflows/ci.yml), so a regression fails there even when a bare local
+# `make verify` would not see it. Install them once with:
+#   npx --prefix internal/api/web playwright install --with-deps chromium
 test-ui:
 	$(NPM) --prefix $(WEB_DIR) run test:e2e
 

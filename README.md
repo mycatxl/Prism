@@ -56,6 +56,20 @@ plaintext request - a remote panel over a proxy that is not listed cannot log in
 
 Container deployment uses `Dockerfile` and `docker-compose.yml.example`, which documents the volume layout, the container user and the health check. A tagged release publishes a multi-arch image to [`ghcr.io/mycatxl/prism`](https://github.com/mycatxl/Prism/pkgs/container/prism); `docker-compose.yml.example` pins the release it deploys.
 
+**Initialise the store before the first `up`.** The image's entrypoint only creates the data directories and drops to the `prism` user: it never creates an account, and self-registration is off unless `PRISM_REGISTRATION` says otherwise (`off` is the default), so a container that was simply started has no way in. `prism init` is the only entry point that creates the administrator and the password pepper, and it refuses to run against a store that already holds a user - which is why the compose file does not run it as a service. Run it once, against the same volumes the service uses:
+
+```bash
+docker compose run --rm prism prism init --dir /tmp --admin-username admin
+```
+
+It prints the generated administrator password once; copy it. `--dir /tmp` keeps the generated `.env` inside that throw-away container: the account and the pepper land in the `prism_state` volume, and the settings the service reads come from the `environment:` block of the compose file. Pass `--admin-password` to choose the password instead. Then start the service and sign in at `/ui/` as that administrator:
+
+```bash
+docker compose up -d
+```
+
+A second `init` fails by design; starting over means removing the `prism_state` volume, which holds the store, the pepper and every account.
+
 ## Configuration
 
 Every setting is a `PRISM_*` variable; `.env.example` and
@@ -88,6 +102,8 @@ tenant accounts, while each tenant only sees its own subscription, keys and
 usage under `/api/v1/me/*`. Roles, registration modes, plan snapshots, key
 revocation and the retention windows are documented in
 [`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md). That guide also covers the abuse-protection defaults and the usage-anomaly alerts: an account that spends a third of its plan quota inside an hour is reported once (`PRISM_ALERT_USAGE_RATIO`, `PRISM_ALERT_WINDOW_MINUTES`, `PRISM_ALERT_RETENTION_DAYS`). The three are hot-changeable in the console, where a change is in force at the next scan - at most a minute later, not instantly.
+
+The commercial path is part of the same API: a tenant reads a balance (`GET /api/v1/me/balance`), tops it up by redeeming a code an administrator minted on `/admin/redeem-codes` (`POST /api/v1/me/redeem`) or by an on-chain USDT deposit that needs `PRISM_USDT_ADDRESS` set, then spends the balance on a plan (`GET /api/v1/me/plans`, `POST /api/v1/me/purchases`). `make billing` walks that path end-to-end over real HTTP against a fake TronGrid, and CI runs it on every push.
 
 ## Layout
 

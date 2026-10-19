@@ -82,7 +82,8 @@ Options:
   --cache-dir <path>     Set PRISM_CACHE_DIR.
   --log-dir <path>       Set PRISM_LOG_DIR.
   --no-service           Only prepare .env and the data directories; do not
-                         install the systemd unit.
+                         install the systemd unit. The port is not checked
+                         either: nothing is started.
   --dry-run              Print what would be done without changing anything.
   -h, --help             Show this help message.
 
@@ -90,6 +91,12 @@ The five --* override options touch only the matching PRISM_* key: every other
 line of an existing .env is preserved, and the file is backed up to
 <.env>.bak.<timestamp> before the first change. An existing .env is never
 regenerated or overwritten.
+
+The port is checked before .env is rewritten, and only when this run could
+start the service on a fresh deployment: --no-service and a run that only
+rewrites the keys above skip it, because the process holding the port is then
+normally the Prism service itself (a restart replaces it in place). This script
+never stops or kills a process.
 
 Examples:
   ./scripts/deploy.sh
@@ -409,6 +416,30 @@ check_port_free() {
     fi
 }
 
+# should_check_port: 0 when this run must verify that the port is free before
+# .env is rewritten, 1 when checking would only be checking us out of our own
+# deployment.
+#
+# The check exists for a first install: it refuses to touch anything while
+# something else already listens on the port, because this script never stops
+# another process. It must not fire when the listener on that port is this
+# deployment:
+#   * --no-service installs nothing and starts nothing, so occupancy is not
+#     this script's business;
+#   * a run that rewrites PRISM_* keys is reconfiguring a deployment that is
+#     normally already running -- its own service holds the port, and
+#     install_service restarts it in place. A foreign holder still fails there,
+#     loudly, on the restart.
+should_check_port() {
+    if [[ "$INSTALL_SERVICE" != true ]]; then
+        return 1
+    fi
+    if [[ -n "$OPT_LISTEN$OPT_PORT$OPT_STATE_DIR$OPT_CACHE_DIR$OPT_LOG_DIR" ]]; then
+        return 1
+    fi
+    return 0
+}
+
 resolve_config() {
     local listen port state_dir cache_dir log_dir
     listen="$(env_get "PRISM_LISTEN_ADDRESS")"
@@ -613,9 +644,15 @@ main() {
     generate_env_if_missing
     resolve_config
 
-    # The port is checked before .env is touched: an occupied port is a hard
-    # error, and this script never stops the process that holds it.
-    check_port_free "${OPT_PORT:-$EFFECTIVE_PORT}"
+    # The port is checked before .env is rewritten: an occupied port is a hard
+    # error, and this script never stops the process that holds it. The check
+    # only applies when this run may start a listener of its own -- see
+    # should_check_port -- and it stays ahead of apply_overrides either way.
+    if should_check_port; then
+        check_port_free "${OPT_PORT:-$EFFECTIVE_PORT}"
+    else
+        log_info "Skipping the port check: this run does not start a listener of its own"
+    fi
 
     apply_overrides
     # Re-read the file: the overrides above are the authoritative values.

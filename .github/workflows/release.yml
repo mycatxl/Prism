@@ -195,18 +195,44 @@ jobs:
             > "$RUNNER_TEMP/release-notes.md"
           wc -c "$RUNNER_TEMP/release-notes.md"
 
-      # Upload the archives while the release is still a draft: the action
-      # publishes a normal release after uploading, but a prerelease is published
-      # immediately, which is how the first tagged run produced a zero-asset
-      # release. A draft is writable, so the assets go up first and the next step
-      # publishes the finished release in one move.
+      # Refuse to touch a release that already carries assets. A second run of
+      # the same tag rebuilds the binaries, and BUILD_TIME makes them different
+      # bytes, so replacing the assets would leave the SHA256SUMS.txt that was
+      # already downloaded next to the release pointing at files that no longer
+      # exist. The overwrite below is off for the same reason; this step fails
+      # before anything is uploaded, with a message that says what to do.
+      - name: Refuse to overwrite an existing release's assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          assets="$(gh release view "$GITHUB_REF_NAME" --json assets \
+            --jq '.assets | length' 2>/dev/null || true)"
+          if [[ -z "$assets" ]]; then
+            echo "no release named $GITHUB_REF_NAME yet; the next step creates the draft"
+            exit 0
+          fi
+          echo "release $GITHUB_REF_NAME already carries $assets asset(s)"
+          if [[ "$assets" != "0" ]]; then
+            echo "::error::release $GITHUB_REF_NAME already has assets; refusing to overwrite them (a rebuild of the same commit is not byte-identical, so the published SHA256SUMS.txt would stop matching). Delete the assets by hand on GitHub and re-run, or release from a new tag."
+            exit 1
+          fi
+
+      # Upload the archives while the release is still a draft, and pass
+      # `draft: true` explicitly rather than relying on the action's default.
+      # The action publishes a release as soon as it creates one unless it is
+      # told not to, which is how the first tagged run produced a release with
+      # no assets: they were uploaded after it had become visible. A draft is
+      # writable, so for a normal and a -rc tag alike the assets go up first and
+      # the step after this one publishes the finished release in one move.
       - name: Create Draft Release and Upload Assets
         id: draft_release
         uses: softprops/action-gh-release@v3
         with:
           files: build/*
           fail_on_unmatched_files: true
-          overwrite_files: true
+          # Never replace an asset, see the guard above.
+          overwrite_files: false
           generate_release_notes: true
           body_path: ${{ runner.temp }}/release-notes.md
           draft: true

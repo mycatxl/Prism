@@ -19,7 +19,7 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 | 管理员 `admin` | 全部 `/api/v1/*` | 全部管理台页面 + 账户安全 |
 | 用户 `user` | 仅 `/api/v1/auth/*` 与 `/api/v1/me/*` | 自助面板 + 账户安全 |
 
-边界由 `internal/api/rolegate.go` 的 `requireAdmin` 中间件执行：它挂在身份中间件内侧，因此到达它时身份已经确定——**没有身份给 401，身份合法但角色不对给 403**，控制台可以据此区分「请重新登录」和「你没有权限」。除自助路径前缀（`/api/v1/auth`、`/api/v1/me`）与公开的登录/注册路由外，所有路由默认只有管理员可达：**新加的管理接口天然是私有的，不需要记得去保护它**。
+边界由 `internal/api/rolegate.go` 的 `requireAdmin` 中间件执行：它挂在身份中间件内侧，因此到达它时身份已经确定——**没有身份给 401，身份合法但角色不对给 404**。角色不符之所以不是 403，是防枚举：403 等于承认「这条端点存在，只是你不够格」，整张管理面就成了一张可以逐个探测的清单；404 与一条从未注册过的路径**同形同文**（都是 `NOT_FOUND` / `not found`），探测者分不出「存在但被拒」和「根本不存在」，`internal/api/rolegate_test.go` 把这条语义钉死。代价是状态码不再区分「请重新登录」和「你没有权限」，所以判断只在服务端做，控制台压根不会为租户会话发起管理查询（见下一段）。除自助路径前缀（`/api/v1/auth`、`/api/v1/me`）与公开的登录/注册路由外，所有路由默认只有管理员可达：**新加的管理接口天然是私有的，不需要记得去保护它**。
 
 前端是同一份包：`lib/navigation.ts` 按角色过滤导航，`features/auth/RequireAdmin.tsx` 把走旧链接的租户送回自己的页面，`AppShell` 对租户会话不发起任何运维查询（实例信息、环境配置都是管理员接口）。**前端的过滤只是体面，控制权始终在服务端。**
 
@@ -105,6 +105,7 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 | 用户详情 | `/admin/users/:id` | 用户 CRUD、密钥、订阅、单用户用量 |
 | 套餐管理 | `/admin/plans` | `GET|POST|PATCH|DELETE /api/v1/admin/plans` |
 | 邀请码管理 | `/admin/invites` | `GET|POST|DELETE /api/v1/admin/invites` |
+| 兑换码管理 | `/admin/redeem-codes` | `GET|POST /api/v1/admin/redeem-codes`（生成时明文只出现一次，列表只给 `code_hint`）、`DELETE /api/v1/admin/redeem-codes/{id}` |
 | 用量统计 | `/admin/usage` | `GET /api/v1/admin/usage/*`（含按套餐分布）、`GET /api/v1/admin/alerts` |
 | 系统设置 | `/admin/settings` | `GET|PATCH /api/v1/system/config`（注册准入、保留周期、纯净度阈值）、`GET /api/v1/system/config/env`（部署侧注册策略） |
 
@@ -112,11 +113,29 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 
 | 页面 | 路径 | 说明 |
 | --- | --- | --- |
-| 概览 | `/me` | 套餐、周期用量、剩余额度、实时并发、活跃会话 |
+| 概览 | `/me` | 套餐、周期用量、剩余额度、实时并发、活跃会话，以及余额（`GET /api/v1/me/balance`） |
 | 我的密钥 | `/me/keys` | 自助签发与删除，明文只显示一次 |
 | 接入指南 | `/me/guide` | 可用平台与由运营提供的接入地址 |
+| 购买套餐 | `/me/plans` | `GET /api/v1/me/plans`（可购列表）、`POST /api/v1/me/purchases`（用余额购买，`request_id` 必填）、`PATCH /api/v1/me/subscription`（自动续费） |
+| 我的租约 | `/me/leases` | `GET /api/v1/me/leases`、`DELETE /api/v1/me/leases/{platformID}/{account}`（提前释放） |
+| 链上充值 | `/me/deposit` | `GET /api/v1/me/deposit`（是否开通）、`GET|POST /api/v1/me/deposits`（查/开充值意向）、`GET /api/v1/me/deposits/{id}`；兑换码兑余额走 `POST /api/v1/me/redeem` |
 
-## 9. 滥用防护
+## 9. 资金链路：余额、充值、兑换码与购买
+
+钱这一侧只有一条线：**先有余额，再用余额买套餐**。租户的四个入口都在 `/api/v1/me/*` 下，管理员一侧是兑换码管理。
+
+- **余额**：`GET /api/v1/me/balance`。控制台的余额面板与「概览」页读的都是它。金额是 int64 的微单位（1 微 = 1e-6 USDT，正好是 USDT 自身的精度，全程不碰浮点）；`user_balance` 存当前值，`balance_ledger` 记每一笔变动（迁移 `000022`），两者在同一个事务里提交，账目行还写下变动后的余额——余额与自己的历史对不上时是看得见的，而不是静默的。
+- **兑换码**：管理员在「兑换码管理」页生成（`POST /api/v1/admin/redeem-codes`，字段 `amount_micro` / `max_uses` / `expires_in_days` / `note` / `count`——`count` 是这一批生成几张；`DELETE /api/v1/admin/redeem-codes/{id}` 按 id 删一张码），列表只给 `code_hint`：明文**只在生成的那次响应里出现一次**，之后不可恢复。租户在自助面板兑换（`POST /api/v1/me/redeem`，请求体 `{"code":"..."}`）：花码与入账在同一个事务里，失败不会留下「码已失效、钱没到」的中间态；而未知、已撤销、已过期、已用尽四种情况返回**同一个 400**，理由与邀请码相同——区分它们，这个端点就成了搜索有效码的工具。
+- **链上充值**：`GET /api/v1/me/deposit` 报告充值是否开通（`enabled`）、收款地址、合约、最小/最大面额与金额有效期；`POST /api/v1/me/deposits` 用 `{"amount_micro":N}` 开一张充值意向，服务端回给你一个**唯一金额**（在你要的金额上加若干最小单位，避开与别人的转账撞车——整数金额恰好是最容易撞上的那种）；`GET /api/v1/me/deposits` 与 `GET /api/v1/me/deposits/{id}` 查进度，别人的意向 id 一律 404，与不存在的 id 同形。扫描器只读收款地址上的 TRC20 Transfer 事件，金额必须正属于某张仍在持有它的意向、且这笔转账的**区块时间**落在该意向的窗口内才入账（窗口按链上的钟算，不按本地钟）；没有任何意向认领的转账留在链上交给运维人工处理，服务不猜。低于最小面额的转账直接跳过。
+- **购买**：`GET /api/v1/me/plans` 列出可买套餐，`POST /api/v1/me/purchases` 用余额买（`{"plan_id":"...","request_id":"..."}`，**`request_id` 是必填**：上一次购买只结束旧订阅、写一条扣款，没有别的东西能拦住重复扣款）。扣款与订阅在一个事务里提交，所以 201 就意味着「钱扣了、套餐已生效」；带同一个 `request_id` 重放不会二次扣款，返回首次结果并把 `charged_micro` 记成 0；余额不足是 400（`balance: not enough to buy this plan`），不是 500。买到的订阅与管理员的分配一样持有套餐快照。自动续费开关是 `PATCH /api/v1/me/subscription`，属于客户自己的决定，不会被「应用到存量订阅」改掉。
+
+**充值要配置才有。** 不设 `PRISM_USDT_ADDRESS` 时链上充值是关的：`GET /api/v1/me/deposit` 返回 `enabled:false`，控制台据此隐藏充值页而不是显示一个坏掉的页面，`POST /api/v1/me/deposits` 明确回「链上充值未配置」。这个地址是你自己的钱包，服务只读链、不持私钥、不碰资金。合约 `PRISM_USDT_CONTRACT`（默认 Tether 的 TRC20 USDT）与端点 `PRISM_TRONGRID_ENDPOINT`（默认 `https://api.trongrid.io`）都有默认值，`PRISM_TRONGRID_API_KEY` 可选——但匿名调用会被 TronGrid 限流到扫描器几乎跟不上，生产部署应当配一个。
+
+**兑换码不是邀请码。** 邀请码（`/admin/invites`）建的是账号、按绑定的套餐授予订阅，落在注册路径上；兑换码（`/admin/redeem-codes`）给的是余额，落在已登录的自助路径上。两者都拒绝枚举，但一个是「注册时花掉」，一个是「充值后自己拿去买」。
+
+**回归证据**：`scripts/billing.sh`（`make billing`，CI 每次都跑）用一个假的 TronGrid 把整条链路走一遍——建带价套餐、建邀请、注册、开充值意向、假链上转账、余额入账、用余额购买、重放购买、打开自动续费；接口层的正反两面在 `internal/api/balance_e2e_test.go` 与 `internal/api/deposit_e2e_test.go`。
+
+## 10. 滥用防护
 
 一个对外开放的部署会把别人的流量从你的 VPS 送出去，所以默认值按「先拒绝、再解释」来设。
 
@@ -134,12 +153,12 @@ Prism 从一个「单人自用」的代理池长成了一个多租户控制台�
 
 **被看见的路径**：`GET /api/v1/admin/alerts?limit=&since_ns=&unacknowledged=` 列出告警（默认 50 条、上限 500，按检测时间倒序；账号名与套餐名在读取时解析，账号或套餐删掉后告警仍留着当时的 id 与数字），`POST /api/v1/admin/alerts/{id}/actions/acknowledge` 确认（重复确认同一条返回 404——「已经处理过」不是错误，是事实）。控制台的读入口在用量统计页，见 §8。
 
-## 10. 验收与回归
+## 11. 验收与回归
 
 多租户这一层的自动化证据在四处，改动后请一起跑：
 
 - `internal/api/rolegate_test.go`：角色矩阵（用户/管理员/无凭据/密钥持有人在管理路径与自助路径上的结果）。
-- `internal/api/multi_tenant_admin_e2e_test.go`：走真实 HTTP 栈的全链路——建套餐 → 建用户 → 发密钥 → 查用量 → 证明租户读管理接口得到 403 → 停用（会话失效、密钥在数据面不可用）→ 删除（密钥清空、账号 404），以及邀请码注册的正反两面。
+- `internal/api/multi_tenant_admin_e2e_test.go`：走真实 HTTP 栈的全链路——建套餐 → 建用户 → 发密钥 → 查用量 → 证明租户读管理接口得到 404 而不是 403 → 停用（会话失效、密钥在数据面不可用）→ 删除（密钥清空、账号 404），以及邀请码注册的正反两面。
 - `internal/service/control_plane_tenant_test.go` 与 `internal/state/repo_invite_test.go`：服务层与状态层行为，含邀请码兑换的原子性。
 
 - `internal/service/control_plane_alert_test.go`、`internal/state/repo_alert_test.go` 与服务层的检测语义：越线边界（恰好达到报一条、差一点不报、不限量套餐永不报）、去重与确认后的重报、保留窗口清理。端口屏蔽的证据在 `internal/config/blocked_destination_ports_test.go` 与 `internal/proxy/direct_dial_guard_ports_test.go`：默认名单、空值放行全部、非法端口名报错，以及「关掉私网拒绝也照样拦发信端口」。

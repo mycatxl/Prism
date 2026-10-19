@@ -8,6 +8,25 @@
 # Do not leave both enabled and then call `docker compose pull`: with `build:` set,
 # compose builds and tags the result locally, so the image name below is only used
 # as a tag -- but a plain `pull` fetches it from the registry instead.
+#
+# FIRST START: initialise the store once with `prism init`, or there is no
+# account to sign in with. The image's entrypoint only creates the data
+# directories and drops to the `prism` user -- it never creates a user, and
+# self-registration is off by default (PRISM_REGISTRATION defaults to `off`), so
+# a container that was simply started rejects every sign-up and has no
+# administrator. `prism init` is the only entry point that creates one, plus the
+# password pepper in the state volume. It refuses to run on a store that already
+# holds a user, which is why it is not modelled as a service here: on a second
+# `up` it would fail and keep the service from starting. Run it by hand, once,
+# against the same volumes this file declares:
+#
+#   docker compose run --rm prism prism init --dir /tmp --admin-username admin
+#
+# It prints the generated administrator password once -- copy it -- then
+# `docker compose up -d` and sign in at http://127.0.0.1:2260/ui/ as that
+# account. Pass --admin-password to choose the password instead. Starting over
+# means removing the prism_state volume: the store, the pepper and every account
+# live there.
 services:
   prism:
     build:
@@ -15,9 +34,11 @@ services:
       dockerfile: Dockerfile
     # Published by the release workflow on a v* tag. Comment out `build:` above to
     # use it, and pin the release you intend (`latest` follows the newest
-    # non-prerelease release). Bump this line with each release you deploy.
+    # non-prerelease release). Bump this line with every release you deploy: it
+    # is the version an operator actually runs, so it must never lag the
+    # published tags (v0.4.1 is the current one).
     # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
-    image: ghcr.io/mycatxl/prism:0.3.0
+    image: ghcr.io/mycatxl/prism:0.4.1
     container_name: prism
     restart: unless-stopped
     environment:
@@ -25,6 +46,10 @@ services:
       PRISM_LISTEN_ADDRESS: 0.0.0.0
       PRISM_PORT: 2260
       # TZ: <Your Time Zone>
+      # On-chain USDT (TRC20) deposits stay off while this is empty or absent:
+      # the address is your own wallet (the server holds no key), and it is what
+      # turns the /me/deposit page on. See docs/MULTI_TENANT.md for the money path.
+      # PRISM_USDT_ADDRESS: T...
     ports:
       - "127.0.0.1:2260:2260"  # loopback only; put a TLS reverse proxy in front for remote access
     volumes:
