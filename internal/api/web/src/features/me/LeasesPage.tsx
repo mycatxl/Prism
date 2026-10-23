@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Unlink } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import {
   DialogContent,
@@ -18,7 +17,10 @@ import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
+import { cn } from "../../lib/cn";
+import { useNow } from "../../lib/clock";
 import { formatApiErrorMessage } from "../../lib/error-message";
+import { formatGoDuration } from "../../lib/time";
 import { getLeases, releaseLease } from "./api";
 import type { SelfLease } from "./types";
 
@@ -36,6 +38,86 @@ function formatTimestamp(value: string): string {
     minute: "2-digit",
     hour12: false,
   }).format(date);
+}
+
+/** The console-wide "soon" line: the last two days of a lease's life warn. */
+const LEASE_WARN_MS = 48 * 3_600_000;
+
+/** The state ramp of a lease's remaining life: signal, then warn, then alert. */
+function remainingTone(remainingMs: number): "signal" | "warn" | "alert" {
+  if (remainingMs <= 0) return "alert";
+  if (remainingMs <= LEASE_WARN_MS) return "warn";
+  return "signal";
+}
+
+/** The share of the lease's window that is still ahead, 0..100. */
+function remainingPercent(remainingMs: number, windowMs: number): number {
+  if (windowMs <= 0 || remainingMs <= 0) return 0;
+  return Math.max(0, Math.min(100, (remainingMs / windowMs) * 100));
+}
+
+/** A remaining span in the house duration voice, re-encoded through formatGoDuration. */
+function formatRemainingDuration(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (hours === 0 && seconds > 0) parts.push(`${seconds}s`);
+  return formatGoDuration(parts.join("") || "0s");
+}
+
+/** The fill class of the remaining-life bar, one per state tone. */
+const BAR_CLASS = {
+  signal: "lease-fill",
+  warn: "lease-fill lease-fill--warn",
+  alert: "lease-fill lease-fill--alert",
+} as const;
+
+/**
+ * The remaining-life cell: the figure states how long is left, and the bar
+ * draws the same share of the window the row's own stamps produce (last
+ * access to expiry). A window the row cannot produce is a bar that would
+ * guess at its denominator, so the bar is left out rather than drawn.
+ */
+function RemainingCell({ lease }: { lease: SelfLease }) {
+  const { t } = useI18n();
+  const now = useNow();
+  const expiryMs = Date.parse(lease.expiry || "");
+  if (!Number.isFinite(expiryMs)) {
+    return <TD className="text-ink-faint">--</TD>;
+  }
+  const remainingMs = expiryMs - now;
+  const expired = remainingMs <= 0;
+  const accessedMs = Date.parse(lease.last_accessed || "");
+  const windowMs =
+    Number.isFinite(accessedMs) && expiryMs - accessedMs > 0 ? expiryMs - accessedMs : 0;
+  return (
+    <TD>
+      <div className="flex items-center gap-2.5">
+        <span
+          className={cn(
+            "readout whitespace-nowrap text-xs tabular-nums",
+            expired ? "text-alert" : "text-ink-soft",
+          )}
+        >
+          {expired ? t("已过期") : formatRemainingDuration(remainingMs)}
+        </span>
+        {windowMs > 0 && (
+          <span className="block min-w-16 flex-1" aria-hidden>
+            <span className="lease-track block">
+              <span
+                className={cn("block", BAR_CLASS[remainingTone(remainingMs)])}
+                style={{ width: `${expired ? 100 : remainingPercent(remainingMs, windowMs)}%` }}
+              />
+            </span>
+          </span>
+        )}
+      </div>
+    </TD>
+  );
 }
 
 /**
@@ -98,7 +180,7 @@ export function LeasesPage() {
         <PanelHeader
           title={t("当前租约")}
           description={t("同一账号在租约有效期内保持同一个出口 IP。")}
-          meta={<Badge tone="neutral">{leases.length}</Badge>}
+          meta={t("共 {{count}} 条", { count: leases.length })}
         />
         <PanelBody className="p-0">
           {leasesQuery.isLoading ? (
@@ -125,6 +207,7 @@ export function LeasesPage() {
                     <TH>{t("节点")}</TH>
                     <TH>{t("出口 IP")}</TH>
                     <TH>{t("到期时间")}</TH>
+                    <TH>{t("剩余时间")}</TH>
                     <TH>{t("最后活跃")}</TH>
                     <TH className="text-right">{t("操作")}</TH>
                   </TR>
@@ -147,6 +230,7 @@ export function LeasesPage() {
                       <TD className="readout font-mono text-xs text-ink-soft">
                         {formatTimestamp(lease.expiry)}
                       </TD>
+                      <RemainingCell lease={lease} />
                       <TD className="readout font-mono text-xs text-ink-soft">
                         {formatTimestamp(lease.last_accessed)}
                       </TD>
@@ -205,9 +289,9 @@ export function LeasesPage() {
                 onClick={() => {
                   if (releaseTarget) releaseMutation.mutate(releaseTarget);
                 }}
-                disabled={releaseMutation.isPending}
+                loading={releaseMutation.isPending}
               >
-                {releaseMutation.isPending ? t("释放中...") : t("确认释放")}
+                {t("确认释放")}
               </Button>
             </div>
           </DialogContent>

@@ -8,7 +8,6 @@ import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { ErrorState } from "../../components/ui/QueryState";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
-import { cn } from "../../lib/cn";
 import { ApiError, fetchSession, register } from "../../lib/api-client";
 import { homePathFor } from "../../lib/roles";
 import { useAuthStore } from "./auth-store";
@@ -101,7 +100,7 @@ export function RegisterPage() {
   });
 
   return (
-    <main className="login-shell ground flex min-h-dvh flex-col lg:flex-row">
+    <main className="login-shell ground">
       <section aria-label="Prism" className="login-intro flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14">
         <div className="flex items-center gap-2.5">
           <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" className="size-10" />
@@ -121,8 +120,8 @@ export function RegisterPage() {
         <p className="text-xs text-ink-faint">{t("账号创建后即可登录控制台。")}</p>
       </section>
 
-      <section className="login-card-shell flex w-full shrink-0 items-center border-t border-rule bg-paper-inset px-6 py-10 lg:w-[min(42vw,32rem)] lg:border-t-0 lg:border-l lg:px-8">
-        <div className="login-card panel mx-auto w-full max-w-md p-6 sm:p-8">
+      <section className="login-card-shell">
+        <div className="login-card panel">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="text-lg">{t("注册账号")}</h2>
@@ -152,20 +151,24 @@ export function RegisterPage() {
                   id="username"
                   autoComplete="username"
                   autoCapitalize="none"
-                  aria-invalid={errors.username ? true : undefined}
+                  invalid={Boolean(errors.username)}
                   {...field("username")}
                 />
-                {errors.username?.message ? <p className="text-xs text-alert">{t(errors.username.message)}</p> : null}
+                {errors.username?.message ? (
+                  <p role="alert" className="text-xs text-alert">
+                    {t(errors.username.message)}
+                  </p>
+                ) : null}
               </Fieldset>
 
               <Fieldset label={t("密码")} htmlFor="password">
                 <div className="flex items-start gap-1.5">
                   <Input
                     id="password"
-                    className={cn("min-w-0 flex-1", errors.password && "border-alert ring-1 ring-alert/40")}
+                    className="min-w-0 flex-1"
                     type={isPasswordVisible ? "text" : "password"}
                     autoComplete="new-password"
-                    aria-invalid={errors.password ? true : undefined}
+                    invalid={Boolean(errors.password)}
                     {...field("password")}
                   />
                   <Button
@@ -180,7 +183,11 @@ export function RegisterPage() {
                     {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
                   </Button>
                 </div>
-                {errors.password?.message ? <p className="text-xs text-alert">{t(errors.password.message)}</p> : null}
+                {errors.password?.message ? (
+                  <p role="alert" className="text-xs text-alert">
+                    {t(errors.password.message)}
+                  </p>
+                ) : null}
               </Fieldset>
 
               <Fieldset label={t("确认密码")} htmlFor="confirm">
@@ -188,10 +195,14 @@ export function RegisterPage() {
                   id="confirm"
                   type={isPasswordVisible ? "text" : "password"}
                   autoComplete="new-password"
-                  aria-invalid={errors.confirm ? true : undefined}
+                  invalid={Boolean(errors.confirm)}
                   {...field("confirm")}
                 />
-                {errors.confirm?.message ? <p className="text-xs text-alert">{t(errors.confirm.message)}</p> : null}
+                {errors.confirm?.message ? (
+                  <p role="alert" className="text-xs text-alert">
+                    {t(errors.confirm.message)}
+                  </p>
+                ) : null}
               </Fieldset>
 
               {submitError ? <ErrorState message={submitError} /> : null}
@@ -203,7 +214,7 @@ export function RegisterPage() {
 
           <p className="mt-5 border-t border-rule pt-3 text-xs leading-relaxed text-ink-faint">
             {t("已有账号？")}
-            <Link className="ml-1 text-signal underline-offset-2 hover:underline" to="/login">
+            <Link className="ml-1 text-accent underline-offset-2 hover:underline" to="/login">
               {t("去登录")}
             </Link>
           </p>

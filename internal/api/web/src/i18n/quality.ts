@@ -252,4 +252,7 @@ export const QUALITY_TRANSLATIONS: Record<string, string> = {
   "保存全部更改": "Save all changes",
   "代理 / API 监听地址": "Proxy / API listen address",
   "代理 / API 端口": "Proxy / API port",
+  "运行配置已在后台更新，草稿基于旧数据；直接保存会用旧值覆盖新值，建议先重新加载。":
+    "Runtime settings changed in the background; this draft is based on the old values, and saving would overwrite them. Reload before saving.",
+  "gstatic.com\ngoogle.com\ncloudflare.com": "gstatic.com\ngoogle.com\ncloudflare.com",
 };

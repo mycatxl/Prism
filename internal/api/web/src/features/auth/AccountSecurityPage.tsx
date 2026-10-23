@@ -226,7 +226,7 @@ export function AccountSecurityPage() {
           <PanelBody className="space-y-4">
             {hasTotp ? (
               <>
-                <div className="flex items-start gap-3 rounded-card-sm border border-signal/30 bg-signal/10 p-3 text-sm text-ink-soft">
+                <div className="flex items-start gap-3 rounded-card-sm border border-signal/30 bg-signal-wash p-3 text-sm text-ink-soft">
                   <ShieldCheck size={18} className="mt-0.5 shrink-0 text-signal" aria-hidden />
                   <div>
                     <p className="font-medium text-ink">{t("双因素认证已启用")}</p>

@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import type { BadgeProps } from "../../../components/ui/Badge";
 import type { QualitySummary } from "./types";
 
 export const riskLabels = { unknown: "评级未知", low: "较低风险", moderate: "一般风险", high: "较高风险", severe: "严重风险" };
@@ -16,6 +16,56 @@ export const assessmentReasons: Record<string, string> = {
   TOR_PUBLIC_RELAY: "公开中继资料中存在此地址",
 };
 export const torRoleLabels = { exit: "Tor 出口", guard: "Tor 入口守卫（候选）", relay: "Tor 中继" };
+
+// Intel label maps, shared with the node list cell and the detail panels: the
+// same outcomes must read the same everywhere, so they live here rather than
+// beside one component.
+export const stateLabels: Record<string, string> = {
+  unassessed: "未评估",
+  pending: "等待评估",
+  unsupported: "不支持评估",
+  stale: "评估已过期",
+};
+
+export const confidenceLabels: Record<string, string> = {
+  high: "置信度高",
+  medium: "置信度中",
+  low: "置信度低",
+  none: "置信度未知",
+};
+
+export const flagLabels: Record<string, string> = {
+  compromised: "被入侵记录",
+  tor: "Tor",
+  vpn: "VPN",
+  proxy: "代理",
+  scraper: "爬取特征",
+  abuse: "滥用记录",
+  anonymous: "匿名网络",
+  hosting: "托管网络",
+  dnsbl: "黑名单命中",
+  attack_history: "攻击历史",
+};
+
+export const outcomeLabels: Record<string, string> = {
+  unknown: "未知",
+  available: "可用",
+  blocked: "被拦截",
+  region_limited: "地区受限",
+  captcha: "验证码",
+  error: "检测失败",
+};
+
+type Tone = NonNullable<BadgeProps["tone"]>;
+
+export const outcomeTones: Record<string, Tone> = {
+  available: "signal",
+  blocked: "alert",
+  region_limited: "warn",
+  captcha: "warn",
+  error: "alert",
+  unknown: "neutral",
+};
 
 export function evidenceFor(summary: QualitySummary | null | undefined, provider: string) {
   const source = summary?.sources?.find(source => source.provider === provider)?.evidence;
@@ -50,27 +100,6 @@ export function hasContradictingSignals(summary: QualitySummary | null | undefin
   const score = purityScore(summary!.evidence!.risk_score);
   return score !== null && score >= 80 && [signals.proxy, signals.vpn, signals.tor, signals.anonymous, signals.scraper].some(value => value === true);
 }
-
-let currentTime = Date.now();
-let clockTimer: ReturnType<typeof setInterval> | undefined;
-const clockSubscribers = new Set<() => void>();
-function subscribeClock(listener: () => void) {
-  if (clockSubscribers.size === 0) {
-    currentTime = Date.now();
-    clockTimer = setInterval(() => {
-      currentTime = Date.now();
-      clockSubscribers.forEach(notify => notify());
-    }, 1000);
-  }
-  clockSubscribers.add(listener);
-  return () => {
-    clockSubscribers.delete(listener);
-    if (clockSubscribers.size === 0) { clearInterval(clockTimer); clockTimer = undefined; }
-  };
-}
-const clockSnapshot = () => currentTime;
-const serverClockSnapshot = () => 0;
-export const useQualityTime = () => useSyncExternalStore(subscribeClock, clockSnapshot, serverClockSnapshot);
 
 export function isFresh(summary: QualitySummary | null | undefined, now: number) {
   return summary?.state === "valid" && Boolean(summary.evidence) && Date.parse(summary.evidence!.valid_until) > now;

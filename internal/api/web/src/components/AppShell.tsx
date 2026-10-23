@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, Suspense, lazy, useEffect, useState, useSyncExternalStore } from "react";
-import { ChevronDown, LogOut, Menu as MenuIcon, Search, ShieldCheck, UserRound, X } from "lucide-react";
+import { Activity, Boxes, Cable, ChartNoAxesColumn, ChevronDown, ClipboardList, Coins, FileClock, KeyRound, ListChecks, LogOut, Menu as MenuIcon, Network, PackageCheck, ReceiptText, Search, ServerCog, Settings2, ShieldCheck, Tags, UserRound, UsersRound, WalletCards, Waypoints, X, type LucideIcon } from "lucide-react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, logout } from "../lib/api-client";
 import { cn } from "../lib/cn";
@@ -23,6 +23,29 @@ import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } fr
  * its own chunk the first time it is opened, and stays mounted afterwards.
  */
 const CommandPalette = lazy(() => import("./CommandPalette").then((module) => ({ default: module.CommandPalette })));
+
+function navIconFor(path: string): LucideIcon {
+  if (path === OPS_ROOT) return Activity;
+  if (path === ACCOUNT) return ShieldCheck;
+  if (path.includes("nodes")) return Boxes;
+  if (path.includes("subscriptions")) return Cable;
+  if (path.includes("jobs")) return ListChecks;
+  if (path.includes("platforms")) return Network;
+  if (path.includes("endpoints")) return ServerCog;
+  if (path.includes("rules")) return Settings2;
+  if (path.includes("request-logs")) return FileClock;
+  if (path.includes("users")) return UsersRound;
+  if (path.includes("plans")) return PackageCheck;
+  if (path.includes("invites")) return Tags;
+  if (path.includes("redeem-codes")) return Coins;
+  if (path.includes("usage")) return ChartNoAxesColumn;
+  if (path.includes("config") || path.includes("settings")) return Settings2;
+  if (path.includes("resources")) return WalletCards;
+  if (path.includes("audit")) return ReceiptText;
+  if (path.includes("keys")) return KeyRound;
+  if (path.includes("leases")) return Waypoints;
+  return ClipboardList;
+}
 
 function subscribeOnline(callback: () => void) {
   window.addEventListener("online", callback);
@@ -99,15 +122,12 @@ export function AppShell() {
 
   // A route change is a new page: focus its heading so a keyboard or screen
   // reader starts at the top of the document, not where the previous page left
-  // the caret. The drawer closes on the same event, since it covers the page.
+  // Route-local focus is handled by the Page boundary after a lazy page resolves.
+  // Keep the shell responsible for closing the mobile rail and resetting the work area.
   useEffect(() => {
     setRailOpen(false);
-    const heading = document.querySelector<HTMLElement>("main h1");
-    heading?.setAttribute("tabindex", "-1");
-    heading?.focus({ preventScroll: true });
     document.querySelector(".shell-main")?.scrollTo({ top: 0, behavior: "instant" });
   }, [location.pathname]);
-
   useEffect(() => {
     if (!railOpen) return;
     const onKey = (event: KeyboardEvent) => {
@@ -170,20 +190,13 @@ export function AppShell() {
     return /^\d/.test(raw) ? `v${raw}` : raw;
   })();
 
-  // The rail's groups, numbered in the order they appear. The numeral is the
-  // index an operator can quote, so it is derived from the same array the rail
-  // renders rather than kept as a second list.
-  const sections: string[] = [];
-  for (const item of navItems) {
-    if (item.section && !sections.includes(item.section)) sections.push(item.section);
-  }
   const current = navItems
     .filter((item) => isCurrentPath(location.pathname, item.path))
     .sort((a, b) => b.path.length - a.path.length)[0];
   const username = session.user?.username ?? "";
 
   return (
-    <div className={cn("shell", isAdmin ? "shell--desk" : "shell--self")}>
+    <div className={cn("shell", isAdmin ? "shell--desk" : "shell--self", railOpen && "is-open")} data-tier={isAdmin ? "ops" : "me"}>
       <a className="shell-skip" href="#sheet">
         {t("跳到正文")}
       </a>
@@ -284,14 +297,11 @@ export function AppShell() {
           {navItems.map((item, index) => {
             const active = isCurrentPath(location.pathname, item.path);
             const opensGroup = Boolean(item.section) && navItems[index - 1]?.section !== item.section;
-            const ordinal = String(sections.indexOf(item.section) + 1).padStart(2, "0");
+            const Icon = navIconFor(item.path);
             return (
               <Fragment key={item.path}>
                 {opensGroup && (
                   <div className="shell-nav__section">
-                    <span className="shell-nav__ord" aria-hidden>
-                      {ordinal}
-                    </span>
                     <span className="shell-nav__section-label">{t(item.section)}</span>
                   </div>
                 )}
@@ -303,7 +313,8 @@ export function AppShell() {
                   end={isExactPath(item.path)}
                   className={cn("shell-nav__link", active && "is-active")}
                 >
-                  {t(item.label)}
+                  <span className="shell-nav__link-icon" aria-hidden><Icon size={15} /></span>
+                  <span className="shell-nav__link-label">{t(item.label)}</span>
                 </NavLink>
               </Fragment>
             );

@@ -84,6 +84,7 @@ function normalizeLease(raw: ApiPlatformLease): PlatformLease {
     egress_ip: typeof raw.egress_ip === "string" ? raw.egress_ip : "",
     expiry: typeof raw.expiry === "string" ? raw.expiry : "",
     last_accessed: typeof raw.last_accessed === "string" ? raw.last_accessed : "",
+    user_id: typeof raw.user_id === "string" ? raw.user_id : undefined,
   };
 }
 

@@ -1,7 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ChevronLeft, ChevronRight, Info, RefreshCw, Search, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useForm, useFormState, useWatch } from "react-hook-form";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
@@ -50,7 +50,7 @@ import {
 } from "./formModel";
 import { NodeCriteriaFields } from "./NodeCriteriaFields";
 import { PlatformAccessPanel } from "./PlatformAccessPanel";
-import { PlatformMonitorPanel } from "./PlatformMonitorPanel";
+const PlatformMonitorPanel = lazy(() => import("./PlatformMonitorPanel").then((m) => ({ default: m.PlatformMonitorPanel })));
 import type { PlatformLease } from "./types";
 
 type PlatformDetailTab = "monitor" | "access" | "config" | "ops";
@@ -570,7 +570,9 @@ export function PlatformDetailPage() {
                 </ReadoutStrip>
 
                 <TabsContent value="monitor" className="flex flex-col">
-                  <PlatformMonitorPanel platform={platform} />
+                  <Suspense fallback={<div className="p-6" />}>
+                    <PlatformMonitorPanel platform={platform} />
+                  </Suspense>
                 </TabsContent>
 
                 <TabsContent value="access" className="flex flex-col">

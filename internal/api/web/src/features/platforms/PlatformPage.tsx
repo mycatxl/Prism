@@ -1,27 +1,32 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Info, Plus, RefreshCw, Search } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { adminPlansQueryKey, listPlans } from "../admin/api";
+import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Page, PageHeader } from "../../components/ui/PageHeader";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
 import { Switch } from "../../components/ui/Switch";
-import { Table, TableWrap, TBody, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
+import { getPlatformPulse } from "../dashboard/api";
+import { getTimeWindow } from "../dashboard/range";
+import { listSubscriptions } from "../subscriptions/api";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
-import { formatGoDuration } from "../../lib/time";
+import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import { createPlatform, listPlatforms } from "./api";
 import {
   allocationPolicies,
@@ -39,11 +44,31 @@ import {
   type PlatformFormValues,
 } from "./formModel";
 import { NodeCriteriaFields } from "./NodeCriteriaFields";
+import { platformDotClass, platformStatus } from "./platformMeta";
 import type { Platform } from "./types";
+
+/*
+ * The platform list, on the Signal Console rhythm: page header, one panel, a
+ * toolbar of the filters an operator actually drives (status, name, refresh),
+ * one data grid, and a footer that carries the counts and the pager. The
+ * columns answer the questions the workbench asks per platform — is it
+ * serving, what feeds it, what sells it, what it holds right now — and every
+ * cell is either a field the server returns or a count derived from one.
+ */
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 const EMPTY_PLATFORMS: Platform[] = [];
+const EMPTY_SUBSCRIPTIONS: { id: string; name: string }[] = [];
 const PAGE_SIZE_OPTIONS = [12, 24, 48, 96] as const;
+
+/** The statuses the toolbar can narrow the grid to; they mirror `platformStatus`. */
+type PlatformStatusFilter = "all" | "ok" | "no-routable";
+
+const STATUS_FILTERS: Array<{ key: PlatformStatusFilter; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "ok", label: "正常" },
+  { key: "no-routable", label: "无可路由节点" },
+];
 
 /**
  * Offset pagination for this page's table footer.
@@ -161,6 +186,7 @@ export function PlatformPage() {
   // so one keystroke is never one request while typing still never loses a
   // character.
   const settledSearch = useDebouncedValue(search);
+  const [statusFilter, setStatusFilter] = useState<PlatformStatusFilter>("all");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState<number>(24);
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -187,11 +213,70 @@ export function PlatformPage() {
     placeholderData: (prev) => prev,
   });
 
-  const platforms = platformsQuery.data?.items ?? EMPTY_PLATFORMS;
-
+  const platformItems = platformsQuery.data?.items ?? EMPTY_PLATFORMS;
   const totalPlatforms = platformsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(totalPlatforms / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
+
+  // The subscriptions a platform's criteria point at are the "upstream" of the
+  // page: one list query shared by every row, keyed so the page's own refresh
+  // (and any platform write) picks up renames.
+  const subscriptionsQuery = useQuery({
+    queryKey: ["platforms", "upstream"],
+    queryFn: () => listSubscriptions({ limit: 200 }),
+    staleTime: 60_000,
+  });
+  const subscriptionNameById = useMemo(() => {
+    const items = subscriptionsQuery.data?.items ?? EMPTY_SUBSCRIPTIONS;
+    return new Map(items.map((subscription) => [subscription.id, subscription.name]));
+  }, [subscriptionsQuery.data]);
+
+  // The plan list is the admin console's single shared cache entry: the plans
+  // page edits it, the user pickers read it, and this page counts from it —
+  // one read, never a divergent copy.
+  const plansQuery = useQuery({
+    queryKey: adminPlansQueryKey,
+    queryFn: listPlans,
+    staleTime: 60_000,
+  });
+
+  // Active leases come from the same pulse the workbench reads: one snapshot
+  // query per visible row, all under the "platforms" prefix so the page's one
+  // refresh button and every platform mutation move them too.
+  const pulses = useQueries({
+    queries: platformItems.map((platform) => ({
+      queryKey: ["platforms", "pulse", platform.id],
+      queryFn: () => getPlatformPulse(platform.id, getTimeWindow("1h")),
+      refetchInterval: 30_000,
+      placeholderData: (previous: Awaited<ReturnType<typeof getPlatformPulse>> | undefined) => previous,
+    })),
+  });
+  const activeLeasesById = useMemo(() => {
+    const map = new Map<string, number | null>();
+    platformItems.forEach((platform, index) => {
+      map.set(platform.id, pulses[index]?.data?.activeLeases ?? null);
+    });
+    return map;
+  }, [platformItems, pulses]);
+
+  // The status filter works on the facts the rows already carry; the list
+  // endpoint has no server-side state parameter, so the filter narrows the
+  // loaded page rather than pretending to re-query the server.
+  const visiblePlatforms =
+    statusFilter === "all"
+      ? platformItems
+      : platformItems.filter(
+          (platform) =>
+            (platform.routable_node_count > 0) === (statusFilter === "ok"),
+        );
+  const hasActiveFilters = statusFilter !== "all" || Boolean(settledSearch);
+
+  // One action, every query the page reads: the list, every row's pulse, the
+  // upstream subscription names and the plan counts.
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["platforms"] });
+    void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey });
+  };
 
   const createForm = useForm<PlatformFormValues>({
     resolver: zodResolver(platformFormSchema),
@@ -235,35 +320,47 @@ export function PlatformPage() {
       <Page bleed>
         <PageHeader
           title={t("平台")}
+          meta={
+            platformsQuery.data ? (
+              <PageMeta label={t("平台总数")} value={totalPlatforms.toLocaleString()} />
+            ) : undefined
+          }
           actions={
-            <>
-              <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                <Plus size={14} />
-                {t("新建")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => platformsQuery.refetch()}
-                disabled={platformsQuery.isFetching}
-                aria-label={t("刷新")}
-                title={t("刷新")}
-              >
-                <RefreshCw size={15} className={cn(platformsQuery.isFetching && "animate-spin")} />
-              </Button>
-            </>
+            <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+              <Plus size={14} />
+              {t("新建")}
+            </Button>
           }
         />
 
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-        <div className="page-content page-content--fill">
+        <div className="page-content">
           <Panel className="flex min-w-0 flex-col">
             <PanelHeader
               title={t("平台列表")}
+              meta={
+                plansQuery.data
+                  ? t("共 {{count}} 个套餐", { count: plansQuery.data.items.length })
+                  : undefined
+              }
             />
 
-            <PanelToolbar>
+            <PanelToolbar className="filter-toolbar">
+              <Select
+                className="w-40"
+                value={statusFilter}
+                aria-label={t("状态")}
+                onChange={(event) => {
+                  setStatusFilter(event.target.value as PlatformStatusFilter);
+                }}
+              >
+                {STATUS_FILTERS.map((item) => (
+                  <option key={item.key} value={item.key}>
+                    {t(item.label)}
+                  </option>
+                ))}
+              </Select>
               <div className="relative w-full sm:w-64">
                 <label htmlFor="platform-search" className="sr-only">
                   {t("搜索平台")}
@@ -284,6 +381,19 @@ export function PlatformPage() {
                   className="h-[var(--control-h)] pl-7 text-xs"
                 />
               </div>
+              <div className="ml-auto flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  disabled={platformsQuery.isFetching}
+                  onClick={refresh}
+                >
+                  <RefreshCw
+                    size={15}
+                    className={platformsQuery.isFetching ? "animate-spin" : undefined}
+                  />
+                  {t("刷新")}
+                </Button>
+              </div>
             </PanelToolbar>
 
             {platformsQuery.isLoading ? (
@@ -302,11 +412,15 @@ export function PlatformPage() {
                   }
                 />
               </PanelBody>
-            ) : platforms.length === 0 ? (
+            ) : visiblePlatforms.length === 0 ? (
               <PanelBody>
                 <EmptyState
-                  title={t("没有匹配的平台")}
-                  hint={t("共 {{count}} 个平台", { count: totalPlatforms })}
+                  title={t(hasActiveFilters ? "没有匹配的平台" : "还没有平台")}
+                  hint={
+                    statusFilter !== "all" && platformItems.length > 0
+                      ? t("状态筛选仅作用于当前页。")
+                      : undefined
+                  }
                   action={
                     <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
                       <Plus size={14} />
@@ -316,35 +430,46 @@ export function PlatformPage() {
                 />
               </PanelBody>
             ) : (
-              <TableWrap>
-                <Table>
+              <TableWrap aria-busy={platformsQuery.isFetching}>
+                <Table className="min-w-[820px]">
                   <caption className="sr-only">{t("平台列表")}</caption>
                   <THead>
-                    <TR className="hover:bg-transparent">
-                      <TH>{t("平台")}</TH>
-                      <TH>{t("标签规则")}</TH>
-                      <TH>{t("地区")}</TH>
-                      <TH>{t("策略")}</TH>
-                      <TH className="text-right">{t("可用节点")}</TH>
-                      <TH className="text-right">{t("租约时长")}</TH>
+                    <TR>
+                      <TH>{t("平台名")}</TH>
+                      <TH>{t("状态")}</TH>
+                      <TH>{t("上游订阅")}</TH>
+                      <TH className="text-right">{t("套餐数")}</TH>
+                      <TH className="text-right">{t("活跃租约")}</TH>
+                      <TH className="text-right">{t("最近活动")}</TH>
                     </TR>
                   </THead>
                   <TBody>
-                    {platforms.map((platform) => {
-                      const open = () => navigate(`${opsPaths.platforms}/${platform.id}`);
-                      const policy = t(
-                        platform.id === ZERO_UUID
-                          ? "内置平台"
-                          : allocationPolicyLabel[platform.allocation_policy],
+                    {visiblePlatforms.map((platform) => {
+                      const state = platformStatus(platform);
+                      const upstreamNames = platform.subscription_filters.map(
+                        (id) => subscriptionNameById.get(id) ?? id,
                       );
-                      const tagRules = platform.regex_filters.join("  ");
-                      const regions = platform.region_filters.join(" / ").toUpperCase();
+                      const planCount = plansQuery.data
+                        ? plansQuery.data.items.filter(
+                            (plan) =>
+                              (plan.platforms ?? []).length === 0 ||
+                              (plan.platforms ?? []).includes(platform.name),
+                          ).length
+                        : null;
+                      const activeLeases = activeLeasesById.get(platform.id) ?? null;
+                      const detailHref = `${opsPaths.platforms}/${platform.id}`;
+                      const open = () => navigate(detailHref);
                       return (
                         <TR
                           key={platform.id}
                           tabIndex={0}
                           className="cursor-pointer"
-                          onClick={open}
+                          onClick={(event) => {
+                            // The name is its own link; a click that starts on
+                            // a control belongs to that control alone.
+                            if ((event.target as HTMLElement).closest("a, button, input, select")) return;
+                            open();
+                          }}
                           onKeyDown={(event) => {
                             if (event.target !== event.currentTarget) return;
                             if (event.key === "Enter" || event.key === " ") {
@@ -353,31 +478,52 @@ export function PlatformPage() {
                             }
                           }}
                         >
+                          <TDClip title={platform.name}>
+                            <span className="flex min-w-0 items-center gap-2">
+                              <Link
+                                to={detailHref}
+                                className="mono block max-w-full truncate text-sm font-medium text-accent"
+                              >
+                                {platform.name}
+                              </Link>
+                              {platform.id === ZERO_UUID ? (
+                                <Badge tone="neutral" className="shrink-0">
+                                  {t("内置平台")}
+                                </Badge>
+                              ) : null}
+                            </span>
+                          </TDClip>
+                          <TD className="whitespace-nowrap">
+                            <span className="inline-flex items-center gap-2">
+                              <span aria-hidden className={platformDotClass(state.tone)} />
+                              <span className="state-text">{t(state.label)}</span>
+                            </span>
+                          </TD>
                           <TDClip
-                            className="font-medium text-ink"
-                            title={`${platform.name} · ${policy}`}
+                            title={upstreamNames.length > 1 ? upstreamNames.join(" · ") : undefined}
                           >
-                            {platform.name}
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="min-w-0 truncate">
+                                {upstreamNames[0] ?? t("不限订阅")}
+                              </span>
+                              {upstreamNames.length > 1 ? (
+                                <span className="readout shrink-0 text-2xs text-ink-faint">
+                                  +{upstreamNames.length - 1}
+                                </span>
+                              ) : null}
+                            </span>
                           </TDClip>
-                          <TDClip
-                            className="font-mono text-2xs text-ink-soft"
-                            title={tagRules || undefined}
-                          >
-                            {tagRules || t("全部标签")}
-                          </TDClip>
-                          <TDClip className="readout text-xs text-ink-soft" title={regions || undefined}>
-                            {regions || t("不限地区")}
-                          </TDClip>
-                          <TDClip className="text-xs text-ink-soft" title={policy}>
-                            {policy}
-                          </TDClip>
-                          <TDNum
-                            className={platform.routable_node_count ? undefined : "text-ink-faint"}
-                          >
-                            {platform.routable_node_count.toLocaleString()}
+                          <TDNum className={planCount ? undefined : "text-ink-faint"}>
+                            {planCount === null ? "--" : planCount.toLocaleString()}
                           </TDNum>
-                          <TDNum className="text-xs text-ink-soft">
-                            {formatGoDuration(platform.sticky_ttl, t("默认"))}
+                          <TDNum className={activeLeases === null ? "text-ink-faint" : undefined}>
+                            {activeLeases === null ? "--" : activeLeases.toLocaleString()}
+                          </TDNum>
+                          <TDNum
+                            className="text-xs text-ink-soft"
+                            title={formatDateTime(platform.updated_at)}
+                          >
+                            {formatRelativeTime(platform.updated_at)}
                           </TDNum>
                         </TR>
                       );
@@ -387,7 +533,7 @@ export function PlatformPage() {
               </TableWrap>
             )}
 
-            {platformsQuery.data && platforms.length > 0 && (
+            {platformsQuery.data && visiblePlatforms.length > 0 && (
               <PageNavigator
                 page={currentPage}
                 totalPages={totalPages}

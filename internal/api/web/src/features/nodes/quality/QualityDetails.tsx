@@ -9,7 +9,8 @@ import { useI18n } from "../../../i18n";
 import { opsPaths } from "../../../lib/paths";
 import { formatDateTime, formatRelativeTime } from "../../../lib/time";
 import type { QualityEvidence, QualitySummary } from "./types";
-import { assessmentReasons, evidenceFor, inspectionErrorLabel, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, useQualityTime, verdictLabels } from "./presentation";
+import { useNow } from "../../../lib/clock";
+import { assessmentReasons, evidenceFor, inspectionErrorLabel, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, verdictLabels } from "./presentation";
 import { PurityGuide } from "./PurityGuide";
 import { IPPureReviewPanel } from "./IPPureReview";
 
@@ -58,7 +59,7 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
 
 export function QualityBadge({ summary, showScore = true }: { summary?: QualitySummary | null; showScore?: boolean }) {
   const { t } = useI18n();
-  const now = useQualityTime();
+  const now = useNow();
   const evidence = evidenceFor(summary, "ippure");
   if (evidence && !sourceIsFresh(summary, "ippure", now)) return <Badge tone="warn"><Clock3 size={11} aria-hidden />{t("纯净度评分已过期")}</Badge>;
   if (sourceIsFresh(summary, "ippure", now)) {
@@ -74,7 +75,7 @@ export function QualityBadge({ summary, showScore = true }: { summary?: QualityS
 
 export function VerdictBadge({ summary }: { summary?: QualitySummary | null }) {
   const { t } = useI18n();
-  const now = useQualityTime();
+  const now = useNow();
   const verdict = summary?.assessment?.verdict || "pending";
   const expired = ["ippure", "proxycheck"].some(id => { const evidence = evidenceFor(summary,id); return evidence && Date.parse(evidence.valid_until) <= now; });
   const adverse = ["high_risk","review","conflicting"].includes(verdict);
@@ -87,7 +88,7 @@ export function VerdictBadge({ summary }: { summary?: QualitySummary | null }) {
 
 export function NetworkSignals({ summary }: { summary?: QualitySummary | null }) {
   const { t } = useI18n();
-  const now = useQualityTime();
+  const now = useNow();
   const evidence = evidenceFor(summary,"proxycheck");
   const torRoles = sourceIsFresh(summary,"torproject",now) ? evidenceFor(summary,"torproject")?.tor_roles || [] : [];
   const roleTags = torRoles.filter(role => role !== "relay" || torRoles.length === 1).map(role => role === "guard" ? "Tor 守卫" : torRoleLabels[role]);
@@ -107,7 +108,7 @@ export function NetworkSignals({ summary }: { summary?: QualitySummary | null })
 
 export function IPTypeBadge({ summary }: { summary?: QualitySummary | null }) {
   const { t } = useI18n();
-  const now = useQualityTime();
+  const now = useNow();
   const proxyFresh = sourceIsFresh(summary,"proxycheck",now);
   const pureFresh = sourceIsFresh(summary,"ippure",now);
   let type = proxyFresh ? evidenceFor(summary,"proxycheck")!.ip_type : "unknown";
@@ -145,7 +146,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
   nodeHash?: string; nodeIP?: string; nodeReady?: boolean;
 }) {
   const { t } = useI18n();
-  const now = useQualityTime();
+  const now = useNow();
   const evidence = summary?.evidence;
   const pure = evidenceFor(summary,"ippure");
   const pureFresh = sourceIsFresh(summary,"ippure",now);

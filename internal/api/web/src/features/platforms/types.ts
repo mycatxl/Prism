@@ -140,6 +140,11 @@ export type PlatformLease = {
   egress_ip: string;
   expiry: string;
   last_accessed: string;
+  /**
+   * The tenant the lease belongs to. Empty on a single-tenant platform, where
+   * the lease is carried by the instance's global token rather than a user.
+   */
+  user_id?: string;
 };
 
 export type PlatformLeaseSortBy = "account" | "expiry" | "last_accessed";

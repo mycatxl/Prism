@@ -8,10 +8,6 @@ export type GeoIPLookupResult = {
   region: string;
 };
 
-export type GeoIPBatchLookupResponse = {
-  results: GeoIPLookupResult[];
-};
-
 export type GeoIPUpdateResponse = {
   status: string;
 };

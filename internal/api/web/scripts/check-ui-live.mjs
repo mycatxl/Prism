@@ -889,6 +889,7 @@ check("the page never overflows horizontally", async ({ origin, page }) => {
   const failures = [];
   for (const viewport of [
     { width: 1440, height: 900 },
+    { width: 1024, height: 900 },
     { width: 390, height: 844 },
   ]) {
     await page.setViewportSize(viewport);
@@ -918,36 +919,18 @@ check("the dashboard states its condition and works from real registers", async 
   await page.goto(origin + DASHBOARD);
   await rendered(page);
 
-  /*
-   * Two states are legitimate: a deployment with a fleet states its condition and
-   * opens its registers; an empty one walks the operator through the first run
-   * instead of printing four zeros. Both must be real.
-   */
-  const band = page.locator("main dl").first();
-  if ((await band.count()) > 0) {
-    const facts = await band.locator("dd").allInnerTexts();
-    assert(facts.length >= 4, "the condition band must state four facts");
-    assert(
-      facts.some((text) => /\d/.test(text)),
-      "at least one fact must carry a number, not four dashes",
-    );
-
-    // The two registers the page is worked from, addressed by their own names.
-    await page.getByRole("table", { name: "需要处理" }).waitFor({ state: "visible", timeout: 20000 });
-    await page.getByRole("table", { name: "平台配线" }).waitFor({ state: "visible", timeout: 20000 });
-
-    // The egress plate is an offline SVG projection; when there are exits it must
-    // draw at a real size rather than collapsing to an empty box.
-    const svg = page.locator("main svg").first();
-    if ((await svg.count()) > 0) {
-      const box = await svg.boundingBox();
-      assert(box && box.width > 0 && box.height > 0, "the egress plate must draw an SVG with a real size");
-    }
-  } else {
-    await page.getByRole("heading", { name: "从三步开始" }).waitFor({ state: "visible", timeout: 20000 });
-    const steps = page.locator("main ol > li");
-    assert.equal(await steps.count(), 3, "the first run must list exactly three steps");
-  }
+  /* The current workbench is organized around state, action queues, objects and evidence. */
+  await page.getByRole("heading", { name: "控制平面" }).waitFor({ state: "visible", timeout: 20000 });
+  await page.locator("main .workbench-statusline").waitFor({ state: "visible", timeout: 20000 });
+  const statusCells = page.locator("main .workbench-statusline__cell");
+  assert.equal(await statusCells.count(), 4, "the workbench must state four global facts");
+  const statusText = await statusCells.allInnerTexts();
+  assert(statusText.some((text) => /\d/.test(text)), "at least one global fact must carry a number");
+  await page.getByRole("heading", { name: "交付" }).waitFor({ state: "visible", timeout: 20000 });
+  await page.getByRole("heading", { name: "平台配线" }).waitFor({ state: "visible", timeout: 20000 });
+  await page.getByRole("heading", { name: "最近证据" }).waitFor({ state: "visible", timeout: 20000 });
+  assert((await page.locator("main .workbench-object-list__row").count()) > 0, "the platform register must expose real objects");
+  assert((await page.locator("main .workbench-evidence-row").count()) > 0, "the evidence register must expose real audit entries");
 });
 
 check("every theme is legible, not just the one the art was drawn in", async ({ origin, page }) => {

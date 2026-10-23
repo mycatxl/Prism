@@ -49,6 +49,8 @@ export const JOBS_TRANSLATIONS: Record<string, string> = {
   "已完成 {{count}}": "{{count}} completed",
   "失败 {{count}}": "{{count}} failed",
   "已跳过 {{count}}": "{{count}} skipped",
+  "已取消 {{count}}": "{{count}} canceled",
+  请求参数: "Request body",
   "待处理 {{count}}": "{{count}} pending",
   "在线查询待完成 {{count}}": "{{count}} online lookups pending",
   取消任务: "Cancel job",

@@ -1,7 +1,7 @@
 import { Sheet } from "../../components/ui/Sheet";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Eye, Filter, Info, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Ellipsis, Info, Plus, RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Controller, useForm, useFormState } from "react-hook-form";
 import { Link, useSearchParams } from "react-router-dom";
@@ -10,7 +10,8 @@ import { cn } from "../../lib/cn";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Page, PageHeader } from "../../components/ui/PageHeader";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "../../components/ui/Menu";
 import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Fieldset, Input, Textarea } from "../../components/ui/Input";
@@ -24,7 +25,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
-import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
+import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import {
   cleanupSubscriptionCircuitOpenNodes,
   createSubscription,
@@ -117,6 +118,31 @@ function subscriptionToEditForm(subscription: Subscription): SubscriptionEditFor
 
 function sourceTypeLabel(sourceType: SubscriptionSourceType): string {
   return sourceType === "local" ? "本地" : "远程";
+}
+
+/**
+ * The one state a subscription row shows: what the last sync did, or what is
+ * happening right now. An in-flight manual refresh outranks the stored state, a
+ * disabled source reads as stopped regardless of its last error, and an error
+ * beats a stale success. The returned label is a translation key, not prose.
+ */
+function subscriptionRowState(
+  subscription: Subscription,
+  { refreshPending, enabled }: { refreshPending: boolean; enabled: boolean },
+): { tone: "neutral" | "signal" | "alert"; label: string } {
+  if (refreshPending) {
+    return { tone: "neutral", label: "同步中" };
+  }
+  if (!enabled) {
+    return { tone: "neutral", label: "已停用" };
+  }
+  if (subscription.last_error) {
+    return { tone: "alert", label: "错误" };
+  }
+  if (subscription.last_updated) {
+    return { tone: "signal", label: "正常" };
+  }
+  return { tone: "neutral", label: "未检查" };
 }
 
 function parseEnabledFilter(value: EnabledFilter): boolean | undefined {
@@ -479,6 +505,8 @@ export function SubscriptionPage() {
 
   const totalPages = Math.max(1, Math.ceil(totalSubscriptions / pageSize));
   const currentPage = Math.min(page, totalPages - 1);
+  /* The empty state distinguishes "nothing here yet" from "filters matched nothing". */
+  const hasActiveFilters = enabledFilter !== "all" || search.trim().length > 0;
 
   const selectedQuery = useQuery({ queryKey: ["subscriptions", "detail", selectedSubscriptionId], queryFn: () => getSubscription(selectedSubscriptionId), enabled: Boolean(selectedSubscriptionId), refetchInterval: 30_000 });
   const selectedSubscription = useMemo(() => {
@@ -824,48 +852,43 @@ export function SubscriptionPage() {
 
       <PageHeader
         title={t("订阅源")}
+        meta={
+          subscriptionsQuery.data ? (
+            <PageMeta label={t("订阅总数")} value={totalSubscriptions.toLocaleString()} />
+          ) : undefined
+        }
         actions={
-          <>
-            <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-              <Plus size={14} />
-              {t("新建")}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => subscriptionsQuery.refetch()}
-              disabled={subscriptionsQuery.isFetching}
-              aria-label={t("刷新")}
-              title={t("刷新")}
-            >
-              <RefreshCw size={15} className={cn(subscriptionsQuery.isFetching && "animate-spin")} />
-            </Button>
-          </>
+          <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
+            <Plus size={14} aria-hidden />
+            {t("新建")}
+          </Button>
         }
       />
 
       <div className="page-content page-content--fill">
         <Panel className="flex min-w-0 flex-col">
-          <PanelHeader title={t("订阅列表")} />
+          <PanelHeader
+            title={t("订阅列表")}
+            meta={
+              subscriptionsQuery.data ? t("共 {{count}} 个订阅", { count: totalSubscriptions }) : undefined
+            }
+          />
 
           <PanelToolbar>
-            <div className="flex items-center gap-1.5">
-              <Filter size={14} aria-hidden className="text-ink-faint" />
-              <Select
-                id="sub-status-filter"
-                className="w-auto"
-                aria-label={t("刷新状态")}
-                value={enabledFilter}
-                onChange={(event) => {
-                  setEnabledFilter(event.target.value as EnabledFilter);
-                  setPage(0);
-                }}
-              >
-                <option value="all">{t("全部")}</option>
-                <option value="enabled">{t("仅启用")}</option>
-                <option value="disabled">{t("仅禁用")}</option>
-              </Select>
-            </div>
+            <Select
+              id="sub-status-filter"
+              className="w-auto"
+              aria-label={t("状态")}
+              value={enabledFilter}
+              onChange={(event) => {
+                setEnabledFilter(event.target.value as EnabledFilter);
+                setPage(0);
+              }}
+            >
+              <option value="all">{t("全部")}</option>
+              <option value="enabled">{t("仅启用")}</option>
+              <option value="disabled">{t("仅禁用")}</option>
+            </Select>
             <div className="relative w-full sm:w-64">
               <label htmlFor="subscription-search" className="sr-only">
                 {t("搜索订阅")}
@@ -886,6 +909,23 @@ export function SubscriptionPage() {
                 className="pl-7"
               />
             </div>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void invalidateSubscriptions()}
+                disabled={subscriptionsQuery.isFetching}
+                aria-label={t("刷新")}
+                title={t("刷新")}
+              >
+                <RefreshCw
+                  size={14}
+                  aria-hidden
+                  className={cn(subscriptionsQuery.isFetching && "animate-spin")}
+                />
+                {t("刷新")}
+              </Button>
+            </div>
           </PanelToolbar>
 
           {subscriptionsQuery.isLoading ? (
@@ -902,10 +942,10 @@ export function SubscriptionPage() {
           ) : !subscriptions.length ? (
             <PanelBody>
               <EmptyState
-                title={t("没有匹配的订阅")}
+                title={hasActiveFilters ? t("没有匹配的订阅") : t("尚未添加任何订阅源")}
                 action={
                   <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                    <Plus size={14} />
+                    <Plus size={14} aria-hidden />
                     {t("新建")}
                   </Button>
                 }
@@ -914,34 +954,37 @@ export function SubscriptionPage() {
           ) : null}
 
           {subscriptions.length ? (
-            <TableWrap>
-              <Table className="min-w-[920px]">
+            <TableWrap aria-busy={subscriptionsQuery.isFetching}>
+              <Table className="min-w-[760px]">
                 <caption className="sr-only">{t("订阅列表")}</caption>
                 <THead>
                   <TR>
                     <TH>{t("名称")}</TH>
                     <TH>{t("订阅源")}</TH>
-                    <TH>{t("更新间隔")}</TH>
+                    <TH>{t("状态")}</TH>
                     <TH className="text-right">{t("节点数")}</TH>
-                    <TH>{t("刷新状态")}</TH>
-                    <TH>{t("上次检查")}</TH>
-                    <TH>{t("上次更新")}</TH>
-                    <TH>{t("启用")}</TH>
+                    <TH>{t("最近同步")}</TH>
                     <TH className="text-right">{t("操作")}</TH>
                   </TR>
                 </THead>
                 <TBody>
                   {subscriptions.map((subscription) => {
                     const enabled = displayedEnabledState(subscription);
-                    const toggleLabel = enabled
-                      ? t("停用订阅 {{name}}", { name: subscription.name })
-                      : t("启用订阅 {{name}}", { name: subscription.name });
+                    const rowState = subscriptionRowState(subscription, {
+                      refreshPending: isRefreshPending(subscription.id),
+                      enabled,
+                    });
                     return (
                       <TR
                         key={subscription.id}
                         tabIndex={0}
                         className="cursor-pointer"
-                        onClick={() => openDrawer(subscription)}
+                        onClick={(event) => {
+                          // The actions menu is its own control; a click that
+                          // starts on it belongs to it alone.
+                          if ((event.target as HTMLElement).closest("a, button, input, select")) return;
+                          openDrawer(subscription);
+                        }}
                         onKeyDown={(event) => {
                           if (event.target !== event.currentTarget) return;
                           if (event.key === "Enter" || event.key === " ") {
@@ -952,98 +995,96 @@ export function SubscriptionPage() {
                       >
                         <TDClip className="font-medium text-ink">{subscription.name}</TDClip>
                         <TDClip
-                          className="font-mono text-xs text-ink-soft"
-                          title={
-                            subscription.source_type === "local" ? t("本地订阅") : subscription.url
-                          }
+                          className="mono text-xs"
+                          title={subscription.source_type === "local" ? undefined : subscription.url}
                         >
                           {subscription.source_type === "local"
                             ? t("本地订阅")
                             : extractHostname(subscription.url)}
                         </TDClip>
-                        <TD className="font-mono text-xs text-ink-soft">
-                          {formatGoDuration(subscription.update_interval)}
-                        </TD>
-                        <TDNum className="text-xs">
-                          {`${subscription.healthy_node_count} / ${subscription.node_count}`}
-                        </TDNum>
-                        <TD>
-                          {subscription.last_error ? (
-                            <Badge tone="alert" dot>
-                              {t("错误")}
-                            </Badge>
-                          ) : subscription.last_checked ? (
-                            <Badge tone="signal" dot>
-                              {t("正常")}
-                            </Badge>
-                          ) : (
-                            <Badge tone="neutral" dot>
-                              {t("未检查")}
-                            </Badge>
-                          )}
-                        </TD>
-                        <TDClip className="font-mono text-xs text-ink-soft">
-                          {formatRelativeTime(subscription.last_checked || "")}
-                        </TDClip>
-                        <TDClip className="font-mono text-xs text-ink-soft">
-                          {formatRelativeTime(subscription.last_updated || "")}
-                        </TDClip>
-                        <TD>
-                          <div title={toggleLabel} onClick={(event) => event.stopPropagation()}>
-                            <Switch
-                              checked={enabled}
-                              disabled={isEnabledTogglePending(subscription.id)}
-                              onCheckedChange={(next) => void handleEnabledChange(subscription, next)}
-                              aria-label={toggleLabel}
+                        <TD className="whitespace-nowrap" title={subscription.last_error || undefined}>
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className={cn(
+                                "state-dot",
+                                rowState.tone !== "neutral" && `state-dot--${rowState.tone}`,
+                              )}
                             />
-                          </div>
+                            <span className="state-text">{t(rowState.label)}</span>
+                          </span>
                         </TD>
+                        <TDNum title={`${t("健康节点数")} / ${t("节点总数")}`}>
+                          <span className="readout text-xs">{subscription.healthy_node_count}</span>
+                          <span className="text-xs text-ink-faint"> / {subscription.node_count}</span>
+                        </TDNum>
+                        <TDNum
+                          title={
+                            subscription.last_updated
+                              ? formatDateTime(subscription.last_updated)
+                              : undefined
+                          }
+                        >
+                          {subscription.last_updated ? (
+                            formatRelativeTime(subscription.last_updated)
+                          ) : (
+                            <span className="text-ink-faint">--</span>
+                          )}
+                        </TDNum>
                         <TD className="text-right">
-                          <div
-                            className="flex items-center justify-end gap-1"
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <Button asChild variant="ghost" size="icon" title={t("预览节点池")}>
-                              <Link
-                                to={`${opsPaths.nodes}?subscription_id=${encodeURIComponent(subscription.id)}`}
-                                aria-label={t("预览订阅 {{name}} 的节点池", {
-                                  name: subscription.name,
-                                })}
+                          <Menu>
+                            <MenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={t("行操作")}
+                                title={t("行操作")}
                               >
-                                <Eye size={14} />
-                              </Link>
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => openDrawer(subscription)}
-                              title={t("编辑")}
-                              aria-label={t("编辑")}
-                            >
-                              <Pencil size={14} />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => void handleRefresh(subscription)}
-                              disabled={isRefreshPending(subscription.id)}
-                              title={t("刷新")}
-                              aria-label={t("刷新")}
-                            >
-                              <RefreshCw size={14} />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-ink-faint hover:bg-alert-wash hover:text-alert"
-                              onClick={() => void handleDelete(subscription)}
-                              disabled={isDeletePending}
-                              title={t("删除")}
-                              aria-label={t("删除")}
-                            >
-                              <Trash2 size={14} />
-                            </Button>
-                          </div>
+                                <Ellipsis size={14} aria-hidden />
+                              </Button>
+                            </MenuTrigger>
+                            <MenuContent>
+                              <MenuItem asChild>
+                                <Link
+                                  to={`${opsPaths.nodes}?subscription_id=${encodeURIComponent(subscription.id)}`}
+                                  aria-label={t("预览订阅 {{name}} 的节点池", {
+                                    name: subscription.name,
+                                  })}
+                                >
+                                  {t("预览节点池")}
+                                </Link>
+                              </MenuItem>
+                              <MenuItem onSelect={() => openDrawer(subscription)}>
+                                {t("编辑")}
+                              </MenuItem>
+                              <MenuItem
+                                onSelect={() => void handleRefresh(subscription)}
+                                disabled={isRefreshPending(subscription.id)}
+                              >
+                                {t("立即刷新")}
+                              </MenuItem>
+                              <MenuItem
+                                onSelect={() => void handleEnabledChange(subscription, !enabled)}
+                                disabled={isEnabledTogglePending(subscription.id)}
+                              >
+                                {enabled ? t("停用") : t("启用")}
+                              </MenuItem>
+                              <MenuItem
+                                onSelect={() => void handleCleanupCircuitOpenNodes(subscription)}
+                                disabled={cleanupCircuitOpenNodesMutation.isPending}
+                              >
+                                {t("清理失效节点")}
+                              </MenuItem>
+                              <MenuSeparator />
+                              <MenuItem
+                                className="text-alert"
+                                onSelect={() => void handleDelete(subscription)}
+                                disabled={isDeletePending}
+                              >
+                                {t("删除")}
+                              </MenuItem>
+                            </MenuContent>
+                          </Menu>
                         </TD>
                       </TR>
                     );

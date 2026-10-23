@@ -18,11 +18,12 @@ import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
+ import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { newRequestID } from "../../lib/idempotency";
 import { formatMicro } from "../../lib/money";
 import { BALANCE_LEDGER_LIMIT, getBalance, getPlans, meBalanceQueryKey, purchase } from "./api";
-import type { PurchasablePlan } from "./types";
+ import type { PurchaseResult, PurchasablePlan } from "./types";
 
 /** periodLabel names a rollover window in the reader's language. */
 function periodLabel(period: string, t: (text: string) => string): string {
@@ -88,9 +89,12 @@ export function PlansPage() {
         description={t("用余额购买或更换套餐，扣款与生效同时完成。")}
         actions={
           <div className="flex items-center gap-2">
-            <Badge tone={balance > 0 ? "signal" : "neutral"}>
-              {t("当前余额")} {formatMicro(balance)}
-            </Badge>
+            <span className="flex items-baseline gap-2">
+              <span className="text-xs text-ink-soft">{t("当前余额")}</span>
+              <span className="readout text-sm text-ink">
+                {formatMicro(balance)}
+              </span>
+            </span>
             <Button
               variant="secondary"
               onClick={handleRefresh}
@@ -202,9 +206,18 @@ export function PlansPage() {
           plan={buying}
           balanceMicro={balance}
           onClose={() => setBuying(null)}
-          onDone={() => {
-            setBuying(null);
-            showToast("success", t("购买成功，套餐已生效"));
+          onCommitted={(result) => {
+            // The server's own answer says whether money moved: a replay
+            // (same request id answered from the idempotency store) charges
+            // nothing, and the wording says so instead of a generic success.
+            showToast(
+              "success",
+              result.replayed
+                ? t("重复请求：已存在的订阅生效，本次未扣费。")
+                : t("已扣费 {{amount}} USDT，套餐已生效。", {
+                    amount: formatMicro(result.charged_micro),
+                  }),
+            );
             void queryClient.invalidateQueries({ queryKey: ["me-plans"] });
             void queryClient.invalidateQueries({ queryKey: ["me-balance"] });
             void queryClient.invalidateQueries({ queryKey: ["me-overview"] });
@@ -225,26 +238,33 @@ export function PlansPage() {
  * charging a second time. The parent keys this component by plan id, so a
  * different plan - or the same one bought again - mounts a new key, which really
  * is a second charge.
+ *
+ * A commit keeps the dialog open on the server's own answer: what was charged
+ * (`charged_micro`), whether this answer is a replay (`replayed`, zero charge),
+ * and the subscription now in force. The result stays until the reader closes
+ * it — a toast answering "was I charged twice?" disappears too fast to trust.
  */
 function PurchaseDialog({
   plan,
   balanceMicro,
   onClose,
-  onDone,
+  onCommitted,
 }: {
   plan: PurchasablePlan;
   balanceMicro: number;
   onClose: () => void;
-  onDone: () => void;
+  onCommitted: (result: PurchaseResult) => void;
 }) {
   const { t } = useI18n();
   const [requestID] = useState(newRequestID);
+  const [result, setResult] = useState<PurchaseResult | null>(null);
 
   const buyMutation = useMutation({
     mutationFn: (input: { planID: string; requestID: string }) =>
       purchase(input.planID, input.requestID),
-    onSuccess: () => {
-      onDone();
+    onSuccess: (res) => {
+      setResult(res);
+      onCommitted(res);
     },
   });
 
@@ -264,67 +284,132 @@ function PurchaseDialog({
         <DialogOverlay />
         <DialogContent className="w-full max-w-md p-6">
           <DialogTitle className="text-base font-semibold text-ink">
-            {t("确认购买")}
+            {result ? t("购买完成") : t("确认购买")}
           </DialogTitle>
-          <p className="mt-1 text-xs text-ink-soft">
-            {t("扣款与套餐生效同时完成，余额不足时不会扣款。")}
-          </p>
 
-          <div className="mt-4 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-ink-soft">{t("套餐")}</span>
-              <span className="font-medium text-ink">{plan.name}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-ink-soft">{t("有效期")}</span>
-              <span className="readout text-ink">
-                {t("{{days}} 天", { days: plan.duration_days })}
-              </span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-ink-soft">{t("扣款金额")}</span>
-              <span className="readout font-mono text-ink">
-                {formatMicro(plan.price_micro)} USDT
-              </span>
-            </div>
-            <div className="flex items-center justify-between border-t border-rule pt-2">
-              <span className="text-ink-soft">{t("扣款后余额")}</span>
-              <span
-                className={`readout font-mono ${
-                  short ? "text-alert" : "text-signal"
-                }`}
-              >
-                {formatMicro(balanceMicro - plan.price_micro)} USDT
-              </span>
-            </div>
-          </div>
+          {result ? (
+            <>
+              <div className="mt-4 flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className={cn(
+                    "state-dot",
+                    !result.replayed && "state-dot--signal",
+                  )}
+                />
+                <span className="state-text">
+                  {result.replayed
+                    ? t("重复请求，已存在的订阅生效")
+                    : t("购买成功")}
+                </span>
+              </div>
 
-          {buyMutation.isError && (
-            <div className="mt-3 rounded-control border border-alert/30 bg-alert-wash p-3 text-xs text-alert">
-              {formatApiErrorMessage(buyMutation.error, t)}
-            </div>
+              <div className="mt-3 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-ink-soft">{t("本次扣款")}</span>
+                  <span className="readout text-ink">
+                    {result.replayed
+                      ? t("未扣费")
+                      : `${formatMicro(result.charged_micro)} USDT`}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ink-soft">{t("当前余额")}</span>
+                  <span className="readout text-ink">
+                    {formatMicro(result.balance_micro)} USDT
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-rule pt-2">
+                  <span className="text-ink-soft">{t("订阅状态")}</span>
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "state-dot",
+                        result.subscription.status === "active" &&
+                          "state-dot--signal",
+                      )}
+                    />
+                    <span className="state-text">
+                      {result.subscription.status === "active"
+                        ? t("生效中")
+                        : result.subscription.status}
+                    </span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="mt-6 flex items-center justify-end">
+                <Button variant="primary" onClick={onClose}>
+                  {t("完成")}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-xs text-ink-soft">
+                {t("扣款与套餐生效同时完成，余额不足时不会扣款。")}
+              </p>
+
+              <div className="mt-4 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-ink-soft">{t("套餐")}</span>
+                  <span className="font-medium text-ink">{plan.name}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ink-soft">{t("有效期")}</span>
+                  <span className="readout text-ink">
+                    {t("{{days}} 天", { days: plan.duration_days })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-ink-soft">{t("扣款金额")}</span>
+                  <span className="readout font-mono text-ink">
+                    {formatMicro(plan.price_micro)} USDT
+                  </span>
+                </div>
+                <div className="flex items-center justify-between border-t border-rule pt-2">
+                  <span className="text-ink-soft">{t("扣款后余额")}</span>
+                  <span
+                    className={`readout font-mono ${
+                      short ? "text-alert" : "text-signal"
+                    }`}
+                  >
+                    {formatMicro(balanceMicro - plan.price_micro)} USDT
+                  </span>
+                </div>
+              </div>
+
+              {buyMutation.isError && (
+                <div className="mt-3 rounded-control border border-alert/30 bg-alert-wash p-3 text-xs text-alert">
+                  {formatApiErrorMessage(buyMutation.error, t)}
+                </div>
+              )}
+
+              <div className="mt-6 flex items-center justify-end gap-3">
+                <Button
+                  variant="secondary"
+                  onClick={onClose}
+                  disabled={buyMutation.isPending}
+                >
+                  {t("取消")}
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() =>
+                    buyMutation.mutate({ planID: plan.id, requestID })
+                  }
+                  disabled={buyMutation.isPending || short}
+                >
+                  {buyMutation.isPending
+                    ? t("正在购买...")
+                    : short
+                      ? t("余额不足")
+                      : t("确认购买")}
+                </Button>
+              </div>
+            </>
           )}
-
-          <div className="mt-6 flex items-center justify-end gap-3">
-            <Button
-              variant="secondary"
-              onClick={onClose}
-              disabled={buyMutation.isPending}
-            >
-              {t("取消")}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => buyMutation.mutate({ planID: plan.id, requestID })}
-              disabled={buyMutation.isPending || short}
-            >
-              {buyMutation.isPending
-                ? t("正在购买...")
-                : short
-                  ? t("余额不足")
-                  : t("确认购买")}
-            </Button>
-          </div>
         </DialogContent>
       </DialogPortal>
     </DialogRoot>

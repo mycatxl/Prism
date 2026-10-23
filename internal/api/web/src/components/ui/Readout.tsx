@@ -169,11 +169,11 @@ export function Readout({
  */
 export function ReadoutStrip({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <div className={cn("panel flex flex-wrap divide-x divide-rule-faint overflow-hidden", className)}>
+    <div className={cn("readout-strip flex flex-wrap divide-x divide-rule-faint overflow-hidden", className)}>
       {children}
     </div>
-    );
-  }
+  );
+}
 export function ReadoutCell({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("min-w-[9.5rem] flex-1 px-4 py-3.5", className)}>{children}</div>;
+  return <div className={cn("readout-strip__cell min-w-[9.5rem] flex-1 px-4 py-3.5", className)}>{children}</div>;
 }

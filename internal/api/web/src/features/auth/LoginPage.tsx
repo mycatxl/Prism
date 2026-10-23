@@ -1,5 +1,5 @@
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Check, Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -8,7 +8,6 @@ import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { ErrorState } from "../../components/ui/QueryState";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
-import { cn } from "../../lib/cn";
 import { ApiError, fetchSession, login } from "../../lib/api-client";
 import { homePathFor } from "../../lib/roles";
 import { useAuthStore } from "./auth-store";
@@ -102,34 +101,23 @@ export function LoginPage() {
   });
 
   return (
-    <main className="login-shell ground flex min-h-dvh flex-col lg:flex-row">
-      <section aria-label="Prism" className="login-intro flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14">
-        <div className="flex items-center gap-2.5">
-          <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" className="size-10" />
-          <span className="text-lg font-semibold tracking-tight">Prism</span>
-        </div>
-        <div className="max-w-[46ch]">
-          <h1 className="text-2xl">{t("管理你的节点，读懂每个出口。")}</h1>
-          <ul className="mt-5 space-y-2">
-            {["订阅与节点", "出口类型与风险记录", "路由与请求日志"].map((label) => (
-              <li key={label} className="flex items-center gap-2 text-sm text-ink-soft">
-                <Check size={14} className="shrink-0 text-signal" aria-hidden />
-                {t(label)}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <p className="text-xs text-ink-faint">{t("节点、出口与质量，一处掌握。")}</p>
-      </section>
-
-      <section className="login-card-shell flex w-full shrink-0 items-center border-t border-rule bg-paper-inset px-6 py-10 lg:w-[min(42vw,32rem)] lg:border-t-0 lg:border-l lg:px-8">
-        <div className="login-card panel mx-auto w-full max-w-md p-6 sm:p-8">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-lg">{t("欢迎回来")}</h2>
-              <p className="mt-1 text-sm leading-relaxed text-ink-soft">{t("使用你的 Prism 账号登录。")}</p>
+    <main className="login-shell ground">
+      <section className="login-card-shell">
+        <div className="login-card panel">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="36" height="36" className="size-9 rounded-control" />
+              <div className="min-w-0">
+                <span className="block text-base font-semibold tracking-tight">Prism</span>
+                <span className="block text-xs text-ink-faint">{t("管理控制台")}</span>
+              </div>
             </div>
             <LanguageSwitcher />
+          </div>
+
+          <div className="mt-5">
+            <h1 className="text-xl font-semibold text-ink">{t("欢迎回来")}</h1>
+            <p className="mt-1 text-sm leading-relaxed text-ink-soft">{t("使用你的 Prism 账号登录。")}</p>
           </div>
 
           <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
@@ -138,20 +126,24 @@ export function LoginPage() {
                 id="username"
                 autoComplete="username"
                 autoCapitalize="none"
-                aria-invalid={errors.username ? true : undefined}
+                invalid={Boolean(errors.username)}
                 {...register("username")}
               />
-              {errors.username?.message ? <p className="text-xs text-alert">{t(errors.username.message)}</p> : null}
+              {errors.username?.message ? (
+                <p role="alert" className="text-xs text-alert">
+                  {t(errors.username.message)}
+                </p>
+              ) : null}
             </Fieldset>
 
             <Fieldset label={t("密码")} htmlFor="password">
               <div className="flex items-start gap-1.5">
                 <Input
                   id="password"
-                  className={cn("min-w-0 flex-1", errors.password && "border-alert ring-1 ring-alert/40")}
+                  className="min-w-0 flex-1"
                   type={isPasswordVisible ? "text" : "password"}
                   autoComplete="current-password"
-                  aria-invalid={errors.password ? true : undefined}
+                  invalid={Boolean(errors.password)}
                   {...register("password")}
                 />
                 <Button
@@ -166,7 +158,11 @@ export function LoginPage() {
                   {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
                 </Button>
               </div>
-              {errors.password?.message ? <p className="text-xs text-alert">{t(errors.password.message)}</p> : null}
+              {errors.password?.message ? (
+                <p role="alert" className="text-xs text-alert">
+                  {t(errors.password.message)}
+                </p>
+              ) : null}
             </Fieldset>
 
             <Fieldset label={t("身份验证码")} hint={t("启用双因素认证后填写身份验证器中的 6 位验证码。")} htmlFor="totp">
@@ -176,10 +172,14 @@ export function LoginPage() {
                 autoComplete="one-time-code"
                 className="font-mono tracking-[0.25em]"
                 maxLength={6}
-                aria-invalid={errors.totp ? true : undefined}
+                invalid={Boolean(errors.totp)}
                 {...register("totp")}
               />
-              {errors.totp?.message ? <p className="text-xs text-alert">{t(errors.totp.message)}</p> : null}
+              {errors.totp?.message ? (
+                <p role="alert" className="text-xs text-alert">
+                  {t(errors.totp.message)}
+                </p>
+              ) : null}
             </Fieldset>
 
             {submitError ? <ErrorState message={submitError} /> : null}
@@ -195,7 +195,7 @@ export function LoginPage() {
           {registrationMode === "open" || registrationMode === "invite" ? (
             <p className="mt-3 text-xs leading-relaxed text-ink-faint">
               {t("还没有账号？")}
-              <Link className="ml-1 text-signal underline-offset-2 hover:underline" to="/register">
+              <Link className="ml-1 text-accent underline-offset-2 hover:underline" to="/register">
                 {t("注册")}
               </Link>
             </p>

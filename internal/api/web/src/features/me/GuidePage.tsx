@@ -114,7 +114,7 @@ print(resp.json())`;
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
               <div className="text-xs font-semibold text-ink-soft">{t("网关地址 (Host / Port)")}</div>
-              <div className="text-sm font-mono text-ink select-all break-all">{gatewayAddr}</div>
+              <div className="readout text-sm text-ink select-all break-all">{gatewayAddr}</div>
               <div className="text-xs text-ink-muted leading-relaxed">
                 {t("控制台与代理网关是同一入口时，这里就是本页地址；若运营方另设代理端口，以运营方提供的地址为准。")}
               </div>
@@ -122,7 +122,7 @@ print(resp.json())`;
 
             <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
               <div className="text-xs font-semibold text-ink-soft">{t("访问凭据 (Access Key)")}</div>
-              <div className="text-sm font-mono text-ink select-all break-all">pk_&lt;key_id&gt;_&lt;secret&gt;</div>
+              <div className="readout text-sm text-ink select-all break-all">pk_&lt;key_id&gt;_&lt;secret&gt;</div>
               <div className="text-xs text-ink-muted leading-relaxed">
                 {t("在「我的密钥」页面中生成。凭据明文仅在创建时展示一次，请妥善保管。")}
               </div>
@@ -130,7 +130,7 @@ print(resp.json())`;
 
             <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
               <div className="text-xs font-semibold text-ink-soft">{t("账号标识 (Identity)")}</div>
-              <div className="text-sm font-mono text-ink select-all break-all">&lt;platform_name&gt;.&lt;account_id&gt;</div>
+              <div className="readout text-sm text-ink select-all break-all">&lt;platform_name&gt;.&lt;account_id&gt;</div>
               <div className="text-xs text-ink-muted leading-relaxed">
                 {t("点号前是平台名称，点号后是会话粘性账号。只填平台名称、不写点号也可用；整段留空则走默认平台。")}
               </div>
@@ -177,7 +177,7 @@ print(resp.json())`;
                   {platforms.map((plat) => (
                     <TR key={plat.platform_id}>
                       <TD>
-                        <span className="font-mono text-xs font-semibold text-ink select-all">
+                        <span className="readout text-xs text-ink select-all">
                           {plat.platform_name}
                         </span>
                       </TD>
@@ -229,7 +229,7 @@ print(resp.json())`;
                     onClick={() => copyText("forwardCurl", forwardCurl, t("cURL 命令已复制"))}
                   >
                     {copiedKey === "forwardCurl" ? (
-                      <Check aria-hidden className="size-3.5 text-live" />
+                      <Check aria-hidden className="size-3.5 text-signal" />
                     ) : (
                       <Copy aria-hidden className="size-3.5 text-ink-muted" />
                     )}
@@ -250,7 +250,7 @@ print(resp.json())`;
                     onClick={() => copyText("forwardPython", forwardPython, t("Python 代码已复制"))}
                   >
                     {copiedKey === "forwardPython" ? (
-                      <Check aria-hidden className="size-3.5 text-live" />
+                      <Check aria-hidden className="size-3.5 text-signal" />
                     ) : (
                       <Copy aria-hidden className="size-3.5 text-ink-muted" />
                     )}
@@ -280,7 +280,7 @@ print(resp.json())`;
                     onClick={() => copyText("socks5Curl", socks5Curl, t("cURL 命令已复制"))}
                   >
                     {copiedKey === "socks5Curl" ? (
-                      <Check aria-hidden className="size-3.5 text-live" />
+                      <Check aria-hidden className="size-3.5 text-signal" />
                     ) : (
                       <Copy aria-hidden className="size-3.5 text-ink-muted" />
                     )}
@@ -303,7 +303,7 @@ print(resp.json())`;
 
               <div className="flex flex-col gap-1.5 p-3 rounded-control border border-rule bg-paper-inset">
                 <div className="text-xs font-semibold text-ink-soft">{t("URL 路径规范")}</div>
-                <div className="font-mono text-xs text-ink select-all break-all">
+                  <div className="readout text-xs text-ink select-all break-all">
                   /&lt;credential&gt;/&lt;platform_name&gt;:&lt;account_id&gt;/&lt;target_scheme&gt;/&lt;target_host&gt;/&lt;target_path&gt;
                 </div>
                 <div className="text-xs text-ink-muted">
@@ -320,7 +320,7 @@ print(resp.json())`;
                     onClick={() => copyText("reverseCurl", reverseCurl, t("cURL 命令已复制"))}
                   >
                     {copiedKey === "reverseCurl" ? (
-                      <Check aria-hidden className="size-3.5 text-live" />
+                      <Check aria-hidden className="size-3.5 text-signal" />
                     ) : (
                       <Copy aria-hidden className="size-3.5 text-ink-muted" />
                     )}

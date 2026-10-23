@@ -65,4 +65,7 @@ export const DASHBOARD_TRANSLATIONS: Record<string, string> = {
   部分令牌未设置: "Some tokens are not set",
   切换到深色: "Switch to dark",
   切换到浅色: "Switch to light",
+ // 工作台 KPI 条：健康独立出口 IP（overview 的 healthy_egress_ip_count）。
+ "健康独立出口 IP": "Healthy unique egress IPs",
+ "全部独立出口 {{count}} 个": "{{count}} unique egress IPs in total",
 };

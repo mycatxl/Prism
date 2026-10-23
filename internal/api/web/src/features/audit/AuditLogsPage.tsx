@@ -16,6 +16,9 @@ import type { AuditLogEntry } from "./types";
 
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200] as const;
 const DEFAULT_PAGE_SIZE = 50;
+// The server's own cap (internal/api/audit.go auditMaxLimit): a larger limit is
+// rejected outright, which bounds how far the +1 probe below can reach.
+const AUDIT_MAX_LIMIT = 200;
 const NANOS_PER_MILLI = 1_000_000;
 const MAX_VISIBLE_DETAIL_KEYS = 3;
 const EMPTY_ENTRIES: AuditLogEntry[] = [];
@@ -147,16 +150,30 @@ export function AuditLogsPage() {
 
   const entriesQuery = useQuery({
     queryKey: ["audit-logs", beforeId, pageSize],
-    queryFn: () => listAuditLogs({ before_id: beforeId, limit: pageSize }),
+    /*
+     * One row past the page size decides "there is more" without a second
+     * request. A full page alone cannot distinguish "exactly this many rows
+     * are left" from "more follow" — the old `length >= limit` reading of it
+     * walked the operator onto an empty page whenever the trail ended on an
+     * exact multiple.
+     */
+    queryFn: () =>
+      listAuditLogs({ before_id: beforeId, limit: Math.min(pageSize + 1, AUDIT_MAX_LIMIT) }),
     placeholderData: (previous) => previous,
     staleTime: 10_000,
   });
 
   const entries = entriesQuery.data?.items ?? EMPTY_ENTRIES;
   const isPageTransitioning = entriesQuery.isFetching && entriesQuery.isPlaceholderData;
-  const visibleEntries = isPageTransitioning ? EMPTY_ENTRIES : entries;
-  const pageLimit = entriesQuery.data?.limit ?? pageSize;
-  const hasMore = entries.length > 0 && entries.length >= pageLimit;
+  /*
+   * The probe row, when it arrived, is an existence check, not a page row: show
+   * one page's worth, and read "more" from what arrives beyond it. At the
+   * server's 200 cap the probe cannot be sent, so that option keeps the
+   * full-page heuristic — and may still stop on one empty last page there.
+   */
+  const visibleEntries = isPageTransitioning ? EMPTY_ENTRIES : entries.slice(0, pageSize);
+  const hasMore =
+    pageSize < AUDIT_MAX_LIMIT ? entries.length > pageSize : entries.length >= pageSize;
   const refreshBusy = entriesQuery.isFetching;
 
   const resetPagination = () => {
@@ -165,7 +182,10 @@ export function AuditLogsPage() {
   };
 
   const moveNext = () => {
-    const lastEntry = entries[entries.length - 1];
+    // The cursor is the last *displayed* row: with the +1 probe in flight the
+    // raw list carries one row more than the page shows, and that row belongs
+    // to the next page — using it as the cursor would skip it.
+    const lastEntry = visibleEntries[visibleEntries.length - 1];
     if (isPageTransitioning || !hasMore || !lastEntry) {
       return;
     }
@@ -272,9 +292,10 @@ export function AuditLogsPage() {
                         <TDClip className="readout text-xs">{actor || "-"}</TDClip>
                         <TDClip className="readout text-xs">{remote || "-"}</TDClip>
                         <TD>
-                          <Badge tone="signal" dot title={t("仅记录成功的写操作")}>
-                            {t("成功")}
-                          </Badge>
+                          <span className="flex items-center gap-2" title={t("仅记录成功的写操作")}>
+                            <span aria-hidden className="state-dot state-dot--signal" />
+                            <span className="state-text">{t("成功")}</span>
+                          </span>
                         </TD>
                       </TR>
                     );

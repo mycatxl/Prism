@@ -22,12 +22,17 @@ const TONE: Record<string, string> = {
 export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
   const { t } = useI18n();
 
-  if (toasts.length === 0) return null;
-
   return createPortal(
     <div
-      className="pointer-events-none fixed bottom-4 left-1/2 z-[60] flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
+      className={cn(
+        toasts.length > 0
+          ? "pointer-events-none fixed bottom-4 left-1/2 z-[60] flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 flex-col gap-2"
+          : "sr-only",
+      )}
       aria-live="polite"
+      aria-atomic="false"
+      aria-relevant="additions text"
+      data-toast-region
     >
       {toasts.map((toast) => (
         <div
@@ -37,6 +42,7 @@ export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
             TONE[toast.tone] ?? "border-rule-strong bg-paper-elevated text-ink",
             toast.exiting && "opacity-0",
           )}
+          role={toast.tone === "error" ? "alert" : "status"}
         >
           <span className="min-w-0 flex-1 leading-snug">{t(toast.text)}</span>
           <button
@@ -45,7 +51,7 @@ export function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
             aria-label={t("关闭")}
             onClick={() => onDismiss(toast.id)}
           >
-            <X size={13} />
+            <X size={13} aria-hidden />
           </button>
         </div>
       ))}

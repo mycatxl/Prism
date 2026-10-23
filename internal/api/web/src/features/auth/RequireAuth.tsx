@@ -24,9 +24,13 @@ export function RequireAuth({ children }: RequireAuthProps) {
     }
     let active = true;
     const controller = new AbortController();
-    void fetchSession(controller.signal).finally(() => {
-      if (active) setChecked(true);
-    });
+    void fetchSession(controller.signal)
+      .catch(() => {
+        // Session probes are disposable; cancellation and probe failures fall back to the login path below.
+      })
+      .finally(() => {
+        if (active) setChecked(true);
+      });
     return () => {
       active = false;
       controller.abort();

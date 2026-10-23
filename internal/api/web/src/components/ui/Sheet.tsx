@@ -1,6 +1,6 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 
@@ -27,6 +27,22 @@ export function Sheet({
 }) {
   const widthClass = { sm: "sm:max-w-md", md: "sm:max-w-2xl", lg: "sm:max-w-4xl" }[width];
   const { t } = useI18n();
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
+
+  const handleOpenAutoFocus = () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      restoreFocusRef.current = active;
+    }
+  };
+
+  const handleCloseAutoFocus = (event: Event) => {
+    const target = restoreFocusRef.current;
+    restoreFocusRef.current = null;
+    if (!target?.isConnected || target.hasAttribute("disabled")) return;
+    event.preventDefault();
+    target.focus({ preventScroll: true });
+  };
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -37,10 +53,12 @@ export function Sheet({
             "sheet-shell overlay-surface fixed right-0 z-50 flex w-full flex-col focus:outline-none",
             widthClass,
           )}
+          onOpenAutoFocus={handleOpenAutoFocus}
+          onCloseAutoFocus={handleCloseAutoFocus}
         >
           <header className="sheet-header flex items-start justify-between gap-4">
             <div className="min-w-0">
-              <DialogPrimitive.Title className="truncate text-base font-semibold text-ink">
+              <DialogPrimitive.Title className="break-words text-base font-semibold text-ink">
                 {title}
               </DialogPrimitive.Title>
               {description && (

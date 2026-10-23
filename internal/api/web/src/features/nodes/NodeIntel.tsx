@@ -10,7 +10,15 @@ import { opsPaths } from "../../lib/paths";
 import { formatRelativeTime } from "../../lib/time";
 import { createIntelJob } from "../jobs/api";
 import { IPTypeBadge } from "./quality/QualityDetails";
-import { purityBands, typeLabels } from "./quality/presentation";
+import {
+  confidenceLabels,
+  flagLabels,
+  outcomeLabels,
+  outcomeTones,
+  purityBands,
+  stateLabels,
+  typeLabels,
+} from "./quality/presentation";
 import type { QualitySummary } from "./quality/types";
 import { getRegionName } from "./regions";
 import type { NodeIntel } from "./types";
@@ -18,42 +26,6 @@ import type { NodeIntel } from "./types";
 // node intel surface. The API field `intel` carries the prism-purity-v2
 // assessment of the node's egress IP; an unassessed node reports explicit empty
 // values and state "unassessed", which is rendered as such — never as a score.
-
-const stateLabels: Record<string, string> = {
-  unassessed: "未评估",
-  pending: "等待评估",
-  unsupported: "不支持评估",
-  stale: "评估已过期",
-};
-
-const confidenceLabels: Record<string, string> = {
-  high: "置信度高",
-  medium: "置信度中",
-  low: "置信度低",
-  none: "置信度未知",
-};
-
-const flagLabels: Record<string, string> = {
-  compromised: "被入侵记录",
-  tor: "Tor",
-  vpn: "VPN",
-  proxy: "代理",
-  scraper: "爬取特征",
-  abuse: "滥用记录",
-  anonymous: "匿名网络",
-  hosting: "托管网络",
-  dnsbl: "黑名单命中",
-  attack_history: "攻击历史",
-};
-
-const outcomeLabels: Record<string, string> = {
-  unknown: "未知",
-  available: "可用",
-  blocked: "被拦截",
-  region_limited: "地区受限",
-  captcha: "验证码",
-  error: "检测失败",
-};
 
 type Tone = NonNullable<BadgeProps["tone"]>;
 
@@ -64,15 +36,6 @@ const bandTones: Record<string, Tone> = {
   info: "live",
   warning: "warn",
   danger: "alert",
-};
-
-const outcomeTones: Record<string, Tone> = {
-  available: "signal",
-  blocked: "alert",
-  region_limited: "warn",
-  captcha: "warn",
-  error: "alert",
-  unknown: "neutral",
 };
 
 /** One measurement in a definition list: quiet label above, value on the sheet. */

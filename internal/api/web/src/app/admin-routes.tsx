@@ -34,6 +34,7 @@ const WorkbenchPage = lazy(() => import("../features/dashboard/WorkbenchPage").t
 const EndpointsPage = lazy(() => import("../features/endpoints/EndpointsPage").then((m) => ({ default: m.EndpointsPage })));
 const GeoIPPage = lazy(() => import("../features/geoip/GeoIPPage").then((m) => ({ default: m.GeoIPPage })));
 const NodesPage = lazy(() => import("../features/nodes/NodesPage").then((m) => ({ default: m.NodesPage })));
+const NodeDetailPage = lazy(() => import("../features/nodes/detail/NodeDetailPage").then((m) => ({ default: m.NodeDetailPage })));
 const PlatformDetailPage = lazy(() => import("../features/platforms/PlatformDetailPage").then((m) => ({ default: m.PlatformDetailPage })));
 const PlatformPage = lazy(() => import("../features/platforms/PlatformPage").then((m) => ({ default: m.PlatformPage })));
 const RequestLogsPage = lazy(() => import("../features/requestLogs/RequestLogsPage").then((m) => ({ default: m.RequestLogsPage })));
@@ -55,8 +56,9 @@ const adminRouteObjects: RouteObject[] = [
       { path: "", element: <Page><WorkbenchPage /></Page> },
       { path: "platforms", element: <Page><PlatformPage /></Page> },
       { path: "platforms/:platformId", element: <Page><PlatformDetailPage /></Page> },
-      { path: "subscriptions", element: <Page><SubscriptionPage /></Page> },
       { path: "nodes", element: <Page><NodesPage /></Page> },
+      { path: "nodes/:nodeId", element: <Page><NodeDetailPage /></Page> },
+      { path: "subscriptions", element: <Page><SubscriptionPage /></Page> },
       { path: "quality", element: <LegacyQualityRedirect /> },
       { path: "endpoints", element: <Page><EndpointsPage /></Page> },
       { path: "rules", element: <Page><RulesPage /></Page> },

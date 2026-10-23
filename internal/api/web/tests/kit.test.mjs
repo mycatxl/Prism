@@ -121,3 +121,19 @@ test("the pill shape is reserved for Badge", () => {
   assert.doesNotMatch(source, /rounded-full/, "Switch must be rectangular, not a pill");
   assert.match(source, /rounded-control/, "Switch must use the control radius");
 });
+
+test("Sheet restores the opener and becomes a full-screen mobile work surface", () => {
+  const source = read("../src/components/ui/Sheet.tsx");
+  const styles = read("../src/styles/design.css");
+
+  assert.match(source, /useRef<HTMLElement \| null>\(null\)/, "Sheet must retain the opener element");
+  assert.match(source, /onOpenAutoFocus=\{handleOpenAutoFocus\}/, "Sheet must capture focus before Radix moves it");
+  assert.match(source, /onCloseAutoFocus=\{handleCloseAutoFocus\}/, "Sheet must own focus restoration");
+  assert.match(source, /target\.focus\(\{ preventScroll: true \}\)/, "focus restoration must not jump the page");
+  assert.doesNotMatch(source, /truncate text-base font-semibold/, "sheet titles must be allowed to wrap");
+  assert.match(
+    styles,
+    /@media \(max-width: 639\.98px\)[\s\S]*?\.sheet-shell \{[\s\S]*?width: 100%;[\s\S]*?border-radius: 0;/,
+    "small screens must use a full-screen sheet",
+  );
+});

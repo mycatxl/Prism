@@ -1,38 +1,36 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowDown,
-  ArrowUp,
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
   Copy,
   Download,
+  ExternalLink,
   Globe2,
   LoaderCircle,
   Network,
   Radar,
   RefreshCw,
-  Search,
   ShieldCheck,
-  SlidersHorizontal,
   X,
   Zap,
 } from "lucide-react";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Link,
   useLocation,
   useNavigate,
   useSearchParams,
 } from "react-router-dom";
-import { Badge, type BadgeProps } from "../../components/ui/Badge";
+import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { Fieldset, Input } from "../../components/ui/Input";
+import { Input } from "../../components/ui/Input";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../../components/ui/Menu";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import {
   Panel,
   PanelBody,
+  PanelFooter,
   PanelHeader,
   PanelToolbar,
   SectionTitle,
@@ -40,26 +38,17 @@ import {
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Select } from "../../components/ui/Select";
 import { Sheet } from "../../components/ui/Sheet";
-import { TBody, TD, TDClip, TDNum, TH, THead, TR, Table, TableWrap } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
-import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
-import { formatDateTime } from "../../lib/time";
+import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import { listPlatforms } from "../platforms/api";
-import { listSubscriptions } from "../subscriptions/api";
 import { createIntelJob } from "../jobs/api";
 import type { IntelJobScope } from "../jobs/types";
-import {
-  checkFilterValue,
-  INTEL_CHECK_OUTCOMES,
-  listIntelChecks,
-  parseCheckFilterValue,
-  type IntelCheck,
-} from "../intel/checks";
 import {
   exportNodes,
   getNode,
@@ -73,33 +62,45 @@ import { buildBulkIntelScope, hasUnsupportedFilters } from "./intelScope";
 import { getAllRegions, getRegionName } from "./regions";
 import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
 import { getQualityStatus, inspectNode, qualityPollingInterval } from "./quality/api";
-import { NetworkSignals, QualityDetails, VerdictBadge } from "./quality/QualityDetails";
+import { QualityDetails } from "./quality/QualityDetails";
 import { ExitRecordsPanel } from "./quality/ExitRecordsPanel";
-import { purityBands, typeLabels } from "./quality/presentation";
-import { NodeIntelCell, NodeIntelPanel, NodeLabels } from "./NodeIntel";
+import { purityBands } from "./quality/presentation";
+import { NodeIntelPanel } from "./NodeIntel";
 
-type Tone = NonNullable<BadgeProps["tone"]>;
+/*
+ * The node pool list, rebuilt on the Signal Console rhythm: page header, one
+ * panel, a toolbar of the four filters an operator actually drives (health,
+ * platform, country, refresh), a single data grid whose headers own the sort,
+ * and a footer that carries the counts and the pager. The drawer keeps the
+ * per-node work (probes, quality, intel) it always had.
+ */
 
-// The kit's select still carries a pre-Tailwind class name, so each call site
-// supplies the field treatment from the design tokens.
+type HealthTone = "neutral" | "signal" | "warn" | "alert";
 
-function status(node: NodeSummary): { label: string; tone: Tone } {
+/**
+ * Health is one verdict in four words: the dot carries the hue, the word
+ * carries the meaning. `circuit_open_since` covers both a pending probe and an
+ * open breaker — the node still routes, just not cleanly, so it is degraded
+ * rather than critical; only a node without a usable outbound is critical.
+ */
+function status(node: NodeSummary): { label: string; tone: HealthTone } {
   if (!node.enabled) return { label: "禁用", tone: "neutral" };
-  if (!node.has_outbound) return { label: "错误", tone: "alert" };
-  if (node.circuit_open_since)
-    return {
-      label: node.failure_count === 0 ? "待测" : "熔断",
-      tone: "warn",
-    };
+  if (!node.has_outbound) return { label: "危急", tone: "alert" };
+  if (node.circuit_open_since) return { label: "降级", tone: "warn" };
   return { label: "健康", tone: "signal" };
 }
+
+function healthDotClass(tone: HealthTone): string {
+  return tone === "neutral" ? "state-dot" : `state-dot state-dot--${tone}`;
+}
+
 function nameOf(node: NodeSummary) {
   return node.display_tag || node.tags[0]?.tag || node.node_hash.slice(0, 12);
 }
 const sizes = [20, 50, 100, 200] as const;
 const protocolLabels: Record<string, string> = { shadowsocks: "Shadowsocks", vmess: "VMess", vless: "VLESS", trojan: "Trojan", hysteria: "Hysteria", hysteria2: "Hysteria 2", tuic: "TUIC", wireguard: "WireGuard", shadowtls: "ShadowTLS", socks: "SOCKS", http: "HTTP", ssh: "SSH", anytls: "AnyTLS", direct: "Direct" };
-// Sort keys offered by the sort select. purity_score, latency and assessed_at
-// are the keys; the backend rejects anything else.
+// The sort keys the backend accepts; every one of them is a table column, so
+// the header is the only sort control on the page.
 const sorts = ["tag", "created_at", "failure_count", "region", "purity_score", "latency", "assessed_at"] as const;
 function integer(value: string | null, fallback: number) {
   const n = Number(value);
@@ -153,103 +154,112 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
 }
 
 /**
- * UnlockCheckFilter is the "检测结果" picker.
- *
- * The filter value is "<check id>:<outcome>" and repeatable, and the outcome is
- * optional ("<check id>" alone means any outcome). The rules come from
- * GET /api/v1/intel/checks because the backend rejects an unknown id, so a
- * hand-typed one only ever produced a 400. The outcome stays a select because
- * its value set is fixed by node_checks.outcome.
+ * The most countries the open menu ever renders. The picker is searchable, so
+ * the toolbar never mounts the full country list: an empty query shows a hint,
+ * a typed query shows the first matches only.
  */
-function UnlockCheckFilter({
-  checks,
-  selected,
-  onChange,
-}: {
-  checks: IntelCheck[];
-  selected: string[];
-  onChange: (values: string[]) => void;
-}) {
-  const { t } = useI18n();
-  const entries = selected.map(parseCheckFilterValue);
-  const chosen = new Set(entries.map((entry) => entry.checkID));
+const COUNTRY_MATCH_LIMIT = 60;
 
-  const addCheck = (checkID: string) => {
-    if (!checkID || chosen.has(checkID)) {
-      return;
-    }
-    onChange([...selected, checkID]);
-  };
-  const removeCheck = (checkID: string) => {
-    onChange(entries.filter((entry) => entry.checkID !== checkID).map((entry) => checkFilterValue(entry.checkID, entry.outcome)));
-  };
-  const setOutcome = (checkID: string, outcome: string) => {
-    onChange(
-      entries.map((entry) =>
-        entry.checkID === checkID ? checkFilterValue(entry.checkID, outcome) : checkFilterValue(entry.checkID, entry.outcome),
-      ),
-    );
-  };
+/**
+ * The country filter: a searchable dropdown composed from the kit's menu and
+ * input. Typing stays in the input because the printable keystrokes are kept
+ * away from the menu's own typeahead, which would otherwise yank focus to a
+ * matching item mid-word; Enter picks the first match, items are clickable.
+ */
+function CountryPicker({ value, onChange }: { value: string; onChange: (code: string) => void }) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  // The region list is static; option names localize at render time.
+  const regions = useMemo(() => getAllRegions(), []);
+  const matches = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return [];
+    return regions
+      .filter((region) => region.code.toLowerCase().includes(needle) || region.name.toLowerCase().includes(needle))
+      .slice(0, COUNTRY_MATCH_LIMIT)
+      .map((region) => ({ code: region.code, name: getRegionName(region.code) ?? region.name }));
+  }, [query, regions]);
+  const currentName = value ? getRegionName(value.toUpperCase()) : undefined;
 
   return (
-    <div className="space-y-2">
-      {entries.length === 0 ? (
-        <p className="text-2xs text-ink-faint">{t("未选择检测项：不按解锁结果筛选。")}</p>
-      ) : (
-        <ul className="space-y-1">
-          {entries.map((entry) => {
-            const rule = checks.find((item) => item.id === entry.checkID);
-            const label = rule?.name && rule.name !== rule.id ? `${rule.name} (${entry.checkID})` : entry.checkID;
-            return (
-              <li key={entry.checkID} className="flex items-center gap-1.5">
-                <span className="min-w-0 flex-1 truncate text-xs text-ink-soft" title={entry.checkID}>
-                  {label}
-                </span>
-                <Select
-                  aria-label={t("结果")}
-                  className="w-32 shrink-0"
-                  value={entry.outcome}
-                  onChange={(event) => setOutcome(entry.checkID, event.target.value)}
-                >
-                  <option value="">{t("任意结果")}</option>
-                  {INTEL_CHECK_OUTCOMES.map((outcome) => (
-                    <option key={outcome} value={outcome}>
-                      {outcome}
-                    </option>
-                  ))}
-                </Select>
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="sm"
-                  aria-label={t("移除")}
-                  onClick={() => removeCheck(entry.checkID)}
-                >
-                  <X size={12} />
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      <Select
-        aria-label={t("添加检测项")}
-        value=""
-        onChange={(event) => addCheck(event.target.value)}
-      >
-        <option value="">{t("添加检测项…")}</option>
-        {checks
-          .filter((check) => !chosen.has(check.id))
-          .map((check) => (
-            <option key={check.id} value={check.id}>
-              {check.name && check.name !== check.id ? `${check.name} (${check.id})` : check.id}
-            </option>
+    <Menu
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) {
+          setQuery("");
+          // Radix hands focus to the first menu item on entry; the search
+          // field is the one thing this menu is for, so it wins focus back
+          // one macrotask later.
+          window.setTimeout(() => inputRef.current?.focus(), 0);
+        }
+      }}
+    >
+      <MenuTrigger asChild>
+        <Button
+          variant="secondary"
+          className="max-w-56"
+          aria-label={t("按国家或地区筛选")}
+          title={value ? currentName || value.toUpperCase() : t("按国家或地区筛选")}
+        >
+          <Globe2 size={15} aria-hidden className="shrink-0" />
+          <span className="min-w-0 truncate">
+            {value ? `${value.toUpperCase()} · ${currentName ?? ""}` : t("国家 / 地区")}
+          </span>
+        </Button>
+      </MenuTrigger>
+      <MenuContent className="w-72">
+        <div className="border-b border-rule-faint p-1.5">
+          <Input
+            ref={inputRef}
+            aria-label={t("搜索国家或地区")}
+            placeholder={t("搜索国家或地区")}
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              // Printable keys must not reach the menu's typeahead, and Enter
+              // picks the first match instead of the focused item.
+              if (event.key.length === 1) event.stopPropagation();
+              if (event.key === "Enter" && matches[0]) {
+                event.preventDefault();
+                onChange(matches[0].code);
+                setOpen(false);
+              }
+            }}
+          />
+        </div>
+        <div className="max-h-72 overflow-y-auto p-1">
+          {value ? (
+            <MenuItem onSelect={() => { onChange(""); setOpen(false); }}>
+              <span>{t("全部国家 / 地区")}</span>
+            </MenuItem>
+          ) : null}
+          {matches.map((region) => (
+            <MenuItem
+              key={region.code}
+              onSelect={() => { onChange(region.code); setOpen(false); }}
+            >
+              <span className="readout shrink-0 text-xs">{region.code}</span>
+              <span className="min-w-0 truncate text-ink-soft">
+                {region.name}
+              </span>
+            </MenuItem>
           ))}
-      </Select>
-      <p className="text-2xs text-ink-faint">
-        {t("解锁结果是标签，不是准入条件：这里只筛选节点，不改变节点是否可用。")}
-      </p>
-    </div>
+          {!query.trim() ? (
+            <MenuLabel className="px-2.5 py-2 text-2xs text-ink-faint">
+              {t("输入国家或地区名称或代码")}
+            </MenuLabel>
+          ) : null}
+          {query.trim() && matches.length === 0 ? (
+            <MenuLabel className="px-2.5 py-2 text-2xs text-ink-faint">
+              {t("没有匹配的国家 / 地区")}
+            </MenuLabel>
+          ) : null}
+        </div>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -258,7 +268,6 @@ export function NodesPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const [advanced, setAdvanced] = useState(false);
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
   const view = params.get("view") === "exits" ? "exits" : "nodes";
@@ -282,14 +291,13 @@ export function NodesPage() {
           ? "circuit_open"
           : "all");
   const keyword = params.get("tag_keyword") || params.get("tag") || "";
-  const deferredKeyword = useDebouncedValue(keyword);
   const filter = {
     ip_type: params.get("ip_type") || "",
     quality_state: params.get("quality_state") || "",
     risk_grade: params.get("risk_grade") || "",
     purity_band: params.get("purity_band") || "",
     protocol: params.get("protocol") || "",
-    tag_keyword: deferredKeyword,
+    tag_keyword: keyword,
     platform_id: params.get("platform_id") || "",
     subscription_id: params.get("subscription_id") || "",
     region: params.get("region") || "",
@@ -315,16 +323,14 @@ export function NodesPage() {
     sort_by: sort,
     sort_order: order,
   } as const;
-  // The URL keeps the raw text of every filter (inputs bind to it); the API
-  // query converts the intel filters to their typed form.
+  // The URL keeps the raw text of every filter it ever carried; filters the
+  // toolbar no longer edits still shape the query, so a shared deep link keeps
+  // working until someone clears it.
   //
   // `check` is repeatable and therefore not part of `filter`: a single-value
   // object cannot hold it, and reading only `params.get("check")` would drop the
   // second rule. It lives in the query key instead (see `checksKey`), because a
-  // key that ignores it would leave the table on the previous result set while
-  // the picker already showed two chips.
-  // The picker and the API read the same repeatable parameter, so both stay in
-  // sync with the URL - including an entry typed before the picker existed.
+  // key that ignores it would leave the table on the previous result set.
   const selectedChecks = params.getAll("check").map((value) => value.trim()).filter(Boolean);
   // Sorted, so the same set picked in a different order is not a new query.
   const checksKey = [...selectedChecks].sort().join("|");
@@ -366,36 +372,7 @@ export function NodesPage() {
     enabled: view === "nodes",
     staleTime: 60_000,
   });
-  const subscriptions = useQuery({
-    queryKey: ["subscriptions", "node-filter"],
-    queryFn: () => listSubscriptions({ limit: 1000 }),
-    enabled: view === "nodes",
-    staleTime: 60_000,
-  });
-  // The unlock-check rule list is what turns the free-text filter into a picker:
-  // the backend rejects an unknown check id, so the options must come from the
-  // server rather than from a hand-typed string.
-  const intelChecks = useQuery({
-    queryKey: ["intel", "checks"],
-    queryFn: ({ signal }) => listIntelChecks(signal),
-    enabled: view === "nodes",
-    staleTime: 300_000,
-  });
-  // `check` is repeatable, so its writer replaces every occurrence instead of
-  // setting one value.
-  const updateChecks = (values: string[]) =>
-    setParams(
-      (previous) => {
-        const next = new URLSearchParams(previous);
-        next.delete("check");
-        for (const value of values) {
-          if (value) next.append("check", value);
-        }
-        next.delete("page");
-        return next;
-      },
-      { replace: true, state: location.state },
-    );
+
   const update = (key: string, value: string) =>
     setParams(
       (previous) => {
@@ -424,6 +401,13 @@ export function NodesPage() {
     if (location.state?.nodePanel) navigate(-1);
     else update("selected", "");
   };
+  // The drawer route is the list route plus `selected`; the name cell links
+  // there directly so the drawer opens from history like any other navigation.
+  const nodeDetailHref = (hash: string) => {
+    const next = new URLSearchParams(params);
+    next.set("selected", hash);
+    return `?${next.toString()}`;
+  };
   const changeSort = (key: NodeSortBy) =>
     setParams(
       (previous) => {
@@ -434,6 +418,21 @@ export function NodesPage() {
         return next;
       },
       { replace: true },
+    );
+  // Clearing filters clears filters only: the view tab, the drawer selection,
+  // the page size and the sort survive, so the "clear" button can never close
+  // the drawer it sits next to or reset a preference it does not own.
+  const clearFilters = () =>
+    setParams(
+      (previous) => {
+        const next = new URLSearchParams();
+        for (const key of ["view", "selected", "size", "sort", "order"]) {
+          const value = previous.get(key);
+          if (value) next.set(key, value);
+        }
+        return next;
+      },
+      { replace: true, state: location.state },
     );
   const probe = useMutation({
     mutationFn: ({
@@ -493,10 +492,13 @@ export function NodesPage() {
     onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
   });
 
+  // One action, every query the page reads: the list, the drawer's node, the
+  // filter vocabularies and the quality status line.
   const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["nodes"] });
+    void queryClient.invalidateQueries({ queryKey: ["node"] });
+    void queryClient.invalidateQueries({ queryKey: ["platforms", "node-filter"] });
     void queryClient.invalidateQueries({ queryKey: ["quality"] });
-    if (view === "nodes") void nodesQuery.refetch();
-    if (selected) void detailQuery.refetch();
   };
   const copy = async (value: string) => {
     try {
@@ -526,35 +528,34 @@ export function NodesPage() {
     "country",
     "check",
   ].filter((key) => params.get(key)).length;
-  const sortButton = (key: NodeSortBy, label: string) => (
-    <Button
-      type="button"
-      variant="quiet"
-      size="sm"
-      onClick={() => changeSort(key)}
-      className="px-0 text-xs font-medium text-ink-soft"
-    >
-      {t(label)}
-      {sort !== key ? (
-        <ArrowUpDown size={12} aria-hidden className="text-ink-faint" />
-      ) : order === "asc" ? (
-        <ArrowUp size={12} aria-hidden className="text-signal-deep" />
-      ) : (
-        <ArrowDown size={12} aria-hidden className="text-signal-deep" />
-      )}
-    </Button>
-  );
-  const sortableTH = (key: NodeSortBy, label: string, hint?: string) => (
-    <TH
-      className="w-auto"
-      aria-sort={
-        sort === key ? (order === "asc" ? "ascending" : "descending") : undefined
-      }
-    >
-      {sortButton(key, label)}
-      {hint && <span className="ml-1 text-2xs font-normal text-ink-faint">{hint}</span>}
-    </TH>
-  );
+  const hasActiveFilters = numberOfFilters > 0 || mode !== "all" || Boolean(keyword);
+
+  // Sort lives in the headers: the th carries data-sortable and aria-sort (the
+  // stylesheet draws the arrow), the label is a real button for the keyboard.
+  const sortTH = (key: NodeSortBy, label: string) => {
+    const active = sort === key;
+    return (
+      <TH
+        data-sortable=""
+        aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"}
+        onClick={() => changeSort(key)}
+      >
+        <Button
+          type="button"
+          variant="quiet"
+          size="sm"
+          className={`h-auto gap-1 px-0 py-0 text-2xs font-semibold uppercase tracking-[0.08em] ${active ? "text-ink" : "text-ink-faint"}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            changeSort(key);
+          }}
+        >
+          {t(label)}
+          {!active && <ArrowUpDown size={11} aria-hidden />}
+        </Button>
+      </TH>
+    );
+  };
   const currentPage = Math.min(page, Math.max(0, Math.ceil((nodesQuery.data?.total ?? 0) / pageSize) - 1));
   const totalPages = Math.max(1, Math.ceil((nodesQuery.data?.total ?? 0) / pageSize));
   const jumpToPage = (raw: string) => {
@@ -586,19 +587,6 @@ export function NodesPage() {
           }
           actions={
             <>
-              <Button
-                variant="ghost"
-                size="icon"
-                title={t("刷新")}
-                aria-label={t("刷新")}
-                disabled={view === "nodes" && nodesQuery.isFetching}
-                onClick={refresh}
-              >
-                <RefreshCw
-                  size={16}
-                  className={nodesQuery.isFetching ? "animate-spin" : undefined}
-                />
-              </Button>
               <Menu>
                 <MenuTrigger asChild>
                   <Button variant="secondary" disabled={exportMutation.isPending}>
@@ -660,584 +648,354 @@ export function NodesPage() {
           value="nodes"
           className="page-content page-content--fill"
         >
-
-          {/* 列表自身的筛选与分页都归这个 Panel：工具条在上，表格与
-              空/错误状态在面板体内，分页落在 PanelFooter。 */}
           <Panel className="flex min-w-0 flex-col">
-            <PanelHeader title={t("节点线路")} />
+            <PanelHeader
+              title={t("节点线路")}
+              meta={nodesQuery.data ? t("{{count}} 个节点", { count: nodesQuery.data.total }) : undefined}
+              actions={
+                <>
+                  {bulkJobID ? (
+                    <Button asChild variant="ghost" size="sm">
+                      <Link to={opsPaths.jobs}>{t("查看检测任务")}</Link>
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={t("批量拉取情报")}
+                    title={t(bulkScopeBlocked
+                      ? "批量拉取只对健康节点生效，请先切换状态筛选。"
+                      : "对当前筛选结果中健康的节点批量拉取情报。")}
+                    disabled={bulkJob.isPending || bulkScopeBlocked || bulkCount === 0}
+                    onClick={() => bulkJob.mutate({ scope: buildBulkIntelScope(params), count: bulkCount })}
+                  >
+                    {bulkJob.isPending ? (
+                      <LoaderCircle size={15} className="animate-spin" />
+                    ) : (
+                      <Radar size={15} />
+                    )}
+                    {t("批量拉取情报")}
+                    <span className="readout text-2xs text-ink-faint">
+                      {bulkCount.toLocaleString()}
+                    </span>
+                  </Button>
+                </>
+              }
+            />
+
             <PanelToolbar className="filter-toolbar">
-            <div className="relative w-full min-w-48 sm:w-64">
-              <Search
-                size={14}
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint"
+              <Select
+                className="w-32"
+                value={mode}
+                aria-label={t("健康状态")}
+                onChange={(event) => update("status", event.target.value)}
+              >
+                {[
+                  ["all", "全部"],
+                  ["healthy", "健康"],
+                  ["circuit_open", "降级"],
+                  ["error", "危急"],
+                  ["disabled", "禁用"],
+                ].map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {t(label)}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                className="w-44"
+                aria-label={t("平台")}
+                value={filter.platform_id}
+                onChange={(event) => update("platform_id", event.target.value)}
+              >
+                <option value="">{t("全部平台")}</option>
+                {platforms.data?.items.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </Select>
+              <CountryPicker
+                value={filter.country}
+                onChange={(code) => update("country", code)}
               />
-              <Input
-                aria-label={t("搜索节点")}
-                placeholder={t("搜索节点名称或标签")}
-                className="pl-8 pr-8"
-                value={keyword}
-                onChange={(event) => update("tag_keyword", event.target.value)}
-              />
-              {keyword && (
-                <Button
-                  type="button"
-                  variant="quiet"
-                  size="icon"
-                  aria-label={t("清除搜索")}
-                  className="absolute top-1/2 right-1 -translate-y-1/2 text-ink-faint"
-                  onClick={() => update("tag_keyword", "")}
-                >
-                  <X size={14} aria-hidden />
-                </Button>
-              )}
-            </div>
-            <Select
-              className="w-full sm:w-40"
-              value={mode}
-              aria-label={t("状态")}
-              onChange={(event) => update("status", event.target.value)}
-            >
-              {[
-                ["all", "全部状态"],
-                ["healthy", "健康"],
-                ["circuit_open", "熔断 / 待测"],
-                ["error", "错误"],
-                ["disabled", "禁用"],
-              ].map(([key, label]) => (
-                <option key={key} value={key}>
-                  {t(label)}
-                </option>
-              ))}
-            </Select>
-            <Button
-              variant="secondary"
-              onClick={() => setAdvanced((value) => !value)}
-              aria-expanded={advanced}
-              aria-controls="node-filters"
-            >
-              <SlidersHorizontal size={15} />
-              {t("筛选")}
-              {numberOfFilters ? <Badge tone="outline">{numberOfFilters}</Badge> : null}
-            </Button>
-            <Button
-              variant="secondary"
-              aria-label={t("批量拉取情报")}
-              title={t(bulkScopeBlocked
-                ? "批量拉取只对健康节点生效，请先切换状态筛选。"
-                : "对当前筛选结果中健康的节点批量拉取情报。")}
-              disabled={bulkJob.isPending || bulkScopeBlocked || bulkCount === 0}
-              onClick={() => bulkJob.mutate({ scope: buildBulkIntelScope(params), count: bulkCount })}
-            >
-              {bulkJob.isPending ? (
-                <LoaderCircle size={15} className="animate-spin" />
-              ) : (
-                <Radar size={15} />
-              )}
-              <span>{t("批量拉取情报")}</span>
-              <span className="readout text-2xs text-ink-faint">
-                {bulkCount.toLocaleString()}
-              </span>
-            </Button>
-            {bulkScopeWider && !bulkScopeBlocked ? (
-              <span className="max-w-[40ch] text-xs leading-relaxed text-warn">
-                {t("部分筛选条件不适用于批量拉取，实际范围可能更大。")}
-              </span>
-            ) : null}
-            {bulkJobID ? (
-              <Button asChild variant="ghost" size="sm">
-                <Link to={opsPaths.jobs}>{t("查看检测任务")}</Link>
-              </Button>
-            ) : null}
-            <div className="nodes-toolbar__pagination ml-auto flex flex-wrap items-center gap-2">
-              {nodesQuery.data && (
-                <span className="readout text-xs text-ink-soft">
-                  {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
-                    page: currentPage + 1,
-                    pages: totalPages,
-                    start: nodesQuery.data.total ? currentPage * pageSize + 1 : 0,
-                    end: Math.min((currentPage + 1) * pageSize, nodesQuery.data.total),
-                    total: nodesQuery.data.total,
-                  })}
+              {bulkScopeWider && !bulkScopeBlocked ? (
+                <span className="max-w-[40ch] text-xs leading-relaxed text-warn">
+                  {t("部分筛选条件不适用于批量拉取，实际范围可能更大。")}
                 </span>
-              )}
-              <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                <span>{t("每页")}</span>
-                <Select
-                  value={pageSize}
-                  disabled={nodesQuery.isFetching}
-                  aria-label={t("每页")}
-                  onChange={(event) => update("size", event.target.value)}
-                >
-                  {sizes.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </Select>
-              </label>
-              <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-                <span>{t("跳至")}</span>
-                <Input
-                  key={currentPage}
-                  className="readout w-16 text-center"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={totalPages}
-                  defaultValue={currentPage + 1}
-                  aria-label={t("选择页码")}
-                  disabled={nodesQuery.isFetching}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") jumpToPage(event.currentTarget.value);
-                  }}
-                  onBlur={(event) => jumpToPage(event.currentTarget.value)}
-                />
-              </label>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t("上一页")}
-                title={t("上一页")}
-                disabled={nodesQuery.isFetching || currentPage === 0}
-                onClick={() => update("page", String(currentPage - 1))}
-              >
-                <ChevronLeft size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={t("下一页")}
-                title={t("下一页")}
-                disabled={nodesQuery.isFetching || currentPage >= totalPages - 1}
-                onClick={() => update("page", String(currentPage + 1))}
-              >
-                <ChevronRight size={16} />
-              </Button>
-            </div>
-            </PanelToolbar>
-
-            <PanelToolbar className="filter-toolbar filter-toolbar--advanced">
-            <Select
-              className="w-full sm:w-40"
-              aria-label={t("IP 类型")}
-              value={filter.ip_type}
-              onChange={event => update("ip_type", event.target.value)}
-            >
-              <option value="">{t("全部 IP 类型")}</option>
-              {Object.entries(typeLabels).map(([value, label]) => (
-                <option value={value} key={value}>{t(label)}</option>
-              ))}
-            </Select>
-            <Select
-              className="w-full sm:w-40"
-              aria-label={t("连接协议")}
-              value={filter.protocol}
-              onChange={event => update("protocol", event.target.value)}
-            >
-              <option value="">{t("全部协议")}</option>
-              {Object.entries(protocolLabels).map(([value, label]) => (
-                <option value={value} key={value}>{label}</option>
-              ))}
-            </Select>
-            <Select
-              className="w-full sm:w-40"
-              aria-label={t("质量状态")}
-              value={filter.quality_state}
-              onChange={event => update("quality_state", event.target.value)}
-            >
-              {[["", "全部质量状态"], ["valid", "证据齐全"], ["partial", "仅部分证据"], ["pending", "等待检测"], ["unobserved", "未检测"], ["stale", "已过期"], ["conflicting", "来源有分歧"], ["unsupported", "不支持检测"]].map(([value, label]) => (
-                <option value={value} key={value}>{t(label)}</option>
-              ))}
-            </Select>
-            <Select
-              className="w-full sm:w-40"
-              aria-label={t("纯净度分级")}
-              value={filter.purity_band}
-              onChange={event => update("purity_band", event.target.value)}
-            >
-              <option value="">{t("全部纯净度")}</option>
-              {purityBands.map(band => (
-                <option value={band.id} key={band.id}>{band.min}–{band.max} {t(band.label)}</option>
-              ))}
-              {/* unknown is a real band (PurityBand(nil) in internal/quality), so it belongs
-                  here; review is not - it is a verdict, and the 判定 select already carries it. */}
-              <option value="unknown">{t("评级未知")}</option>
-            </Select>
-            <Select
-              className="w-full sm:w-40"
-              aria-label={t("排序")}
-              value={sort}
-              onChange={event => update("sort", event.target.value)}
-            >
-              {[
-                ["tag", "节点名称"],
-                ["created_at", "创建时间"],
-                ["failure_count", "连续失败"],
-                ["region", "地区"],
-                ["purity_score", "纯净度评分"],
-                ["latency", "参考延迟"],
-                ["assessed_at", "评估时间"],
-              ].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
-            </Select>
-            <Select
-              className="w-full sm:w-40"
-              aria-label={t("排序方向")}
-              value={order}
-              onChange={event => update("order", event.target.value)}
-            >
-              <option value="asc">{t("升序")}</option>
-              <option value="desc">{t("降序")}</option>
-            </Select>
-            <span className="flex items-center gap-1 text-xs text-ink-faint">
-              <ShieldCheck size={13} aria-hidden />
-              {t("质量按出口 IP 共享")}
-            </span>
-            </PanelToolbar>
-
-            {advanced && (
-            <div
-              className="grid grid-cols-1 gap-x-4 gap-y-3 border-b border-rule-faint px-4 py-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4"
-              id="node-filters"
-            >
-              <Fieldset label={t("平台")}>
-                <Select
-                  aria-label={t("平台")}
-                  value={filter.platform_id}
-                  onChange={(event) => update("platform_id", event.target.value)}
-                >
-                  <option value="">{t("全部平台")}</option>
-                  {platforms.data?.items.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </Select>
-              </Fieldset>
-              <Fieldset label={t("订阅")}>
-                <Select
-                  aria-label={t("订阅")}
-                  value={filter.subscription_id}
-                  onChange={(event) =>
-                    update("subscription_id", event.target.value)
-                  }
-                >
-                  <option value="">{t("全部订阅")}</option>
-                  {subscriptions.data?.items.map((sub) => (
-                    <option key={sub.id} value={sub.id}>
-                      {sub.name}
-                    </option>
-                  ))}
-                </Select>
-              </Fieldset>
-              <Fieldset label={t("地区")}>
-                <Select
-                  aria-label={t("地区")}
-                  value={filter.region}
-                  onChange={(event) => update("region", event.target.value)}
-                >
-                  <option value="">{t("全部地区")}</option>
-                  {getAllRegions().map((region) => (
-                    <option key={region.code} value={region.code}>
-                      {region.name}
-                    </option>
-                  ))}
-                </Select>
-              </Fieldset>
-              <Fieldset label={t("出口 IP")}>
-                <Input
-                  aria-label={t("出口 IP")}
-                  className="readout w-full"
-                  value={filter.egress_ip}
-                  onChange={(event) => update("egress_ip", event.target.value)}
-                  placeholder={t("精确出口 IP")}
-                />
-              </Fieldset>
-              <Fieldset label={t("来源风险等级")}>
-                <Select
-                  aria-label={t("风险等级")}
-                  value={filter.risk_grade}
-                  onChange={event => update("risk_grade", event.target.value)}
-                >
-                  {[["", "全部风险等级"], ["low", "较低风险"], ["moderate", "一般风险"], ["high", "较高风险"], ["severe", "严重风险"], ["review", "有滥用记录"], ["unknown", "评级未知"]].map(([value, label]) => (
-                    <option value={value} key={value}>{t(label)}</option>
-                  ))}
-                </Select>
-              </Fieldset>
-              <Fieldset label={t("最低纯净度")}>
-                <Input
-                  aria-label={t("最低纯净度")}
-                  className="readout w-full"
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={filter.purity_min}
-                  onChange={(event) => update("purity_min", event.target.value)}
-                  placeholder="0"
-                />
-              </Fieldset>
-              <Fieldset label={t("最高纯净度")}>
-                <Input
-                  aria-label={t("最高纯净度")}
-                  className="readout w-full"
-                  type="number"
-                  min={0}
-                  max={100}
-                  value={filter.purity_max}
-                  onChange={(event) => update("purity_max", event.target.value)}
-                  placeholder="100"
-                />
-              </Fieldset>
-              <Fieldset label={t("判定")}>
-                <Select
-                  aria-label={t("判定")}
-                  value={filter.verdict}
-                  onChange={event => update("verdict", event.target.value)}
-                >
-                  <option value="">{t("全部判定")}</option>
-                  {[
-                    ["favorable", "未见明显风险"],
-                    ["caution", "谨慎使用"],
-                    ["incomplete", "特征未齐"],
-                    ["review", "需要复核"],
-                    ["conflicting", "类型有分歧"],
-                    ["high_risk", "风险较高"],
-                    ["pending", "等待评估"],
-                  ].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
-                </Select>
-              </Fieldset>
-              <Fieldset label={t("最低置信度")}>
-                <Select
-                  aria-label={t("最低置信度")}
-                  value={filter.confidence_min}
-                  onChange={event => update("confidence_min", event.target.value)}
-                >
-                  <option value="">{t("全部置信度")}</option>
-                  {[["low", "置信度低"], ["medium", "置信度中"], ["high", "置信度高"]].map(([value, label]) => <option value={value} key={value}>{t(label)}</option>)}
-                </Select>
-              </Fieldset>
-              <Fieldset label={t("原生 IP")}>
-                <Select
-                  aria-label={t("原生 IP")}
-                  value={filter.native}
-                  onChange={event => update("native", event.target.value)}
-                >
-                  <option value="">{t("全部原生类型")}</option>
-                  <option value="true">{t("原生 IP")}</option>
-                  <option value="false">{t("广播 IP")}</option>
-                </Select>
-              </Fieldset>
-              <Fieldset label="ASN">
-                <Input
-                  aria-label="ASN"
-                  className="readout w-full"
-                  value={filter.asn}
-                  onChange={(event) => update("asn", event.target.value)}
-                  placeholder="13335"
-                />
-              </Fieldset>
-              <Fieldset label={t("国家 / 地区")}>
-                <Input
-                  aria-label={t("国家 / 地区")}
-                  className="readout w-full"
-                  value={filter.country}
-                  onChange={(event) => update("country", event.target.value)}
-                  placeholder="JP"
-                />
-              </Fieldset>
-              <Fieldset label={t("检测结果")}>
-                <UnlockCheckFilter
-                  checks={intelChecks.data ?? []}
-                  selected={selectedChecks}
-                  onChange={updateChecks}
-                />
-              </Fieldset>
-              {/* The reset is the panel's own action, not a condition, so it takes the
-                  grid's trailing row rather than a field's cell. */}
-              <div className="flex items-center justify-end sm:col-span-2 xl:col-span-3 2xl:col-span-4">
+              ) : null}
+              <div className="ml-auto flex items-center gap-2">
+                {hasActiveFilters ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={clearFilters}
+                  >
+                    <X size={14} aria-hidden />
+                    {t("清除筛选")}
+                  </Button>
+                ) : null}
                 <Button
-                  variant="ghost"
-                  onClick={() => setParams({}, { replace: true })}
+                  variant="secondary"
+                  disabled={view === "nodes" && nodesQuery.isFetching}
+                  onClick={refresh}
                 >
-                  <X size={14} />
-                  {t("清除筛选")}
+                  <RefreshCw
+                    size={15}
+                    className={nodesQuery.isFetching ? "animate-spin" : undefined}
+                  />
+                  {t("刷新")}
                 </Button>
               </div>
-              {(platforms.isError || subscriptions.isError) && (
-                <div className="sm:col-span-2 xl:col-span-3 2xl:col-span-4">
-                  <ErrorState
-                    message={t("数据暂时不可用")}
-                    onRetry={() => {
-                      void platforms.refetch();
-                      void subscriptions.refetch();
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          )}
+            </PanelToolbar>
 
-          {!advanced && numberOfFilters > 0 && (
-            <div className="flex flex-wrap items-center gap-2 border-b border-rule-faint px-4 py-1.5 text-xs text-ink-soft">
-              <span>
-                {t("已应用筛选")} <span className="readout">{numberOfFilters}</span>
-              </span>
-              <Button variant="quiet" size="sm" onClick={() => setAdvanced(true)}>
-                {t("查看")}
-              </Button>
-              <Button
-                variant="quiet"
-                size="sm"
-                onClick={() => setParams({}, { replace: true })}
-              >
-                {t("清除筛选")}
-              </Button>
-            </div>
-          )}
-
-          {nodesQuery.isLoading && (
-            <PanelBody>
-              <LoadingState />
-            </PanelBody>
-          )}
-          {nodesQuery.isError && (
-            <PanelBody>
-              <ErrorState
-                message={t("数据暂时不可用")}
-                onRetry={() => void nodesQuery.refetch()}
-              />
-            </PanelBody>
-          )}
-          {!nodesQuery.isLoading && !nodesQuery.isError && nodes.length === 0 && (
-            <PanelBody>
-              <EmptyState
-                title={t(
-                  keyword || mode !== "all" || numberOfFilters
-                    ? "没有匹配的节点"
-                    : "还没有节点",
-                )}
-                action={
-                  <div className="flex flex-wrap items-center justify-center gap-2">
-                    <Button
-                      variant="secondary"
-                      onClick={() => setParams({}, { replace: true })}
-                    >
-                      {t("清除筛选")}
-                    </Button>
-                    <Button asChild>
-                      <Link to={`${opsPaths.subscriptions}?create=1`}>{t("添加订阅")}</Link>
-                    </Button>
-                  </div>
-                }
-              />
-            </PanelBody>
-          )}
-
-          {nodes.length > 0 && (
-            <TableWrap aria-busy={nodesQuery.isFetching}>
-              <Table className="nodes-table min-w-[1040px]">
-                <THead>
-                  <TR>
-                    {sortableTH("tag", "节点名称")}
-                    <TH>{t("状态")}</TH>
-                    <TH>{t("出口 IP")}</TH>
-                    {sortableTH("region", "地区 / 网络类型")}
-                    {sortableTH("purity_score", "纯净度", "prism-purity-v2")}
-                    <TH className="w-auto">{t("网络特征")}</TH>
-                    {sortableTH("latency", "参考延迟")}
-                    <TH className="w-24 text-right">{t("操作")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {nodes.map((node) => {
-                    const state = status(node);
-                    const inventory = protocolLabels[node.protocol || ""];
-                    // 每个节点只占一行：协议、来源订阅与短哈希退到 title，状态单独成列，
-                    // 这样再长的标签也撑不高行高。
-                    const subtitle = [
-                      inventory,
-                      node.tags[0]?.subscription_name ?? node.node_hash.slice(0, 12),
-                      node.tags.length > 1 ? `+${node.tags.length - 1}` : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" · ");
-                    const native = node.quality?.assessment?.native;
-                    const nativeLabel =
-                      native === null || native === undefined
-                        ? ""
-                        : t(native ? "原生 IP" : "广播 IP");
-                    return (
-                      <TR key={node.node_hash} selected={selected === node.node_hash}>
-                        <TDClip title={subtitle}>
-                          <Button
-                            type="button"
-                            variant="quiet"
-                            className="h-auto w-full min-w-0 justify-start gap-2 p-0 text-left"
-                            onClick={() => open(node.node_hash)}
+            {nodesQuery.isLoading && (
+              <PanelBody>
+                <LoadingState />
+              </PanelBody>
+            )}
+            {nodesQuery.isError && (
+              <PanelBody>
+                <ErrorState
+                  message={formatApiErrorMessage(nodesQuery.error, t)}
+                  onRetry={() => void nodesQuery.refetch()}
+                />
+              </PanelBody>
+            )}
+            {!nodesQuery.isLoading && !nodesQuery.isError && nodes.length === 0 && (
+              <PanelBody>
+                <EmptyState
+                  title={t(
+                    hasActiveFilters
+                      ? "没有匹配的节点"
+                      : "还没有节点",
+                  )}
+                  action={
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      {hasActiveFilters ? (
+                        <Button
+                          variant="secondary"
+                          onClick={clearFilters}
+                        >
+                          {t("清除筛选")}
+                        </Button>
+                      ) : null}
+                      <Button asChild>
+                        <Link to={`${opsPaths.subscriptions}?create=1`}>{t("添加订阅")}</Link>
+                      </Button>
+                    </div>
+                  }
+                />
+              </PanelBody>
+            )}
+            {nodes.length > 0 && (
+              <TableWrap aria-busy={nodesQuery.isFetching}>
+                <Table className="nodes-table min-w-[1080px]">
+                  <colgroup>
+                    {/* c-name is the stylesheet's own width for the name column. */}
+                    <col className="c-name" />
+                    <col style={{ width: "13%" }} />
+                    <col style={{ width: "9%" }} />
+                    <col style={{ width: "9%" }} />
+                    <col style={{ width: "9%" }} />
+                    <col style={{ width: "14%" }} />
+                    <col style={{ width: "14%" }} />
+                    <col style={{ width: "12%" }} />
+                  </colgroup>
+                  <THead>
+                    <TR>
+                      {sortTH("tag", "节点名称")}
+                      <TH>{t("来源订阅")}</TH>
+                      <TH>{t("健康")}</TH>
+                      {sortTH("latency", "延迟")}
+                      {sortTH("purity_score", "纯净度")}
+                      <TH>{t("出口 IP")}</TH>
+                      {sortTH("region", "国家 / 地区")}
+                      {sortTH("assessed_at", "最近检测")}
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {nodes.map((node) => {
+                      const state = status(node);
+                      const sourceNames = [...new Set(node.tags.map((tag) => tag.subscription_name))];
+                      const intel = node.intel;
+                      const purityScore =
+                        intel && typeof intel.purity_score === "number" ? intel.purity_score : null;
+                      const purityBand = intel
+                        ? purityBands.find((item) => item.id === intel.purity_band)
+                        : undefined;
+                      const countryCode = (intel?.country || node.region || "").toUpperCase();
+                      const place = intel?.city || intel?.colo || "";
+                      return (
+                        <TR
+                          key={node.node_hash}
+                          selected={selected === node.node_hash}
+                          className="cursor-pointer"
+                          onClick={(event) => {
+                            // The name is its own link; a click that starts on
+                            // a control belongs to that control alone.
+                            if ((event.target as HTMLElement).closest("a, button, input, select")) return;
+                            open(node.node_hash);
+                          }}
+                        >
+                          <TDClip title={nameOf(node)}>
+                            <Link
+                              to={nodeDetailHref(node.node_hash)}
+                              state={{ nodePanel: true }}
+                              className="mono block max-w-full truncate text-sm font-medium text-accent"
+                            >
+                              {nameOf(node)}
+                            </Link>
+                          </TDClip>
+                          <TDClip
+                            title={sourceNames.length > 1 ? sourceNames.join(" · ") : undefined}
                           >
-                            <Network size={14} aria-hidden className="shrink-0 text-ink-faint" />
-                            <span className="truncate font-medium text-ink">{nameOf(node)}</span>
-                          </Button>
-                        </TDClip>
-                        <TD>
-                          <Badge tone={state.tone} dot>
-                            {t(state.label)}
-                          </Badge>
-                        </TD>
-                        <TDClip title={nativeLabel || undefined}>
-                          <span className="readout truncate font-medium text-ink">
-                            {node.egress_ip || "—"}
-                          </span>
-                        </TDClip>
-                        <TDClip>
-                          {/* 地区与网络类型同格：地点是国家码加城市（无城市时用机房代号），
-                              类型用 Badge。整格强制单行，行高才是一个 token 的高度。 */}
-                          <NodeLabels
-                            intel={node.intel}
-                            region={node.region}
-                            quality={node.quality}
-                          />
-                        </TDClip>
-                        <TDClip>
-                          <NodeIntelCell intel={node.intel} />
-                        </TDClip>
-                        <TDClip>
-                          {/* 两个徽标组件各自 flex-wrap；这里强制单行，行高才是一个 token。 */}
-                          <span className="flex min-w-0 items-center gap-1.5 [&>span]:flex-nowrap">
-                            <NetworkSignals summary={node.quality} />
-                            {node.quality?.assessment?.verdict &&
-                              node.quality.assessment.verdict !== "pending" && (
-                                <VerdictBadge summary={node.quality} />
-                              )}
-                          </span>
-                        </TDClip>
-                        <TDNum>
-                          {node.reference_latency_ms !== undefined && state.tone === "signal" ? (
-                            <span className="readout">
-                              {Math.round(node.reference_latency_ms) + " ms"}
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="min-w-0 truncate">
+                                {sourceNames[0] || "--"}
+                              </span>
+                              {sourceNames.length > 1 ? (
+                                <span className="readout shrink-0 text-2xs text-ink-faint">
+                                  +{sourceNames.length - 1}
+                                </span>
+                              ) : null}
                             </span>
-                          ) : (
-                            <span className="text-ink-faint">--</span>
-                          )}
-                        </TDNum>
-                        <TD className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => open(node.node_hash)}
-                            aria-label={t("查看节点详情")}
+                          </TDClip>
+                          <TD className="whitespace-nowrap">
+                            <span className="inline-flex items-center gap-2">
+                              <span aria-hidden className={healthDotClass(state.tone)} />
+                              <span className="state-text">{t(state.label)}</span>
+                            </span>
+                          </TD>
+                          <TDNum>
+                            {node.reference_latency_ms !== undefined ? (
+                              `${Math.round(node.reference_latency_ms)} ms`
+                            ) : (
+                              <span className="text-ink-faint">--</span>
+                            )}
+                          </TDNum>
+                          <TDNum
+                            title={purityBand ? t(purityBand.label) : purityScore === null ? t("评级未知") : undefined}
                           >
-                            {t("详情")}
-                          </Button>
-                        </TD>
-                      </TR>
-                    );
-                  })}
-                </TBody>
-              </Table>
-            </TableWrap>
-          )}
+                            {purityScore !== null ? (
+                              purityScore
+                            ) : (
+                              <span className="text-ink-faint">--</span>
+                            )}
+                          </TDNum>
+                          <TDClip title={node.egress_ip || undefined}>
+                            <span className="mono truncate">
+                              {node.egress_ip || <span className="text-ink-faint">--</span>}
+                            </span>
+                          </TDClip>
+                          <TDClip
+                            title={
+                              [
+                                countryCode ? getRegionName(countryCode) : undefined,
+                                place,
+                              ]
+                                .filter(Boolean)
+                                .join(" · ") || undefined
+                            }
+                          >
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              <span className="readout shrink-0 text-ink">{countryCode || "--"}</span>
+                              {countryCode && place ? (
+                                <>
+                                  <span aria-hidden className="shrink-0 text-ink-faint">
+                                    ·
+                                  </span>
+                                  <span className="min-w-0 truncate text-xs text-ink-soft">{place}</span>
+                                </>
+                              ) : null}
+                            </span>
+                          </TDClip>
+                          <TDNum
+                            title={intel?.assessed_at ? formatDateTime(intel.assessed_at) : undefined}
+                          >
+                            {intel?.assessed_at ? (
+                              formatRelativeTime(intel.assessed_at)
+                            ) : (
+                              <span className="text-ink-faint">--</span>
+                            )}
+                          </TDNum>
+                        </TR>
+                      );
+                    })}
+                  </TBody>
+                </Table>
+              </TableWrap>
+            )}
 
+            <PanelFooter className="justify-between gap-3">
+              <p className="text-xs text-ink-soft">
+                {nodesQuery.data
+                  ? t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
+                      page: currentPage + 1,
+                      pages: totalPages,
+                      start: nodesQuery.data.total ? currentPage * pageSize + 1 : 0,
+                      end: Math.min((currentPage + 1) * pageSize, nodesQuery.data.total),
+                      total: nodesQuery.data.total,
+                    })
+                  : null}
+              </p>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                  <span>{t("每页")}</span>
+                  <Select
+                    className="w-auto"
+                    value={pageSize}
+                    disabled={nodesQuery.isFetching}
+                    aria-label={t("每页")}
+                    onChange={(event) => update("size", event.target.value)}
+                  >
+                    {sizes.map((size) => (
+                      <option key={size} value={size}>
+                        {size}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-ink-soft">
+                  <span>{t("跳至")}</span>
+                  <Input
+                    key={currentPage}
+                    className="readout w-16 text-center"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={totalPages}
+                    defaultValue={currentPage + 1}
+                    aria-label={t("选择页码")}
+                    disabled={nodesQuery.isFetching}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") jumpToPage(event.currentTarget.value);
+                    }}
+                    onBlur={(event) => jumpToPage(event.currentTarget.value)}
+                  />
+                </label>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("上一页")}
+                  title={t("上一页")}
+                  disabled={nodesQuery.isFetching || currentPage === 0}
+                  onClick={() => update("page", String(currentPage - 1))}
+                >
+                  <ChevronLeft size={16} />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t("下一页")}
+                  title={t("下一页")}
+                  disabled={nodesQuery.isFetching || currentPage >= totalPages - 1}
+                  onClick={() => update("page", String(currentPage + 1))}
+                >
+                  <ChevronRight size={16} />
+                </Button>
+              </div>
+            </PanelFooter>
           </Panel>
         </TabsContent>
       </Tabs>
@@ -1281,6 +1039,17 @@ export function NodesPage() {
                   </Button>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t("打开完整页面")}
+                    title={t("打开完整页面")}
+                    asChild
+                  >
+                    <Link to={`${opsPaths.nodes}/${detail.node_hash}`}>
+                      <ExternalLink size={15} />
+                    </Link>
+                  </Button>
                   <Button
                     disabled={
                       qualityProbe.isPending ||

@@ -7,7 +7,7 @@ import {
   TriangleAlert,
   Undo2,
 } from "lucide-react";
-import { useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -27,6 +27,9 @@ import { StatusMark, type StatusMarkTone } from "../../components/ui/StatusMark"
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
+// The section list in the dirty banner is joined with the session's own list
+// separators, so the locale helpers ride along with the rest of i18n.
+import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { fetchSession } from "../../lib/api-client";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
@@ -81,6 +84,35 @@ function modeTone(mode: RegistrationMode): StatusMarkTone {
 }
 
 /**
+ * A section header's state: the canonical dot-plus-word, never a badge stamp.
+ * `warn` marks a section carrying unsaved edits — the accent colour is the
+ * interaction colour, and a state is not an interaction.
+ */
+function SectionStateMark({ tone, label }: { tone: "warn" | "neutral"; label: string }) {
+  return (
+    <span className="flex items-center gap-2">
+      <span aria-hidden className={tone === "warn" ? "state-dot state-dot--warn" : "state-dot"} />
+      <span className="state-text">{label}</span>
+    </span>
+  );
+}
+
+/**
+ * The draft text for an optional config number: empty when the server does not
+ * carry one. An empty field reads as "not set" — the shipped window still
+ * applies — so the form never puts a built-in fallback on the sheet as if the
+ * deployment had set it.
+ */
+function draftText(value: number | null | undefined): string {
+  return value == null ? "" : String(value);
+}
+
+/** The placeholder for the same field: the shipped default, when it is known. */
+function defaultText(value: number | null | undefined): string | undefined {
+  return value == null ? undefined : String(value);
+}
+
+/**
  * Parses a whole, non-negative count. Empty means "use the shipped window" and
  * reads as 0, which is what the server does with it; anything that is not a
  * plain number is rejected instead of silently becoming 0, because a typo that
@@ -129,6 +161,48 @@ export function SettingsPage() {
     staleTime: SYSTEM_ENV_STALE_MS,
   });
 
+  /*
+   * No fallback object here. Every policy field is optional on the wire, and
+   * answering a missing one with the shipped number would render a default as
+   * if the deployment had set it — the form reads absent fields as "not set"
+   * instead. `{}` is only the shape the optional fields allow.
+   */
+  const config: SettingsPolicyView = configQuery.data ?? {};
+  const defaultConfig = defaultQuery.data ?? config;
+  const envRegistration =
+    typeof envQuery.data?.registration === "string" ? envQuery.data.registration : "";
+
+  /*
+   * The form is keyed on the *content* of the config, not on when it was last
+   * fetched. `dataUpdatedAt` changes on every background refetch — and the query
+   * client refetches on window focus — so keying on it remounted this form and
+   * threw away whatever the operator had typed without saving.
+   *
+   * The inherited registration policy is part of the key for the same reason in
+   * the other direction: the radios start from the value that is actually in
+   * force, so their initial state must be rebuilt once the deployment's policy
+   * arrives rather than left on a placeholder.
+   *
+   * A refetch can also land *while* the operator has unsaved edits — another
+   * page saves the shared runtime slice, the signature moves, and the remount
+   * drops them. While the form is dirty the key is pinned to the signature it
+   * mounted with; the new one is adopted only once the edits are saved or
+   * dropped. The form reports that through `onDirtyChange`.
+   */
+  const [pinnedKey, setPinnedKey] = useState<string | null>(null);
+  const liveKeyRef = useRef("");
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    setPinnedKey((previous) => (dirty ? previous ?? liveKeyRef.current : null));
+  }, []);
+  const liveKey = `${JSON.stringify(config)}|${envRegistration}`;
+
+  // Kept current in an effect rather than a render-phase write: the pin has to
+  // name the signature that was live when the edits started, and effects run
+  // after the commit they describe.
+  useEffect(() => {
+    liveKeyRef.current = liveKey;
+  });
+
   if (configQuery.isLoading || defaultQuery.isLoading || envQuery.isLoading) {
     return (
       <div className="space-y-6">
@@ -165,37 +239,15 @@ export function SettingsPage() {
     );
   }
 
-  const config: SettingsPolicyView = configQuery.data ?? {
-    audit_retention_days: 90,
-    // The shipped window: 90 days for audit logs, 400 for usage (internal/config).
-    usage_retention_days: 400,
-    purity_bands: { excellent: 95, clean: 90, fair: 80, mixed: 60 },
-  };
-
-  /*
-   * The form is keyed on the *content* of the config, not on when it was last
-   * fetched. `dataUpdatedAt` changes on every background refetch — and the query
-   * client refetches on window focus — so keying on it remounted this form and
-   * threw away whatever the operator had typed without saving.
-   *
-   * The inherited registration policy is part of the key for the same reason in
-   * the other direction: the radios start from the value that is actually in
-   * force, so their initial state must be rebuilt once the deployment's policy
-   * arrives rather than left on a placeholder.
-   */
-  const envRegistration =
-    typeof envQuery.data?.registration === "string" ? envQuery.data.registration : "";
-  const configSignature = JSON.stringify(config);
-  const defaultConfig = defaultQuery.data ?? config;
-
   return (
     <>
       <SettingsFormContent
-        key={`${configSignature}|${envRegistration}`}
+        key={pinnedKey ?? liveKey}
         config={config}
         defaultConfig={defaultConfig}
         envRegistration={envRegistration}
         envKnown={!envQuery.isError}
+        onDirtyChange={handleDirtyChange}
         showToast={showToast}
         onRefetch={() => {
           void configQuery.refetch();
@@ -213,6 +265,7 @@ function SettingsFormContent({
   defaultConfig,
   envRegistration,
   envKnown,
+  onDirtyChange,
   onRefetch,
   showToast,
 }: {
@@ -220,6 +273,7 @@ function SettingsFormContent({
   defaultConfig: SettingsPolicyView;
   envRegistration: string;
   envKnown: boolean;
+  onDirtyChange: (dirty: boolean) => void;
   onRefetch: () => void;
   showToast: (tone: "success" | "error", text: string) => void;
 }) {
@@ -231,6 +285,13 @@ function SettingsFormContent({
   const cleanFieldId = useId();
   const fairFieldId = useId();
   const mixedFieldId = useId();
+  // Field-level errors get their own targets so each Input's aria-describedby
+  // names exactly the message that reports on it; the dialog's body paragraph
+  // is the description Radix's content points at.
+  const auditErrorId = useId();
+  const usageErrorId = useId();
+  const purityErrorId = useId();
+  const resetDescriptionId = useId();
 
   /*
    * The override the server holds, if any, and the policy the deployment would
@@ -248,24 +309,16 @@ function SettingsFormContent({
   const [mode, setMode] = useState<RegistrationMode>(effectiveMode);
   const [followEnv, setFollowEnv] = useState(false);
 
-  const [auditRetention, setAuditRetention] = useState(
-    String(config.audit_retention_days ?? 90),
-  );
-  const [usageRetention, setUsageRetention] = useState(
-    String(config.usage_retention_days ?? 400),
-  );
-  const [purityExcellent, setPurityExcellent] = useState(
-    String(config.purity_bands?.excellent ?? 95),
-  );
-  const [purityClean, setPurityClean] = useState(
-    String(config.purity_bands?.clean ?? 90),
-  );
-  const [purityFair, setPurityFair] = useState(
-    String(config.purity_bands?.fair ?? 80),
-  );
-  const [purityMixed, setPurityMixed] = useState(
-    String(config.purity_bands?.mixed ?? 60),
-  );
+  // Optional policy numbers start empty when the server does not carry them:
+  // an empty field is "not set" (the shipped window still applies), and
+  // pre-filling the shipped number would dress a default up as a deployed
+  // value the API never reported.
+  const [auditRetention, setAuditRetention] = useState(draftText(config.audit_retention_days));
+  const [usageRetention, setUsageRetention] = useState(draftText(config.usage_retention_days));
+  const [purityExcellent, setPurityExcellent] = useState(draftText(config.purity_bands?.excellent));
+  const [purityClean, setPurityClean] = useState(draftText(config.purity_bands?.clean));
+  const [purityFair, setPurityFair] = useState(draftText(config.purity_bands?.fair));
+  const [purityMixed, setPurityMixed] = useState(draftText(config.purity_bands?.mixed));
 
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
@@ -318,25 +371,47 @@ function SettingsFormContent({
   // shipped thresholds, so an off-by-one here would look like the save worked
   // and then quietly do something else. Check it before it leaves the page.
   const [excellent, clean, fair, mixed] = purityValues.map((value) => value ?? 0);
+  /*
+   * A config without purity bands plus an untouched form is "not configured",
+   * not a validation failure: the shipped thresholds apply, and demanding four
+   * numbers the server never sent would load the page looking broken.
+   */
+  const purityBlank =
+    purityExcellent.trim() === "" &&
+    purityClean.trim() === "" &&
+    purityFair.trim() === "" &&
+    purityMixed.trim() === "";
+  const purityNotConfigured = config.purity_bands == null && purityBlank;
   const purityOrdered =
     purityInRange && mixed < fair && fair < clean && clean < excellent;
   const purityError =
-    !purityInRange || !purityOrdered
+    !purityNotConfigured && (!purityInRange || !purityOrdered)
       ? t("阈值必须是 1 到 100 之间的整数，并从高到低：极优 > 优良 > 一般 > 混合。")
       : undefined;
 
   // --- dirty state ----------------------------------------------------------
 
+  /*
+   * An absent window behaves as 0 — both mean "use the shipped window", so the
+   * comparison may treat "unset" and "cleared" as the same state without
+   * inventing a number. The bands have no such equivalence: any complete set is
+   * a change when the server carries none.
+   */
   const auditDirty =
-    auditValue !== null && !auditOutOfRange && auditValue !== config.audit_retention_days;
+    auditValue !== null &&
+    !auditOutOfRange &&
+    auditValue !== (config.audit_retention_days ?? 0);
   const usageDirty =
-    usageValue !== null && !usageOutOfRange && usageValue !== config.usage_retention_days;
+    usageValue !== null &&
+    !usageOutOfRange &&
+    usageValue !== (config.usage_retention_days ?? 0);
   const purityDirty =
     purityOrdered &&
-    (excellent !== config.purity_bands?.excellent ||
-      clean !== config.purity_bands?.clean ||
-      fair !== config.purity_bands?.fair ||
-      mixed !== config.purity_bands?.mixed);
+    (config.purity_bands == null ||
+      excellent !== config.purity_bands.excellent ||
+      clean !== config.purity_bands.clean ||
+      fair !== config.purity_bands.fair ||
+      mixed !== config.purity_bands.mixed);
 
   /*
    * What the save actually sends: only the fields that changed. The endpoint
@@ -363,11 +438,26 @@ function SettingsFormContent({
   const hasErrors = Boolean(auditError || usageError || purityError);
   const canSave = isDirty && !hasErrors && !updateMutation.isPending;
 
+  // The parent pins the form key while this form is dirty, so a background
+  // refetch cannot remount it out from under unsaved edits (see SettingsPage).
+  useEffect(() => {
+    onDirtyChange(isDirty);
+  }, [isDirty, onDirtyChange]);
+
   const changedSections = [
     registrationDirty ? t("注册准入") : null,
     auditDirty || usageDirty ? t("数据保留") : null,
     purityDirty ? t("纯净度阈值") : null,
   ].filter((label): label is string => label !== null);
+
+  /*
+   * Joined the way the session's locale joins lists, instead of a hardcoded 、
+   * that reads as a typo in an English session.
+   */
+  const changedSectionsText = new Intl.ListFormat(
+    isEnglishLocale(getCurrentLocale()) ? "en-US" : "zh-CN",
+    { type: "conjunction" },
+  ).format(changedSections);
 
   const handleSave = () => {
     if (!canSave) return;
@@ -376,12 +466,14 @@ function SettingsFormContent({
   };
 
   const revertChanges = () => {
-    setAuditRetention(String(config.audit_retention_days));
-    setUsageRetention(String(config.usage_retention_days));
-    setPurityExcellent(String(config.purity_bands?.excellent ?? 95));
-    setPurityClean(String(config.purity_bands?.clean ?? 90));
-    setPurityFair(String(config.purity_bands?.fair ?? 80));
-    setPurityMixed(String(config.purity_bands?.mixed ?? 60));
+    // Same source as the draft init: an absent field reverts to empty ("not
+    // set"), never to a shipped number posed as the current value.
+    setAuditRetention(draftText(config.audit_retention_days));
+    setUsageRetention(draftText(config.usage_retention_days));
+    setPurityExcellent(draftText(config.purity_bands?.excellent));
+    setPurityClean(draftText(config.purity_bands?.clean));
+    setPurityFair(draftText(config.purity_bands?.fair));
+    setPurityMixed(draftText(config.purity_bands?.mixed));
     setMode(effectiveMode);
     setFollowEnv(false);
     setErrorMsg("");
@@ -466,9 +558,9 @@ function SettingsFormContent({
       )}
 
       {isDirty && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-accent/30 bg-accent-wash px-3.5 py-2.5">
-          <span className="text-xs font-medium text-accent">{t("有未保存的更改")}</span>
-          <span className="text-xs text-ink-soft">{changedSections.join("、")}</span>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-warn/30 bg-warn-wash px-3.5 py-2.5">
+          <span className="text-xs font-medium text-warn">{t("有未保存的更改")}</span>
+          <span className="text-xs text-ink-soft">{changedSectionsText}</span>
           <Button
             variant="quiet"
             size="sm"
@@ -488,7 +580,9 @@ function SettingsFormContent({
           title={t("账户注册")}
           description={t("决定访客能否自行创建账号。保存后立即生效，无需重启服务。")}
           meta={
-            registrationDirty ? <Badge tone="accent">{t("已修改")}</Badge> : undefined
+            registrationDirty ? (
+              <SectionStateMark tone="warn" label={t("已修改")} />
+            ) : undefined
           }
         />
         <PanelBody className="space-y-5">
@@ -598,9 +692,9 @@ function SettingsFormContent({
           description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口。")}
           meta={
             auditDirty || usageDirty ? (
-              <Badge tone="accent">{t("已修改")}</Badge>
+              <SectionStateMark tone="warn" label={t("已修改")} />
             ) : (
-              <Badge tone="neutral">{t("系统默认")}</Badge>
+              <SectionStateMark tone="neutral" label={t("系统默认")} />
             )
           }
         />
@@ -619,11 +713,20 @@ function SettingsFormContent({
                 step="1"
                 value={auditRetention}
                 onChange={(e) => setAuditRetention(e.target.value)}
-                placeholder={String(defaultConfig.audit_retention_days ?? 90)}
+                placeholder={defaultText(defaultConfig.audit_retention_days)}
                 invalid={Boolean(auditError)}
+                aria-describedby={auditError ? auditErrorId : undefined}
               />
               {auditError ? (
-                <p className="text-xs text-alert">{auditError}</p>
+                <p id={auditErrorId} role="alert" className="text-xs text-alert">
+                  {auditError}
+                </p>
+              ) : config.audit_retention_days == null ? (
+                <p className="text-xs text-ink-faint">
+                  {defaultConfig.audit_retention_days != null
+                    ? t("未设置（默认 {{val}} 天）", { val: defaultConfig.audit_retention_days })
+                    : t("未设置")}
+                </p>
               ) : (
                 defaultConfig.audit_retention_days != null && (
                   <p className="text-xs text-ink-faint">
@@ -646,11 +749,20 @@ function SettingsFormContent({
                 step="1"
                 value={usageRetention}
                 onChange={(e) => setUsageRetention(e.target.value)}
-                placeholder={String(defaultConfig.usage_retention_days ?? 400)}
+                placeholder={defaultText(defaultConfig.usage_retention_days)}
                 invalid={Boolean(usageError)}
+                aria-describedby={usageError ? usageErrorId : undefined}
               />
               {usageError ? (
-                <p className="text-xs text-alert">{usageError}</p>
+                <p id={usageErrorId} role="alert" className="text-xs text-alert">
+                  {usageError}
+                </p>
+              ) : config.usage_retention_days == null ? (
+                <p className="text-xs text-ink-faint">
+                  {defaultConfig.usage_retention_days != null
+                    ? t("未设置（默认 {{val}} 天）", { val: defaultConfig.usage_retention_days })
+                    : t("未设置")}
+                </p>
               ) : (
                 defaultConfig.usage_retention_days != null && (
                   <p className="text-xs text-ink-faint">
@@ -670,9 +782,9 @@ function SettingsFormContent({
           description={t("配置网络节点 IP 纯净度评估的四个等级阈值（1 - 100 分）。")}
           meta={
             purityDirty ? (
-              <Badge tone="accent">{t("已修改")}</Badge>
+              <SectionStateMark tone="warn" label={t("已修改")} />
             ) : (
-              <Badge tone="neutral">{t("系统默认")}</Badge>
+              <SectionStateMark tone="neutral" label={t("系统默认")} />
             )
           }
         />
@@ -691,9 +803,17 @@ function SettingsFormContent({
                 step="1"
                 value={purityExcellent}
                 onChange={(e) => setPurityExcellent(e.target.value)}
-                placeholder={String(defaultConfig.purity_bands?.excellent ?? 95)}
+                placeholder={defaultText(defaultConfig.purity_bands?.excellent)}
                 invalid={Boolean(purityError)}
+                aria-describedby={purityError ? purityErrorId : undefined}
               />
+              {config.purity_bands?.excellent == null && (
+                <p className="text-xs text-ink-faint">
+                  {defaultConfig.purity_bands?.excellent != null
+                    ? t("未设置（默认 {{val}} 分）", { val: defaultConfig.purity_bands.excellent })
+                    : t("未设置")}
+                </p>
+              )}
             </Fieldset>
 
             <Fieldset
@@ -709,9 +829,17 @@ function SettingsFormContent({
                 step="1"
                 value={purityClean}
                 onChange={(e) => setPurityClean(e.target.value)}
-                placeholder={String(defaultConfig.purity_bands?.clean ?? 90)}
+                placeholder={defaultText(defaultConfig.purity_bands?.clean)}
                 invalid={Boolean(purityError)}
+                aria-describedby={purityError ? purityErrorId : undefined}
               />
+              {config.purity_bands?.clean == null && (
+                <p className="text-xs text-ink-faint">
+                  {defaultConfig.purity_bands?.clean != null
+                    ? t("未设置（默认 {{val}} 分）", { val: defaultConfig.purity_bands.clean })
+                    : t("未设置")}
+                </p>
+              )}
             </Fieldset>
 
             <Fieldset
@@ -727,9 +855,17 @@ function SettingsFormContent({
                 step="1"
                 value={purityFair}
                 onChange={(e) => setPurityFair(e.target.value)}
-                placeholder={String(defaultConfig.purity_bands?.fair ?? 80)}
+                placeholder={defaultText(defaultConfig.purity_bands?.fair)}
                 invalid={Boolean(purityError)}
+                aria-describedby={purityError ? purityErrorId : undefined}
               />
+              {config.purity_bands?.fair == null && (
+                <p className="text-xs text-ink-faint">
+                  {defaultConfig.purity_bands?.fair != null
+                    ? t("未设置（默认 {{val}} 分）", { val: defaultConfig.purity_bands.fair })
+                    : t("未设置")}
+                </p>
+              )}
             </Fieldset>
 
             <Fieldset
@@ -745,12 +881,24 @@ function SettingsFormContent({
                 step="1"
                 value={purityMixed}
                 onChange={(e) => setPurityMixed(e.target.value)}
-                placeholder={String(defaultConfig.purity_bands?.mixed ?? 60)}
+                placeholder={defaultText(defaultConfig.purity_bands?.mixed)}
                 invalid={Boolean(purityError)}
+                aria-describedby={purityError ? purityErrorId : undefined}
               />
+              {config.purity_bands?.mixed == null && (
+                <p className="text-xs text-ink-faint">
+                  {defaultConfig.purity_bands?.mixed != null
+                    ? t("未设置（默认 {{val}} 分）", { val: defaultConfig.purity_bands.mixed })
+                    : t("未设置")}
+                </p>
+              )}
             </Fieldset>
           </div>
-          {purityError && <p className="text-xs text-alert">{purityError}</p>}
+          {purityError && (
+            <p id={purityErrorId} role="alert" className="text-xs text-alert">
+              {purityError}
+            </p>
+          )}
         </PanelBody>
       </Panel>
 
@@ -758,11 +906,11 @@ function SettingsFormContent({
       <DialogRoot open={resetModalOpen} onOpenChange={setResetModalOpen}>
         <DialogPortal>
           <DialogOverlay />
-          <DialogContent className="w-full max-w-md p-6">
+          <DialogContent className="w-full max-w-md p-6" aria-describedby={resetDescriptionId}>
             <DialogTitle className="text-base font-semibold text-ink">
               {t("确认恢复默认设置")}
             </DialogTitle>
-            <p className="mt-3 text-sm text-ink-soft">
+            <p id={resetDescriptionId} className="mt-3 text-sm text-ink-soft">
               {t(
                 "确定要将数据保留周期和纯净度等级阈值恢复为系统默认配置吗？未保存的手动更改将丢失。",
               )}

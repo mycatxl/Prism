@@ -5,6 +5,8 @@ import {
   BarChart3,
   ChevronRight,
   FileText,
+  LockKeyhole,
+  PencilLine,
   HardDrive,
   Network,
   RefreshCw,
@@ -14,9 +16,8 @@ import {
   Server,
   Waypoints,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useBeforeUnload, useSearchParams } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
@@ -185,10 +186,10 @@ function parseAuthorities(raw: string): string[] {
 function parseForm(form: RuntimeConfigForm): RuntimeConfig {
   const latencyURL = form.latency_test_url.trim();
   if (!latencyURL) {
-    throw new Error("延迟测试目标 URL 不能为空");
+    throw new Error(i18next.t("延迟测试目标 URL 不能为空"));
   }
   if (!latencyURL.startsWith("http://") && !latencyURL.startsWith("https://")) {
-    throw new Error("延迟测试目标 URL 必须是 http/https 地址");
+    throw new Error(i18next.t("延迟测试目标 URL 必须是 http/https 地址"));
   }
 
   return {
@@ -332,13 +333,34 @@ function ConfigSwitch({
 /**
  * A read-only value that comes from the deployment environment: the label is the
  * row's name and the value is clipped to one line, because a data directory path
- * is read as a value, not as a paragraph.
+ * is read as a value, not as a paragraph. `status` renders a state instead of a
+ * figure: the dot carries the tone, the word carries the meaning.
  */
-function StaticRow({ label, value }: { label: string; value: string }) {
+function StaticRow({
+  label,
+  value,
+  status,
+}: {
+  label: string;
+  value?: string;
+  status?: { tone: "signal" | "warn" | "neutral"; text: string };
+}) {
   return (
     <TR>
-      <TD className="w-1/3 text-ink-soft">{label}</TD>
-      <TDClip className="readout text-xs">{value}</TDClip>
+      <TD className="w-40 text-ink-soft">{label}</TD>
+      <TDClip className="readout text-xs">
+        {status ? (
+          <span className="inline-flex items-center gap-2">
+            <span
+              aria-hidden
+              className={cn("state-dot", status.tone !== "neutral" && `state-dot--${status.tone}`)}
+            />
+            <span className="state-text">{status.text}</span>
+          </span>
+        ) : (
+          value
+        )}
+      </TDClip>
     </TR>
   );
 }
@@ -444,18 +466,44 @@ export function SystemConfigPage() {
   useBeforeUnload(event => {
     if (hasUnsavedChanges) { event.preventDefault(); event.returnValue = ""; }
   });
+  /*
+   * The server can move under an open draft: a background refetch replaces the
+   * baseline, and a patch diffed against the new one would silently push the
+   * draft's old values over fields this operator never touched. The draft
+   * remembers which baseline it was seeded from, and a banner says when the two
+   * have drifted instead of letting the diff drift quietly.
+   */
+  const baselineSignature = useMemo(() => (baseline ? JSON.stringify(baseline) : null), [baseline]);
+  const draftSeedSignatureRef = useRef<string | null>(null);
+  const [staleDraft, setStaleDraft] = useState(false);
+
+  useEffect(() => {
+    if (!baselineSignature) return;
+    if (!hasUnsavedChanges) {
+      draftSeedSignatureRef.current = baselineSignature;
+      setStaleDraft(false);
+      return;
+    }
+    if (draftSeedSignatureRef.current === null) {
+      draftSeedSignatureRef.current = baselineSignature;
+      return;
+    }
+    if (draftSeedSignatureRef.current !== baselineSignature) {
+      setStaleDraft(true);
+    }
+  }, [baselineSignature, hasUnsavedChanges]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!baseline || !form) {
-        throw new Error("配置尚未加载完成");
+         throw new Error(t("配置尚未加载完成"));
       }
       if (customPatchText !== null) throw new Error(t("请先将 JSON 应用到草稿"));
       const patchToSend = buildPatch(baseline, parseForm(form));
 
       const changedCount = Object.keys(patchToSend).length;
       if (!changedCount) {
-        throw new Error("没有可提交的变更");
+         throw new Error(t("没有可提交的变更"));
       }
       const updated = await patchSystemConfig(patchToSend);
       return { updated, changedCount };
@@ -588,23 +636,32 @@ export function SystemConfigPage() {
       <PageHeader
         title={
           <span id="settings-title" tabIndex={-1} className="outline-none">
-            {t("运行参数")}
+            {t("系统配置")}
           </span>
         }
-        description={category ? t(category.description) : t("选择一类设置，集中查看和调整。")}
+        description={t("编辑运行时配置，查看部署级只读信息。")}
         meta={
           <>
-            <PageMeta label={t("所有配置")} value={t("{{count}} 个配置项", { count: SETTINGS_CATEGORIES.length })} />
+            <PageMeta label={t("配置分类")} value={t("{{count}} 个分类", { count: SETTINGS_CATEGORIES.length })} />
             <PageMeta
               label={t("配置草稿")}
-              value={changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")}
+              value={
+                <span className="inline-flex items-center gap-2">
+                  <span aria-hidden className={cn("state-dot", changedKeys.length > 0 && "state-dot--warn")} />
+                  <span className="state-text">
+                    {changedKeys.length
+                      ? t("{{count}} 项待保存", { count: changedKeys.length })
+                      : t("当前无未保存改动")}
+                  </span>
+                </span>
+              }
             />
           </>
         }
         actions={category ? (
           <Button variant="secondary" onClick={() => selectCategory()}>
             <ArrowLeft size={15} aria-hidden />
-            {t("所有配置")}
+            {t("配置目录")}
           </Button>
         ) : undefined}
       />
@@ -612,6 +669,16 @@ export function SystemConfigPage() {
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
       <div className="page-content page-content--fill">
+        <div className="config-mode-strip" role="note">
+          <div className="config-mode-strip__item">
+            <span className="config-mode-strip__icon config-mode-strip__icon--editable" aria-hidden><PencilLine size={15} /></span>
+            <span><strong>{t("可编辑配置")}</strong><small>{t("运行时变更，保存后生效")}</small></span>
+          </div>
+          <div className="config-mode-strip__item">
+            <span className="config-mode-strip__icon config-mode-strip__icon--readonly" aria-hidden><LockKeyhole size={15} /></span>
+            <span><strong>{t("部署只读信息")}</strong><small>{t("来自部署环境，修改需重启")}</small></span>
+          </div>
+        </div>
         {!form ? (
           <Panel className="max-w-3xl">
             <PanelBody>
@@ -629,8 +696,8 @@ export function SystemConfigPage() {
         ) : (
           <div className="space-y-3">
             {!category && (
-              <Panel className="config-directory panel-group flex min-w-0 flex-col">
-                <PanelHeader title={t("所有配置")} description={t("选择一类设置，集中查看和调整。")} />
+              <Panel className="panel-group flex min-w-0 flex-col">
+                <PanelHeader title={t("配置目录")} description={t("按领域管理可编辑配置，或查看部署级只读信息。")} />
                 <PanelToolbar>
                   <label className="relative block w-full sm:w-72">
                     <Search
@@ -659,7 +726,8 @@ export function SystemConfigPage() {
                           <Button
                             type="button"
                             variant="quiet"
-                            className="h-auto w-full min-w-0 justify-start gap-3 rounded-none px-4 py-2 text-left"
+                            size="lg"
+                            className="w-full min-w-0 justify-start gap-3 text-left"
                             onClick={() => selectCategory(item.id)}
                             aria-label={t(item.title)}
                           >
@@ -667,7 +735,10 @@ export function SystemConfigPage() {
                             <span className="w-40 shrink-0 truncate text-sm font-medium text-ink">{t(item.title)}</span>
                             <span className="min-w-0 flex-1 truncate text-xs text-ink-soft">{t(item.description)}</span>
                             {dirty ? (
-                              <Badge tone="warn">{t("{{count}} 项待保存", { count: dirty })}</Badge>
+                              <span className="flex shrink-0 items-center gap-2">
+                                <span aria-hidden className="state-dot state-dot--warn" />
+                                <span className="state-text">{t("{{count}} 项待保存", { count: dirty })}</span>
+                              </span>
                             ) : (
                               <span className="shrink-0 text-xs text-ink-faint">
                                 {t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}
@@ -962,8 +1033,8 @@ export function SystemConfigPage() {
                     {envBaseline && (
                       <Panel className="min-w-0">
                         <PanelHeader
-                          title={t("启动配置")}
-                          description={t("只读参数，修改部署配置并重启服务后生效。")}
+                          title={t("部署只读信息")}
+                          description={t("来自部署环境，当前页面只读；修改需更新部署配置并重启。")}
                           actions={
                             <Button
                               variant="secondary"
@@ -1066,9 +1137,25 @@ export function SystemConfigPage() {
                             <StaticGroup title={t("服务鉴权状态")}>
                               <StaticRow
                                 label={t("已配置代理令牌")}
-                                value={envBaseline.proxy_token_set ? t("已配置") : t("未配置")}
+                                status={
+                                  envBaseline.proxy_token_set
+                                    ? { tone: "signal", text: t("已配置") }
+                                    : { tone: "neutral", text: t("未配置") }
+                                }
                               />
                             </StaticGroup>
+                          )}
+
+                          {activeCategory === "deployment" && envBaseline.proxy_token_weak && (
+                            <div
+                              className="flex items-start gap-2.5 rounded-control border border-warn/30 bg-warn-wash px-3.5 py-2.5"
+                              role="status"
+                            >
+                              <span aria-hidden className="state-dot state-dot--warn mt-1" />
+                              <span className="state-text">
+                                {t("PRISM_PROXY_TOKEN 强度较弱，建议更换为更高熵随机令牌")}
+                              </span>
+                            </div>
                           )}
                         </PanelBody>
                       </Panel>
@@ -1084,7 +1171,10 @@ export function SystemConfigPage() {
                 description={t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。")}
                 actions={
                   changedKeys.length ? (
-                    <Badge tone="warn">{t("{{count}} 项待保存", { count: changedKeys.length })}</Badge>
+                    <span className="flex shrink-0 items-center gap-2">
+                      <span aria-hidden className="state-dot state-dot--warn" />
+                      <span className="state-text">{t("{{count}} 项待保存", { count: changedKeys.length })}</span>
+                    </span>
                   ) : (
                     <span className="text-xs text-ink-faint">{t("当前无未保存改动")}</span>
                   )
@@ -1092,6 +1182,23 @@ export function SystemConfigPage() {
               />
 
               <PanelBody className="space-y-3">
+                {staleDraft && (
+                  <div
+                    className="flex flex-wrap items-center gap-2.5 rounded-control border border-warn/30 bg-warn-wash px-3.5 py-2.5"
+                    role="status"
+                  >
+                    <span aria-hidden className="state-dot state-dot--warn" />
+                    <span className="state-text min-w-0 flex-1">
+                      {t("运行配置已在后台更新，草稿基于旧数据；直接保存会用旧值覆盖新值，建议先重新加载。")}
+                    </span>
+                    <Button variant="secondary" size="sm" onClick={() => void reloadFromServer()}>
+                      {t("重新加载")}
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => setStaleDraft(false)}>
+                      {t("关闭")}
+                    </Button>
+                  </div>
+                )}
                 {changedKeys.length > 0 && (
                   <div className="flex flex-wrap gap-1.5">
                     {changedKeys.map(field => (
@@ -1110,20 +1217,24 @@ export function SystemConfigPage() {
 
                 {parsedResult.error && <ErrorState message={parsedResult.error} />}
 
-                <details>
-                  <summary className="cursor-pointer text-sm font-medium text-ink-soft select-none hover:text-ink">
+                <div className="space-y-2">
+                  <SectionTitle
+                    trailing={
+                      customPatchText !== null ? (
+                        <span className="flex shrink-0 items-center gap-2">
+                          <span aria-hidden className="state-dot state-dot--warn" />
+                          <span className="state-text">{t("待应用")}</span>
+                        </span>
+                      ) : undefined
+                    }
+                  >
                     {t("高级：JSON 变更")}
-                    {customPatchText !== null && (
-                      <Badge tone="warn" className="ml-2">
-                        {t("待应用")}
-                      </Badge>
-                    )}
-                  </summary>
-                  <p className="mt-2 max-w-[68ch] text-xs leading-relaxed text-ink-soft">
+                  </SectionTitle>
+                  <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">
                     {t("JSON 先应用到草稿，再统一保存。分类切换会保留所有未保存更改。")}
                   </p>
                   <Textarea
-                    className="mt-2 font-mono"
+                    className="font-mono"
                     aria-label={t("JSON 变更内容")}
                     value={displayedPatchText}
                     onChange={handlePatchEdit}
@@ -1131,7 +1242,7 @@ export function SystemConfigPage() {
                     spellCheck={false}
                     disabled={saveMutation.isPending}
                   />
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     <Button
                       variant="secondary"
                       size="sm"
@@ -1149,11 +1260,11 @@ export function SystemConfigPage() {
                       {t("取消 JSON 编辑")}
                     </Button>
                   </div>
-                </details>
+                </div>
               </PanelBody>
             </Panel>
 
-            <Panel className="sticky bottom-0 z-10">
+            <Panel className="config-draft-panel sticky bottom-0 z-10">
               <PanelBody className="flex flex-wrap items-center justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-ink">

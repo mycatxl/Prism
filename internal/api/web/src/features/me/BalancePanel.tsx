@@ -2,17 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Coins, Ticket, Wallet } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Readout } from "../../components/ui/Readout";
-import { Table, TableWrap, TBody, TD, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
+import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { mePaths } from "../../lib/paths";
 import { formatMicro } from "../../lib/money";
@@ -111,9 +111,10 @@ export function BalancePanel() {
           title={t("余额")}
           description={t("用兑换码或链上转账充值，余额用于购买与续费套餐。")}
           meta={
-            <Badge tone={balance > 0 ? "signal" : "neutral"}>
-              {balance > 0 ? t("可用") : t("暂无余额")}
-            </Badge>
+            <span className="flex items-center gap-2">
+              <span aria-hidden className={cn("state-dot", balance > 0 && "state-dot--signal")} />
+              <span className="state-text">{balance > 0 ? t("可用") : t("暂无余额")}</span>
+            </span>
           }
         />
         <PanelBody className="space-y-6">
@@ -160,11 +161,11 @@ export function BalancePanel() {
             </Fieldset>
             <Button
               onClick={handleRedeem}
-              disabled={redeemMutation.isPending}
+              loading={redeemMutation.isPending}
               title={t("使用兑换码充值")}
             >
               <Ticket size={14} />
-              <span>{redeemMutation.isPending ? t("兑换中...") : t("兑换")}</span>
+              <span>{t("兑换")}</span>
             </Button>
             <Button variant="secondary" asChild title={t("转入 USDT (TRC20) 充值")}>
               <Link to={mePaths.deposit}>
@@ -180,7 +181,7 @@ export function BalancePanel() {
         <PanelHeader
           title={t("余额流水")}
           description={t("每一笔余额变动都有记录，可按来源追溯。")}
-          meta={<Badge tone="neutral">{ledger.length}</Badge>}
+          meta={t("共 {{count}} 条", { count: ledger.length })}
         />
         <PanelBody className="p-0">
           {balanceQuery.isLoading ? (
@@ -218,17 +219,20 @@ export function BalancePanel() {
                       <TD className="text-xs text-ink">
                         {reasonLabel(entry.reason, t)}
                       </TD>
-                      <TD
-                        className={`readout text-right font-mono text-xs ${
-                          entry.delta_micro >= 0 ? "text-signal" : "text-alert"
-                        }`}
+                      <TDNum
+                        className={cn(
+                          "text-xs",
+                          entry.delta_micro >= 0 ? "text-signal" : "text-alert",
+                        )}
                       >
-                        {entry.delta_micro >= 0 ? "+" : ""}
-                        {formatMicro(entry.delta_micro)}
-                      </TD>
-                      <TD className="readout text-right font-mono text-xs text-ink">
-                        {formatMicro(entry.balance_after_micro)}
-                      </TD>
+                        <span className="readout">
+                          {entry.delta_micro >= 0 ? "+" : ""}
+                          {formatMicro(entry.delta_micro)}
+                        </span>
+                      </TDNum>
+                      <TDNum className="text-xs">
+                        <span className="readout">{formatMicro(entry.balance_after_micro)}</span>
+                      </TDNum>
                       <TD className="max-w-xs truncate text-xs text-ink-faint" title={entry.note}>
                         {entry.note || entry.actor || "-"}
                       </TD>

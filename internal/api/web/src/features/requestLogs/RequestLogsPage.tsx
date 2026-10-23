@@ -18,6 +18,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatBytes } from "../../lib/bytes";
+import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { formatDateTime } from "../../lib/time";
@@ -681,10 +682,22 @@ export function RequestLogsPage() {
             <Link
               to={opsPaths.config}
               className="flex shrink-0 items-center transition-opacity hover:opacity-80"
+              aria-label={
+                configQuery.data.request_log_enabled
+                  ? t("请求日志已开启，前往系统配置")
+                  : t("请求日志未开启，前往系统配置")
+              }
             >
-              <Badge tone={configQuery.data.request_log_enabled ? "signal" : "warn"} dot>
-                {configQuery.data.request_log_enabled ? t("已开启") : t("未开启")}
-              </Badge>
+              <span className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className={cn(
+                    "state-dot",
+                    configQuery.data.request_log_enabled ? "state-dot--signal" : "state-dot--warn",
+                  )}
+                />
+                <span className="state-text">{configQuery.data.request_log_enabled ? t("已开启") : t("未开启")}</span>
+              </span>
             </Link>
           ) : undefined
         }
@@ -886,9 +899,13 @@ export function RequestLogsPage() {
                           {http}
                         </TDClip>
                         <TD>
-                          <Badge tone={log.net_ok ? "signal" : "warn"} dot>
-                            {log.net_ok ? t("成功") : t("失败")}
-                          </Badge>
+                          <span className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className={cn("state-dot", log.net_ok ? "state-dot--signal" : "state-dot--warn")}
+                            />
+                            <span className="state-text">{log.net_ok ? t("成功") : t("失败")}</span>
+                          </span>
                         </TD>
                         <TDNum className="text-xs text-ink-soft">
                           {formatOptionalDurationMs(log.first_byte_duration_ms)}

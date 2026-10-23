@@ -1,7 +1,6 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownToLine, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Fieldset, Input } from "../../components/ui/Input";
 import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
@@ -29,6 +28,7 @@ import type { GeoIPLookupResult } from "./types";
  */
 export function GeoIPPage() {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const [singleIP, setSingleIP] = useState("");
   const [singleResult, setSingleResult] = useState<GeoIPLookupResult | null>(null);
   const { toasts, showToast, dismissToast } = useToast();
@@ -57,9 +57,22 @@ export function GeoIPPage() {
 
   const updateMutation = useMutation({
     mutationFn: updateGeoIPNow,
-    onSuccess: async () => {
-      await statusQuery.refetch();
-      showToast("success", t("GeoIP 数据库更新任务已执行"));
+    onSuccess: async (result) => {
+      /*
+       * The update is synchronous, but the status readout is a different cache
+       * entry: invalidate it so the new mtime lands now instead of waiting for
+       * the next poll. And the endpoint's own verdict is honoured — `status` is
+       * the response's word for how it went, not decoration on a static toast.
+       */
+      await queryClient.invalidateQueries({ queryKey: ["geoip-status"] });
+      if (result.status === "ok") {
+        showToast("success", t("GeoIP 数据库更新任务已执行"));
+      } else {
+        showToast(
+          "error",
+          t("GeoIP 数据库更新未完成（状态：{{status}}）", { status: result.status || "-" }),
+        );
+      }
     },
     onError: (error) => {
       showToast("error", formatApiErrorMessage(error, t));
@@ -69,6 +82,21 @@ export function GeoIPPage() {
   const status = statusQuery.data;
   const hasDBTime = Boolean(status?.db_mtime);
   const hasNextSchedule = Boolean(status?.next_scheduled_update);
+
+  /*
+   * One reading, two places: the page header and the database panel both show
+   * the loaded/not-loaded state, and both render this mark, so the two copies
+   * can never drift apart.
+   */
+  const dbState = (
+    <span className="flex items-center gap-2">
+      <span
+        aria-hidden
+        className={cn("state-dot", hasDBTime ? "state-dot--signal" : "state-dot--warn")}
+      />
+      <span className="state-text">{hasDBTime ? t("数据库已加载") : t("数据库未加载")}</span>
+    </span>
+  );
 
   const singleRegion = useMemo(() => {
     if (!singleResult || !singleResult.region) {
@@ -90,11 +118,7 @@ export function GeoIPPage() {
           <>
             <PageMeta
               label={t("数据库状态")}
-              value={
-                <Badge tone={hasDBTime ? "signal" : "warn"} dot>
-                  {hasDBTime ? t("数据库已加载") : t("数据库未加载")}
-                </Badge>
-              }
+              value={dbState}
             />
             <PageMeta
               label={t("数据库更新时间")}
@@ -155,9 +179,7 @@ export function GeoIPPage() {
                 </ReadoutStrip>
 
                 <div className="flex flex-wrap items-center gap-2 border-t border-rule-faint pt-3">
-                  <Badge tone={hasDBTime ? "signal" : "warn"} dot>
-                    {hasDBTime ? t("数据库已加载") : t("数据库未加载")}
-                  </Badge>
+                  {dbState}
                   <Button
                     size="sm"
                     variant="secondary"

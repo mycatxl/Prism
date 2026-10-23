@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useState } from "react";
-import { Badge } from "../../components/ui/Badge";
+import { Pencil, Plus, Power, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/Button";
 import {
   DialogContent,
@@ -11,12 +10,18 @@ import {
   DialogTitle,
 } from "../../components/ui/Dialog";
 import { Fieldset, Input } from "../../components/ui/Input";
-import { PageHeader } from "../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
+import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
+import {
+  Panel,
+  PanelBody,
+  PanelFooter,
+  PanelHeader,
+  PanelToolbar,
+} from "../../components/ui/Panel";
 import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
 import { Select } from "../../components/ui/Select";
 import { Switch } from "../../components/ui/Switch";
-import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../components/ui/Table";
+import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -31,6 +36,16 @@ import {
   unitsToBase,
 } from "./plan-units";
 import type { AdminPlan, PlanPatch, PlanStatus, PlanWrite } from "./types";
+
+/*
+ * The operator's plan catalogue, on the Signal Console rhythm: the page header
+ * states the page and carries the one action that creates, one panel carries a
+ * toolbar of search + status + refresh over a single data grid, and the footer
+ * carries the count. The status column is the dot-and-word pair; the figures a
+ * reader compares — price, quota, duration — are readouts with their units set
+ * small. The create/edit dialog keeps every field and validation it had; only
+ * the arrangement changed.
+ */
 
 /*
  * The periods a plan may name, in the order the form offers them.
@@ -64,26 +79,76 @@ function periodLabel(period: string, t: (text: string) => string): string {
   }
 }
 
+/** `formatBytes` keeps figure and unit apart; here the unit drops into a `<small>`. */
+function trafficReadout(bytes: number): ReactNode {
+  const [figure, unit] = formatBytes(bytes).split(" ");
+  return (
+    <>
+      {figure}
+      <small>{unit}</small>
+    </>
+  );
+}
+
+type StatusFilter = "all" | PlanStatus;
+
 export function PlansPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
 
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [formOpen, setFormOpen] = useState(false);
   const [editingPlan, setEditingPlan] = useState<AdminPlan | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminPlan | null>(null);
+  const [delistTarget, setDelistTarget] = useState<AdminPlan | null>(null);
 
   const {
     data: plansData,
     isLoading,
     isError,
     error,
-    refetch,
     isFetching,
   } = useQuery({
     queryKey: adminPlansQueryKey,
     queryFn: () => listPlans(),
   });
+
+  const plans = useMemo(() => plansData?.items ?? [], [plansData]);
+
+  /*
+   * The list endpoint takes no filters, so search and status narrow the page
+   * itself: the same rows the cache holds, viewed through the toolbar. The
+   * needle matches the name and the bound platforms and IP tiers, the three
+   * things an operator scans a catalogue by.
+   */
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return plans.filter((plan) => {
+      if (statusFilter !== "all" && plan.status !== statusFilter) return false;
+      if (!needle) return true;
+      const haystack = [
+        plan.name,
+        (plan.platforms ?? []).join(" "),
+        (plan.ip_tiers ?? []).join(" "),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [plans, search, statusFilter]);
+  const filtersActive = search.trim() !== "" || statusFilter !== "all";
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+  };
+
+  // One action, the page's own cache entry: the list this panel reads and the
+  // plan pickers on the user, invite and user-detail pages share.
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey });
+  };
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deletePlan(id),
@@ -97,184 +162,274 @@ export function PlansPage() {
     },
   });
 
-  const plans = plansData?.items ?? [];
+  /*
+   * Listing and delisting are one field on the merge patch, so the row action
+   * sends only the status. Delisting is the destructive direction — the server
+   * stops every subscription on the plan at once and listing again does not
+   * restore them — so it confirms before it sends; listing does not.
+   */
+  const statusMutation = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: PlanStatus }) =>
+      updatePlan(id, { status }),
+    onSuccess: (_plan, variables) => {
+      showToast("success", t(variables.status === "active" ? "套餐已上架" : "套餐已下架"));
+      setDelistTarget(null);
+      void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey });
+    },
+    onError: (err) => {
+      showToast("error", formatApiErrorMessage(err, t));
+    },
+  });
 
   return (
-    <div className="space-y-6">
+    <Page bleed>
       <PageHeader
         title={t("套餐")}
         description={t("管理订阅套餐规则、流量配额与并发限制。")}
+        meta={<PageMeta label={t("套餐总数")} value={plansData ? plans.length : "--"} />}
         actions={
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => void refetch()}
-              disabled={isFetching}
-              title={t("刷新")}
-            >
-              <RefreshCw
-                size={14}
-                className={isFetching ? "animate-spin" : undefined}
-              />
-              <span>{t("刷新")}</span>
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => {
-                setEditingPlan(null);
-                setFormOpen(true);
-              }}
-            >
-              <Plus size={14} />
-              <span>{t("新建套餐")}</span>
-            </Button>
-          </div>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setEditingPlan(null);
+              setFormOpen(true);
+            }}
+          >
+            <Plus size={16} />
+            <span>{t("新建套餐")}</span>
+          </Button>
         }
       />
 
-      <Panel>
-        <PanelHeader
-          title={t("全部套餐")}
-          meta={<Badge tone="neutral">{plans.length}</Badge>}
-        />
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-        <PanelBody className="p-0">
+      <div className="page-content page-content--fill">
+        <Panel className="flex min-w-0 flex-col">
+          <PanelHeader
+            title={t("全部套餐")}
+            meta={t("共 {{count}} 个套餐", { count: filtered.length })}
+          />
+
+          <PanelToolbar>
+            <label htmlFor="plans-search" className="relative block min-w-48 sm:w-64">
+              <Search
+                size={13}
+                aria-hidden
+                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+              />
+              <Input
+                id="plans-search"
+                className="pl-7 text-xs"
+                placeholder={t("搜索套餐")}
+                aria-label={t("搜索套餐")}
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </label>
+            <Select
+              className="w-32"
+              aria-label={t("状态")}
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+            >
+              <option value="all">{t("全部状态")}</option>
+              <option value="active">{t("上架")}</option>
+              <option value="disabled">{t("下架")}</option>
+            </Select>
+            {filtersActive && (
+              <Button variant="ghost" size="sm" onClick={clearFilters}>
+                {t("清除筛选")}
+              </Button>
+            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={refresh}
+                disabled={isFetching}
+                title={t("刷新")}
+              >
+                <RefreshCw
+                  size={15}
+                  className={isFetching ? "animate-spin" : undefined}
+                />
+                <span>{t("刷新")}</span>
+              </Button>
+            </div>
+          </PanelToolbar>
+
           {isLoading ? (
-            <LoadingState label={t("正在加载套餐列表...")} />
+            <PanelBody>
+              <LoadingState label={t("正在加载套餐列表...")} />
+            </PanelBody>
           ) : isError ? (
-            <ErrorState
-              message={formatApiErrorMessage(error, t)}
-              onRetry={() => void refetch()}
-            />
-          ) : plans.length === 0 ? (
-            <EmptyState
-              title={t("暂无套餐")}
-              hint={t("尚未创建任何订阅套餐，点击右上角新建。")}
-              action={
-                <Button
-                  variant="primary"
-                  onClick={() => {
-                    setEditingPlan(null);
-                    setFormOpen(true);
-                  }}
-                >
-                  <Plus size={14} />
-                  <span>{t("新建套餐")}</span>
-                </Button>
-              }
-            />
+            <PanelBody>
+              <ErrorState
+                message={formatApiErrorMessage(error, t)}
+                onRetry={refresh}
+              />
+            </PanelBody>
+          ) : filtered.length === 0 ? (
+            <PanelBody>
+              <EmptyState
+                title={filtersActive ? t("没有匹配的套餐") : t("暂无套餐")}
+                hint={
+                  filtersActive
+                    ? t("调整搜索或状态筛选，或清除筛选查看全部。")
+                    : t("尚未创建任何订阅套餐，点击右上角新建。")
+                }
+                action={
+                  filtersActive ? (
+                    <Button variant="secondary" onClick={clearFilters}>
+                      {t("清除筛选")}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="primary"
+                      onClick={() => {
+                        setEditingPlan(null);
+                        setFormOpen(true);
+                      }}
+                    >
+                      <Plus size={14} />
+                      <span>{t("新建套餐")}</span>
+                    </Button>
+                  )
+                }
+              />
+            </PanelBody>
           ) : (
-            <TableWrap>
-              <Table>
+            <TableWrap aria-busy={isFetching}>
+              <Table className="min-w-[960px]">
                 <THead>
                   <TR>
                     <TH>{t("套餐名称")}</TH>
                     <TH>{t("状态")}</TH>
-                    <TH>{t("适用平台")}</TH>
-                    <TH>{t("IP 类型与纯净度")}</TH>
-                    <TH>{t("流量配额")}</TH>
-                    <TH>{t("重置周期")}</TH>
-                    <TH>{t("最大并发")}</TH>
-                    <TH>{t("最大密钥数")}</TH>
-                    <TH>{t("有效天数")}</TH>
                     <TH className="text-right">{t("价格 (USDT)")}</TH>
-                    <TH>{t("活跃用户")}</TH>
+                    <TH className="text-right">{t("流量配额")}</TH>
+                    <TH>{t("重置周期")}</TH>
+                    <TH className="text-right">{t("时长")}</TH>
+                    <TH>{t("适用平台")}</TH>
                     <TH className="text-right">{t("操作")}</TH>
                   </TR>
                 </THead>
                 <TBody>
-                  {plans.map((plan) => (
-                    <TR key={plan.id}>
-                      <TD className="font-medium text-ink">
-                        <TDClip>{plan.name}</TDClip>
-                      </TD>
-                      <TD>
-                        <Badge
-                          tone={plan.status === "active" ? "live" : "warn"}
-                        >
-                          {plan.status === "active" ? t("正常") : t("已停用")}
-                        </Badge>
-                      </TD>
-                      <TD className="text-xs text-ink-soft">
-                        <TDClip>
-                          {plan.platforms && plan.platforms.length > 0
-                            ? plan.platforms.join(", ")
-                            : t("全部平台")}
+                  {filtered.map((plan) => {
+                    const active = plan.status === "active";
+                    const busy =
+                      statusMutation.isPending && statusMutation.variables?.id === plan.id;
+                    const platformText =
+                      plan.platforms && plan.platforms.length > 0
+                        ? plan.platforms.join(", ")
+                        : t("全部平台");
+                    return (
+                      <TR key={plan.id}>
+                        <TDClip className="font-medium text-ink">{plan.name}</TDClip>
+                        <TD className="whitespace-nowrap">
+                          <span className="inline-flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className={active ? "state-dot state-dot--signal" : "state-dot"}
+                            />
+                            <span className="state-text">
+                              {active ? t("上架") : t("下架")}
+                            </span>
+                          </span>
+                        </TD>
+                        <TDNum className="whitespace-nowrap">
+                          {plan.price_micro > 0 ? (
+                            <span className="readout">
+                              {formatMicro(plan.price_micro)}
+                              <small>USDT</small>
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">{t("非卖品")}</span>
+                          )}
+                        </TDNum>
+                        <TDNum className="whitespace-nowrap">
+                          {plan.traffic_bytes > 0 ? (
+                            <span className="readout">
+                              {trafficReadout(plan.traffic_bytes)}
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">{t("不限")}</span>
+                          )}
+                        </TDNum>
+                        <TD className="whitespace-nowrap text-xs text-ink-soft">
+                          {periodLabel(plan.period || "month", t)}
+                        </TD>
+                        <TDNum className="whitespace-nowrap">
+                          {plan.duration_days > 0 ? (
+                            <span className="readout">
+                              {plan.duration_days}
+                              <small>{t("天")}</small>
+                            </span>
+                          ) : (
+                            <span className="text-ink-faint">{t("永久有效")}</span>
+                          )}
+                        </TDNum>
+                        <TDClip className="text-xs text-ink-soft" title={platformText}>
+                          {platformText}
                         </TDClip>
-                      </TD>
-                      <TD className="text-xs text-ink-soft">
-                        <TDClip>
-                          {plan.ip_tiers && plan.ip_tiers.length > 0
-                            ? plan.ip_tiers.join(", ")
-                            : t("不限")}
-                        </TDClip>
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.traffic_bytes > 0
-                          ? formatBytes(plan.traffic_bytes)
-                          : t("不限")}
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.period || t("按月")}
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.max_concurrent > 0 ? plan.max_concurrent : t("不限")}
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.max_keys > 0 ? plan.max_keys : t("不限")}
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.duration_days > 0
-                          ? t("{{days}} 天", { days: plan.duration_days })
-                          : t("永久有效")}
-                      </TD>
-                      <TD className="readout text-right text-xs">
-                        {plan.price_micro > 0 ? (
-                          formatMicro(plan.price_micro)
-                        ) : (
-                          <span className="text-ink-faint">{t("非卖品")}</span>
-                        )}
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.active_user_count ?? 0}
-                      </TD>
-                      <TD className="text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Button
-                            variant="ghost"
-                            onClick={() => {
-                              setEditingPlan(plan);
-                              setFormOpen(true);
-                            }}
-                            title={t("编辑套餐")}
-                          >
-                            <Pencil size={14} />
-                            <span>{t("编辑")}</span>
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            onClick={() => setDeleteTarget(plan)}
-                            title={t("删除套餐")}
-                          >
-                            <Trash2 size={14} className="text-alert" />
-                            <span>{t("删除")}</span>
-                          </Button>
-                        </div>
-                      </TD>
-                    </TR>
-                  ))}
+                        <TD className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setEditingPlan(plan);
+                                setFormOpen(true);
+                              }}
+                              title={t("编辑套餐")}
+                              aria-label={t("编辑套餐")}
+                            >
+                              <Pencil size={14} />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              disabled={busy}
+                              onClick={() => {
+                                if (active) setDelistTarget(plan);
+                                else statusMutation.mutate({ id: plan.id, status: "active" });
+                              }}
+                              title={active ? t("下架套餐") : t("上架套餐")}
+                              aria-label={active ? t("下架套餐") : t("上架套餐")}
+                            >
+                              <Power size={14} />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-ink-faint hover:bg-alert-wash hover:text-alert"
+                              onClick={() => setDeleteTarget(plan)}
+                              title={t("删除套餐")}
+                              aria-label={t("删除套餐")}
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </TD>
+                      </TR>
+                    );
+                  })}
                 </TBody>
               </Table>
             </TableWrap>
           )}
-        </PanelBody>
 
-        <PanelFooter className="flex items-center justify-between">
-          <span className="readout text-xs text-ink-soft">
-            {t("共 {{count}} 个套餐", { count: plans.length })}
-          </span>
-        </PanelFooter>
-      </Panel>
+          <PanelFooter>
+            <p className="text-xs text-ink-soft">
+              {filtersActive
+                ? t("显示 {{shown}} / {{total}} 个套餐", {
+                    shown: filtered.length,
+                    total: plans.length,
+                  })
+                : t("共 {{count}} 个套餐", { count: plans.length })}
+            </p>
+          </PanelFooter>
+        </Panel>
+      </div>
 
       <PlanFormDialog
         open={formOpen}
@@ -292,24 +447,64 @@ export function PlansPage() {
       />
 
       <DialogRoot
+        open={Boolean(delistTarget)}
+        onOpenChange={(open) => !open && setDelistTarget(null)}
+      >
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent className="w-full max-w-md">
+            <div className="border-b border-rule px-5 py-4">
+              <DialogTitle>{t("确认下架")}</DialogTitle>
+            </div>
+            <div className="px-5 py-4 text-sm leading-relaxed text-ink-soft">
+              {t(
+                "下架会立即停止该套餐现有用户的订阅，重新上架也不会自动恢复。确定要下架 {{name}} 吗？",
+                { name: delistTarget?.name ?? "" },
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-rule bg-rail px-5 py-3">
+              <Button
+                variant="secondary"
+                onClick={() => setDelistTarget(null)}
+                disabled={statusMutation.isPending}
+              >
+                {t("取消")}
+              </Button>
+              <Button
+                variant="danger"
+                loading={statusMutation.isPending}
+                onClick={() => {
+                  if (delistTarget) {
+                    statusMutation.mutate({ id: delistTarget.id, status: "disabled" });
+                  }
+                }}
+              >
+                {t("确认下架")}
+              </Button>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
+
+      <DialogRoot
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
       >
         <DialogPortal>
           <DialogOverlay />
-          <DialogContent className="w-full max-w-md p-6">
-            <DialogTitle className="text-base font-semibold text-ink">
-              {t("确认删除套餐")}
-            </DialogTitle>
-            <p className="mt-3 text-sm text-ink-soft">
+          <DialogContent className="w-full max-w-md">
+            <div className="border-b border-rule px-5 py-4">
+              <DialogTitle>{t("确认删除套餐")}</DialogTitle>
+            </div>
+            <div className="px-5 py-4 text-sm leading-relaxed text-ink-soft">
               {t(
                 "确定要删除套餐 {{name}} 吗？若有用户正在使用该套餐，此操作将被服务器拒绝。",
                 {
                   name: deleteTarget?.name ?? "",
                 },
               )}
-            </p>
-            <div className="mt-6 flex items-center justify-end gap-3">
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-rule bg-rail px-5 py-3">
               <Button
                 variant="secondary"
                 onClick={() => setDeleteTarget(null)}
@@ -318,21 +513,19 @@ export function PlansPage() {
                 {t("取消")}
               </Button>
               <Button
-                variant="primary"
+                variant="danger"
+                loading={deleteMutation.isPending}
                 onClick={() => {
                   if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
                 }}
-                disabled={deleteMutation.isPending}
               >
-                {deleteMutation.isPending ? t("正在删除...") : t("确认删除")}
+                {t("确认删除")}
               </Button>
             </div>
           </DialogContent>
         </DialogPortal>
       </DialogRoot>
-
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </div>
+    </Page>
   );
 }
 
@@ -465,224 +658,231 @@ function PlanFormContent({
 
   return (
     <>
-          <DialogTitle className="text-base font-semibold text-ink">
-            {initialPlan ? t("编辑套餐") : t("新建套餐")}
-          </DialogTitle>
-          <p className="mt-1 text-xs text-ink-soft">
-            {t("配置套餐的适用平台、网络质量约束与用量配额。")}
-          </p>
+      <div className="border-b border-rule px-5 py-4">
+        <DialogTitle>{initialPlan ? t("编辑套餐") : t("新建套餐")}</DialogTitle>
+        <p className="mt-1 text-xs text-ink-faint">
+          {t("配置套餐的适用平台、网络质量约束与用量配额。")}
+        </p>
+      </div>
 
-          <div className="mt-5 space-y-4">
-            <Fieldset label={t("套餐名称")} htmlFor="plan-name">
-              <Input
-                id="plan-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={t("输入套餐名称，如 标准订阅")}
-              />
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+        <section className="space-y-4">
+          <div className="micro">{t("基本信息")}</div>
+          <Fieldset label={t("套餐名称")} htmlFor="plan-name">
+            <Input
+              id="plan-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t("输入套餐名称，如 标准订阅")}
+            />
+          </Fieldset>
+          <div className="grid grid-cols-2 gap-4">
+            <Fieldset label={t("状态")} htmlFor="plan-status">
+              <Select
+                id="plan-status"
+                value={status}
+                onChange={(e) => setStatus(e.target.value as PlanStatus)}
+              >
+                <option value="active">{t("正常启用")}</option>
+                <option value="disabled">{t("已停用")}</option>
+              </Select>
             </Fieldset>
 
-            <div className="grid grid-cols-2 gap-4">
-              <Fieldset label={t("状态")} htmlFor="plan-status">
-                <Select
-                  id="plan-status"
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as PlanStatus)}
-                >
-                  <option value="active">{t("正常启用")}</option>
-                  <option value="disabled">{t("已停用")}</option>
-                </Select>
-              </Fieldset>
-
-              <Fieldset label={t("重置周期")} htmlFor="plan-period">
-                <Select
-                  id="plan-period"
-                  value={period}
-                  onChange={(e) => setPeriod(e.target.value)}
-                >
-                  {periodOptions.map((option) => (
-                    <option key={option} value={option}>
-                      {periodLabel(option, t)}
-                    </option>
-                  ))}
-                </Select>
-              </Fieldset>
-            </div>
-
-            <Fieldset
-              label={t("适用平台 (可选，多个逗号分隔)")}
-              hint={t("留空允许所有平台，或填: openai, anthropic")}
-              htmlFor="plan-platforms"
-            >
-              <Input
-                id="plan-platforms"
-                value={platformsRaw}
-                onChange={(e) => setPlatformsRaw(e.target.value)}
-                placeholder={t("留空不限制，或填: openai, anthropic")}
-              />
+            <Fieldset label={t("重置周期")} htmlFor="plan-period">
+              <Select
+                id="plan-period"
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+              >
+                {periodOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {periodLabel(option, t)}
+                  </option>
+                ))}
+              </Select>
             </Fieldset>
+          </div>
+        </section>
 
+        <section className="space-y-4 border-t border-rule-faint pt-4">
+          <div className="micro">{t("平台与网络")}</div>
+          <Fieldset
+            label={t("适用平台 (可选，多个逗号分隔)")}
+            hint={t("留空允许所有平台，或填: openai, anthropic")}
+            htmlFor="plan-platforms"
+          >
+            <Input
+              id="plan-platforms"
+              value={platformsRaw}
+              onChange={(e) => setPlatformsRaw(e.target.value)}
+              placeholder={t("留空不限制，或填: openai, anthropic")}
+            />
+          </Fieldset>
+
+          <Fieldset
+            label={t("IP 类型与纯净度 (可选，多个逗号分隔)")}
+            hint={t("格式为 类型:纯净度，如 residential:clean，留空不限制")}
+            htmlFor="plan-ip-tiers"
+          >
+            <Input
+              id="plan-ip-tiers"
+              value={ipTiersRaw}
+              onChange={(e) => setIpTiersRaw(e.target.value)}
+              placeholder={t("例如: residential:clean, datacenter:fair")}
+            />
+          </Fieldset>
+        </section>
+
+        <section className="space-y-4 border-t border-rule-faint pt-4">
+          <div className="micro">{t("配额与限制")}</div>
+          <div className="grid grid-cols-2 gap-4">
             <Fieldset
-              label={t("IP 类型与纯净度 (可选，多个逗号分隔)")}
-              hint={t("格式为 类型:纯净度，如 residential:clean，留空不限制")}
-              htmlFor="plan-ip-tiers"
+              label={t("周期流量配额 (GB)")}
+              hint={t("填 0 为不限制流量")}
+              htmlFor="plan-traffic"
             >
               <Input
-                id="plan-ip-tiers"
-                value={ipTiersRaw}
-                onChange={(e) => setIpTiersRaw(e.target.value)}
-                placeholder={t("例如: residential:clean, datacenter:fair")}
-              />
-            </Fieldset>
-
-            <div className="grid grid-cols-2 gap-4">
-              <Fieldset
-                label={t("周期流量配额 (GB)")}
-                hint={t("填 0 为不限制流量")}
-                htmlFor="plan-traffic"
-              >
-                <Input
-                  id="plan-traffic"
-                  type="number"
-                  min="0"
-                  value={trafficGB}
-                  onChange={(e) => {
-                    // The field now owns the number: the stored one no longer applies.
-                    setTrafficGB(e.target.value);
-                    setTrafficBytesExact(null);
-                  }}
-                />
-              </Fieldset>
-
-              <Fieldset
-                label={t("默认有效天数")}
-                hint={t("填 0 为永久有效")}
-                htmlFor="plan-duration"
-              >
-                <Input
-                  id="plan-duration"
-                  type="number"
-                  min="0"
-                  value={durationDays}
-                  onChange={(e) => setDurationDays(e.target.value)}
-                />
-              </Fieldset>
-            </div>
-
-            <Fieldset
-              label={t("价格 (USDT)")}
-              hint={t("一个周期的售价，留空表示非卖品，由运营方手动分配。")}
-              htmlFor="plan-price"
-            >
-              <Input
-                id="plan-price"
-                inputMode="decimal"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                placeholder="0.000000"
-                className="font-mono"
-              />
-            </Fieldset>
-
-            <div className="grid grid-cols-3 gap-3">
-              <Fieldset
-                label={t("最大并发数")}
-                hint={t("0 为不限制")}
-                htmlFor="plan-concurrent"
-              >
-                <Input
-                  id="plan-concurrent"
-                  type="number"
-                  min="0"
-                  value={maxConcurrent}
-                  onChange={(e) => setMaxConcurrent(e.target.value)}
-                />
-              </Fieldset>
-
-              <Fieldset
-                label={t("最大 RPS")}
-                hint={t("0 为不限制")}
-                htmlFor="plan-rps"
-              >
-                <Input
-                  id="plan-rps"
-                  type="number"
-                  min="0"
-                  value={maxRps}
-                  onChange={(e) => setMaxRps(e.target.value)}
-                />
-              </Fieldset>
-
-              <Fieldset
-                label={t("最大密钥数")}
-                hint={t("0 为不限制")}
-                htmlFor="plan-keys"
-              >
-                <Input
-                  id="plan-keys"
-                  type="number"
-                  min="0"
-                  value={maxKeys}
-                  onChange={(e) => setMaxKeys(e.target.value)}
-                />
-              </Fieldset>
-            </div>
-
-            <Fieldset
-              label={t("最大带宽 (Mbps)")}
-              hint={t("填 0 为不限制带宽")}
-              htmlFor="plan-bandwidth"
-            >
-              <Input
-                id="plan-bandwidth"
+                id="plan-traffic"
                 type="number"
                 min="0"
-                value={maxBandwidthMbps}
+                value={trafficGB}
                 onChange={(e) => {
-                  setMaxBandwidthMbps(e.target.value);
-                  setBandwidthBpsExact(null);
+                  // The field now owns the number: the stored one no longer applies.
+                  setTrafficGB(e.target.value);
+                  setTrafficBytesExact(null);
                 }}
               />
             </Fieldset>
 
-            {initialPlan && (
-              <div className="flex items-center justify-between rounded-control border border-rule bg-paper-inset p-3">
-                <div className="space-y-0.5">
-                  <span className="text-xs font-medium text-ink">
-                    {t("同步应用到存量订阅")}
-                  </span>
-                  <p className="text-xs text-ink-soft">
-                    {t("开启后，该套餐已有的用户订阅将立即同步应用最新配置")}
-                  </p>
-                </div>
-                <Switch
-                  checked={applyToExisting}
-                  onCheckedChange={setApplyToExisting}
-                />
-              </div>
-            )}
+            <Fieldset
+              label={t("默认有效天数")}
+              hint={t("填 0 为永久有效")}
+              htmlFor="plan-duration"
+            >
+              <Input
+                id="plan-duration"
+                type="number"
+                min="0"
+                value={durationDays}
+                onChange={(e) => setDurationDays(e.target.value)}
+              />
+            </Fieldset>
           </div>
 
-          <div className="mt-6 flex items-center justify-end gap-3">
-            <Button
-              variant="secondary"
-              onClick={() => onOpenChange(false)}
-              disabled={saveMutation.isPending}
+          <div className="grid grid-cols-3 gap-3">
+            <Fieldset
+              label={t("最大并发数")}
+              hint={t("0 为不限制")}
+              htmlFor="plan-concurrent"
             >
-              {t("取消")}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
+              <Input
+                id="plan-concurrent"
+                type="number"
+                min="0"
+                value={maxConcurrent}
+                onChange={(e) => setMaxConcurrent(e.target.value)}
+              />
+            </Fieldset>
+
+            <Fieldset
+              label={t("最大 RPS")}
+              hint={t("0 为不限制")}
+              htmlFor="plan-rps"
             >
-              {saveMutation.isPending
-                ? t("正在保存...")
-                : initialPlan
-                  ? t("保存修改")
-                  : t("立即创建")}
-            </Button>
+              <Input
+                id="plan-rps"
+                type="number"
+                min="0"
+                value={maxRps}
+                onChange={(e) => setMaxRps(e.target.value)}
+              />
+            </Fieldset>
+
+            <Fieldset
+              label={t("最大密钥数")}
+              hint={t("0 为不限制")}
+              htmlFor="plan-keys"
+            >
+              <Input
+                id="plan-keys"
+                type="number"
+                min="0"
+                value={maxKeys}
+                onChange={(e) => setMaxKeys(e.target.value)}
+              />
+            </Fieldset>
           </div>
+
+          <Fieldset
+            label={t("最大带宽 (Mbps)")}
+            hint={t("填 0 为不限制带宽")}
+            htmlFor="plan-bandwidth"
+          >
+            <Input
+              id="plan-bandwidth"
+              type="number"
+              min="0"
+              value={maxBandwidthMbps}
+              onChange={(e) => {
+                setMaxBandwidthMbps(e.target.value);
+                setBandwidthBpsExact(null);
+              }}
+            />
+          </Fieldset>
+        </section>
+
+        <section className="space-y-4 border-t border-rule-faint pt-4">
+          <div className="micro">{t("定价")}</div>
+          <Fieldset
+            label={t("价格 (USDT)")}
+            hint={t("一个周期的售价，留空表示非卖品，由运营方手动分配。")}
+            htmlFor="plan-price"
+          >
+            <Input
+              id="plan-price"
+              inputMode="decimal"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="0.000000"
+              className="font-mono"
+            />
+          </Fieldset>
+        </section>
+
+        {initialPlan && (
+          <div className="flex items-center justify-between rounded-control border border-rule bg-paper-inset p-3">
+            <div className="space-y-0.5">
+              <span className="text-xs font-medium text-ink">
+                {t("同步应用到存量订阅")}
+              </span>
+              <p className="text-xs text-ink-soft">
+                {t("开启后，该套餐已有的用户订阅将立即同步应用最新配置")}
+              </p>
+            </div>
+            <Switch
+              checked={applyToExisting}
+              onCheckedChange={setApplyToExisting}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2 border-t border-rule bg-rail px-5 py-3">
+        <Button
+          variant="secondary"
+          onClick={() => onOpenChange(false)}
+          disabled={saveMutation.isPending}
+        >
+          {t("取消")}
+        </Button>
+        <Button
+          variant="primary"
+          loading={saveMutation.isPending}
+          onClick={() => saveMutation.mutate()}
+        >
+          {initialPlan ? t("保存修改") : t("立即创建")}
+        </Button>
+      </div>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </>
   );
@@ -703,7 +903,7 @@ function PlanFormDialog({
     <DialogRoot open={open} onOpenChange={onOpenChange}>
       <DialogPortal>
         <DialogOverlay />
-        <DialogContent className="max-h-[85vh] w-full max-w-xl overflow-y-auto p-6">
+        <DialogContent className="flex w-full max-w-xl flex-col">
           {open && (
             <PlanFormContent
               key={initialPlan?.id ?? "new"}

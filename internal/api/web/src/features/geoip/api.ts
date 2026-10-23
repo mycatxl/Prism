@@ -1,5 +1,5 @@
 import { apiRequest } from "../../lib/api-client";
-import type { GeoIPBatchLookupResponse, GeoIPLookupResult, GeoIPStatus, GeoIPUpdateResponse } from "./types";
+import type { GeoIPLookupResult, GeoIPStatus, GeoIPUpdateResponse } from "./types";
 
 const basePath = "/api/v1/geoip";
 
@@ -22,17 +22,6 @@ export async function lookupIP(ip: string): Promise<GeoIPLookupResult> {
   const query = new URLSearchParams({ ip });
   const data = await apiRequest<GeoIPLookupResult>(`${basePath}/lookup?${query.toString()}`);
   return normalizeLookupResult(data);
-}
-
-export async function lookupIPBatch(ips: string[]): Promise<GeoIPLookupResult[]> {
-  const data = await apiRequest<GeoIPBatchLookupResponse>(`${basePath}/lookup`, {
-    method: "POST",
-    body: { ips },
-  });
-  if (!Array.isArray(data.results)) {
-    return [];
-  }
-  return data.results.map(normalizeLookupResult);
 }
 
 export async function updateGeoIPNow(): Promise<GeoIPUpdateResponse> {

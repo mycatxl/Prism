@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Ban, Plus, RefreshCw, RotateCcw, Wifi, WifiOff } from "lucide-react";
+import { AlertTriangle, Ban, Plus, RefreshCw, RotateCcw } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -39,7 +39,8 @@ import type {
 // /检测任务工作区：任务列表 + 新建对话框 + 详情抽屉（SSE 实时进度）。
 // 后端见 internal/api/handler_intel.go（CRUD 与 SSE）与 internal/intel/jobs。
 
-type BadgeTone = "neutral" | "signal" | "live" | "warn" | "alert" | "outline";
+// The state vocabulary the dot renders; `neutral` is the bare state-dot.
+type StatusTone = "neutral" | "signal" | "live" | "warn" | "alert";
 type ShowToast = (tone: "success" | "error", text: string) => void;
 
 const JOB_STATUS_LABELS: Record<string, string> = {
@@ -51,13 +52,14 @@ const JOB_STATUS_LABELS: Record<string, string> = {
   canceled: "已取消",
 };
 
-const JOB_STATUS_TONES: Record<string, BadgeTone> = {
+const JOB_STATUS_TONES: Record<string, StatusTone> = {
   queued: "neutral",
   running: "live",
   succeeded: "signal",
   partial: "warn",
   failed: "alert",
-  canceled: "outline",
+  // 已取消是主动停止而非故障：裸 state-dot，不占用警示色。
+  canceled: "neutral",
 };
 
 const JOB_KIND_LABELS: Record<string, string> = {
@@ -76,13 +78,13 @@ const ITEM_STATUS_LABELS: Record<string, string> = {
   canceled: "已取消",
 };
 
-const ITEM_STATUS_TONES: Record<string, BadgeTone> = {
+const ITEM_STATUS_TONES: Record<string, StatusTone> = {
   queued: "neutral",
   running: "live",
   done: "signal",
   failed: "alert",
   skipped: "warn",
-  canceled: "outline",
+  canceled: "neutral",
 };
 
 // internal/intel/jobs/jobs.go:46 — the numbered pipeline steps of one node.
@@ -105,23 +107,25 @@ const STREAM_LABELS: Record<JobStreamState, string> = {
   error: "实时连接中断",
 };
 
-const STREAM_TONES: Record<JobStreamState, BadgeTone> = {
-  idle: "outline",
+const STREAM_TONES: Record<JobStreamState, StatusTone> = {
+  idle: "neutral",
   connecting: "warn",
   live: "live",
   reconnecting: "warn",
-  ended: "outline",
+  ended: "neutral",
   error: "alert",
 };
 
 // The bar takes the colour of the outcome it is reporting, so a failed run is
-// recognisable from the row without reading the counter beside it.
-const PROGRESS_BAR_CLASS: Record<string, string> = {
+// recognisable from the row without reading the counter beside it. The track and
+// fill are the system's lease bar: `.lease-fill` is signal, and the existing
+// utilities and modifiers below re-point the fill per status.
+const PROGRESS_FILL_CLASS: Record<string, string> = {
   queued: "bg-live",
   running: "bg-live",
-  succeeded: "bg-signal",
-  partial: "bg-warn",
-  failed: "bg-alert",
+  succeeded: "",
+  partial: "lease-fill--warn",
+  failed: "lease-fill--alert",
   canceled: "bg-ink-faint",
 };
 
@@ -172,6 +176,21 @@ function inlineValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// job.request_json is the request body the job was created with (store.Job).
+// Pretty-printed so the scope a run covers stays readable; an unparsable body
+// falls back to the raw string, and an empty body means nothing to show.
+function formatRequestJson(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "{}") {
+    return "";
+  }
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return trimmed;
+  }
+}
+
 // job_items.result_json is the bounded step summary written by the pipeline
 // (internal/intel/jobs/jobs.go:184, truncated to 4 KiB server side). One step
 // result per line keeps the dump readable when it is long.
@@ -193,22 +212,35 @@ function formatResultSummary(raw: string): string {
   }
 }
 
-function JobStatusBadge({ status }: { status: string }) {
-  const { t } = useI18n();
-  const tone = JOB_STATUS_TONES[status] ?? "neutral";
+/** The system's state language: the dot carries the hue, the word carries the meaning. */
+function StatusState({ tone, label, title }: { tone: StatusTone; label: string; title?: string }) {
   return (
-    <Badge tone={tone} dot={tone === "live"} title={status}>
-      {t(textOf(JOB_STATUS_LABELS, status))}
-    </Badge>
+    <span className="flex items-center gap-2" title={title}>
+      <span aria-hidden className={cn("state-dot", tone !== "neutral" && `state-dot--${tone}`)} />
+      <span className="state-text">{label}</span>
+    </span>
   );
 }
 
-function ItemStatusBadge({ status }: { status: string }) {
+function JobStatusState({ status }: { status: string }) {
   const { t } = useI18n();
   return (
-    <Badge tone={ITEM_STATUS_TONES[status] ?? "neutral"} title={status}>
-      {t(textOf(ITEM_STATUS_LABELS, status))}
-    </Badge>
+    <StatusState
+      tone={JOB_STATUS_TONES[status] ?? "neutral"}
+      label={t(textOf(JOB_STATUS_LABELS, status))}
+      title={status}
+    />
+  );
+}
+
+function ItemStatusState({ status }: { status: string }) {
+  const { t } = useI18n();
+  return (
+    <StatusState
+      tone={ITEM_STATUS_TONES[status] ?? "neutral"}
+      label={t(textOf(ITEM_STATUS_LABELS, status))}
+      title={status}
+    />
   );
 }
 
@@ -221,7 +253,7 @@ function JobKindBadge({ kind }: { kind: string }) {
   );
 }
 
-/** The progress meter: a counter, a hairline-thin bar, and the failure count when there is one. */
+/** The progress meter: a counter, the lease bar, and the failure count when there is one. */
 function ProgressMeter({
   job,
   size = "sm",
@@ -238,7 +270,7 @@ function ProgressMeter({
   // 列表行只有一行高：失败计数挤不进单元格，退到 title；详情抽屉里仍然单独成行。
   const failure = job.failed > 0 ? t("失败 {{count}}", { count: job.failed }) : undefined;
   const bar = (
-    <div
+    <span
       role="progressbar"
       aria-label={t("进度")}
       aria-valuemin={0}
@@ -246,17 +278,16 @@ function ProgressMeter({
       aria-valuenow={settled}
       title={failure}
       className={cn(
-        // A 4px bar, so 2px reads as a soft cap without claiming the pill shape
- // that is reserved for status.
-        "overflow-hidden rounded-[2px] bg-paper-sunk",
-        inline ? "h-1 min-w-0 flex-1" : cn("h-1 w-full", size === "lg" ? "mt-2" : "mt-1"),
+        "lease-track block",
+        inline ? "min-w-0 flex-1" : "w-full",
+        !inline && (size === "lg" ? "mt-2" : "mt-1"),
       )}
     >
       <span
-        className={cn("block h-full", PROGRESS_BAR_CLASS[job.status] ?? "bg-ink-faint")}
+        className={cn("lease-fill", PROGRESS_FILL_CLASS[job.status] ?? "bg-ink-faint")}
         style={{ width: `${percent}%` }}
       />
-    </div>
+    </span>
   );
   if (inline) {
     return bar;
@@ -480,6 +511,7 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
   const itemTotal = itemsQuery.data?.total ?? 0;
   const failedCount = job?.failed ?? 0;
   const busy = cancelMutation.isPending || retryMutation.isPending;
+  const requestText = job ? formatRequestJson(job.request_json) : "";
 
   const handleCancel = () => {
     if (!running || !window.confirm(t("确认取消任务 {{id}} 吗？正在处理的节点会停止。", { id: jobID }))) {
@@ -504,7 +536,7 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
         <div className="flex flex-wrap items-center gap-2">
           {job ? (
             <>
-              <JobStatusBadge status={job.status} />
+              <JobStatusState status={job.status} />
               <JobKindBadge kind={job.kind} />
               <span className="text-xs text-ink-soft">{t("优先级 {{priority}}", { priority: job.priority })}</span>
               <span className="text-xs text-ink-soft">{t("创建者 {{by}}", { by: job.created_by })}</span>
@@ -512,14 +544,11 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Badge tone={STREAM_TONES[streamState]} dot={streamState === "live"}>
-            {streamState === "live" ? <Wifi size={11} /> : streamState === "error" ? <WifiOff size={11} /> : null}
-            {t(STREAM_LABELS[streamState])}
-          </Badge>
+        <div className="flex items-center gap-2" aria-live="polite" aria-atomic="true">
+          <StatusState tone={STREAM_TONES[streamState]} label={t(STREAM_LABELS[streamState])} />
           {streamState === "error" ? (
             <Button size="sm" variant="secondary" onClick={stream.reconnect}>
-              <RefreshCw size={13} />
+              <RefreshCw size={13} aria-hidden />
               {t("重新连接")}
             </Button>
           ) : null}
@@ -568,6 +597,9 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
           {detailQuery.data ? (
             <div className="mt-2 flex flex-wrap gap-x-4 text-xs text-ink-soft">
               <span>{t("待处理 {{count}}", { count: detailQuery.data.progress.pending })}</span>
+              {detailQuery.data.progress.canceled > 0 ? (
+                <span>{t("已取消 {{count}}", { count: detailQuery.data.progress.canceled })}</span>
+              ) : null}
               {detailQuery.data.progress.pending_online_lookups > 0 ? (
                 <span>{t("在线查询待完成 {{count}}", { count: detailQuery.data.progress.pending_online_lookups })}</span>
               ) : null}
@@ -588,6 +620,13 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
               <div className="readout mt-0.5">{formatNs(job.finished_at_ns)}</div>
             </div>
           </div>
+
+          {requestText ? (
+            <div className="mt-3 min-w-0">
+              <div className="label">{t("请求参数")}</div>
+              <pre className="readout mt-0.5 overflow-x-auto whitespace-pre-wrap break-words text-xs">{requestText}</pre>
+            </div>
+          ) : null}
 
           {job.error ? (
             <p
@@ -710,7 +749,7 @@ function JobDetailDrawer({ jobID, onClose, showToast }: { jobID: string; onClose
                       >
                         <TDClip className="readout text-xs">{item.node_hash}</TDClip>
                         <TD>
-                          <ItemStatusBadge status={item.status} />
+                          <ItemStatusState status={item.status} />
                         </TD>
                         <TDClip>
                           {t("第 {{step}} 步：{{name}}", {
@@ -838,17 +877,13 @@ function CreateJobDialog({
 
         <Fieldset
           label={t("优先级")}
-          htmlFor="job-priority"
           hint={t("新建任务固定使用手动优先级 100；订阅与定时刷新任务由系统排队。")}
         >
           {/* 优先级由服务端固定：POST /intel/jobs 的请求体不接受 priority
               字段（internal/service/control_plane_intel.go:113 固定为手动 100），
-              解码器还启用了 DisallowUnknownFields。 */}
-          <Select id="job-priority" value="manual" disabled>
-            <option value="manual">{t("手动 (100)")}</option>
-            <option value="subscription">{t("订阅 (50)")}</option>
-            <option value="refresh">{t("定时刷新 (10)")}</option>
-          </Select>
+              解码器还启用了 DisallowUnknownFields。没有可选项就没有控件：
+              这里是读出，不是被禁用的假下拉。 */}
+          <p className="readout text-sm">{t("手动 (100)")}</p>
         </Fieldset>
 
         <fieldset className="min-w-0">
@@ -1048,7 +1083,7 @@ export function JobsPage() {
                         {job.id.slice(0, 8)}
                       </TDClip>
                       <TD>
-                        <JobStatusBadge status={job.status} />
+                        <JobStatusState status={job.status} />
                       </TD>
                       <TD>
                         <JobKindBadge kind={job.kind} />

@@ -9,7 +9,8 @@ import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Reado
 import { useI18n } from "../../../i18n";
 import { formatDateTime } from "../../../lib/time";
 import { getQualityStatus, reviewIPPure } from "./api";
-import { purityBand, purityScore, useQualityTime } from "./presentation";
+import { useNow } from "../../../lib/clock";
+import { purityBand, purityScore } from "./presentation";
 
 const failures: Record<string, string> = {
   IPPURE_LIMIT: "复核正在冷却，请稍后重试",
@@ -41,7 +42,7 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
 
 export function IPPureReviewPanel({ nodeHash, nodeIP, ready }: { nodeHash: string; nodeIP?: string; ready: boolean }) {
   const { t } = useI18n();
-  const now = useQualityTime();
+  const now = useNow();
   const client = useQueryClient();
   const status = useQuery({ queryKey: ["quality", "status"], queryFn: getQualityStatus, staleTime: 5000 });
   const review = useMutation({ mutationFn: () => reviewIPPure(nodeHash), retry: false, gcTime: 0,

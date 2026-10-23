@@ -173,7 +173,7 @@ export function RulesPage() {
 
   const handleDelete = useCallback(async (rule: Rule) => {
     if (isFallbackRule(rule)) {
-      showToast("error", '兜底规则 "*" 不允许删除');
+      showToast("error", t('兜底规则 "*" 不允许删除'));
       return;
     }
     const confirmed = window.confirm(t("确认删除规则 {{prefix}} 吗？", { prefix: rule.url_prefix }));
@@ -296,9 +296,16 @@ export function RulesPage() {
                       }}
                     >
                       <TDClip className="readout text-xs" title={rule.url_prefix}>
-                        {rule.url_prefix}
+                        <span className="flex min-w-0 items-center gap-1.5">
+                          <span className="block max-w-full truncate">{rule.url_prefix}</span>
+                          {isFallbackRule(rule) ? (
+                            <Badge tone="neutral" className="shrink-0">
+                              {t("兜底")}
+                            </Badge>
+                          ) : null}
+                        </span>
                       </TDClip>
-                      <TDClip className="text-xs text-ink-soft" title={rule.headers.join(", ")}>
+                      <TDClip className="readout text-xs text-ink-soft" title={rule.headers.join(", ")}>
                         {headerPreview(rule)}
                       </TDClip>
                       <TD className="text-right">

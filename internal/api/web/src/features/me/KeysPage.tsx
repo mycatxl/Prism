@@ -39,6 +39,7 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { copyToClipboard } from "../../lib/clipboard";
+ import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { createKey, deleteKey, getKeys, getOverview } from "./api";
 import type { AccessKeyInput, AccessKeyView, CreateKeyResponse } from "./types";
@@ -270,13 +271,26 @@ export function KeysPage() {
                         {key.credential_hint}
                       </TD>
                       <TD>
-                        <Badge
-                          tone={key.status === "active" ? "signal" : "warn"}
-                        >
-                          {key.status === "active"
-                            ? t("正常")
-                            : t("已禁用")}
-                        </Badge>
+                        <span className="flex items-center gap-2">
+                          <span
+                            aria-hidden
+                            className={cn(
+                              "state-dot",
+                              (key.status === "active" ||
+                                key.status === "disabled") &&
+                                `state-dot--${
+                                  key.status === "active" ? "signal" : "warn"
+                                }`,
+                            )}
+                          />
+                          <span className="state-text">
+                            {key.status === "active"
+                              ? t("正常")
+                              : key.status === "disabled"
+                                ? t("已禁用")
+                                : key.status}
+                          </span>
+                        </span>
                       </TD>
                       <TD className="text-xs">
                         {key.platforms && key.platforms.length > 0 ? (
@@ -689,6 +703,7 @@ function SecretOnceDialog({
                 readOnly
                 value={data?.credential || ""}
                 className="font-mono text-xs"
+                aria-label={t("明文访问凭据")}
               />
               <Button
                 variant="secondary"

@@ -1,193 +1,80 @@
-# Prism console design rules
+# Prism Control Plane
 
-The durable design contract for `internal/api/web`. It is not a vision document:
-every rule below is either enforced by a script in the gate list, or it is a
-decision recorded so the next change does not re-litigate it. When the code and
-this file disagree, one of them is a bug — and the burden is on the change to
-say which.
+`internal/api/web` 的持久化设计契约。它描述控制台如何组织真实的运营数据、权限边界和操作结果；API、Go 路由、查询参数和业务语义仍由服务端与 `src/features/*/api.ts` 负责。
 
-The world is **the daylight desk**: a lit work surface. Cool neutral paper,
-hairline rules instead of floating tiles, mono figures for everything that is
-read or compared, one governed indigo for interaction, one narrow shadow ladder
-spent on overlays. A region is a *band on that surface*, not a tile on a board:
-separated by a rule and a stated head row, and it never lifts, blurs or glows.
+## 1. 视觉世界
 
-The stylesheet does not use the words "glass", "card", "bento" or "board". Those
-belonged to a previous world; a stylesheet that keeps a dead world's vocabulary
-invites its shapes back. `check:responsive` fails on the retired names.
+产品界面是 Prism Control Plane：一套有鲜明品牌个性、适合日常高频使用的现代运营工作台，不是营销页或报表封面。管理员在 `/ops/*` 维护可售代理业务；租户在 `/me/*` 获取接入并管理额度。两者共享 Prism shell、设计 token、主题和交互语法，但拥有不同的信息架构与数据边界。
 
-## 1. Composition
+管理员首页采用均衡工作台：交付状态、客户经营、治理证据并列，通过连续分区、对象列表、主从详情和就地操作组织。租户首页采用额度优先的账户工作面：套餐、周期用量、余额、到期和配额先出现，接入与密钥保持第一操作入口。避免卡片套卡片、KPI 卡墙、传统后台模板、营销 hero 和装饰性数据。
 
-- A page composes `src/components/ui/`. It does not create its own control.
-- Enforced by `check:kit` (native tags) and `tests/kit.test.mjs`. A native tag
-  outside the kit fails the gate unless it is on the short, justified allow-list
-  in `scripts/check-kit.mjs`. `type="hidden"` inputs are the routine case.
-- 81 `.tsx` files currently pass. The count is the gate's output, not a target.
+视觉使用清爽中性 daylight 与低眩光 night-shift 两套不透明 surface token。Prism cyan/teal 只表示交互、焦点、选择和结构标记；healthy/live、warn、alert、unknown/offline/reconnecting 使用独立状态色并始终配文字或形状。品牌通过棱镜标记、窄状态轨道、线性分隔、IBM Plex Sans/Mono、对象 ID、时间、地址和可比较读数表达。
 
-## 2. Control sizes come from tokens
+页面优先使用连续分区、对象列表、主从详情、关系证据和就地操作。Shell 保持 rail、sticky context bar、work area 三个稳定单元；宽屏详情使用侧栏，窄屏详情使用 Sheet/Drawer，返回恢复筛选、分页和列表上下文。轻量动效只服务导航连续、选择反馈和 mutation 状态，不遮挡内容或改变布局；`prefers-reduced-motion` 下关闭非必要动效。
 
-- `--control-h-sm: 24px`, `--control-h: 28px`, `--control-h-lg: 32px`,
-  `--control-h-xl: 36px`.
-- A control takes its height from `var(--control-h…)`, never from an `h-*` step —
-  not even `h-7`, which happens to equal 28px today. That coincidence is the
-  trap: the token moves and the hard-coded control does not.
-- Enforced by `check:kit` rule 2 (which bans `h-6.5/7/8/9/10` outright) and by
-  `kit.test.mjs`.
+工作区不使用装饰性渐变、玻璃拟态、发光球、bento 拼贴、无来源 KPI、装饰地图或伪造健康率。未知、空、错误、stale、offline、reconnecting 与 mutation 状态保持独立语义；没有真实数据时不补数字、曲线或告警。
 
-## 3. Shape carries meaning
+字体使用 IBM Plex Sans；IP、哈希、时间、端口、余额、数量和可比较读数使用 IBM Plex Mono。字距保持为 0，固定格式控件使用稳定 token 尺寸，面板圆角不超过 8px。
 
-- `--radius-control: 6px`, `--radius-card-sm: 8px`, `--radius-panel: 8px`,
-  `--radius-chip: 4px`.
-- `rounded-full` belongs to `Badge` alone. Badge is the only pill in the system,
-  so a second pill spends the signal that says "this is a status".
-- A status chip clips at 4px. It must never read as a button.
-- `Switch` is a rectangle (`rounded-control`): an 18px visual track, with the hit
-  area padded to `--control-h` by a `before:` pseudo-element.
-- Enforced by `check:kit` rule 3 and `kit.test.mjs` ("the pill shape is reserved
-  for Badge").
+## 2. Token 与表面
 
-## 4. Colour
+权威 token 在 `src/styles/design.css`：
 
-- Two themes, one token set, full parity. Every colour is a primitive (`--p-*`)
-  declared twice in `design.css` — `:root` (light) and `[data-theme="dark"]`.
-  Components reference the semantic alias (`--color-ink`, `--color-accent`),
-  never the primitive.
-- The surfaces that carry text — `--p-canvas`, `--p-sunk`, `--p-raised`,
-  `--p-inset`, `--p-rail`, `--p-elevated` — stay **opaque hex**, so contrast is
-  measured against what a reader actually sees. `check-ui-live` reads the first
-  `:root` block and asserts the page painted those tokens rather than falling
-  back to black on white.
-- Text that sits *on* a filled colour takes `--color-on-accent`,
-  `--color-on-signal`, `--color-on-alert` or `--color-on-live`. In dark, a bright
-  state ink takes dark text; in light it takes white. These are tokens, not
-  constants, for exactly that reason.
-- `accent` means interaction, selection and focus. `signal` / `live` / `warn` /
-  `alert` mean state. They are not interchangeable: colouring a status with
-  `accent` removes it from the status vocabulary.
-- State is never carried by colour alone. A state gets a word, or a shape, as
-  well.
-- Enforced by `check:contrast` (92 pairs, both themes, WCAG AA) and
-  `tests/design-tokens.test.mjs` (the alias layer must stay `static`).
+- `--p-canvas` 是工作区地面，`--p-rail` 是导航层，`--p-raised` 是面板层，`--p-inset` 是面板内嵌层，`--p-elevated` 只用于覆盖层。
+- `--p-ink`、`--p-ink-soft`、`--p-ink-faint` 负责文字层级；`--p-rule`、`--p-row-rule` 负责结构边界。
+- `--p-accent` 只表示交互；`--p-signal`、`--p-live`、`--p-warn`、`--p-alert` 表示状态；所有带色背景都使用对应 `--p-on-*` 前景 token。
+- 所有颜色原语在 `:root` 和 `[data-theme="dark"]` 中各定义一次，并通过 `@theme inline static` 暴露给组件。
+- 控件高度由 `--control-h-sm`、`--control-h`、`--control-h-lg`、`--control-h-xl` 提供；页面不得用偶然相等的 Tailwind 高度替代 token。
 
-## 5. Seven states, every control
+页面最多三层表面：canvas -> panel -> inset。面板使用共享 `Panel`，共享组件负责边框、阴影、状态和交互；业务页不自造按钮、输入框、表格、状态胶囊或弹窗。
 
-Every interactive component defines all of: default, hover, focus-visible,
-active, disabled, loading, invalid/error. The list is the contract; a control
-missing one is incomplete, not minimal.
+## 3. Shell
 
-- `Button` carries `loading`, which renders a spinner **and** sets `disabled`
-  **and** sets `aria-busy`. A page writes `loading={mutation.isPending}`, never a
-  hand-swapped label. `loading` is forbidden together with `asChild`: Radix `Slot`
-  throws on two children, and neither `check:types` nor `eslint` sees it at
-  runtime. That prohibition is typed and locked by `kit.test.mjs`.
-- Enforced by `kit.test.mjs` ("no control is rendered without a way to operate
-  it"), which reads the kit source. `check:kit`'s three rules do not cover it, so
-  the test is the gate here.
+Shell 是三个稳定单元：
 
-## 6. The shell is three cells
+1. rail：Prism 标记、当前角色、按运营域分组的导航、连接状态、语言和主题。
+2. sticky context bar：当前位置、命令面板入口、账户菜单；不重复 rail 的目的地，也不重复 rail 的连接状态。
+3. work area：页面标题、对象操作和业务面板。
 
-    rail (brand, destinations, state foot)   instance bar
-                                             work area
+管理员使用 `/ops/*`，租户使用 `/me/*` 和 `/account`。管理员路由表通过动态模块加载；租户会话不加载管理路由表，也不发起 system info、environment config、nodes、platforms、request logs 等管理查询。前端隔离只是纵深防御，服务端 `requireAdmin` 仍是权限权威。
 
-- **Rail** states the product and its state: mark, name, role, the destinations,
-  then a fixed foot with the status line and the language/theme controls. The
-  middle scrolls; the brand row and the foot do not.
-- **Instance bar** states where you are and what this browser can do from here:
-  the destination (breadcrumb), the command palette, the account menu. It is
-  sticky and owns `--shell-bar-h`.
-- **Work area** is the page. One `PageHeader`, then panels.
-- No control appears in both cells. There is one place to look for a
-  destination, one for the account, one for the instance's health.
-- Rail groups are numbered (`01`…`06`) from the same `navItems` array the rail
-  renders, so an operator can quote a group without a second list existing.
-- Below 1100px the rail becomes a drawer (`z-60`, scrim `z-55`, `Escape` closes,
-  focus returns to the trigger), the bar stays sticky at `z-40`, and
-  `.page-header` offsets by `--shell-bar-h` so it docks under the bar instead of
-  scrolling behind it. CSS owns both stickiness and fill: utilities win over
-  component-layer rules and blocked the offset.
-- The command palette is one keyboard surface (⌘K / Ctrl+K) over the rail plus
-  the five actions the shell owns: go, refresh data, switch theme, switch
-  language, account, sign out. It does not search nodes, users or requests —
-  those are paginated server queries with their own filters, and a client-side
-  "search" over the rows a page happens to hold answers a question nobody asked
-  with data that is already stale. A palette that invents results is worse than
-  no palette.
-- The palette is lazy: `cmdk` arrives with its own chunk on first open, and the
-  shell keeps the trigger and the shortcut.
+桌面端显示完整 rail；低于 1100px 转为抽屉，带 scrim、Escape 关闭和焦点返回。context bar 保持 sticky。390px 视口仍保持完整可操作，表格通过共享表格容器或语义化堆叠布局适配，不产生页面级水平溢出。
 
-## 7. Data surfaces
+Shell 状态只报告浏览器实际知道的事实：管理员实例探针、会话失效、连接中断、旧版令牌配置，或租户的服务连接/离线状态。未知不能显示成健康，离线不能被缓存冒充实时。
 
-- A page's primary surface is a table, a form or a chart — not a tile wall.
-- A panel is a band, not a floating card: top hairline rule and a stated head
-  row, no radius, no shadow. `.panel--ruled` draws that rule 2px when the panel
-  opens a page section; `.panel-group` is the one framed container, for a set of
-  panels that genuinely belong together.
-- Shadows belong to overlays only (dialog, sheet, menu, toast). A surface on the
-  desk is separated by a rule.
-- At most three surfaces deep: canvas → selected surface → inset.
-- A sticky table head is opaque (`--color-paper-raised`) and covers the row
-  passing under it. A translucent head is a legibility bug at speed.
-- Numbers, IPs, hashes, ports and timestamps use `--font-mono`. Mono is for
-  values that are read or compared, not decoration.
-- Loading, error and empty states keep the height of the content they replace, so
-  the page does not jump.
+## 4. 工作区与对象页
 
-## 8. Status is a word
+管理员导航按工作组织为：Control、Inventory、Delivery、Customers、Governance。导航保留既有 `/ops/*` 语义和旧地址重定向；导航、路由和页面标题由同一张路径表驱动。
 
-`Badge` renders the pill; `StatusMark` renders the dot-and-label. Different jobs:
-a status list uses `StatusMark`, a label in a table uses `Badge`.
+Control 首页组合已有 system、metrics、nodes、platforms、jobs、audit 等查询，只展示能追溯到真实接口的数据。没有统一摘要接口时，不补造容量、成功率、实时流量或健康百分比。
 
-The shell's status line always states a verdict in words, and only about what
-this browser can actually know:
+对象详情不是一张放大的表。节点、平台、用户和运行配置都应优先让操作员在几秒内找到：
 
-| Situation | Line |
-| --- | --- |
-| Operator, probe answered | 实例在线 |
-| Operator, probe in flight | 连接中 |
-| Operator, probe failed, or the browser is offline | 连接中断 |
-| Operator, 401 | 会话失效 |
-| Operator, `proxy_token_set` false | 旧版令牌配置仍存在 |
-| Tenant, reachable | 服务已连接 |
-| Tenant, offline | 当前处于离线状态 |
+- 身份：名称、稳定 ID、地址或哈希。
+- 状态：文字加形状，必要时附状态时间和新鲜度。
+- 核心事实：只显示接口返回或能由明确源数据安全格式化的值。
+- 关系：平台、订阅源、租户、租约、请求或审计证据。
+- 操作：可逆操作、危险操作、敏感信息操作分开。
+- 证据：事件、探测、解析报告、日志或账本，显示时间和失败原因。
+- 状态矩阵：loading、empty、success、stale、error、unknown、offline、reconnecting、mutation pending/success/error 均保持语义差异。
 
-A tenant has no instance probe to read, so their line reports the connection
-instead of borrowing the operator's verdict. "Connecting…" shown forever was the
-old behaviour; an unknown state reading as a pending one is the failure this
-line exists to prevent.
+节点详情保留 Overview、Intelligence、Leases、Traffic、Events、Attributes、Probe 所需的真实数据面；无数据时显示未评估、未配置或不可用，不画假曲线。平台详情保留 Monitor、Access、Config、Leases，以及重置、重建、释放和删除等危险区。用户详情保留账户、余额、套餐、密钥、用量、账本和运营操作；余额保持微 USDT 整数语义，一次性密钥只在创建响应中展示。
 
-## 9. Truth rules
+## 5. 状态与操作
 
-- Never invent data. Empty is empty, error is error, loading is loading. A page
-  renders what the server returned and says so when it returned nothing.
-- Unknown is its own state. It is not healthy and it is not failure.
-- A number on screen is reachable from its source: the query key is in
-  `src/features/**/api.ts`, the money is integer micro-USDT, and nothing is
-  re-derived on the client that the server already decided.
-- Chinese and English are both first-class: no string ships in one language only,
-  and no layout depends on one language's word lengths.
-| navigation | `npm run check:nav` | the rail, the router and the page headings stay one table; every label and group is translated; groups stay scannable |
-  390×844 with a keyboard-free path to every control.
+`StatusMark` 用于状态列表，`Badge` 只用于短标签。颜色不是唯一语义。QueryState 的 loading、empty、error 要保持目标区域高度；已有数据遇到刷新错误时不能被无意义清空。
 
-## 10. Gates
+每个交互控件都有 default、hover、focus-visible、active、disabled、loading、invalid/error 状态。提交中的 Button 必须设置 disabled 和 `aria-busy`。危险操作必须独立边界、二次确认、进行中状态、成功反馈和错误恢复。敏感信息必须说明生命周期，环境值必须只读。
 
-| Gate | Command | What it proves |
-| --- | --- | --- |
-| kit | `npm run check:kit` | no native controls, no hard-coded heights, no stray pills |
-| kit behaviour | `npm run test:config` | the `asChild`/`loading` prohibition, control heights, pill reservation, token aliases, i18n coverage, plan units |
-| contrast | `npm run check:contrast` | both themes clear WCAG AA on every text pair |
-| layout | `npm run check:responsive` | no fixed pane geometry, no 1536px layer, no retired world names |
-| navigation | `npm run check:nav` | every destination has a section, a label and a role |
-| anti-patterns | `npm run check:slop` | impeccable's detector, run over the built tree |
-| types | `npm run check:types` | the component contracts hold |
-| live | `npm run test:e2e` | routes render, no console error, no removed class token, tenant isolation, both themes, focus visible |
-| build | `npm run build` | the console compiles with the real bundle graph |
+动效只服务于状态变化和导航反馈，`prefers-reduced-motion` 下关闭非必要动画。键盘焦点、Dialog/Sheet 焦点捕获与恢复、Tabs 语义、表格标题和移动端触控目标由共享组件提供。
 
-## 11. Not allowed
+## 6. 验收
 
-- Gradient text, fake chrome, decorative icon tiles, ground halos, glass, blurred
-  panels, two-axis grid textures.
-- A hero on a working page, or a marketing layout on a login or 404 page.
-- A panel nested in a panel purely for the border.
-- Hard-coded "all systems operational".
-- Presenting unknown as healthy or as failure.
-- A card that exists because a grid wanted a fourth cell.
+网页门禁必须保持绿色：
+
+- `check:types`、`lint`、`build`
+- `test:config`、`check:kit`、`check:responsive`
+- `check:nav`、`check:contrast`、`check:slop`
+- `test:e2e` 在真实 Chromium 中验证路由、主题、焦点、渲染错误、租户隔离和旧地址。
+
+任何数字、图表、状态和操作都必须能追溯到真实查询或 mutation。没有数据时不补数字；权限隐藏不能替代后端授权；本契约不允许通过前端改写 Go API、后端路由、查询参数或数据语义来解决展示问题。

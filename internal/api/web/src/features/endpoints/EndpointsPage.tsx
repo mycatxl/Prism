@@ -15,6 +15,7 @@ import { ToastContainer } from "../../components/ui/Toast";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { createEndpoint, deleteEndpoint, listEndpoints, updateEndpoint } from "./api";
 import type { Endpoint, EndpointInput } from "./types";
@@ -416,8 +417,9 @@ function EndpointPagination({
 function CapabilityCell({ enabled }: { enabled: boolean }) {
   const { t } = useI18n();
   return (
-    <span className={enabled ? "text-xs text-signal-deep" : "text-xs text-ink-faint"}>
-      {enabled ? t("已开启") : t("已关闭")}
+    <span className="flex items-center gap-2">
+      <span aria-hidden className={cn("state-dot", enabled && "state-dot--signal")} />
+      <span className="state-text">{enabled ? t("已开启") : t("已关闭")}</span>
     </span>
   );
 }
@@ -681,9 +683,13 @@ export function EndpointsPage() {
                       </TD>
                       <TD className="whitespace-nowrap">
                         <span className="flex min-w-0 items-center gap-2 whitespace-nowrap">
-                          <Badge tone={status.tone} dot>
-                            {status.label}
-                          </Badge>
+                          <span className="flex items-center gap-2">
+                            <span
+                              aria-hidden
+                              className={cn("state-dot", status.tone !== "neutral" && `state-dot--${status.tone}`)}
+                            />
+                            <span className="state-text">{status.label}</span>
+                          </span>
                           {endpoint.last_error ? (
                             <span
                               className="max-w-[24ch] truncate text-2xs text-alert"

@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
   const config = readServerConfig(
     loadServerEnv(process.cwd(), process.env, mode),
   );
+  const developmentOrigin = `http://${config.host}:${config.port}`;
 
   return {
     base: "/ui/",
@@ -47,8 +48,13 @@ export default defineConfig(({ mode }) => {
         "/api": {
           target: config.apiTarget,
           changeOrigin: true,
+          headers: { origin: developmentOrigin },
         },
         "/healthz": {
+          target: config.apiTarget,
+          changeOrigin: true,
+        },
+        "/ui/session.json": {
           target: config.apiTarget,
           changeOrigin: true,
         },
