@@ -1,3 +1,4 @@
+import { CONTROL_PLANE_TRANSLATIONS } from "./controlPlane";
 import { WORKBENCH_TRANSLATIONS } from "./workbench";
 
 /*
@@ -1800,5 +1801,5 @@ Note: Once enabled, requests without authentication information are rejected ins
   "当前无活跃连接": "No active connections",
 };
 
-export const EN_TRANSLATIONS: Readonly<Record<string, string>> = { ...EXACT_ZH_TO_EN, ...WORKBENCH_TRANSLATIONS };
+export const EN_TRANSLATIONS: Readonly<Record<string, string>> = { ...EXACT_ZH_TO_EN, ...WORKBENCH_TRANSLATIONS, ...CONTROL_PLANE_TRANSLATIONS };
 

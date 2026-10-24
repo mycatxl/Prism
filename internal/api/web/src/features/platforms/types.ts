@@ -5,11 +5,10 @@ export type PlatformAllocationPolicy = "BALANCED" | "PREFER_LOW_LATENCY" | "PREF
 /**
  * Node-selection criteria of a platform.
  *
- * Semantics: every criterion the operator set must hold at the same time (AND),
- * and the values inside one criterion are alternatives (OR) — a node that
- * matches any single value of a criterion passes that criterion. An empty list
- * means "do not restrict on this criterion". `regex_filters` is the legacy
- * escape hatch and keeps its own line-oriented tag semantics.
+ * Every criterion the operator set must hold at the same time (AND), and the
+ * values inside one criterion are alternatives (OR). Empty lists mean that the
+ * criterion is unrestricted. `regex_filters` remains readable on the response
+ * for legacy compatibility, but new forms and request models never create it.
  */
 export type Platform = {
   id: string;
@@ -40,7 +39,6 @@ export type PageResponse<T> = {
 
 /** The criteria subset of a platform, used for the live scope preview. */
 export type PlatformScopeSpec = {
-  regex_filters?: string[];
   region_filters?: string[];
   ip_types?: string[];
   purity_bands?: string[];
@@ -72,7 +70,6 @@ export type PlatformQualityPolicy = {
 export type PlatformCreateInput = {
   name: string;
   sticky_ttl?: string;
-  regex_filters?: string[];
   region_filters?: string[];
   ip_types?: string[];
   purity_bands?: string[];

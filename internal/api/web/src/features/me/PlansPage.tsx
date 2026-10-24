@@ -1,31 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, ShoppingCart } from "lucide-react";
+import { ArrowRight, RefreshCw, ShoppingCart } from "lucide-react";
 import { useState } from "react";
-import { Badge } from "../../components/ui/Badge";
-import { Button } from "../../components/ui/Button";
 import {
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from "../../components/ui/Dialog";
-import { PageHeader } from "../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../components/ui/Table";
+  ControlButton,
+  DetailFact,
+  EmptyWorkState,
+  InspectorDrawer,
+  ObjectList,
+  ObjectRow,
+  PageFrame,
+  QueryBadge,
+  StatusMark,
+  WorkSurface,
+} from "../../components/control-plane";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
- import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { newRequestID } from "../../lib/idempotency";
 import { formatMicro } from "../../lib/money";
 import { BALANCE_LEDGER_LIMIT, getBalance, getPlans, meBalanceQueryKey, purchase } from "./api";
- import type { PurchaseResult, PurchasablePlan } from "./types";
+import type { PurchaseResult, PurchasablePlan } from "./types";
 
-/** periodLabel names a rollover window in the reader's language. */
 function periodLabel(period: string, t: (text: string) => string): string {
   switch (period) {
     case "month":
@@ -47,13 +44,6 @@ function periodLabel(period: string, t: (text: string) => string): string {
   }
 }
 
-/**
- * PlansPage lists what a customer may buy with their own balance.
- *
- * Only plans that are for sale appear: a plan with no price is granted by an
- * operator, and offering it here would be offering a purchase the server has to
- * refuse.
- */
 export function PlansPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -64,10 +54,6 @@ export function PlansPage() {
     queryKey: ["me-plans"],
     queryFn: getPlans,
   });
-
-  // Same key and same limit as the account overview's balance panel: one cache
-  // entry, so the two pages can never disagree about the remaining balance, and
-  // the ledger length is fixed by the constant rather than by whoever asked last.
   const balanceQuery = useQuery({
     queryKey: meBalanceQueryKey,
     queryFn: () => getBalance(BALANCE_LEDGER_LIMIT),
@@ -75,176 +61,108 @@ export function PlansPage() {
 
   const plans = plansQuery.data?.items ?? [];
   const balance = balanceQuery.data?.balance_micro ?? 0;
-  const isRefreshing = plansQuery.isFetching || balanceQuery.isFetching;
+  const refreshing = plansQuery.isFetching || balanceQuery.isFetching;
 
-  const handleRefresh = () => {
+  const refresh = () => {
     void plansQuery.refetch();
     void balanceQuery.refetch();
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={t("购买套餐")}
-        description={t("用余额购买或更换套餐，扣款与生效同时完成。")}
-        actions={
-          <div className="flex items-center gap-2">
-            <span className="flex items-baseline gap-2">
-              <span className="text-xs text-ink-soft">{t("当前余额")}</span>
-              <span className="readout text-sm text-ink">
-                {formatMicro(balance)}
-              </span>
-            </span>
-            <Button
-              variant="secondary"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              title={t("刷新")}
-            >
-              <RefreshCw size={14} className={isRefreshing ? "animate-spin" : undefined} />
-              <span>{t("刷新")}</span>
-            </Button>
-          </div>
-        }
-      />
-
-      <Panel>
-        <PanelHeader
-          title={t("可购买套餐")}
-          description={t("价格按 USDT 计，一个周期扣一次。")}
-          meta={<Badge tone="neutral">{plans.length}</Badge>}
-        />
-        <PanelBody className="p-0">
-          {plansQuery.isLoading ? (
-            <LoadingState label={t("正在加载可购买套餐...")} className="py-12" />
-          ) : plansQuery.isError ? (
-            <ErrorState
-              message={formatApiErrorMessage(plansQuery.error, t)}
-              onRetry={() => void plansQuery.refetch()}
-              className="py-12"
-            />
-          ) : plans.length === 0 ? (
-            <EmptyState
-              title={t("暂无可购买套餐")}
-              hint={t("当前没有对外开放的套餐，请联系运营人员。")}
-              className="py-12"
-            />
-          ) : (
-            <TableWrap>
-              <Table>
-                <THead>
-                  <TR>
-                    <TH>{t("套餐名称")}</TH>
-                    <TH>{t("适用平台")}</TH>
-                    <TH>{t("流量配额")}</TH>
-                    <TH>{t("重置周期")}</TH>
-                    <TH>{t("有效天数")}</TH>
-                    <TH className="text-right">{t("价格 (USDT)")}</TH>
-                    <TH className="text-right">{t("操作")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {plans.map((plan) => (
-                    <TR key={plan.id}>
-                      <TD className="font-medium text-ink">
-                        <TDClip>{plan.name}</TDClip>
-                      </TD>
-                      <TD className="text-xs text-ink-soft">
-                        <TDClip>
-                          {plan.platforms && plan.platforms.length > 0
-                            ? plan.platforms.join(", ")
-                            : t("全部平台")}
-                        </TDClip>
-                      </TD>
-                      <TD className="readout text-xs">
-                        {plan.traffic_bytes > 0
-                          ? formatBytes(plan.traffic_bytes)
-                          : t("不限")}
-                      </TD>
-                      <TD className="readout text-xs">{periodLabel(plan.period, t)}</TD>
-                      <TD className="readout text-xs">
-                        {plan.duration_days > 0
-                          ? t("{{days}} 天", { days: plan.duration_days })
-                          : t("永久有效")}
-                      </TD>
-                      <TD className="readout text-right text-xs">
-                        {formatMicro(plan.price_micro)}
-                      </TD>
-                      <TD className="text-right">
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          onClick={() => setBuying(plan)}
-                          title={t("用余额购买此套餐")}
-                        >
-                          <ShoppingCart size={14} />
-                          <span>{t("购买")}</span>
-                        </Button>
-                      </TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </TableWrap>
-          )}
-        </PanelBody>
-        <PanelFooter className="flex items-center justify-between">
-          <span className="readout text-xs text-ink-soft">
-            {t("购买后当前订阅会被替换，未用完的流量不结转。")}
-          </span>
-        </PanelFooter>
-      </Panel>
-
-      {/*
-       * The dialog is keyed by the plan it is open for, so opening a different
-       * plan remounts it and mints a new idempotency key. Reopening the same
-       * one after an error keeps the key it already has.
-       */}
-      {buying && (
-        <PurchaseDialog
+    <PageFrame
+      eyebrow="Self Service / billing"
+      title={t("购买套餐")}
+      description={t("用余额购买或更换套餐，扣款与生效同时完成。")}
+      meta={<StatusMark tone={plansQuery.isError && !plansQuery.data ? "warn" : plansQuery.data ? "live" : "neutral"} label={plansQuery.isError && !plansQuery.data ? t("读取失败") : plansQuery.data ? t("目录已同步") : t("等待目录")} />}
+      actions={
+        <>
+          <QueryBadge label={`${t("当前余额")} ${formatMicro(balance)} USDT`} tone="signal" />
+          <ControlButton variant="secondary" size="sm" onPress={refresh} loading={refreshing}>
+            <RefreshCw size={14} aria-hidden />
+            {t("刷新")}
+          </ControlButton>
+        </>
+      }
+    >
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      <WorkSurface
+        eyebrow="Purchasable catalog"
+        title={t("可购买套餐")}
+        description={t("价格按 USDT 计，一个周期扣一次。只有服务端返回的 active、可售套餐会显示在这里。")}
+        meta={plansQuery.data ? t("共 {{count}} 个套餐", { count: plans.length }) : t("未加载")}
+      >
+        {plansQuery.isError && !plansQuery.data ? (
+          <EmptyWorkState
+            title={t("可购买套餐读取失败")}
+            detail={formatApiErrorMessage(plansQuery.error, t)}
+            action={<ControlButton variant="secondary" size="sm" onPress={() => void plansQuery.refetch()}>{t("重试")}</ControlButton>}
+          />
+        ) : null}
+        {plansQuery.isLoading && !plansQuery.data ? (
+          <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载可购买套餐...")}</div>
+        ) : null}
+        {!plansQuery.isLoading && !plansQuery.isError && plans.length === 0 ? (
+          <EmptyWorkState title={t("暂无可购买套餐")} detail={t("当前没有对外开放的套餐，请联系运营人员。")} />
+        ) : null}
+        {plans.length > 0 ? (
+          <ObjectList>
+            {plans.map((plan) => (
+              <ObjectRow
+                key={plan.id}
+                onClick={() => setBuying(plan)}
+                leading={<span aria-hidden>$</span>}
+                title={plan.name}
+                subtitle={`${periodLabel(plan.period, t)} · ${plan.duration_days > 0 ? t("{{days}} 天", { days: plan.duration_days }) : t("永久有效")}`}
+                facts={
+                  <>
+                    <span>{plan.traffic_bytes > 0 ? formatBytes(plan.traffic_bytes) : t("不限")}</span>
+                    <span>{plan.platforms?.length ? plan.platforms.join(", ") : t("全部平台")}</span>
+                    <span>{formatMicro(plan.price_micro)} USDT</span>
+                  </>
+                }
+                status={<StatusMark tone="signal" label={t("可购买")} />}
+                action={<ArrowRight size={14} aria-hidden />}
+              />
+            ))}
+          </ObjectList>
+        ) : null}
+      </WorkSurface>
+      <WorkSurface
+        eyebrow="Purchase boundary"
+        title={t("购买说明")}
+        description={t("购买后当前订阅会被替换，未用完的流量不结转。余额不足时服务端不会扣款。")}
+      >
+        <div className="cp-data-grid">
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("余额")}</span><strong className="cp-data-grid__value">{formatMicro(balance)}</strong></div>
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("可售套餐")}</span><strong className="cp-data-grid__value">{plans.length}</strong></div>
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("扣款单位")}</span><strong className="cp-data-grid__value">USDT</strong></div>
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("购买状态")}</span><strong className="cp-data-grid__value">{plansQuery.isError ? t("未知") : t("可查询")}</strong></div>
+        </div>
+      </WorkSurface>
+      {buying ? (
+        <PurchaseDrawer
           key={buying.id}
           plan={buying}
           balanceMicro={balance}
           onClose={() => setBuying(null)}
           onCommitted={(result) => {
-            // The server's own answer says whether money moved: a replay
-            // (same request id answered from the idempotency store) charges
-            // nothing, and the wording says so instead of a generic success.
             showToast(
               "success",
               result.replayed
                 ? t("重复请求：已存在的订阅生效，本次未扣费。")
-                : t("已扣费 {{amount}} USDT，套餐已生效。", {
-                    amount: formatMicro(result.charged_micro),
-                  }),
+                : t("已扣费 {{amount}} USDT，套餐已生效。", { amount: formatMicro(result.charged_micro) }),
             );
             void queryClient.invalidateQueries({ queryKey: ["me-plans"] });
             void queryClient.invalidateQueries({ queryKey: ["me-balance"] });
             void queryClient.invalidateQueries({ queryKey: ["me-overview"] });
           }}
         />
-      )}
-
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </div>
+      ) : null}
+    </PageFrame>
   );
 }
 
-/**
- * The confirmation step, which is also where the idempotency key is minted.
- *
- * The key is minted once, when this dialog mounts, and kept for its lifetime: a
- * retry after a network error answers with the first call's result instead of
- * charging a second time. The parent keys this component by plan id, so a
- * different plan - or the same one bought again - mounts a new key, which really
- * is a second charge.
- *
- * A commit keeps the dialog open on the server's own answer: what was charged
- * (`charged_micro`), whether this answer is a replay (`replayed`, zero charge),
- * and the subscription now in force. The result stays until the reader closes
- * it — a toast answering "was I charged twice?" disappears too fast to trust.
- */
-function PurchaseDialog({
+function PurchaseDrawer({
   plan,
   balanceMicro,
   onClose,
@@ -258,20 +176,17 @@ function PurchaseDialog({
   const { t } = useI18n();
   const [requestID] = useState(newRequestID);
   const [result, setResult] = useState<PurchaseResult | null>(null);
-
   const buyMutation = useMutation({
-    mutationFn: (input: { planID: string; requestID: string }) =>
-      purchase(input.planID, input.requestID),
-    onSuccess: (res) => {
-      setResult(res);
-      onCommitted(res);
+    mutationFn: () => purchase(plan.id, requestID),
+    onSuccess: (next) => {
+      setResult(next);
+      onCommitted(next);
     },
   });
-
-  const short = balanceMicro < plan.price_micro;
+  const insufficient = balanceMicro < plan.price_micro;
 
   return (
-    <DialogRoot
+    <InspectorDrawer
       open
       onOpenChange={(open) => {
         if (!open) {
@@ -279,139 +194,44 @@ function PurchaseDialog({
           onClose();
         }
       }}
+      title={result ? t("购买完成") : t("确认购买")}
+      eyebrow={result ? t("Purchase result") : t("Purchase confirmation")}
+      footer={result ? (
+        <ControlButton variant="primary" size="sm" onPress={onClose}>{t("完成")}</ControlButton>
+      ) : (
+        <>
+          <ControlButton variant="ghost" size="sm" onPress={onClose} isDisabled={buyMutation.isPending}>{t("取消")}</ControlButton>
+          <ControlButton variant="primary" size="sm" onPress={() => buyMutation.mutate()} isDisabled={buyMutation.isPending || insufficient} loading={buyMutation.isPending}>
+            <ShoppingCart size={14} aria-hidden />
+            {buyMutation.isPending ? t("正在购买...") : insufficient ? t("余额不足") : t("确认购买")}
+          </ControlButton>
+        </>
+      )}
     >
-      <DialogPortal>
-        <DialogOverlay />
-        <DialogContent className="w-full max-w-md p-6">
-          <DialogTitle className="text-base font-semibold text-ink">
-            {result ? t("购买完成") : t("确认购买")}
-          </DialogTitle>
-
-          {result ? (
-            <>
-              <div className="mt-4 flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className={cn(
-                    "state-dot",
-                    !result.replayed && "state-dot--signal",
-                  )}
-                />
-                <span className="state-text">
-                  {result.replayed
-                    ? t("重复请求，已存在的订阅生效")
-                    : t("购买成功")}
-                </span>
-              </div>
-
-              <div className="mt-3 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-ink-soft">{t("本次扣款")}</span>
-                  <span className="readout text-ink">
-                    {result.replayed
-                      ? t("未扣费")
-                      : `${formatMicro(result.charged_micro)} USDT`}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-ink-soft">{t("当前余额")}</span>
-                  <span className="readout text-ink">
-                    {formatMicro(result.balance_micro)} USDT
-                  </span>
-                </div>
-                <div className="flex items-center justify-between border-t border-rule pt-2">
-                  <span className="text-ink-soft">{t("订阅状态")}</span>
-                  <span className="flex items-center gap-2">
-                    <span
-                      aria-hidden
-                      className={cn(
-                        "state-dot",
-                        result.subscription.status === "active" &&
-                          "state-dot--signal",
-                      )}
-                    />
-                    <span className="state-text">
-                      {result.subscription.status === "active"
-                        ? t("生效中")
-                        : result.subscription.status}
-                    </span>
-                  </span>
-                </div>
-              </div>
-
-              <div className="mt-6 flex items-center justify-end">
-                <Button variant="primary" onClick={onClose}>
-                  {t("完成")}
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <p className="mt-1 text-xs text-ink-soft">
-                {t("扣款与套餐生效同时完成，余额不足时不会扣款。")}
-              </p>
-
-              <div className="mt-4 space-y-2 rounded-control border border-rule bg-paper-inset p-3 text-xs">
-                <div className="flex items-center justify-between">
-                  <span className="text-ink-soft">{t("套餐")}</span>
-                  <span className="font-medium text-ink">{plan.name}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-ink-soft">{t("有效期")}</span>
-                  <span className="readout text-ink">
-                    {t("{{days}} 天", { days: plan.duration_days })}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-ink-soft">{t("扣款金额")}</span>
-                  <span className="readout font-mono text-ink">
-                    {formatMicro(plan.price_micro)} USDT
-                  </span>
-                </div>
-                <div className="flex items-center justify-between border-t border-rule pt-2">
-                  <span className="text-ink-soft">{t("扣款后余额")}</span>
-                  <span
-                    className={`readout font-mono ${
-                      short ? "text-alert" : "text-signal"
-                    }`}
-                  >
-                    {formatMicro(balanceMicro - plan.price_micro)} USDT
-                  </span>
-                </div>
-              </div>
-
-              {buyMutation.isError && (
-                <div className="mt-3 rounded-control border border-alert/30 bg-alert-wash p-3 text-xs text-alert">
-                  {formatApiErrorMessage(buyMutation.error, t)}
-                </div>
-              )}
-
-              <div className="mt-6 flex items-center justify-end gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={onClose}
-                  disabled={buyMutation.isPending}
-                >
-                  {t("取消")}
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() =>
-                    buyMutation.mutate({ planID: plan.id, requestID })
-                  }
-                  disabled={buyMutation.isPending || short}
-                >
-                  {buyMutation.isPending
-                    ? t("正在购买...")
-                    : short
-                      ? t("余额不足")
-                      : t("确认购买")}
-                </Button>
-              </div>
-            </>
-          )}
-        </DialogContent>
-      </DialogPortal>
-    </DialogRoot>
+      {result ? (
+        <div className="cp-stack">
+          <StatusMark tone={result.replayed ? "warn" : "signal"} label={result.replayed ? t("重复请求，已存在的订阅生效") : t("购买成功")} />
+          <dl className="cp-detail-facts">
+            <DetailFact label={t("套餐")} value={result.subscription.plan_name} />
+            <DetailFact label={t("本次扣款")} value={result.replayed ? t("未扣费") : `${formatMicro(result.charged_micro)} USDT`} mono />
+            <DetailFact label={t("当前余额")} value={`${formatMicro(result.balance_micro)} USDT`} mono />
+            <DetailFact label={t("订阅状态")} value={result.subscription.status === "active" ? t("生效中") : result.subscription.status} />
+          </dl>
+          <QueryBadge label={t("服务端已返回本次幂等请求的最终结果")} tone={result.replayed ? "warn" : "signal"} />
+        </div>
+      ) : (
+        <div className="cp-stack">
+          <p className="cp-muted">{t("扣款与套餐生效同时完成，余额不足时不会扣款。")}</p>
+          <dl className="cp-detail-facts">
+            <DetailFact label={t("套餐")} value={plan.name} />
+            <DetailFact label={t("有效期")} value={plan.duration_days > 0 ? t("{{days}} 天", { days: plan.duration_days }) : t("永久有效")} mono />
+            <DetailFact label={t("重置周期")} value={periodLabel(plan.period, t)} />
+            <DetailFact label={t("扣款金额")} value={`${formatMicro(plan.price_micro)} USDT`} mono />
+            <DetailFact label={t("扣款后余额")} value={`${formatMicro(balanceMicro - plan.price_micro)} USDT`} mono />
+          </dl>
+          {buyMutation.isError ? <p className="cp-form-error">{formatApiErrorMessage(buyMutation.error, t)}</p> : null}
+        </div>
+      )}
+    </InspectorDrawer>
   );
 }

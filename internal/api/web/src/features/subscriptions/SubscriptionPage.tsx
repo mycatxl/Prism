@@ -1,171 +1,102 @@
-import { Sheet } from "../../components/ui/Sheet";
-import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Ellipsis, Info, Plus, RefreshCw, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Controller, useForm, useFormState } from "react-hook-form";
-import { Link, useSearchParams } from "react-router-dom";
-import { z } from "zod";
-import { cn } from "../../lib/cn";
-import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
-import { Badge } from "../../components/ui/Badge";
-import { Button } from "../../components/ui/Button";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
-import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "../../components/ui/Menu";
-import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { Select } from "../../components/ui/Select";
-import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
-import { Tabs, TabsList, TabsTrigger } from "../../components/ui/Tabs";
-import { Switch } from "../../components/ui/Switch";
+import { Info, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import {
+  ConfirmDrawer,
+  ControlButton,
+  ControlInput,
+  ControlPagination,
+  ControlSelect,
+  ControlSwitch,
+  ControlTabs,
+  ControlTextarea,
+  DetailFact,
+  EmptyWorkState,
+  FilterChip,
+  InspectorDrawer,
+  ObjectList,
+  ObjectRow,
+  PageFrame,
+  QueryBadge,
+  StatusMark,
+  WorkSurface,
+} from "../../components/control-plane";
 import { ToastContainer } from "../../components/ui/Toast";
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
-import { opsPaths } from "../../lib/paths";
 import { formatDateTime, formatRelativeTime } from "../../lib/time";
 import {
   cleanupSubscriptionCircuitOpenNodes,
   createSubscription,
   deleteSubscription,
-  listSubscriptions,
   getSubscription,
   getSubscriptionParseReport,
+  listSubscriptions,
   refreshSubscription,
   updateSubscription,
 } from "./api";
-import type { Subscription, SubscriptionParseReason } from "./types";
+import type { Subscription, SubscriptionCreateInput, SubscriptionParseReportDetail, SubscriptionUpdateInput } from "./types";
 
 type EnabledFilter = "all" | "enabled" | "disabled";
-type SubscriptionSourceType = "remote" | "local";
-type SubscriptionEnabledMutation = {
-  subscription: Subscription;
+type SourceType = "remote" | "local";
+type FormState = {
+  name: string;
+  source_type: SourceType;
+  url: string;
+  content: string;
+  update_interval: string;
+  ephemeral_node_evict_delay: string;
   enabled: boolean;
+  ephemeral: boolean;
+  incremental_alive_nodes: boolean;
+  auto_intel: boolean;
 };
 
-const SUBSCRIPTION_SOURCE_TABS: Array<{ key: SubscriptionSourceType; label: string; hint: string }> = [
-  { key: "remote", label: "远程", hint: "从 HTTP/HTTPS 订阅链接拉取内容" },
-  { key: "local", label: "本地", hint: "直接填写订阅文本，不经过网络拉取" },
-];
+type ConfirmAction =
+  | { kind: "delete"; subscription: Subscription }
+  | { kind: "cleanup"; subscription: Subscription }
+  | null;
 
-const subscriptionCreateSchema = z.object({
-  name: z.string().trim().min(1, "订阅名称不能为空"),
-  source_type: z.enum(["remote", "local"]),
-  url: z.string(),
-  content: z.string(),
-  update_interval: z.string().trim().min(1, "更新间隔不能为空"),
-  ephemeral_node_evict_delay: z.string().trim().min(1, "临时节点驱逐延迟不能为空"),
-  enabled: z.boolean(),
-  ephemeral: z.boolean(),
-  incremental_alive_nodes: z.boolean(),
-  auto_intel: z.boolean(),
-}).superRefine((value, ctx) => {
-  const url = value.url.trim();
-  const content = value.content.trim();
-  if (value.source_type === "remote") {
-    if (!url) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "URL 不能为空" });
-      return;
-    }
-    if (!(url.startsWith("http://") || url.startsWith("https://"))) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["url"], message: "URL 必须是 http/https 地址" });
-    }
-    return;
-  }
-  if (!content) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "订阅内容不能为空" });
-  }
-});
-
-const subscriptionEditSchema = subscriptionCreateSchema;
-
-type SubscriptionCreateForm = z.infer<typeof subscriptionCreateSchema>;
-type SubscriptionEditForm = z.infer<typeof subscriptionEditSchema>;
-const EMPTY_SUBSCRIPTIONS: Subscription[] = [];
-const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
 const LOCAL_SOURCE_UPDATE_INTERVAL = "12h";
-const SUBSCRIPTION_DISABLE_HINT = "禁用订阅后，相关节点不会参与平台路由、健康统计或自动探测。";
-const SUBSCRIPTION_EPHEMERAL_HINT = "临时订阅的非健康节点会在一段时间后被自动删除。订阅本身不会被删除。";
-const SUBSCRIPTION_INCREMENTAL_HINT = "开启后刷新时保留当前仍存活的旧节点，仅清理失效旧节点，并合并新订阅内容；关闭后仅保留刷新后的订阅内容。";
-const SUBSCRIPTION_AUTO_INTEL_HINT = "开启后，该订阅刷新新增的节点会自动进入 Intel 批量检测；关闭后该订阅不会自动排队检测。";
-const SUBSCRIPTION_PARSE_REPORT_HINT =
-  "解析报告按原因分组列出被丢弃的节点：原因、数量以及一个有限的名称样例。另有被导入时改写了配置的节点（悬空的 detour 或 dialer-proxy 被剥离），它们不算丢弃。";
+const PARSE_REPORT_HINT = "解析报告按原因分组列出被丢弃的节点，并保留有限的名称样例。被导入但配置被改写的节点会单独标记，不计入丢弃。";
 
-function extractHostname(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
-
-function subscriptionToEditForm(subscription: Subscription): SubscriptionEditForm {
+function formFromSubscription(subscription?: Subscription): FormState {
   return {
-    name: subscription.name,
-    source_type: subscription.source_type,
-    url: subscription.url,
-    content: subscription.content ?? "",
-    update_interval: subscription.update_interval,
-    ephemeral_node_evict_delay: subscription.ephemeral_node_evict_delay,
-    enabled: subscription.enabled,
-    ephemeral: subscription.ephemeral,
-    incremental_alive_nodes: subscription.incremental_alive_nodes,
-    auto_intel: subscription.auto_intel,
+    name: subscription?.name ?? "",
+    source_type: subscription?.source_type ?? "remote",
+    url: subscription?.url ?? "",
+    content: subscription?.content ?? "",
+    update_interval: subscription?.update_interval ?? "12h",
+    ephemeral_node_evict_delay: subscription?.ephemeral_node_evict_delay ?? "72h",
+    enabled: subscription?.enabled ?? true,
+    ephemeral: subscription?.ephemeral ?? false,
+    incremental_alive_nodes: subscription?.incremental_alive_nodes ?? false,
+    auto_intel: subscription?.auto_intel ?? true,
   };
 }
 
-function sourceTypeLabel(sourceType: SubscriptionSourceType): string {
-  return sourceType === "local" ? "本地" : "远程";
+
+function rowState(subscription: Subscription, pendingRefresh: boolean, enabled: boolean) {
+  if (pendingRefresh) return { tone: "neutral" as const, label: "同步中" };
+  if (!enabled) return { tone: "neutral" as const, label: "已停用" };
+  if (subscription.last_error) return { tone: "alert" as const, label: "错误" };
+  if (subscription.last_updated) return { tone: "signal" as const, label: "正常" };
+  return { tone: "neutral" as const, label: "未检查" };
 }
 
-/**
- * The one state a subscription row shows: what the last sync did, or what is
- * happening right now. An in-flight manual refresh outranks the stored state, a
- * disabled source reads as stopped regardless of its last error, and an error
- * beats a stale success. The returned label is a translation key, not prose.
- */
-function subscriptionRowState(
-  subscription: Subscription,
-  { refreshPending, enabled }: { refreshPending: boolean; enabled: boolean },
-): { tone: "neutral" | "signal" | "alert"; label: string } {
-  if (refreshPending) {
-    return { tone: "neutral", label: "同步中" };
+function hostname(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url || "-";
   }
-  if (!enabled) {
-    return { tone: "neutral", label: "已停用" };
-  }
-  if (subscription.last_error) {
-    return { tone: "alert", label: "错误" };
-  }
-  if (subscription.last_updated) {
-    return { tone: "signal", label: "正常" };
-  }
-  return { tone: "neutral", label: "未检查" };
 }
 
-function parseEnabledFilter(value: EnabledFilter): boolean | undefined {
-  if (value === "enabled") {
-    return true;
-  }
-  if (value === "disabled") {
-    return false;
-  }
-  return undefined;
-}
-
-function normalizeSubmitUpdateInterval(sourceType: SubscriptionSourceType, raw: string): string {
-  if (sourceType === "local") {
-    return LOCAL_SOURCE_UPDATE_INTERVAL;
-  }
-  return raw.trim();
-}
-
-// SubscriptionParseReportSection renders the parse report of one subscription:
-// the grouped skip summary that every subscription response carries, plus the
-// exact (bounded) list from GET /api/v1/subscriptions/{id}/parse-report.
-function SubscriptionParseReportSection({ subscription }: { subscription: Subscription }) {
+function ParseReport({ subscription }: { subscription: Subscription }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const detailQuery = useQuery({
@@ -173,1454 +104,129 @@ function SubscriptionParseReportSection({ subscription }: { subscription: Subscr
     queryFn: () => getSubscriptionParseReport(subscription.id),
     enabled: expanded,
   });
-
-  const summary = subscription.parse_report ?? null;
+  const summary = subscription.parse_report;
   const detail = detailQuery.data;
-
   return (
-    <section>
-      <div className="flex items-center gap-1.5">
-        <h3 className="text-xs font-medium text-ink-soft">{t("解析报告")}</h3>
-        <InfoHint text={t(SUBSCRIPTION_PARSE_REPORT_HINT)} />
-      </div>
-
-      {summary === null ? (
-        <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
-          {t("该订阅尚未解析；刷新一次后会在这里列出被丢弃的节点及原因。")}
-        </p>
-      ) : (
-        <>
-          <p className="mt-1 max-w-[68ch] text-xs text-ink-soft">
-            {t("共 {{total}} 个节点：导入 {{imported}} 个，丢弃 {{skipped}} 个。", {
-              total: summary.total,
-              imported: summary.imported,
-              skipped: summary.skipped,
-            })}
-          </p>
-
-          {summary.reasons.length === 0 ? (
-            <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">{t("没有节点被丢弃。")}</p>
-          ) : (
-            <ul className="mt-2 divide-y divide-rule border-y border-rule">
-              {summary.reasons.map((bucket: SubscriptionParseReason) => (
-                <li key={bucket.reason} className="py-2">
-                  <h4 className="text-xs font-medium">{`${bucket.reason} × ${bucket.count}`}</h4>
-                  <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">
-                    {bucket.sample_names.length > 0
-                      ? t("名称样例：{{names}}", { names: bucket.sample_names.join("、") })
-                      : t("没有可显示的名称")}
-                    {bucket.samples_truncated ? t("（样例已截断）") : ""}
-                  </p>
-                  {bucket.detail ? (
-                    <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">{bucket.detail}</p>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {summary.skipped_overflow ? (
-            <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
-              {t("另有 {{count}} 个被丢弃的节点只计入数量，未记录名称。", {
-                count: summary.skipped_overflow,
-              })}
-            </p>
-          ) : null}
-          {summary.reasons_overflow ? (
-            <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
-              {t("另有 {{count}} 种原因只计入数量。", { count: summary.reasons_overflow })}
-            </p>
-          ) : null}
-          {/* A note is not a drop: the node is imported, but a dangling detour
-              or dialer-proxy reference was stripped from it (or cut from its
-              chain). Without this line the operator would only see the node
-              arrive with fewer hops than the subscription declared. */}
-          {summary.notes ? (
-            <p className="mt-1 max-w-[68ch] text-xs text-ink-soft">
-              {t("另有 {{count}} 个节点被导入时改写了配置（悬空的 detour 或 dialer-proxy 被剥离）。", {
-                count: summary.notes,
-              })}
-              {summary.notes_overflow
-                ? t("其中 {{count}} 条只计入数量。", { count: summary.notes_overflow })
-                : ""}
-            </p>
-          ) : null}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-1"
-            onClick={() => setExpanded((previous) => !previous)}
-          >
-            {expanded ? t("收起完整列表") : t("查看完整列表")}
-          </Button>
-
-          {expanded ? (
-            detailQuery.isPending ? (
-              <LoadingState />
-            ) : detailQuery.error ? (
-              <ErrorState
-                className="mt-2"
-                message={formatApiErrorMessage(detailQuery.error, t)}
-                onRetry={() => void detailQuery.refetch()}
-              />
-            ) : !detail || !detail.parsed ? (
-              <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">{t("该订阅尚未解析。")}</p>
-            ) : detail.truncated ? (
-              <p className="mt-1 max-w-[68ch] text-xs text-ink-faint">
-                {t("解析报告超过 64 KiB，只保留了截断标记。")}
-              </p>
-            ) : (
-              <>
-                {detail.notes?.length ? (
-                  <ul className="mt-2 divide-y divide-rule border-y border-rule">
-                    {detail.notes.map((entry) => (
-                      <li key={`${entry.type}|${entry.name}|${entry.reason}`} className="py-2">
-                        <h4 className="text-xs font-medium">
-                          {`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}
-                        </h4>
-                        <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
-                          {`${t("导入时已改写")}: ${entry.detail}`}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                <ul className="mt-2 divide-y divide-rule border-y border-rule">
-                  {detail.skipped.map((entry) => (
-                    <li key={`${entry.type}|${entry.name}|${entry.reason}`} className="py-2">
-                      <h4 className="text-xs font-medium">
-                        {`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`}
-                      </h4>
-                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-faint">{`${entry.reason}: ${entry.detail}`}</p>
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )
-          ) : null}
-        </>
-      )}
-    </section>
-  );
-}
-
-/**
- * A hint attached to a label.
- *
- * The icon is a real button inside a Radix tooltip, so the explanation is reachable
- * with the keyboard rather than only by hovering a bare span.
- */
-function InfoHint({ text }: { text: string }) {
-  return (
-    <Tooltip content={text}>
-      <Button
-        type="button"
-        variant="quiet"
-        size="icon"
-        aria-label={text}
-        className="text-ink-faint"
-      >
-        <Info size={13} aria-hidden />
-      </Button>
-    </Tooltip>
-  );
-}
-
-/** One boolean setting: label and hint on the left, the switch on the right. */
-function SwitchRow({
-  id,
-  label,
-  hint,
-  checked,
-  disabled,
-  onChange,
-}: {
-  id: string;
-  label: string;
-  hint?: string;
-  checked: boolean;
-  disabled?: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 border-t border-rule pt-3 sm:col-span-2">
-      <div className="flex min-w-0 items-center gap-1.5">
-        <label htmlFor={id} className="text-xs font-medium text-ink-soft">
-          {label}
-        </label>
-        {hint ? <InfoHint text={hint} /> : null}
-      </div>
-      <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+    <div className="cp-inset-stack">
+      <div className="cp-section-line"><strong>{t("解析报告")}</strong><span title={t(PARSE_REPORT_HINT)} aria-label={t(PARSE_REPORT_HINT)}><Info size={13} aria-hidden /></span></div>
+      {!summary ? <p className="cp-muted">{t("该订阅尚未解析；刷新一次后会在这里列出被丢弃的节点及原因。")}</p> : <>
+        <p className="cp-muted">{t("共 {{total}} 个节点：导入 {{imported}} 个，丢弃 {{skipped}} 个。", { total: summary.total, imported: summary.imported, skipped: summary.skipped })}</p>
+        {summary.reasons.length ? <ObjectList>{summary.reasons.map((reason) => <ObjectRow key={reason.reason} leading={<span className="cp-platform-row__mark" aria-hidden>{reason.count}</span>} title={reason.reason} subtitle={reason.detail || t("解析跳过原因")} facts={<span>{reason.sample_names.length ? t("名称样例：{{names}}", { names: reason.sample_names.join("、") }) : t("没有可显示的名称")}</span>} status={reason.samples_truncated ? <QueryBadge label={t("样例已截断")} tone="warn" /> : undefined} />)}</ObjectList> : <p className="cp-muted">{t("没有节点被丢弃。")}</p>}
+        {summary.skipped_overflow ? <p className="cp-muted">{t("另有 {{count}} 个被丢弃的节点只计入数量，未记录名称。", { count: summary.skipped_overflow })}</p> : null}
+        {summary.notes ? <p className="cp-muted">{t("另有 {{count}} 个节点被导入时改写了配置。", { count: summary.notes })}</p> : null}
+        <ControlButton variant="ghost" size="sm" onPress={() => setExpanded((value) => !value)}>{expanded ? t("收起完整列表") : t("查看完整列表")}</ControlButton>
+        {expanded ? <ParseReportDetail detail={detail} loading={detailQuery.isLoading} error={detailQuery.error} onRetry={() => void detailQuery.refetch()} /> : null}
+      </>}
     </div>
   );
 }
 
-/** Offset pagination for this page's table footer. */
-function PageNavigator({
-  page,
-  totalPages,
-  totalItems,
-  pageSize,
-  pageSizeOptions,
-  onPageChange,
-  onPageSizeChange,
-}: {
-  page: number;
-  totalPages: number;
-  totalItems: number;
-  pageSize: number;
-  pageSizeOptions: readonly number[];
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
-}) {
+function ParseReportDetail({ detail, loading, error, onRetry }: { detail?: SubscriptionParseReportDetail; loading: boolean; error: Error | null; onRetry: () => void }) {
   const { t } = useI18n();
-  const pages = Math.max(1, totalPages);
-  const current = Math.min(Math.max(0, page), pages - 1);
-  const jump = (raw: string) => {
-    const value = Number(raw);
-    if (Number.isInteger(value) && value > 0) {
-      onPageChange(Math.max(0, Math.min(pages - 1, value - 1)));
-    }
-  };
+  if (loading) return <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载解析报告")}</div>;
+  if (error) return <p className="cp-form-error">{formatApiErrorMessage(error, t)} <ControlButton variant="ghost" size="sm" onPress={onRetry}>{t("重试")}</ControlButton></p>;
+  if (!detail || !detail.parsed) return <p className="cp-muted">{t("该订阅尚未解析。")}</p>;
+  if (detail.truncated) return <p className="cp-muted">{t("解析报告超过 64 KiB，只保留了截断标记。")}</p>;
+  const notes = detail.notes ?? [];
+  return <ObjectList>{[...notes.map((entry) => ({ ...entry, kind: "note" })), ...detail.skipped.map((entry) => ({ ...entry, kind: "skipped" }))].map((entry) => <ObjectRow key={`${entry.kind}|${entry.type}|${entry.name}|${entry.reason}`} leading={<span className="cp-platform-row__mark" aria-hidden>{entry.kind === "note" ? "NOTE" : "DROP"}</span>} title={`${entry.name || t("未命名")} · ${entry.type || t("未知类型")}`} subtitle={entry.kind === "note" ? t("导入时已改写") : entry.reason} facts={<span>{entry.detail}</span>} />)}</ObjectList>;
+}
 
-  return (
-    <PanelFooter className="justify-between gap-x-4">
-      <p className="text-xs text-ink-soft">
-        {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
-          page: current + 1,
-          pages,
-          start: totalItems ? current * pageSize + 1 : 0,
-          end: Math.min((current + 1) * pageSize, totalItems),
-          total: totalItems,
-        })}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-          <span>{t("每页")}</span>
-          <Select
-            className="w-auto px-1.5 text-xs"
-            value={pageSize}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          >
-            {pageSizeOptions.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-          <span>{t("跳至")}</span>
-          <Input
-            key={current}
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={pages}
-            defaultValue={current + 1}
-            aria-label={t("选择页码")}
-            className="h-[var(--control-h)] w-14 px-1.5 text-xs"
-            onKeyDown={(event) => {
-              if (event.key === "Enter") jump(event.currentTarget.value);
-            }}
-            onBlur={(event) => {
-              jump(event.currentTarget.value);
-            }}
-          />
-        </label>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t("上一页")}
-          title={t("上一页")}
-          disabled={current === 0}
-          onClick={() => onPageChange(current - 1)}
-        >
-          <ChevronLeft size={16} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label={t("下一页")}
-          title={t("下一页")}
-          disabled={current >= pages - 1}
-          onClick={() => onPageChange(current + 1)}
-        >
-          <ChevronRight size={16} />
-        </Button>
-      </div>
-    </PanelFooter>
-  );
+function SubscriptionForm({ mode, initial, onSubmit, pending, error, formId }: { mode: "create" | "edit"; initial?: Subscription; onSubmit: (form: FormState) => void; pending: boolean; error: string; formId: string }) {
+  const { t } = useI18n();
+  const [form, setForm] = useState<FormState>(() => formFromSubscription(initial));
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => ({ ...current, [key]: value }));
+  const [validationError, setValidationError] = useState("");
+  const contentPlaceholder = t("支持 sing-box、Clash/Mihomo、URI 或 base64 内容；本地订阅直接粘贴文本。");
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!form.name.trim()) { setValidationError(t("订阅名称不能为空")); return; }
+    if (form.source_type === "remote" && (!form.url.trim() || !/^https?:\/\//i.test(form.url.trim()))) { setValidationError(t("URL 必须是 http/https 地址")); return; }
+    if (form.source_type === "local" && !form.content.trim()) { setValidationError(t("订阅内容不能为空")); return; }
+    if (form.source_type === "remote" && !form.update_interval.trim()) { setValidationError(t("更新间隔不能为空")); return; }
+    if (!form.ephemeral_node_evict_delay.trim()) { setValidationError(t("临时节点驱逐延迟不能为空")); return; }
+    setValidationError("");
+    onSubmit(form);
+  };
+  return <form id={formId} className="cp-form-stack" onSubmit={submit}>
+    {validationError || error ? <p className="cp-form-error">{validationError || error}</p> : null}
+    <ControlInput label={t("订阅名称")} value={form.name} onChange={(event) => set("name", event.target.value)} />
+    <ControlTabs label={t("订阅来源类型")} items={[{ id: "remote", label: t("远程") }, { id: "local", label: t("本地") }]} selectedKey={form.source_type} onSelectionChange={(key) => set("source_type", key as SourceType)} />
+    {form.source_type === "remote" ? <><ControlInput label={t("更新间隔")} hint={t("例如 12h")} value={form.update_interval} onChange={(event) => set("update_interval", event.target.value)} /><ControlInput label={t("订阅链接")} value={form.url} onChange={(event) => set("url", event.target.value)} /></> : <ControlTextarea label={t("订阅内容")} hint={contentPlaceholder} rows={9} value={form.content} onChange={(event) => set("content", event.target.value)} />}
+    <ControlSwitch label={t("启用")} hint={t("禁用订阅后，相关节点不会参与平台路由、健康统计或自动探测。")} isSelected={form.enabled} onChange={(value) => set("enabled", value)} isDisabled={pending} />
+    <ControlSwitch label={t("临时订阅")} hint={t("临时订阅的非健康节点会在一段时间后被自动删除。订阅本身不会被删除。")} isSelected={form.ephemeral} onChange={(value) => set("ephemeral", value)} isDisabled={pending} />
+    <ControlSwitch label={t("存活节点增量模式")} hint={t("刷新时保留当前仍存活的旧节点，并合并新订阅内容。")} isSelected={form.incremental_alive_nodes} onChange={(value) => set("incremental_alive_nodes", value)} isDisabled={pending} />
+    <ControlSwitch label={t("自动 Intel 检测")} hint={t("刷新新增节点后自动进入 Intel 批量检测。")} isSelected={form.auto_intel} onChange={(value) => set("auto_intel", value)} isDisabled={pending} />
+    <ControlInput label={t("临时节点驱逐延迟")} hint={t("例如 72h")} value={form.ephemeral_node_evict_delay} onChange={(event) => set("ephemeral_node_evict_delay", event.target.value)} disabled={pending || !form.ephemeral} />
+    {mode === "edit" && initial ? <div className="cp-readout-grid"><DetailFact label={t("创建时间")} value={formatDateTime(initial.created_at)} mono /><DetailFact label={t("上次检查")} value={formatDateTime(initial.last_checked || "")} mono /><DetailFact label={t("上次更新")} value={formatDateTime(initial.last_updated || "")} mono /></div> : null}
+  </form>;
+}
+
+function toCreateInput(form: FormState): SubscriptionCreateInput {
+  return { name: form.name.trim(), source_type: form.source_type, update_interval: form.source_type === "local" ? LOCAL_SOURCE_UPDATE_INTERVAL : form.update_interval.trim(), ephemeral_node_evict_delay: form.ephemeral_node_evict_delay.trim(), enabled: form.enabled, ephemeral: form.ephemeral, incremental_alive_nodes: form.incremental_alive_nodes, auto_intel: form.auto_intel, ...(form.source_type === "remote" ? { url: form.url.trim() } : { content: form.content }) };
+}
+
+function toUpdateInput(form: FormState): SubscriptionUpdateInput {
+  return { name: form.name.trim(), update_interval: form.source_type === "local" ? LOCAL_SOURCE_UPDATE_INTERVAL : form.update_interval.trim(), ephemeral_node_evict_delay: form.ephemeral_node_evict_delay.trim(), enabled: form.enabled, ephemeral: form.ephemeral, incremental_alive_nodes: form.incremental_alive_nodes, auto_intel: form.auto_intel, ...(form.source_type === "remote" ? { url: form.url.trim() } : { content: form.content }) };
 }
 
 export function SubscriptionPage() {
   const { t } = useI18n();
-  const [params, setParams] = useSearchParams();
-  const [enabledFilter, setEnabledFilter] = useState<EnabledFilter>("all");
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState<number>(20);
-  const selectedSubscriptionId = params.get("selected") || "";
-  const setSelectedSubscriptionId = useCallback((id: string) => setParams((previous) => { const next = new URLSearchParams(previous); if (id) next.set("selected",id); else next.delete("selected"); return next; }, { replace: true }), [setParams]);
-  const drawerOpen = Boolean(selectedSubscriptionId);
-  const setDrawerOpen = useCallback((open: boolean) => { if (!open) setSelectedSubscriptionId(""); }, [setSelectedSubscriptionId]);
-  const createModalOpen = params.get("create") === "1";
-  const setCreateModalOpen = (open: boolean) => setParams((previous) => { const next = new URLSearchParams(previous); if (open) next.set("create","1"); else next.delete("create"); return next; }, { replace: true });
-  const [pendingRefreshIds, setPendingRefreshIds] = useState<Set<string>>(() => new Set());
-  const [pendingEnabledStates, setPendingEnabledStates] = useState<ReadonlyMap<string, boolean>>(() => new Map());
-  const { toasts, showToast, dismissToast } = useToast();
-  const pendingRefreshIdsRef = useRef<Set<string>>(new Set());
-  const pendingEnabledStatesRef = useRef<Map<string, boolean>>(new Map());
-
   const queryClient = useQueryClient();
-  const enabledValue = parseEnabledFilter(enabledFilter);
-  const subscriptionContentPlaceholder = [
-    t("支持格式："),
-    t("sing-box / Clash|Mihomo / URI（vmess:// vless:// trojan:// ss:// ...）或他们的 base64 格式"),
-    "",
-    t("HTTP/HTTPS/SOCKS 示例："),
-    t("1.2.3.4:8080:user:pass （HTTP 认证代理）"),
-    t("http://user:pass@1.2.3.4:8080（HTTP 认证代理）"),
-    t("https://user:pass@example.com:8443?sni=example.com（HTTPS + SNI）"),
-    t("socks5://user:pass@1.2.3.4:1080"),
-    t("socks5h://user:pass@example.com:1080"),
-  ].join("\n");
-
-  const subscriptionsQuery = useQuery({
-    queryKey: ["subscriptions", enabledFilter, page, pageSize, search],
-    queryFn: () =>
-      listSubscriptions({
-        enabled: enabledValue,
-        limit: pageSize,
-        offset: page * pageSize,
-        keyword: search,
-      }),
-    refetchInterval: 30_000,
-    placeholderData: (prev) => prev,
-  });
-
-  const subscriptions = subscriptionsQuery.data?.items ?? EMPTY_SUBSCRIPTIONS;
-  const totalSubscriptions = subscriptionsQuery.data?.total ?? 0;
-
-  const totalPages = Math.max(1, Math.ceil(totalSubscriptions / pageSize));
-  const currentPage = Math.min(page, totalPages - 1);
-  /* The empty state distinguishes "nothing here yet" from "filters matched nothing". */
-  const hasActiveFilters = enabledFilter !== "all" || search.trim().length > 0;
-
-  const selectedQuery = useQuery({ queryKey: ["subscriptions", "detail", selectedSubscriptionId], queryFn: () => getSubscription(selectedSubscriptionId), enabled: Boolean(selectedSubscriptionId), refetchInterval: 30_000 });
-  const selectedSubscription = useMemo(() => {
-    if (!selectedSubscriptionId) {
-      return null;
-    }
-    return selectedQuery.data ?? subscriptions.find((item) => item.id === selectedSubscriptionId) ?? null;
-  }, [selectedSubscriptionId, subscriptions, selectedQuery.data]);
-
-  const drawerVisible = drawerOpen && Boolean(selectedSubscription);
-
-  const createForm = useForm<SubscriptionCreateForm>({
-    resolver: zodResolver(subscriptionCreateSchema),
-    defaultValues: {
-      name: "",
-      source_type: "remote",
-      url: "",
-      content: "",
-      update_interval: "12h",
-      ephemeral_node_evict_delay: "72h",
-      enabled: true,
-      ephemeral: false,
-      incremental_alive_nodes: false,
-      auto_intel: true,
-    },
-  });
-
-  const createEphemeral = createForm.watch("ephemeral");
-  const createSourceType = createForm.watch("source_type");
-
-  const editForm = useForm<SubscriptionEditForm>({
-    resolver: zodResolver(subscriptionEditSchema),
-    defaultValues: {
-      name: "",
-      source_type: "remote",
-      url: "",
-      content: "",
-      update_interval: "12h",
-      ephemeral_node_evict_delay: "72h",
-      enabled: true,
-      ephemeral: false,
-      incremental_alive_nodes: false,
-      auto_intel: true,
-    },
-  });
-
-  const editEphemeral = editForm.watch("ephemeral");
-  const editSourceType = editForm.watch("source_type");
-  const { dirtyFields } = useFormState({ control: editForm.control });
-  const lastEditedId = useRef("");
-
-  useEffect(() => {
-    if (!selectedSubscription) {
-      return;
-    }
-    editForm.reset(subscriptionToEditForm(selectedSubscription), { keepDirtyValues: lastEditedId.current === selectedSubscription.id });
-    lastEditedId.current = selectedSubscription.id;
-  }, [selectedSubscription, editForm]);
-
-  useEffect(() => {
-    if (!drawerVisible) {
-      return;
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") {
-        return;
-      }
-      setDrawerOpen(false);
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [drawerVisible, setDrawerOpen]);
-
-  const invalidateSubscriptions = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["subscriptions"] });
-  };
-
-  const invalidateSubscriptionsAndNodes = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["subscriptions"] }),
-      queryClient.invalidateQueries({ queryKey: ["nodes"] }),
-    ]);
-  };
-
-  const createMutation = useMutation({
-    mutationFn: createSubscription,
-    onSuccess: async (created) => {
-      await invalidateSubscriptions();
-      setCreateModalOpen(false);
-      createForm.reset({
-        name: "",
-        source_type: "remote",
-        url: "",
-        content: "",
-        update_interval: LOCAL_SOURCE_UPDATE_INTERVAL,
-        ephemeral_node_evict_delay: "72h",
-        enabled: true,
-        ephemeral: false,
-        incremental_alive_nodes: false,
-        auto_intel: true,
-      });
-      showToast("success", t("订阅 {{name}} 创建成功", { name: created.name }));
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: async (formData: SubscriptionEditForm) => {
-      if (!selectedSubscription) {
-        throw new Error("请选择要编辑的订阅");
-      }
-
-      const payload = {
-        name: formData.name.trim(),
-        update_interval: normalizeSubmitUpdateInterval(formData.source_type, formData.update_interval),
-        ephemeral_node_evict_delay: formData.ephemeral_node_evict_delay.trim(),
-        enabled: formData.enabled,
-        ephemeral: formData.ephemeral,
-        incremental_alive_nodes: formData.incremental_alive_nodes,
-        auto_intel: formData.auto_intel,
-        ...(formData.source_type === "remote"
-          ? { url: formData.url.trim() }
-          : { content: formData.content }),
-      };
-      return updateSubscription(selectedSubscription.id, payload);
-    },
-    onSuccess: async (updated) => {
-      await invalidateSubscriptions();
-      setSelectedSubscriptionId(updated.id);
-      editForm.reset(subscriptionToEditForm(updated));
-      showToast("success", t("订阅 {{name}} 已更新", { name: updated.name }));
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (subscription: Subscription) => {
-      await deleteSubscription(subscription.id);
-      return subscription;
-    },
-    onSuccess: async (deleted) => {
-      await invalidateSubscriptions();
-      if (selectedSubscriptionId === deleted.id) {
-        setSelectedSubscriptionId("");
-        setDrawerOpen(false);
-      }
-      showToast("success", t("订阅 {{name}} 已删除", { name: deleted.name }));
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
-  });
-  const deleteSubscriptionMutateAsync = deleteMutation.mutateAsync;
-  const isDeletePending = deleteMutation.isPending;
-
-  const refreshMutation = useMutation({
-    mutationFn: async (subscription: Subscription) => {
-      await refreshSubscription(subscription.id);
-      return subscription;
-    },
-    onSuccess: async (subscription) => {
-      await invalidateSubscriptions();
-      showToast("success", t("订阅 {{name}} 已手动刷新", { name: subscription.name }));
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
-  });
-  const refreshSubscriptionMutateAsync = refreshMutation.mutateAsync;
-
-  const toggleEnabledMutation = useMutation({
-    mutationFn: ({ subscription, enabled }: SubscriptionEnabledMutation) =>
-      updateSubscription(subscription.id, { enabled }),
-    onSuccess: async (updated, { enabled }) => {
-      await invalidateSubscriptionsAndNodes();
-      showToast(
-        "success",
-        enabled
-          ? t("订阅 {{name}} 已启用", { name: updated.name })
-          : t("订阅 {{name}} 已禁用", { name: updated.name }),
-      );
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
-  });
-  const toggleSubscriptionEnabledMutateAsync = toggleEnabledMutation.mutateAsync;
-
-  const markRefreshPending = useCallback((subscriptionId: string): boolean => {
-    if (pendingRefreshIdsRef.current.has(subscriptionId)) {
-      return false;
-    }
-    const next = new Set(pendingRefreshIdsRef.current);
-    next.add(subscriptionId);
-    pendingRefreshIdsRef.current = next;
-    setPendingRefreshIds(next);
-    return true;
-  }, []);
-
-  const clearRefreshPending = useCallback((subscriptionId: string) => {
-    if (!pendingRefreshIdsRef.current.has(subscriptionId)) {
-      return;
-    }
-    const next = new Set(pendingRefreshIdsRef.current);
-    next.delete(subscriptionId);
-    pendingRefreshIdsRef.current = next;
-    setPendingRefreshIds(next);
-  }, []);
-
-  const isRefreshPending = useCallback((subscriptionId: string): boolean => pendingRefreshIds.has(subscriptionId), [pendingRefreshIds]);
-
-  const markEnabledTogglePending = useCallback((subscriptionId: string, enabled: boolean): boolean => {
-    if (pendingEnabledStatesRef.current.has(subscriptionId)) {
-      return false;
-    }
-    const next = new Map(pendingEnabledStatesRef.current);
-    next.set(subscriptionId, enabled);
-    pendingEnabledStatesRef.current = next;
-    setPendingEnabledStates(next);
-    return true;
-  }, []);
-
-  const clearEnabledTogglePending = useCallback((subscriptionId: string) => {
-    if (!pendingEnabledStatesRef.current.has(subscriptionId)) {
-      return;
-    }
-    const next = new Map(pendingEnabledStatesRef.current);
-    next.delete(subscriptionId);
-    pendingEnabledStatesRef.current = next;
-    setPendingEnabledStates(next);
-  }, []);
-
-  const isEnabledTogglePending = useCallback(
-    (subscriptionId: string): boolean => pendingEnabledStates.has(subscriptionId),
-    [pendingEnabledStates],
-  );
-
-  const displayedEnabledState = useCallback(
-    (subscription: Subscription): boolean => pendingEnabledStates.get(subscription.id) ?? subscription.enabled,
-    [pendingEnabledStates],
-  );
-
-  const cleanupCircuitOpenNodesMutation = useMutation({
-    mutationFn: async (subscription: Subscription) => {
-      const cleanedCount = await cleanupSubscriptionCircuitOpenNodes(subscription.id);
-      return { subscription, cleanedCount };
-    },
-    onSuccess: async ({ subscription, cleanedCount }) => {
-      await invalidateSubscriptionsAndNodes();
-      if (cleanedCount > 0) {
-        showToast("success", t("订阅 {{name}} 已清理 {{count}} 个节点", { name: subscription.name, count: cleanedCount }));
-        return;
-      }
-      showToast("success", t("订阅 {{name}} 没有可清理的熔断或异常节点", { name: subscription.name }));
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
-  });
-
-  const onCreateSubmit = createForm.handleSubmit(async (values) => {
-    const payload = {
-      name: values.name.trim(),
-      source_type: values.source_type,
-      update_interval: normalizeSubmitUpdateInterval(values.source_type, values.update_interval),
-      ephemeral_node_evict_delay: values.ephemeral_node_evict_delay.trim(),
-      enabled: values.enabled,
-      ephemeral: values.ephemeral,
-      incremental_alive_nodes: values.incremental_alive_nodes,
-      auto_intel: values.auto_intel,
-      ...(values.source_type === "remote"
-        ? { url: values.url.trim() }
-        : { content: values.content }),
-    };
-    createMutation.mutate(payload);
-  });
-
-  const onEditSubmit = editForm.handleSubmit(async (values) => {
-    updateMutation.mutate(values);
-  });
-
-  const handleDelete = useCallback(async (subscription: Subscription) => {
-    const confirmed = window.confirm(t("确认删除订阅 {{name}}？关联节点会被清理。", { name: subscription.name }));
-    if (!confirmed) {
-      return;
-    }
-    await deleteSubscriptionMutateAsync(subscription);
-  }, [deleteSubscriptionMutateAsync, t]);
-
-  const handleCleanupCircuitOpenNodes = async (subscription: Subscription) => {
-    const confirmed = window.confirm(t("确认立即清理订阅 {{name}} 中的熔断或异常节点？", { name: subscription.name }));
-    if (!confirmed) {
-      return;
-    }
-    await cleanupCircuitOpenNodesMutation.mutateAsync(subscription);
-  };
-
-  const openDrawer = useCallback((subscription: Subscription) => {
-    setSelectedSubscriptionId(subscription.id);
-  }, [setSelectedSubscriptionId]);
-
-  const handleRefresh = useCallback(async (subscription: Subscription) => {
-    if (!markRefreshPending(subscription.id)) {
-      return;
-    }
-    try {
-      await refreshSubscriptionMutateAsync(subscription);
-    } catch {
-      // Mutation callbacks already surface the failure to the user.
-    } finally {
-      clearRefreshPending(subscription.id);
-    }
-  }, [clearRefreshPending, markRefreshPending, refreshSubscriptionMutateAsync]);
-
-  const handleEnabledChange = useCallback(async (subscription: Subscription, enabled: boolean) => {
-    if (!markEnabledTogglePending(subscription.id, enabled)) {
-      return;
-    }
-    try {
-      await toggleSubscriptionEnabledMutateAsync({ subscription, enabled });
-    } catch {
-      // Mutation callbacks already surface the failure to the user.
-    } finally {
-      clearEnabledTogglePending(subscription.id);
-    }
-  }, [clearEnabledTogglePending, markEnabledTogglePending, toggleSubscriptionEnabledMutateAsync]);
-
-  const changePageSize = (next: number) => {
-    setPageSize(next);
-    setPage(0);
-  };
-
-
-  return (
-    <Page bleed>
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-
-      <PageHeader
-        title={t("订阅源")}
-        meta={
-          subscriptionsQuery.data ? (
-            <PageMeta label={t("订阅总数")} value={totalSubscriptions.toLocaleString()} />
-          ) : undefined
-        }
-        actions={
-          <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-            <Plus size={14} aria-hidden />
-            {t("新建")}
-          </Button>
-        }
-      />
-
-      <div className="page-content page-content--fill">
-        <Panel className="flex min-w-0 flex-col">
-          <PanelHeader
-            title={t("订阅列表")}
-            meta={
-              subscriptionsQuery.data ? t("共 {{count}} 个订阅", { count: totalSubscriptions }) : undefined
-            }
-          />
-
-          <PanelToolbar>
-            <Select
-              id="sub-status-filter"
-              className="w-auto"
-              aria-label={t("状态")}
-              value={enabledFilter}
-              onChange={(event) => {
-                setEnabledFilter(event.target.value as EnabledFilter);
-                setPage(0);
-              }}
-            >
-              <option value="all">{t("全部")}</option>
-              <option value="enabled">{t("仅启用")}</option>
-              <option value="disabled">{t("仅禁用")}</option>
-            </Select>
-            <div className="relative w-full sm:w-64">
-              <label htmlFor="subscription-search" className="sr-only">
-                {t("搜索订阅")}
-              </label>
-              <Search
-                size={14}
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
-              />
-              <Input
-                id="subscription-search"
-                placeholder={t("搜索订阅")}
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPage(0);
-                }}
-                className="pl-7"
-              />
-            </div>
-            <div className="ml-auto flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => void invalidateSubscriptions()}
-                disabled={subscriptionsQuery.isFetching}
-                aria-label={t("刷新")}
-                title={t("刷新")}
-              >
-                <RefreshCw
-                  size={14}
-                  aria-hidden
-                  className={cn(subscriptionsQuery.isFetching && "animate-spin")}
-                />
-                {t("刷新")}
-              </Button>
-            </div>
-          </PanelToolbar>
-
-          {subscriptionsQuery.isLoading ? (
-            <PanelBody>
-              <LoadingState label={t("正在加载订阅数据...")} />
-            </PanelBody>
-          ) : subscriptionsQuery.isError ? (
-            <PanelBody>
-              <ErrorState
-                message={formatApiErrorMessage(subscriptionsQuery.error, t)}
-                onRetry={() => void subscriptionsQuery.refetch()}
-              />
-            </PanelBody>
-          ) : !subscriptions.length ? (
-            <PanelBody>
-              <EmptyState
-                title={hasActiveFilters ? t("没有匹配的订阅") : t("尚未添加任何订阅源")}
-                action={
-                  <Button variant="secondary" size="sm" onClick={() => setCreateModalOpen(true)}>
-                    <Plus size={14} aria-hidden />
-                    {t("新建")}
-                  </Button>
-                }
-              />
-            </PanelBody>
-          ) : null}
-
-          {subscriptions.length ? (
-            <TableWrap aria-busy={subscriptionsQuery.isFetching}>
-              <Table className="min-w-[760px]">
-                <caption className="sr-only">{t("订阅列表")}</caption>
-                <THead>
-                  <TR>
-                    <TH>{t("名称")}</TH>
-                    <TH>{t("订阅源")}</TH>
-                    <TH>{t("状态")}</TH>
-                    <TH className="text-right">{t("节点数")}</TH>
-                    <TH>{t("最近同步")}</TH>
-                    <TH className="text-right">{t("操作")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {subscriptions.map((subscription) => {
-                    const enabled = displayedEnabledState(subscription);
-                    const rowState = subscriptionRowState(subscription, {
-                      refreshPending: isRefreshPending(subscription.id),
-                      enabled,
-                    });
-                    return (
-                      <TR
-                        key={subscription.id}
-                        tabIndex={0}
-                        className="cursor-pointer"
-                        onClick={(event) => {
-                          // The actions menu is its own control; a click that
-                          // starts on it belongs to it alone.
-                          if ((event.target as HTMLElement).closest("a, button, input, select")) return;
-                          openDrawer(subscription);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.target !== event.currentTarget) return;
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            openDrawer(subscription);
-                          }
-                        }}
-                      >
-                        <TDClip className="font-medium text-ink">{subscription.name}</TDClip>
-                        <TDClip
-                          className="mono text-xs"
-                          title={subscription.source_type === "local" ? undefined : subscription.url}
-                        >
-                          {subscription.source_type === "local"
-                            ? t("本地订阅")
-                            : extractHostname(subscription.url)}
-                        </TDClip>
-                        <TD className="whitespace-nowrap" title={subscription.last_error || undefined}>
-                          <span className="inline-flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className={cn(
-                                "state-dot",
-                                rowState.tone !== "neutral" && `state-dot--${rowState.tone}`,
-                              )}
-                            />
-                            <span className="state-text">{t(rowState.label)}</span>
-                          </span>
-                        </TD>
-                        <TDNum title={`${t("健康节点数")} / ${t("节点总数")}`}>
-                          <span className="readout text-xs">{subscription.healthy_node_count}</span>
-                          <span className="text-xs text-ink-faint"> / {subscription.node_count}</span>
-                        </TDNum>
-                        <TDNum
-                          title={
-                            subscription.last_updated
-                              ? formatDateTime(subscription.last_updated)
-                              : undefined
-                          }
-                        >
-                          {subscription.last_updated ? (
-                            formatRelativeTime(subscription.last_updated)
-                          ) : (
-                            <span className="text-ink-faint">--</span>
-                          )}
-                        </TDNum>
-                        <TD className="text-right">
-                          <Menu>
-                            <MenuTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={t("行操作")}
-                                title={t("行操作")}
-                              >
-                                <Ellipsis size={14} aria-hidden />
-                              </Button>
-                            </MenuTrigger>
-                            <MenuContent>
-                              <MenuItem asChild>
-                                <Link
-                                  to={`${opsPaths.nodes}?subscription_id=${encodeURIComponent(subscription.id)}`}
-                                  aria-label={t("预览订阅 {{name}} 的节点池", {
-                                    name: subscription.name,
-                                  })}
-                                >
-                                  {t("预览节点池")}
-                                </Link>
-                              </MenuItem>
-                              <MenuItem onSelect={() => openDrawer(subscription)}>
-                                {t("编辑")}
-                              </MenuItem>
-                              <MenuItem
-                                onSelect={() => void handleRefresh(subscription)}
-                                disabled={isRefreshPending(subscription.id)}
-                              >
-                                {t("立即刷新")}
-                              </MenuItem>
-                              <MenuItem
-                                onSelect={() => void handleEnabledChange(subscription, !enabled)}
-                                disabled={isEnabledTogglePending(subscription.id)}
-                              >
-                                {enabled ? t("停用") : t("启用")}
-                              </MenuItem>
-                              <MenuItem
-                                onSelect={() => void handleCleanupCircuitOpenNodes(subscription)}
-                                disabled={cleanupCircuitOpenNodesMutation.isPending}
-                              >
-                                {t("清理失效节点")}
-                              </MenuItem>
-                              <MenuSeparator />
-                              <MenuItem
-                                className="text-alert"
-                                onSelect={() => void handleDelete(subscription)}
-                                disabled={isDeletePending}
-                              >
-                                {t("删除")}
-                              </MenuItem>
-                            </MenuContent>
-                          </Menu>
-                        </TD>
-                      </TR>
-                    );
-                  })}
-                </TBody>
-              </Table>
-            </TableWrap>
-          ) : null}
-
-        <PageNavigator
-          page={currentPage}
-          totalPages={totalPages}
-          totalItems={totalSubscriptions}
-          pageSize={pageSize}
-          pageSizeOptions={PAGE_SIZE_OPTIONS}
-          onPageChange={setPage}
-          onPageSizeChange={changePageSize}
-        />
-        </Panel>
-      </div>
-
-      {drawerOpen && !selectedSubscription ? (
-        <Sheet
-          open
-          onOpenChange={(open) => {
-            if (!open) setDrawerOpen(false);
-          }}
-          title={t("订阅详情")}
-          width="sm"
-        >
-          {selectedQuery.isLoading ? (
-            <LoadingState />
-          ) : selectedQuery.error ? (
-            <ErrorState
-              message={formatApiErrorMessage(selectedQuery.error, t)}
-              onRetry={() => void selectedQuery.refetch()}
-            />
-          ) : null}
-        </Sheet>
-      ) : null}
-      {drawerVisible && selectedSubscription ? (
-        <Sheet
-          open
-          onOpenChange={(open) => {
-            if (!open) setDrawerOpen(false);
-          }}
-          title={t("编辑订阅 {{name}}", { name: selectedSubscription.name })}
-          description={<span className="font-mono">{selectedSubscription.id}</span>}
-          width="lg"
-        >
-          <TooltipProvider>
-            <div className="space-y-6">
-              {Object.keys(dirtyFields).length > 0 ? (
-                <Badge tone="warn" dot>
-                  {t("保留未保存的修改")}
-                </Badge>
-              ) : null}
-
-              <section>
-                <div>
-                  <h2 className="text-sm font-semibold">{t("订阅配置")}</h2>
-                  <p className="mt-0.5 max-w-[68ch] text-xs leading-relaxed text-ink-soft">
-                    {editSourceType === "local"
-                      ? t("更新本地订阅配置、刷新周期与状态开关后点击保存。")
-                      : t("更新 URL、刷新周期与状态开关后点击保存。")}
-                  </p>
-                </div>
-
-                <ReadoutStrip className="mt-3">
-                  <ReadoutCell>
-                    <Readout
-                      label={t("创建时间")}
-                      value={formatDateTime(selectedSubscription.created_at)}
-                      size="sm"
-                    />
-                  </ReadoutCell>
-                  <ReadoutCell>
-                    <Readout
-                      label={t("上次检查")}
-                      value={formatDateTime(selectedSubscription.last_checked || "")}
-                      size="sm"
-                    />
-                  </ReadoutCell>
-                  <ReadoutCell>
-                    <Readout
-                      label={t("上次更新")}
-                      value={formatDateTime(selectedSubscription.last_updated || "")}
-                      size="sm"
-                    />
-                  </ReadoutCell>
-                </ReadoutStrip>
-
-                {selectedSubscription.last_error ? (
-                  <p className="mt-3 max-w-[68ch] border border-alert/30 bg-alert-wash px-3 py-2 text-xs text-alert">
-                    {t("最近错误：{{message}}", { message: selectedSubscription.last_error })}
-                  </p>
-                ) : (
-                  <p className="mt-3 max-w-[68ch] border border-rule bg-signal-wash px-3 py-2 text-xs text-signal-deep">
-                    {t("最近一次刷新无错误")}
-                  </p>
-                )}
-
-                <div className="mt-4 border-t border-rule pt-4">
-                  <SubscriptionParseReportSection subscription={selectedSubscription} />
-                </div>
-
-                <form className="mt-4 space-y-4" onSubmit={onEditSubmit}>
-                  <input type="hidden" {...editForm.register("source_type")} />
-
-                  <Controller
-                    control={editForm.control}
-                    name="enabled"
-                    render={({ field }) => (
-                      <SwitchRow
-                        id="edit-sub-enabled"
-                        label={t("启用")}
-                        hint={t(SUBSCRIPTION_DISABLE_HINT)}
-                        checked={Boolean(field.value)}
-                        onChange={field.onChange}
-                      />
-                    )}
-                  />
-
-                  <Fieldset label={t("订阅名称")} htmlFor="edit-sub-name">
-                    <Input
-                      id="edit-sub-name"
-                      aria-invalid={Boolean(editForm.formState.errors.name) || undefined}
-                      className={cn(editForm.formState.errors.name && "border-alert")}
-                      {...editForm.register("name")}
-                    />
-                    {editForm.formState.errors.name?.message ? (
-                      <p className="text-xs text-alert">{t(editForm.formState.errors.name.message)}</p>
-                    ) : null}
-                  </Fieldset>
-
-                  <Fieldset label={t("订阅类型")} htmlFor="edit-sub-source-type">
-                    <Input
-                      id="edit-sub-source-type"
-                      value={t(sourceTypeLabel(editSourceType))}
-                      readOnly
-                      disabled
-                    />
-                  </Fieldset>
-
-                  {editSourceType === "remote" ? (
-                    <>
-                      <Fieldset label={t("更新间隔")} htmlFor="edit-sub-interval">
-                        <Input
-                          id="edit-sub-interval"
-                          placeholder={t("例如 12h")}
-                          aria-invalid={
-                            Boolean(editForm.formState.errors.update_interval) || undefined
-                          }
-                          className={cn(
-                            editForm.formState.errors.update_interval && "border-alert",
-                          )}
-                          {...editForm.register("update_interval")}
-                        />
-                        {editForm.formState.errors.update_interval?.message ? (
-                          <p className="text-xs text-alert">
-                            {t(editForm.formState.errors.update_interval.message)}
-                          </p>
-                        ) : null}
-                      </Fieldset>
-
-                      <Fieldset label={t("订阅链接")} htmlFor="edit-sub-url">
-                        <Input
-                          id="edit-sub-url"
-                          className={cn(
-                            "font-mono",
-                            editForm.formState.errors.url && "border-alert",
-                          )}
-                          aria-invalid={Boolean(editForm.formState.errors.url) || undefined}
-                          {...editForm.register("url")}
-                        />
-                        {editForm.formState.errors.url?.message ? (
-                          <p className="text-xs text-alert">
-                            {t(editForm.formState.errors.url.message)}
-                          </p>
-                        ) : null}
-                      </Fieldset>
-                    </>
-                  ) : (
-                    <Fieldset label={t("订阅内容")} htmlFor="edit-sub-content">
-                      <Textarea
-                        id="edit-sub-content"
-                        rows={8}
-                        className={cn(
-                          "font-mono",
-                          editForm.formState.errors.content && "border-alert",
-                        )}
-                        aria-invalid={Boolean(editForm.formState.errors.content) || undefined}
-                        placeholder={subscriptionContentPlaceholder}
-                        {...editForm.register("content")}
-                      />
-                      {editForm.formState.errors.content?.message ? (
-                        <p className="text-xs text-alert">
-                          {t(editForm.formState.errors.content.message)}
-                        </p>
-                      ) : null}
-                    </Fieldset>
-                  )}
-
-                  <Controller
-                    control={editForm.control}
-                    name="ephemeral"
-                    render={({ field }) => (
-                      <SwitchRow
-                        id="edit-sub-ephemeral"
-                        label={t("临时订阅")}
-                        hint={t(SUBSCRIPTION_EPHEMERAL_HINT)}
-                        checked={Boolean(field.value)}
-                        onChange={field.onChange}
-                      />
-                    )}
-                  />
-
-                  <Controller
-                    control={editForm.control}
-                    name="incremental_alive_nodes"
-                    render={({ field }) => (
-                      <SwitchRow
-                        id="edit-sub-incremental-alive-nodes"
-                        label={t("存活节点增量模式")}
-                        hint={t(SUBSCRIPTION_INCREMENTAL_HINT)}
-                        checked={Boolean(field.value)}
-                        onChange={field.onChange}
-                      />
-                    )}
-                  />
-
-                  <Controller
-                    control={editForm.control}
-                    name="auto_intel"
-                    render={({ field }) => (
-                      <SwitchRow
-                        id="edit-sub-auto-intel"
-                        label={t("自动 Intel 检测")}
-                        hint={t(SUBSCRIPTION_AUTO_INTEL_HINT)}
-                        checked={Boolean(field.value)}
-                        onChange={field.onChange}
-                      />
-                    )}
-                  />
-
-                  <Fieldset
-                    label={t("临时节点驱逐延迟")}
-                    htmlFor="edit-sub-ephemeral-evict-delay"
-                  >
-                    <Input
-                      id="edit-sub-ephemeral-evict-delay"
-                      placeholder={t("例如 72h")}
-                      disabled={!editEphemeral}
-                      aria-invalid={
-                        Boolean(editForm.formState.errors.ephemeral_node_evict_delay) || undefined
-                      }
-                      className={cn(
-                        editForm.formState.errors.ephemeral_node_evict_delay && "border-alert",
-                      )}
-                      {...editForm.register("ephemeral_node_evict_delay")}
-                    />
-                    {editForm.formState.errors.ephemeral_node_evict_delay?.message ? (
-                      <p className="text-xs text-alert">
-                        {t(editForm.formState.errors.ephemeral_node_evict_delay.message)}
-                      </p>
-                    ) : null}
-                  </Fieldset>
-
-                  <div className="flex items-center gap-2 border-t border-rule pt-3">
-                    <Button type="submit" disabled={updateMutation.isPending} loading={updateMutation.isPending}>
-                      {t("保存配置")}
-                    </Button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="border-t border-rule pt-4">
-                <h2 className="text-sm font-semibold">{t("运维操作")}</h2>
-
-                <div className="mt-3 divide-y divide-rule border-y border-rule">
-                  <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-medium">{t("手动刷新")}</h3>
-                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
-                        {t("立即刷新订阅并同步节点。")}
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={() => void handleRefresh(selectedSubscription)}
-                      disabled={isRefreshPending(selectedSubscription.id)}
-                      loading={isRefreshPending(selectedSubscription.id)}
-                    >
-                      {t("立即刷新")}
-                    </Button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-medium">{t("清理失效节点")}</h3>
-                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
-                        {t("立即清理当前熔断，或出错的节点。")}
-                      </p>
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={() => void handleCleanupCircuitOpenNodes(selectedSubscription)}
-                      disabled={cleanupCircuitOpenNodesMutation.isPending}
-                    >
-                      {cleanupCircuitOpenNodesMutation.isPending
-                        ? t("清理中...")
-                        : t("立即清理")}
-                    </Button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <h3 className="text-sm font-medium">{t("删除订阅")}</h3>
-                      <p className="mt-0.5 max-w-[68ch] text-xs text-ink-soft">
-                        {t("删除订阅并清理关联节点，操作不可撤销。")}
-                      </p>
-                    </div>
-                    <Button
-                      variant="danger"
-                      onClick={() => void handleDelete(selectedSubscription)}
-                      disabled={deleteMutation.isPending}
-                      loading={deleteMutation.isPending}
-                    >
-                      {t("删除订阅")}
-                    </Button>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </TooltipProvider>
-        </Sheet>
-      ) : null}
-
-      {createModalOpen ? (
-        <Sheet
-          open
-          onOpenChange={(open) => {
-            if (!open) setCreateModalOpen(false);
-          }}
-          title={t("新建订阅")}
-          width="md"
-          footer={
-            <div className="flex items-center justify-end gap-2">
-              <Button variant="secondary" onClick={() => setCreateModalOpen(false)}>
-                {t("取消")}
-              </Button>
-              <Button
-                type="submit"
-                form="subscription-create-form"
-                disabled={createMutation.isPending}
-                loading={createMutation.isPending}
-              >
-                {t("确认创建")}
-              </Button>
-            </div>
-          }
-        >
-          <TooltipProvider>
-            <form id="subscription-create-form" className="space-y-4" onSubmit={onCreateSubmit}>
-              <input type="hidden" {...createForm.register("source_type")} />
-
-              <Controller
-                control={createForm.control}
-                name="enabled"
-                render={({ field }) => (
-                  <SwitchRow
-                    id="create-sub-enabled"
-                    label={t("启用")}
-                    hint={t(SUBSCRIPTION_DISABLE_HINT)}
-                    checked={Boolean(field.value)}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-
-              <Fieldset label={t("订阅名称")} htmlFor="create-sub-name">
-                <Input
-                  id="create-sub-name"
-                  aria-invalid={Boolean(createForm.formState.errors.name) || undefined}
-                  className={cn(createForm.formState.errors.name && "border-alert")}
-                  {...createForm.register("name")}
-                />
-                {createForm.formState.errors.name?.message ? (
-                  <p className="text-xs text-alert">
-                    {t(createForm.formState.errors.name.message)}
-                  </p>
-                ) : null}
-              </Fieldset>
-
-              <div className="space-y-1">
-                <span className="block text-xs font-medium text-ink-soft">{t("订阅来源")}</span>
-                <Tabs
-                  value={createSourceType}
-                  onValueChange={(value) =>
-                    createForm.setValue("source_type", value as SubscriptionSourceType, {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    })
-                  }
-                >
-                  <TabsList aria-label={t("订阅来源类型")}>
-                    {SUBSCRIPTION_SOURCE_TABS.map((tab) => (
-                      <TabsTrigger key={tab.key} value={tab.key} title={t(tab.hint)}>
-                        {t(tab.label)}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
-              </div>
-
-              {createSourceType === "remote" ? (
-                <>
-                  <Fieldset label={t("更新间隔")} htmlFor="create-sub-interval">
-                    <Input
-                      id="create-sub-interval"
-                      placeholder={t("例如 12h")}
-                      aria-invalid={
-                        Boolean(createForm.formState.errors.update_interval) || undefined
-                      }
-                      className={cn(
-                        createForm.formState.errors.update_interval && "border-alert",
-                      )}
-                      {...createForm.register("update_interval")}
-                    />
-                    {createForm.formState.errors.update_interval?.message ? (
-                      <p className="text-xs text-alert">
-                        {t(createForm.formState.errors.update_interval.message)}
-                      </p>
-                    ) : null}
-                  </Fieldset>
-
-                  <Fieldset label={t("订阅链接")} htmlFor="create-sub-url">
-                    <Input
-                      id="create-sub-url"
-                      className={cn("font-mono", createForm.formState.errors.url && "border-alert")}
-                      aria-invalid={Boolean(createForm.formState.errors.url) || undefined}
-                      {...createForm.register("url")}
-                    />
-                    {createForm.formState.errors.url?.message ? (
-                      <p className="text-xs text-alert">
-                        {t(createForm.formState.errors.url.message)}
-                      </p>
-                    ) : null}
-                  </Fieldset>
-                </>
-              ) : (
-                <Fieldset label={t("订阅内容")} htmlFor="create-sub-content">
-                  <Textarea
-                    id="create-sub-content"
-                    rows={8}
-                    className={cn("font-mono", createForm.formState.errors.content && "border-alert")}
-                    aria-invalid={Boolean(createForm.formState.errors.content) || undefined}
-                    placeholder={subscriptionContentPlaceholder}
-                    {...createForm.register("content")}
-                  />
-                  {createForm.formState.errors.content?.message ? (
-                    <p className="text-xs text-alert">
-                      {t(createForm.formState.errors.content.message)}
-                    </p>
-                  ) : null}
-                </Fieldset>
-              )}
-
-              <Controller
-                control={createForm.control}
-                name="ephemeral"
-                render={({ field }) => (
-                  <SwitchRow
-                    id="create-sub-ephemeral"
-                    label={t("临时订阅")}
-                    hint={t(SUBSCRIPTION_EPHEMERAL_HINT)}
-                    checked={Boolean(field.value)}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-
-              <Controller
-                control={createForm.control}
-                name="incremental_alive_nodes"
-                render={({ field }) => (
-                  <SwitchRow
-                    id="create-sub-incremental-alive-nodes"
-                    label={t("存活节点增量模式")}
-                    hint={t(SUBSCRIPTION_INCREMENTAL_HINT)}
-                    checked={Boolean(field.value)}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-
-              <Controller
-                control={createForm.control}
-                name="auto_intel"
-                render={({ field }) => (
-                  <SwitchRow
-                    id="create-sub-auto-intel"
-                    label={t("自动 Intel 检测")}
-                    hint={t(SUBSCRIPTION_AUTO_INTEL_HINT)}
-                    checked={Boolean(field.value)}
-                    onChange={field.onChange}
-                  />
-                )}
-              />
-
-              <Fieldset
-                label={t("临时节点驱逐延迟")}
-                htmlFor="create-sub-ephemeral-evict-delay"
-              >
-                <Input
-                  id="create-sub-ephemeral-evict-delay"
-                  placeholder={t("例如 72h")}
-                  disabled={!createEphemeral}
-                  aria-invalid={
-                    Boolean(createForm.formState.errors.ephemeral_node_evict_delay) || undefined
-                  }
-                  className={cn(
-                    createForm.formState.errors.ephemeral_node_evict_delay && "border-alert",
-                  )}
-                  {...createForm.register("ephemeral_node_evict_delay")}
-                />
-                {createForm.formState.errors.ephemeral_node_evict_delay?.message ? (
-                  <p className="text-xs text-alert">
-                    {t(createForm.formState.errors.ephemeral_node_evict_delay.message)}
-                  </p>
-                ) : null}
-              </Fieldset>
-            </form>
-          </TooltipProvider>
-        </Sheet>
-      ) : null}
-    </Page>
-  );
+  const { toasts, showToast, dismissToast } = useToast();
+  const [params, setParams] = useSearchParams();
+  const [filter, setFilter] = useState<EnabledFilter>("all");
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebouncedValue(search);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(20);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [pendingRefresh, setPendingRefresh] = useState<string | null>(null);
+  const [pendingToggle, setPendingToggle] = useState<string | null>(null);
+  const selectedId = params.get("selected") ?? "";
+  const createOpen = params.get("create") === "1";
+  const setSelectedId = (id: string) => setParams((current) => { const next = new URLSearchParams(current); if (id) next.set("selected", id); else next.delete("selected"); return next; }, { replace: true });
+  const setCreateOpen = (open: boolean) => setParams((current) => { const next = new URLSearchParams(current); if (open) next.set("create", "1"); else next.delete("create"); return next; }, { replace: true });
+  const enabled = filter === "all" ? undefined : filter === "enabled";
+  const listQuery = useQuery({ queryKey: ["subscriptions", filter, debouncedSearch, page, pageSize], queryFn: () => listSubscriptions({ enabled, keyword: debouncedSearch, limit: pageSize, offset: page * pageSize }), placeholderData: (previous) => previous, refetchInterval: 30_000 });
+  const selectedQuery = useQuery({ queryKey: ["subscriptions", "detail", selectedId], queryFn: () => getSubscription(selectedId), enabled: Boolean(selectedId), refetchInterval: 30_000 });
+  const subscriptions = listQuery.data?.items ?? [];
+  const selected = selectedQuery.data ?? subscriptions.find((item) => item.id === selectedId) ?? null;
+  const total = listQuery.data?.total ?? 0;
+  const filtersActive = filter !== "all" || Boolean(search.trim());
+  const invalidate = () => { void queryClient.invalidateQueries({ queryKey: ["subscriptions"] }); void queryClient.invalidateQueries({ queryKey: ["nodes"] }); };
+
+  const createMutation = useMutation({ mutationFn: (form: FormState) => createSubscription(toCreateInput(form)), onSuccess: (created) => { setCreateOpen(false); invalidate(); showToast("success", t("订阅 {{name}} 创建成功", { name: created.name })); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
+  const updateMutation = useMutation({ mutationFn: ({ id, form }: { id: string; form: FormState }) => updateSubscription(id, toUpdateInput(form)), onSuccess: (updated) => { invalidate(); showToast("success", t("订阅 {{name}} 已更新", { name: updated.name })); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
+  const refreshMutation = useMutation({ mutationFn: (subscription: Subscription) => refreshSubscription(subscription.id), onSuccess: (_result, subscription) => { setPendingRefresh(null); invalidate(); showToast("success", t("订阅 {{name}} 已手动刷新", { name: subscription.name })); }, onError: (error) => { setPendingRefresh(null); showToast("error", formatApiErrorMessage(error, t)); } });
+  const toggleMutation = useMutation({ mutationFn: ({ subscription, enabled: next }: { subscription: Subscription; enabled: boolean }) => updateSubscription(subscription.id, { enabled: next }), onSuccess: (_result, variables) => { setPendingToggle(null); invalidate(); showToast("success", variables.enabled ? t("订阅已启用") : t("订阅已禁用")); }, onError: (error) => { setPendingToggle(null); showToast("error", formatApiErrorMessage(error, t)); } });
+  const cleanupMutation = useMutation({ mutationFn: (subscription: Subscription) => cleanupSubscriptionCircuitOpenNodes(subscription.id), onSuccess: (count, subscription) => { setConfirmAction(null); invalidate(); showToast("success", count > 0 ? t("订阅 {{name}} 已清理 {{count}} 个节点", { name: subscription.name, count }) : t("订阅 {{name}} 没有可清理的熔断或异常节点", { name: subscription.name })); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
+  const deleteMutation = useMutation({ mutationFn: (subscription: Subscription) => deleteSubscription(subscription.id), onSuccess: (_result, subscription) => { setConfirmAction(null); if (selectedId === subscription.id) setSelectedId(""); invalidate(); showToast("success", t("订阅 {{name}} 已删除", { name: subscription.name })); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
+
+  const clearFilters = () => { setFilter("all"); setSearch(""); setPage(0); };
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const currentPage = Math.min(page, pages - 1);
+  const selectedStatus = selected ? rowState(selected, pendingRefresh === selected.id, selected.enabled) : null;
+
+  const actionDrawer = selected ? <InspectorDrawer open={Boolean(selectedId)} onOpenChange={(open) => { if (!open) setSelectedId(""); }} title={selected.name} eyebrow="Inventory / subscription" footer={<div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setSelectedId("")}>{t("关闭")}</ControlButton><ControlButton variant="secondary" size="sm" onPress={() => { setPendingRefresh(selected.id); refreshMutation.mutate(selected); }} loading={pendingRefresh === selected.id}><RefreshCw size={14} aria-hidden />{t("立即刷新")}</ControlButton><ControlButton variant="danger" size="sm" onPress={() => setConfirmAction({ kind: "delete", subscription: selected })}><Trash2 size={14} aria-hidden />{t("删除")}</ControlButton></div>}>
+    <div className="cp-stack"><div className="cp-platform-inspector__identity"><span className="cp-platform-row__mark" aria-hidden>{selected.source_type === "local" ? "LOC" : "URL"}</span><div><strong>{selected.name}</strong><code>{selected.id}</code></div>{selectedStatus ? <StatusMark tone={selectedStatus.tone === "signal" ? "signal" : selectedStatus.tone === "alert" ? "alert" : "neutral"} label={t(selectedStatus.label)} /> : null}</div><div className="cp-readout-grid"><DetailFact label={t("来源") } value={selected.source_type === "local" ? t("本地订阅") : hostname(selected.url)} /><DetailFact label={t("节点") } value={`${selected.healthy_node_count} / ${selected.node_count}`} mono /><DetailFact label={t("最近检查") } value={formatDateTime(selected.last_checked || "")} mono /><DetailFact label={t("最近更新") } value={formatDateTime(selected.last_updated || "")} mono /></div><SubscriptionForm mode="edit" initial={selected} formId="edit-subscription-form" pending={updateMutation.isPending} error={updateMutation.error ? formatApiErrorMessage(updateMutation.error, t) : ""} onSubmit={(form) => updateMutation.mutate({ id: selected.id, form })}/><div className="cp-drawer-actions"><ControlButton type="submit" form="edit-subscription-form" variant="primary" size="sm" loading={updateMutation.isPending}>{t("保存配置")}</ControlButton><ControlButton variant="secondary" size="sm" onPress={() => { setPendingToggle(selected.id); toggleMutation.mutate({ subscription: selected, enabled: !selected.enabled }); }} loading={pendingToggle === selected.id}>{selected.enabled ? t("停用") : t("启用")}</ControlButton></div><ParseReport subscription={selected}/><div className="cp-danger-list"><div className="cp-danger-row cp-danger-row--warn"><div><strong>{t("清理失效节点")}</strong><p>{t("立即清理当前熔断或出错的节点。")} </p></div><ControlButton variant="secondary" size="sm" onPress={() => setConfirmAction({ kind: "cleanup", subscription: selected })}>{t("立即清理")}</ControlButton></div></div></div>
+  </InspectorDrawer> : null;
+
+  return <PageFrame eyebrow="Inventory / subscriptions" title={t("订阅源")} description={t("管理远程与本地订阅、刷新策略、解析结果和节点池影响。")} meta={<StatusMark tone={listQuery.isError && !listQuery.data ? "warn" : listQuery.data ? "live" : "neutral"} label={listQuery.isError && !listQuery.data ? t("读取失败") : listQuery.data ? t("目录已同步") : t("等待目录")} />} actions={<ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("新建订阅")}</ControlButton>}>
+    <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+    <section className="cp-command"><div className="cp-command__body"><ControlSelect label={t("状态")} value={filter} onChange={(event) => { setFilter(event.target.value as EnabledFilter); setPage(0); }}><option value="all">{t("全部状态")}</option><option value="enabled">{t("仅启用")}</option><option value="disabled">{t("仅禁用")}</option></ControlSelect><ControlInput label={t("搜索订阅")} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={t("按名称或 URL 搜索")}/></div><div className="cp-command__actions"><Search size={14} aria-hidden />{filtersActive ? <ControlButton variant="ghost" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : null}</div></section>
+    {filtersActive ? <div className="cp-active-filters" aria-label={t("当前筛选")}><FilterChip label={`${t("状态")}: ${filter === "enabled" ? t("仅启用") : t("仅禁用")}`} onRemove={() => { setFilter("all"); setPage(0); }}/>{search.trim() ? <FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={() => { setSearch(""); setPage(0); }}/> : null}</div> : null}
+    <WorkSurface eyebrow="Subscription objects" title={t("订阅目录")} meta={listQuery.data ? t("共 {{count}} 个订阅", { count: total }) : t("未加载")} description={t("选择一项查看配置、解析报告和运维动作；列表只呈现服务端返回的节点与同步事实。")}>
+      {listQuery.isError && !listQuery.data ? <EmptyWorkState title={t("订阅目录读取失败")} detail={formatApiErrorMessage(listQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void listQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+      {listQuery.isLoading && !listQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载订阅列表")}</div> : null}
+      {!listQuery.isLoading && !listQuery.isError && subscriptions.length === 0 ? <EmptyWorkState title={t(filtersActive ? "没有匹配的订阅" : "尚未添加任何订阅源")} detail={t(filtersActive ? "调整筛选后重试。" : "创建第一个订阅源后，节点池关系会显示在这里。")} action={filtersActive ? <ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : <ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("新建订阅")}</ControlButton>} /> : null}
+      {subscriptions.length ? <ObjectList>{subscriptions.map((subscription) => { const state = rowState(subscription, pendingRefresh === subscription.id, subscription.enabled); return <ObjectRow key={subscription.id} active={selectedId === subscription.id} onClick={() => setSelectedId(subscription.id)} leading={<span className="cp-platform-row__mark" aria-hidden>{subscription.source_type === "local" ? "LOC" : "URL"}</span>} title={subscription.name} subtitle={`${subscription.source_type === "local" ? t("本地订阅") : hostname(subscription.url)} · ${formatRelativeTime(subscription.last_updated || subscription.created_at)}`} facts={<><span>{t("健康节点")} <span className="readout">{subscription.healthy_node_count}</span> / {subscription.node_count}</span><span>{t("更新间隔")} <span className="readout">{subscription.update_interval || "-"}</span></span></>} status={<StatusMark tone={state.tone === "signal" ? "signal" : state.tone === "alert" ? "alert" : "neutral"} label={t(state.label)} />} action={<ControlButton variant="ghost" size="sm" isIconOnly aria-label={subscription.enabled ? t("停用") : t("启用")} onPress={() => { setPendingToggle(subscription.id); toggleMutation.mutate({ subscription, enabled: !subscription.enabled }); }} loading={pendingToggle === subscription.id}>{subscription.enabled ? "−" : "+"}</ControlButton>} />; })}</ObjectList> : null}
+      {listQuery.data ? <ControlPagination page={currentPage} totalItems={total} pageSize={pageSize} pageSizes={PAGE_SIZE_OPTIONS} disabled={listQuery.isFetching} labels={{ summary: ({ page: current, pages: totalPages, start, end, total: count }) => t("第 {{page}} / {{pages}} 页 · {{start}}-{{end}} / {{total}}", { page: current, pages: totalPages, start, end, total: count }), perPage: t("每页"), pageOption: (size) => `${size} / ${t("页")}`, previous: t("上一页"), next: t("下一页") }} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(0); }}/>: null}
+    </WorkSurface>
+    {selectedId && !selected ? <InspectorDrawer open onOpenChange={(open) => { if (!open) setSelectedId(""); }} title={t("订阅详情")} eyebrow="Inventory / subscription" footer={<ControlButton variant="ghost" size="sm" onPress={() => setSelectedId("")}>{t("关闭")}</ControlButton>}><div className="cp-register-state"><span className="cp-spinner" aria-hidden />{selectedQuery.isError ? formatApiErrorMessage(selectedQuery.error, t) : t("正在加载订阅详情")}</div></InspectorDrawer> : null}
+    {actionDrawer}
+    <InspectorDrawer open={createOpen} onOpenChange={setCreateOpen} title={t("新建订阅")} eyebrow="Inventory / subscription" footer={<div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setCreateOpen(false)}>{t("取消")}</ControlButton><ControlButton type="submit" form="create-subscription-form" variant="primary" size="sm" loading={createMutation.isPending}>{t("确认创建")}</ControlButton></div>}><SubscriptionForm key={createOpen ? "create" : "closed"} mode="create" formId="create-subscription-form" pending={createMutation.isPending} error={createMutation.error ? formatApiErrorMessage(createMutation.error, t) : ""} onSubmit={(form) => createMutation.mutate(form)}/></InspectorDrawer>
+    <ConfirmDrawer open={Boolean(confirmAction)} onOpenChange={(open) => { if (!open) setConfirmAction(null); }} title={confirmAction?.kind === "delete" ? t("确认删除订阅") : t("确认清理失效节点")} eyebrow="Destructive action" message={confirmAction?.kind === "delete" ? t("确认删除订阅 {{name}}？关联节点会被清理，操作不可撤销。", { name: confirmAction.subscription.name }) : t("确认立即清理订阅 {{name}} 中的熔断或异常节点？", { name: confirmAction?.subscription.name ?? "" })} cancelLabel={t("取消")} confirmLabel={confirmAction?.kind === "delete" ? t("确认删除") : t("确认清理")} loading={deleteMutation.isPending || cleanupMutation.isPending} onConfirm={() => { if (!confirmAction) return; if (confirmAction.kind === "delete") deleteMutation.mutate(confirmAction.subscription); else cleanupMutation.mutate(confirmAction.subscription); }}/>
+  </PageFrame>;
 }
+
+export default SubscriptionPage;

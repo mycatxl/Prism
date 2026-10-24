@@ -1,13 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Info } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button } from "../../components/ui/Button";
-import { Fieldset, Input } from "../../components/ui/Input";
-import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
-import { ErrorState, LoadingState } from "../../components/ui/QueryState";
+import { ControlButton, ControlInput, EmptyWorkState, WorkSurface } from "../../components/control-plane";
 import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
 import { useI18n } from "../../i18n";
-import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { readMigratedValue, removeStoredValues } from "../../lib/storage";
 import { getEnvConfig, SYSTEM_ENV_CONFIG_QUERY_KEY, SYSTEM_ENV_STALE_MS } from "../systemConfig/api";
@@ -165,27 +161,22 @@ function CopyField({
   };
 
   return (
-    <div className="min-w-0">
-      <div className="flex items-baseline justify-between gap-2 pb-1">
-        <span className="label">{label}</span>
-        {hint ? <span className="text-2xs text-ink-faint">{hint}</span> : null}
+    <div className="cp-copy-field">
+      <div className="cp-copy-field__head">
+        <span className="cp-field__label">{label}</span>
+        {hint ? <span className="cp-field__hint">{hint}</span> : null}
       </div>
-      <div className="flex items-start gap-2">
-        <code
-          className="min-w-0 flex-1 rounded-control border border-rule bg-paper-sunk px-2 py-1.5 font-mono text-xs break-all text-ink"
-          title={value}
-        >
-          {value}
-        </code>
-        <Button
+      <div className="cp-copy-field__body">
+        <code className="cp-code-block cp-copy-field__value" title={value}>{value || "—"}</code>
+        <ControlButton
           variant="secondary"
           size="sm"
-          onClick={() => void handleCopy()}
+          onPress={() => void handleCopy()}
           aria-label={`${copied ? copiedLabel : copyLabel}：${label}`}
         >
-          {copied ? <Check size={14} /> : <Copy size={14} />}
+          {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
           {copied ? copiedLabel : copyLabel}
-        </Button>
+        </ControlButton>
       </div>
     </div>
   );
@@ -277,15 +268,10 @@ export function PlatformAccessPanel({
   }, [env, endpointOverride, platformName, account, token, target]);
 
   if (envQuery.isError) {
-    return (
-      <ErrorState
-        message={formatApiErrorMessage(envQuery.error, t)}
-        onRetry={() => void envQuery.refetch()}
-      />
-    );
+    return <EmptyWorkState title={t("配置读取失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} />;
   }
   if (!env) {
-    return <LoadingState />;
+    return <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载配置")}</div>;
   }
 
   const proxyTokenSet = env.proxy_token_set;
@@ -301,145 +287,68 @@ export function PlatformAccessPanel({
 
   return (
     <TooltipProvider>
-      <div className="flex flex-col gap-3">
-        <Panel>
-          <PanelHeader
-            title={t("接入方式")}
-            description={t("填写账号与代理 token，一键复制正向/反向代理地址。")}
-          />
-          <PanelBody className="grid gap-3 sm:grid-cols-2">
-            <Fieldset
+      <div className="cp-stack">
+        <WorkSurface eyebrow="Delivery / access" title={t("接入方式")} description={t("填写账号与代理 token，一键复制正向/反向代理地址。")}>
+          <div className="cp-form-grid">
+            <ControlInput
               label={t("代理服务地址")}
-              htmlFor="access-endpoint"
               hint={endpointInvalid ? t("请输入不含凭证和路径的 HTTP(S) 地址") : undefined}
-            >
-              <Input
-                id="access-endpoint"
-                className={cn("font-mono", endpointInvalid && "border-alert")}
-                aria-invalid={endpointInvalid || undefined}
-                placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
-                value={endpointOverride}
-                onChange={(event) => setEndpointOverride(event.target.value)}
-              />
-              {endpointInvalid ? (
-                <p className="text-xs text-alert">
-                  {t("请输入不含凭证和路径的 HTTP(S) 地址")}
-                </p>
-              ) : null}
-            </Fieldset>
-
-            <Fieldset label={t("业务账号（可选）")} htmlFor="access-account">
-              <Input
-                id="access-account"
-                className="font-mono"
-                placeholder={t("例如 user_tom，留空则只按平台路由")}
-                value={account}
-                onChange={(event) => setAccount(event.target.value)}
-              />
-            </Fieldset>
-
-            <div className="space-y-1 sm:col-span-2">
-              <div className="flex items-center gap-1.5">
-                <label htmlFor="access-token" className="text-xs font-medium text-ink-soft">
-                  {t("代理 token")}
-                </label>
-                <Tooltip content={tokenHint}>
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="icon"
-                    aria-label={tokenHint}
-                    className="text-ink-faint"
-                  >
-                    <Info size={13} aria-hidden />
-                  </Button>
-                </Tooltip>
-              </div>
-              <Input
-                id="access-token"
-                className="font-mono"
-                type="password"
-                placeholder={
-                  proxyTokenSet
-                    ? t("填写 PRISM_PROXY_TOKEN")
-                    : t("当前代理免认证，无需填写")
-                }
-                value={tokenInputValue}
-                onChange={(event) => {
-                  if (proxyTokenSet) {
-                    handleTokenChange(event.target.value);
-                  }
-                }}
-                disabled={!proxyTokenSet}
-                autoComplete="off"
-              />
-              {tokenMissing ? (
-                <p className="max-w-[68ch] text-xs text-ink-faint">
-                  {t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}
-                </p>
-              ) : null}
+              className="font-mono"
+              aria-invalid={endpointInvalid || undefined}
+              placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
+              value={endpointOverride}
+              onChange={(event) => setEndpointOverride(event.target.value)}
+            />
+            <ControlInput
+              label={t("业务账号（可选）")}
+              className="font-mono"
+              placeholder={t("例如 user_tom，留空则只按平台路由")}
+              value={account}
+              onChange={(event) => setAccount(event.target.value)}
+            />
+          </div>
+          <div className="cp-token-field">
+            <div className="cp-token-field__label">
+              <span className="cp-field__label">{t("代理 token")}</span>
+              <Tooltip content={tokenHint}>
+                <ControlButton variant="ghost" size="sm" isIconOnly aria-label={tokenHint}>
+                  <Info size={13} aria-hidden />
+                </ControlButton>
+              </Tooltip>
             </div>
-          </PanelBody>
-        </Panel>
+            <ControlInput
+              aria-label={t("代理 token")}
+              className="font-mono"
+              type="password"
+              placeholder={proxyTokenSet ? t("填写 PRISM_PROXY_TOKEN") : t("当前代理免认证，无需填写")}
+              value={tokenInputValue}
+              onChange={(event) => { if (proxyTokenSet) handleTokenChange(event.target.value); }}
+              disabled={!proxyTokenSet}
+              autoComplete="off"
+            />
+            {tokenMissing ? <p className="cp-muted">{t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}</p> : null}
+          </div>
+        </WorkSurface>
 
-        <Panel>
-          <PanelHeader title={t("正向代理")} />
-          <PanelBody className="space-y-3">
-            <CopyField
-              label={t("HTTP 正向代理")}
-              value={urls.httpForward}
-              copyLabel={copyLabel}
-              copiedLabel={copiedLabel}
-            />
-            <CopyField
-              label={t("SOCKS5 正向代理")}
-              value={urls.socksForward}
-              copyLabel={copyLabel}
-              copiedLabel={copiedLabel}
-            />
-            <CopyField
-              label={t("curl 示例")}
-              value={urls.curlForward}
-              copyLabel={copyLabel}
-              copiedLabel={copiedLabel}
-            />
-          </PanelBody>
-        </Panel>
+        <WorkSurface eyebrow="Delivery / forward proxy" title={t("正向代理")}>
+          <div className="cp-form-stack">
+            <CopyField label={t("HTTP 正向代理")} value={urls.httpForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+            <CopyField label={t("SOCKS5 正向代理")} value={urls.socksForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+            <CopyField label={t("curl 示例")} value={urls.curlForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+          </div>
+        </WorkSurface>
 
-        <Panel>
-          <PanelHeader title={t("反向代理")} />
-          <PanelBody className="space-y-3">
-            <Fieldset label={t("目标网址")} htmlFor="access-target">
-              <Input
-                id="access-target"
-                className="font-mono"
-                placeholder={t("例如 https://api.ipify.org")}
-                value={target}
-                onChange={(event) => setTarget(event.target.value)}
-              />
-            </Fieldset>
+        <WorkSurface eyebrow="Delivery / reverse proxy" title={t("反向代理")}>
+          <div className="cp-form-stack">
+            <ControlInput label={t("目标网址")} className="font-mono" placeholder={t("例如 https://api.ipify.org")} value={target} onChange={(event) => setTarget(event.target.value)} />
             {urls.reverseUrl ? (
               <>
-                <CopyField
-                  label={t("反向代理地址")}
-                  value={urls.reverseUrl}
-                  copyLabel={copyLabel}
-                  copiedLabel={copiedLabel}
-                />
-                <CopyField
-                  label={t("curl 示例")}
-                  value={urls.curlReverse}
-                  copyLabel={copyLabel}
-                  copiedLabel={copiedLabel}
-                />
+                <CopyField label={t("反向代理地址")} value={urls.reverseUrl} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+                <CopyField label={t("curl 示例")} value={urls.curlReverse} copyLabel={copyLabel} copiedLabel={copiedLabel} />
               </>
-            ) : (
-              <p className="max-w-[68ch] text-xs text-ink-faint">
-                {t("请输入合法的 http/https 目标网址以生成反向代理地址。")}
-              </p>
-            )}
-          </PanelBody>
-        </Panel>
+            ) : <p className="cp-muted">{t("请输入合法的 http/https 目标网址以生成反向代理地址。")}</p>}
+          </div>
+        </WorkSurface>
       </div>
     </TooltipProvider>
   );

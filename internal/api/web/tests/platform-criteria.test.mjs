@@ -7,18 +7,9 @@ import { test } from "node:test";
 import { build } from "esbuild";
 
 // toPlatformCriteria / toPlatformCreateInput build the node-selection criteria
-// payload of the platform form, and the live "匹配 N 个节点" preview sends the spec
-// they produce. The backend half of that contract has Go tests
-// (internal/platform/node_criteria_test.go); this covers the frontend half, which
-// decides what actually gets sent: every criterion the operator set is a separate
-// list (ANDed by the backend) and the values inside one list are alternatives.
-//
-// The module is TypeScript, so it is transpiled with the esbuild that already
-// ships in node_modules rather than adding a test runner dependency.
-
+// payload of the platform form, and the live preview sends the same shape.
 const MODULE = resolve(import.meta.dirname, "../src/features/platforms/formModel.ts");
 
-/** Load the TS module once per test file through esbuild. */
 async function loadFormModel() {
   const dir = await mkdtemp(join(tmpdir(), "prism-platform-form-"));
   const outfile = join(dir, "formModel.mjs");
@@ -46,12 +37,10 @@ const {
   toPlatformUpdateInput,
 } = await loadFormModel();
 
-/** The form values of a platform whose every criterion is set. */
 const filledValues = {
   ...defaultPlatformFormValues,
   name: "  filled  ",
   sticky_ttl: "168h",
-  regex_filters_text: "hk\n*fast\n!slow",
   region_filters_text: "HK\nJP\n!us",
   ip_types: ["residential", "mobile"],
   purity_bands: ["clean"],
@@ -59,37 +48,29 @@ const filledValues = {
   protocols: ["vless"],
 };
 
-test("every criterion is sent as its own list", () => {
+test("every current criterion is sent as its own list", () => {
   const payload = toPlatformCreateInput(filledValues);
   assert.deepEqual(payload.region_filters, ["hk", "jp", "!us"]);
   assert.deepEqual(payload.ip_types, ["residential", "mobile"]);
   assert.deepEqual(payload.purity_bands, ["clean"]);
   assert.deepEqual(payload.subscription_filters, ["sub-1", "sub-2"]);
   assert.deepEqual(payload.protocols, ["vless"]);
-  // The legacy escape hatch keeps its own line-oriented rules.
-  assert.deepEqual(payload.regex_filters, ["hk", "*fast", "!slow"]);
+  assert.equal("regex_filters" in payload, false);
   assert.equal(payload.name, "filled");
 });
 
-test("the create payload and the preview spec carry the same criteria", () => {
+test("the create payload and the preview spec carry the same current criteria", () => {
   const payload = toPlatformCreateInput(filledValues);
   const spec = toPlatformCriteria(filledValues);
-  for (const key of [
-    "regex_filters",
-    "region_filters",
-    "ip_types",
-    "purity_bands",
-    "subscription_filters",
-    "protocols",
-  ]) {
+  for (const key of ["region_filters", "ip_types", "purity_bands", "subscription_filters", "protocols"]) {
     assert.deepEqual(spec[key], payload[key], `preview and create payload disagree about ${key}`);
   }
+  assert.equal("regex_filters" in spec, false);
 });
 
 test("an untouched form restricts nothing", () => {
   const spec = toPlatformCriteria(defaultPlatformFormValues);
   assert.deepEqual(spec, {
-    regex_filters: [],
     region_filters: [],
     ip_types: [],
     purity_bands: [],
@@ -106,14 +87,11 @@ test("region filters are lowercased but keep their negations", () => {
 test("toggling a region adds and removes exactly one line", () => {
   const added = toggleListValue("hk", "us", (value) => value.toLowerCase());
   assert.deepEqual(listValues(added), ["hk", "us"]);
-
   const removed = toggleListValue(added, "hk");
   assert.deepEqual(listValues(removed), ["us"]);
 });
 
 test("toggling a region never disturbs a legacy line the picker cannot show", () => {
-  // The picker only renders positive regions, so a persisted "!hk" exclusion
-  // must survive an operator toggling an unrelated region.
   const before = "jp\n!hk";
   const after = toggleListValue(before, "us");
   assert.deepEqual(listValues(after).sort(), ["!hk", "jp", "us"].sort());
@@ -126,15 +104,8 @@ test("an empty list is a valid update that clears the criterion", () => {
   assert.deepEqual(payload.subscription_filters, []);
 });
 
-// ---------------------------------------------------------------------------
-// Unlock requirements (quality_policy.required_checks)
-//
-// An unlock result is a label on a node, not an admission gate, so the form must
-// send nothing at all when the operator set nothing - and PATCH replaces the
-// whole quality_policy, so the fields this form does not edit have to be sent
-// back untouched or they are silently cleared.
-// ---------------------------------------------------------------------------
-
+// Unlock requirements are the only quality policy field edited here. The rest
+// of the loaded policy must survive because PATCH replaces the whole object.
 test("an untouched form sends no quality policy at all", () => {
   const payload = toPlatformCreateInput({ ...defaultPlatformFormValues, name: "no-gate" });
   assert.equal(payload.quality_policy, undefined);
@@ -142,8 +113,6 @@ test("an untouched form sends no quality policy at all", () => {
 
 test("required checks round-trip through the line-based form value", () => {
   const text = requiredChecksToText({ netflix: "available", chatgpt: "blocked" });
-  // Sorted, so the same policy always renders the same text and the dirty check
-  // stays stable.
   assert.equal(text, "chatgpt:blocked\nnetflix:available");
   assert.deepEqual(textToRequiredChecks(text), { chatgpt: "blocked", netflix: "available" });
 });

@@ -38,6 +38,9 @@ import { dirname, join, relative } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const srcDir = join(here, "..", "src");
 const uiDir = join(srcDir, "components", "ui");
+const controlPlaneDir = join(srcDir, "components", "control-plane");
+const uiDirs = [uiDir, controlPlaneDir];
+const isUiKit = (path) => uiDirs.some((dir) => path.startsWith(dir + "/") || path.startsWith(dir + "\\"));
 
 const failures = [];
 let checkedFiles = 0;
@@ -56,7 +59,6 @@ function tsxFiles(dir) {
   return out;
 }
 
-const isUiKit = (path) => path.startsWith(uiDir + "/") || path.startsWith(uiDir + "\\");
 
 // ---------------------------------------------------------------------------
 // Rule 1: native controls live only in the kit.

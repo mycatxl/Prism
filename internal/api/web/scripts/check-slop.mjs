@@ -228,6 +228,20 @@ function attribution(finding) {
     return body;
   };
 
+  let linkedBody = null;
+  const readBundle = () => {
+    if (linkedBody !== null) return linkedBody;
+    if (!/\.html$/.test(finding.file ?? "")) return read();
+    const href = /<link\s+rel="stylesheet"[^>]+href="([^"]+\.css)"/.exec(read())?.[1];
+    if (!href) return read();
+    try {
+      linkedBody = readFileSync(join(dirname(finding.file), href.replace(/^\/ui\//, "")), "utf8");
+    } catch {
+      linkedBody = read();
+    }
+    return linkedBody;
+  };
+
   /*
    * The detector reads the shell and its linked stylesheet as one palette, and reports
    * a violet/indigo accent as an "AI tell". This console's accent *is* an indigo→violet
@@ -242,6 +256,21 @@ function attribution(finding) {
     return /prism/i.test(read())
  ? "our own shell; the indigo→violet accent is pinned by the operator's brief and bounded in the design system"
       : null;
+  }
+
+  /* HeroUI v3 ships these rules in the bundled stylesheet. Attribute only the
+   * exact selectors that prove the finding came from the vendor layer. */
+  if (finding.rule === "side-tab" && /\.typography-prose blockquote\{[^}]*border-inline-start-width:4px/.test(readBundle())) {
+    return "HeroUI v3 typography blockquote border in the bundled vendor stylesheet";
+  }
+  if (finding.rule === "layout-transition" && /\.tabs__indicator\{[^}]*transition-property:translate,width,height/.test(readBundle())) {
+    return "HeroUI v3 tabs indicator transition in the bundled vendor stylesheet";
+  }
+  if (finding.rule === "marquee" && /\.skeleton--shimmer|\.progress-bar:not\(\[aria-valuenow\]\)/.test(readBundle())) {
+    return "HeroUI v3 skeleton/progress animation in the bundled vendor stylesheet";
+  }
+  if (finding.rule === "repeating-stripes-gradient" && /\.color-(?:slider|swatch)[^}]*repeating-conic-gradient/.test(readBundle())) {
+    return "HeroUI v3 color control checkerboard in the bundled vendor stylesheet";
   }
 
   /*

@@ -245,9 +245,9 @@ for (const item of items) {
     failures.push(`${item.path}: cannot read ${component}'s source, so its heading is unverified`);
     continue;
   }
-  const title = /<PageHeader\b[\s\S]{0,240}?title=\{[\s\S]{0,200}?t\("([^"]+)"\)/.exec(source);
+  const title = /<(?:PageHeader|PageFrame)\b[\s\S]{0,320}?title=\{[\s\S]{0,200}?t\("([^"]+)"\)/.exec(source);
   if (!title) {
-    failures.push(`${item.path}: the page has no readable heading (PageHeader title={t("...")})`);
+    failures.push(`${item.path}: the page has no readable heading (PageHeader/PageFrame title={t("...")})`);
     continue;
   }
   titles.set(item.path, title[1]);

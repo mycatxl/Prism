@@ -1,12 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownToLine, RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button } from "../../components/ui/Button";
-import { Fieldset, Input } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
+import {
+  ControlButton,
+  ControlInput,
+  EmptyWorkState,
+  DetailFact,
+  StatusMark,
+  WorkSurface,
+  PageFrame,
+  QueryBadge,
+} from "../../components/control-plane";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -17,15 +21,6 @@ import { getRegionName } from "../nodes/regions";
 import { getGeoIPStatus, lookupIP, updateGeoIPNow } from "./api";
 import type { GeoIPLookupResult } from "./types";
 
-/**
- * The address desk.
- *
- * The database state is an instrument reading — two timestamps on one baseline —
- * and the lookup result is the same strip once there is something to read. Both
- * numbers are mono so they can be compared against a log line character by
- * character. The two blocks are separate panels because they answer two separate
- * questions: what is loaded, and what does one address resolve to.
- */
 export function GeoIPPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -33,222 +28,90 @@ export function GeoIPPage() {
   const [singleResult, setSingleResult] = useState<GeoIPLookupResult | null>(null);
   const { toasts, showToast, dismissToast } = useToast();
 
-  const statusQuery = useQuery({
-    queryKey: ["geoip-status"],
-    queryFn: getGeoIPStatus,
-    refetchInterval: 60_000,
-  });
-
+  const statusQuery = useQuery({ queryKey: ["geoip-status"], queryFn: getGeoIPStatus, refetchInterval: 60_000 });
   const lookupMutation = useMutation({
     mutationFn: async () => {
       const ip = singleIP.trim();
-      if (!ip) {
-        throw new Error(t("请输入 IP 地址"));
-      }
+      if (!ip) throw new Error(t("请输入 IP 地址"));
       return lookupIP(ip);
     },
-    onSuccess: (result) => {
-      setSingleResult(result);
-    },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
+    onSuccess: setSingleResult,
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
   });
-
   const updateMutation = useMutation({
     mutationFn: updateGeoIPNow,
     onSuccess: async (result) => {
-      /*
-       * The update is synchronous, but the status readout is a different cache
-       * entry: invalidate it so the new mtime lands now instead of waiting for
-       * the next poll. And the endpoint's own verdict is honoured — `status` is
-       * the response's word for how it went, not decoration on a static toast.
-       */
       await queryClient.invalidateQueries({ queryKey: ["geoip-status"] });
       if (result.status === "ok") {
         showToast("success", t("GeoIP 数据库更新任务已执行"));
       } else {
-        showToast(
-          "error",
-          t("GeoIP 数据库更新未完成（状态：{{status}}）", { status: result.status || "-" }),
-        );
+        showToast("error", t("GeoIP 数据库更新未完成（状态：{{status}}）", { status: result.status || "-" }));
       }
     },
-    onError: (error) => {
-      showToast("error", formatApiErrorMessage(error, t));
-    },
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
   });
 
   const status = statusQuery.data;
   const hasDBTime = Boolean(status?.db_mtime);
   const hasNextSchedule = Boolean(status?.next_scheduled_update);
-
-  /*
-   * One reading, two places: the page header and the database panel both show
-   * the loaded/not-loaded state, and both render this mark, so the two copies
-   * can never drift apart.
-   */
-  const dbState = (
-    <span className="flex items-center gap-2">
-      <span
-        aria-hidden
-        className={cn("state-dot", hasDBTime ? "state-dot--signal" : "state-dot--warn")}
-      />
-      <span className="state-text">{hasDBTime ? t("数据库已加载") : t("数据库未加载")}</span>
-    </span>
-  );
-
   const singleRegion = useMemo(() => {
-    if (!singleResult || !singleResult.region) {
-      return t("（空）");
-    }
+    if (!singleResult?.region) return t("（空）");
     const code = singleResult.region.toUpperCase();
     const name = getRegionName(code);
-    if (!name) {
-      return code;
-    }
-    return `${code} ${name}`;
+    return name ? `${code} ${name}` : code;
   }, [singleResult, t]);
 
   return (
-    <Page bleed>
-      <PageHeader
-        title={t("资源")}
-        meta={
-          <>
-            <PageMeta
-              label={t("数据库状态")}
-              value={dbState}
-            />
-            <PageMeta
-              label={t("数据库更新时间")}
-              value={hasDBTime ? formatDateTime(status?.db_mtime || "") : "-"}
-            />
-            <PageMeta
-              label={t("下次计划更新")}
-              value={hasNextSchedule ? formatDateTime(status?.next_scheduled_update || "") : "-"}
-            />
-          </>
-        }
-        actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void statusQuery.refetch()}
-            disabled={statusQuery.isFetching}
-          >
-            <RefreshCw size={14} aria-hidden className={cn(statusQuery.isFetching && "animate-spin")} />
-            {t("刷新")}
-          </Button>
-        }
-      />
-
+    <PageFrame
+      eyebrow="Governance / resources"
+      title={t("资源")}
+      description={t("检查 GeoIP 数据库的加载状态，并对单个地址执行区域查询。")}
+      meta={<StatusMark tone={statusQuery.isError && !statusQuery.data ? "warn" : statusQuery.data ? "live" : "neutral"} label={statusQuery.isError && !statusQuery.data ? t("读取失败") : statusQuery.data ? t("资源状态已同步") : t("等待资源状态")} />}
+      actions={<ControlButton variant="secondary" size="sm" onPress={() => void statusQuery.refetch()} loading={statusQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>}
+    >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="page-content page-content--split">
-        <Panel className="min-w-0">
-          <PanelHeader
-            title={t("数据库状态")}
-            description={t("当前加载时间与下一次计划更新时间")}
-          />
-          <PanelBody>
-            {statusQuery.isError ? (
-              <ErrorState
-                message={formatApiErrorMessage(statusQuery.error, t)}
-                onRetry={() => void statusQuery.refetch()}
-              />
-            ) : null}
-
-            {statusQuery.isPending ? (
-              <LoadingState className="py-8" />
-            ) : !statusQuery.isError ? (
-              <div className="space-y-3">
-                <ReadoutStrip>
-                  <ReadoutCell>
-                    <Readout
-                      label={t("数据库更新时间")}
-                      value={hasDBTime ? formatDateTime(status?.db_mtime || "") : "-"}
-                    />
-                  </ReadoutCell>
-                  <ReadoutCell>
-                    <Readout
-                      label={t("下次计划更新")}
-                      value={hasNextSchedule ? formatDateTime(status?.next_scheduled_update || "") : "-"}
-                    />
-                  </ReadoutCell>
-                </ReadoutStrip>
-
-                <div className="flex flex-wrap items-center gap-2 border-t border-rule-faint pt-3">
-                  {dbState}
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void updateMutation.mutateAsync()}
-                    disabled={updateMutation.isPending}
-                    loading={updateMutation.isPending}
-                  >
-                    <ArrowDownToLine
-                      size={14}
-                      aria-hidden
-                      className={cn(updateMutation.isPending && "animate-spin")}
-                    />
-                    {t("立即更新")}
-                  </Button>
-                </div>
+      <div className="cp-split">
+        <WorkSurface eyebrow="Governance / database" title={t("GeoIP 数据库状态")} description={t("当前加载时间与下一次计划更新时间来自 GeoIP 状态接口。")}>
+          {statusQuery.isError && !statusQuery.data ? <EmptyWorkState title={t("GeoIP 状态读取失败")} detail={formatApiErrorMessage(statusQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void statusQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+          {statusQuery.isLoading && !statusQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载 GeoIP 状态")}</div> : null}
+          {status ? (
+            <div className="cp-stack">
+              <dl className="cp-detail-facts">
+                <DetailFact label={t("数据库状态")} value={<StatusMark tone={hasDBTime ? "signal" : "warn"} label={hasDBTime ? t("数据库已加载") : t("数据库未加载")} />} />
+                <DetailFact label={t("数据库更新时间")} value={hasDBTime ? formatDateTime(status.db_mtime) : "-"} mono />
+                <DetailFact label={t("下次计划更新")} value={hasNextSchedule ? formatDateTime(status.next_scheduled_update) : "-"} mono />
+              </dl>
+              <div className="cp-drawer-actions">
+                <ControlButton variant="secondary" size="sm" onPress={() => void updateMutation.mutateAsync()} loading={updateMutation.isPending}>
+                  <ArrowDownToLine size={14} aria-hidden className={cn(updateMutation.isPending && "animate-spin")} />
+                  {t("立即更新")}
+                </ControlButton>
+                <QueryBadge label={hasDBTime ? t("已有数据库时间") : t("等待数据库加载")} tone={hasDBTime ? "signal" : "warn"} />
               </div>
-            ) : null}
-          </PanelBody>
-        </Panel>
-
-        <Panel className="min-w-0">
-          <PanelHeader title={t("单 IP 查询")} description={t("输入 IP 后点击查询。")} />
-          <PanelBody>
-            <div className="flex items-end gap-1.5">
-              <Fieldset
-                className="min-w-0 flex-1"
-                label={t("输入 IP 地址例如 8.8.8.8")}
-                htmlFor="geoip-single-ip"
-              >
-                <Input
-                  id="geoip-single-ip"
-                  className="readout"
-                  value={singleIP}
-                  onChange={(event) => setSingleIP(event.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void lookupMutation.mutateAsync();
-                    }
-                  }}
-                />
-              </Fieldset>
-              <Button
-                variant="secondary"
-                className="shrink-0"
-                onClick={() => void lookupMutation.mutateAsync()}
-                disabled={lookupMutation.isPending}
-                aria-label={t("查询")}
-                title={t("查询")}
-              >
-                <Search size={15} aria-hidden className={cn(lookupMutation.isPending && "animate-spin")} />
-              </Button>
             </div>
+          ) : null}
+        </WorkSurface>
 
-            {singleResult ? (
-              <ReadoutStrip className="mt-3">
-                <ReadoutCell>
-                  <Readout label="IP" value={singleResult.ip} />
-                </ReadoutCell>
-                <ReadoutCell>
-                  <Readout label={t("区域")} value={singleRegion} />
-                </ReadoutCell>
-              </ReadoutStrip>
-            ) : (
-              <EmptyState className="py-8" title={t("输入 IP 执行查询")} />
-            )}
-          </PanelBody>
-        </Panel>
+        <WorkSurface eyebrow="Governance / lookup" title={t("单 IP 查询")} description={t("输入 IP 后查询服务端当前 GeoIP 区域结果。")}>
+          <form className="cp-form-stack" onSubmit={(event) => { event.preventDefault(); void lookupMutation.mutateAsync(); }}>
+            <ControlInput label={t("IP 地址")} hint={t("例如 8.8.8.8")} className="readout" value={singleIP} onChange={(event) => setSingleIP(event.target.value)} />
+            <div className="cp-drawer-actions">
+              <ControlButton type="submit" variant="primary" size="sm" loading={lookupMutation.isPending}><Search size={14} aria-hidden />{t("查询")}</ControlButton>
+            </div>
+          </form>
+          {singleResult ? (
+            <dl className="cp-detail-facts" aria-live="polite">
+              <DetailFact label="IP" value={singleResult.ip || "-"} mono />
+              <DetailFact label={t("区域")} value={singleRegion} />
+            </dl>
+          ) : (
+            <EmptyWorkState title={t("输入 IP 执行查询")} detail={t("查询结果会在这里显示，不会生成未返回的区域信息。")} />
+          )}
+        </WorkSurface>
       </div>
-    </Page>
+    </PageFrame>
   );
 }
+
+export default GeoIPPage;

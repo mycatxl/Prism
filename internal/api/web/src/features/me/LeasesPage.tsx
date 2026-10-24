@@ -1,30 +1,31 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { RefreshCw, Unlink } from "lucide-react";
+import { ArrowRight, RefreshCw, Unlink } from "lucide-react";
 import { useState } from "react";
-import { Button } from "../../components/ui/Button";
 import {
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from "../../components/ui/Dialog";
-import { PageHeader } from "../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelFooter, PanelHeader } from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../components/ui/Table";
+  ConfirmDrawer,
+  ControlButton,
+  DetailFact,
+  EmptyWorkState,
+  InspectorDrawer,
+  ObjectList,
+  ObjectRow,
+  PageFrame,
+  QueryBadge,
+  StatusMark,
+  WorkSurface,
+} from "../../components/control-plane";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
-import { cn } from "../../lib/cn";
-import { useNow } from "../../lib/clock";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatGoDuration } from "../../lib/time";
+import { useNow } from "../../lib/clock";
 import { getLeases, releaseLease } from "./api";
 import type { SelfLease } from "./types";
 
-/** Leases carry RFC 3339 strings, which is what the routing table holds. */
+const LEASE_WARN_MS = 48 * 3_600_000;
+
 function formatTimestamp(value: string): string {
   if (!value) return "-";
   const date = new Date(value);
@@ -40,23 +41,6 @@ function formatTimestamp(value: string): string {
   }).format(date);
 }
 
-/** The console-wide "soon" line: the last two days of a lease's life warn. */
-const LEASE_WARN_MS = 48 * 3_600_000;
-
-/** The state ramp of a lease's remaining life: signal, then warn, then alert. */
-function remainingTone(remainingMs: number): "signal" | "warn" | "alert" {
-  if (remainingMs <= 0) return "alert";
-  if (remainingMs <= LEASE_WARN_MS) return "warn";
-  return "signal";
-}
-
-/** The share of the lease's window that is still ahead, 0..100. */
-function remainingPercent(remainingMs: number, windowMs: number): number {
-  if (windowMs <= 0 || remainingMs <= 0) return 0;
-  return Math.max(0, Math.min(100, (remainingMs / windowMs) * 100));
-}
-
-/** A remaining span in the house duration voice, re-encoded through formatGoDuration. */
 function formatRemainingDuration(remainingMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -69,236 +53,129 @@ function formatRemainingDuration(remainingMs: number): string {
   return formatGoDuration(parts.join("") || "0s");
 }
 
-/** The fill class of the remaining-life bar, one per state tone. */
-const BAR_CLASS = {
-  signal: "lease-fill",
-  warn: "lease-fill lease-fill--warn",
-  alert: "lease-fill lease-fill--alert",
-} as const;
+function remainingTone(remainingMs: number): "signal" | "warn" | "alert" {
+  if (remainingMs <= 0) return "alert";
+  if (remainingMs <= LEASE_WARN_MS) return "warn";
+  return "signal";
+}
 
-/**
- * The remaining-life cell: the figure states how long is left, and the bar
- * draws the same share of the window the row's own stamps produce (last
- * access to expiry). A window the row cannot produce is a bar that would
- * guess at its denominator, so the bar is left out rather than drawn.
- */
-function RemainingCell({ lease }: { lease: SelfLease }) {
+function RemainingState({ lease }: { lease: SelfLease }) {
   const { t } = useI18n();
   const now = useNow();
   const expiryMs = Date.parse(lease.expiry || "");
-  if (!Number.isFinite(expiryMs)) {
-    return <TD className="text-ink-faint">--</TD>;
-  }
+  if (!Number.isFinite(expiryMs)) return <StatusMark tone="neutral" label={t("未知")} />;
   const remainingMs = expiryMs - now;
-  const expired = remainingMs <= 0;
-  const accessedMs = Date.parse(lease.last_accessed || "");
-  const windowMs =
-    Number.isFinite(accessedMs) && expiryMs - accessedMs > 0 ? expiryMs - accessedMs : 0;
-  return (
-    <TD>
-      <div className="flex items-center gap-2.5">
-        <span
-          className={cn(
-            "readout whitespace-nowrap text-xs tabular-nums",
-            expired ? "text-alert" : "text-ink-soft",
-          )}
-        >
-          {expired ? t("已过期") : formatRemainingDuration(remainingMs)}
-        </span>
-        {windowMs > 0 && (
-          <span className="block min-w-16 flex-1" aria-hidden>
-            <span className="lease-track block">
-              <span
-                className={cn("block", BAR_CLASS[remainingTone(remainingMs)])}
-                style={{ width: `${expired ? 100 : remainingPercent(remainingMs, windowMs)}%` }}
-              />
-            </span>
-          </span>
-        )}
-      </div>
-    </TD>
-  );
+  const tone = remainingTone(remainingMs);
+  return <StatusMark tone={tone} label={remainingMs <= 0 ? t("已过期") : formatRemainingDuration(remainingMs)} />;
 }
 
-/**
- * LeasesPage shows a customer the sticky exits their account currently holds.
- *
- * Leases are the data plane's own state: an account stays pinned to one exit for
- * as long as the lease lasts, and releasing one is how a customer asks for a
- * different exit before it expires. The list is per account rather than per
- * connection, which is why the release is addressed by platform and account.
- */
 export function LeasesPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
+  const [selected, setSelected] = useState<SelfLease | null>(null);
   const [releaseTarget, setReleaseTarget] = useState<SelfLease | null>(null);
 
   const leasesQuery = useQuery({
     queryKey: ["me-leases"],
     queryFn: getLeases,
-    // A lease expires on its own, so a list left open goes stale by itself.
     refetchInterval: 60_000,
   });
-
-  const leases = leasesQuery.data?.items ?? [];
-
   const releaseMutation = useMutation({
     mutationFn: (lease: SelfLease) => releaseLease(lease.platform_id, lease.account),
     onSuccess: () => {
       showToast("success", t("租约已释放"));
       setReleaseTarget(null);
+      setSelected(null);
       void queryClient.invalidateQueries({ queryKey: ["me-leases"] });
     },
-    onError: (err) => {
-      showToast("error", formatApiErrorMessage(err, t));
-    },
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
   });
 
+  const leases = leasesQuery.data?.items ?? [];
+  const now = useNow();
+  const refresh = () => void leasesQuery.refetch();
+
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={t("我的租约")}
-        description={t("查看当前粘定的出口，并在到期前主动释放。")}
-        actions={
-          <Button
-            variant="secondary"
-            onClick={() => void leasesQuery.refetch()}
-            disabled={leasesQuery.isFetching}
-            title={t("刷新")}
-          >
-            <RefreshCw
-              size={14}
-              className={leasesQuery.isFetching ? "animate-spin" : undefined}
-            />
-            <span>{t("刷新")}</span>
-          </Button>
-        }
-      />
-
-      <Panel>
-        <PanelHeader
-          title={t("当前租约")}
-          description={t("同一账号在租约有效期内保持同一个出口 IP。")}
-          meta={t("共 {{count}} 条", { count: leases.length })}
-        />
-        <PanelBody className="p-0">
-          {leasesQuery.isLoading ? (
-            <LoadingState label={t("正在加载租约...")} className="py-12" />
-          ) : leasesQuery.isError ? (
-            <ErrorState
-              message={formatApiErrorMessage(leasesQuery.error, t)}
-              onRetry={() => void leasesQuery.refetch()}
-              className="py-12"
-            />
-          ) : leases.length === 0 ? (
-            <EmptyState
-              title={t("暂无租约")}
-              hint={t("建立代理连接后，粘定的出口会显示在这里。")}
-              className="py-12"
-            />
-          ) : (
-            <TableWrap>
-              <Table>
-                <THead>
-                  <TR>
-                    <TH>{t("平台")}</TH>
-                    <TH>{t("账号")}</TH>
-                    <TH>{t("节点")}</TH>
-                    <TH>{t("出口 IP")}</TH>
-                    <TH>{t("到期时间")}</TH>
-                    <TH>{t("剩余时间")}</TH>
-                    <TH>{t("最后活跃")}</TH>
-                    <TH className="text-right">{t("操作")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {leases.map((lease) => (
-                    <TR key={`${lease.platform_id}/${lease.account}`}>
-                      <TD className="font-medium text-ink">
-                        <TDClip>{lease.platform_name || lease.platform_id}</TDClip>
-                      </TD>
-                      <TD className="font-mono text-xs text-ink-soft">
-                        <TDClip>{lease.account}</TDClip>
-                      </TD>
-                      <TD className="text-xs text-ink-soft">
-                        <TDClip>{lease.node_tag || "-"}</TDClip>
-                      </TD>
-                      <TD className="readout font-mono text-xs text-ink">
-                        {lease.egress_ip || "-"}
-                      </TD>
-                      <TD className="readout font-mono text-xs text-ink-soft">
-                        {formatTimestamp(lease.expiry)}
-                      </TD>
-                      <RemainingCell lease={lease} />
-                      <TD className="readout font-mono text-xs text-ink-soft">
-                        {formatTimestamp(lease.last_accessed)}
-                      </TD>
-                      <TD className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setReleaseTarget(lease)}
-                          className="text-alert hover:text-alert"
-                          title={t("释放此租约")}
-                        >
-                          <Unlink size={14} />
-                          <span>{t("释放")}</span>
-                        </Button>
-                      </TD>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </TableWrap>
-          )}
-        </PanelBody>
-        <PanelFooter className="flex items-center justify-between">
-          <span className="readout text-xs text-ink-soft">
-            {t("释放后下一次连接会重新选择出口。")}
-          </span>
-        </PanelFooter>
-      </Panel>
-
-      <DialogRoot
-        open={Boolean(releaseTarget)}
-        onOpenChange={(open) => !open && setReleaseTarget(null)}
-      >
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogContent className="w-full max-w-md p-6">
-            <DialogTitle className="text-base font-semibold text-ink">
-              {t("确认释放租约")}
-            </DialogTitle>
-            <p className="mt-3 text-sm text-ink-soft">
-              {t(
-                "确定要释放账号 {{account}} 的租约吗？释放后该账号下一次连接会重新选择出口。",
-                { account: releaseTarget?.account ?? "" },
-              )}
-            </p>
-            <div className="mt-6 flex items-center justify-end gap-3">
-              <Button
-                variant="secondary"
-                onClick={() => setReleaseTarget(null)}
-                disabled={releaseMutation.isPending}
-              >
-                {t("取消")}
-              </Button>
-              <Button
-                variant="danger"
-                onClick={() => {
-                  if (releaseTarget) releaseMutation.mutate(releaseTarget);
-                }}
-                loading={releaseMutation.isPending}
-              >
-                {t("确认释放")}
-              </Button>
-            </div>
-          </DialogContent>
-        </DialogPortal>
-      </DialogRoot>
-
+    <PageFrame
+      eyebrow="Self Service / leases"
+      title={t("我的租约")}
+      description={t("查看当前粘定的出口，并在到期前主动释放。")}
+      meta={<StatusMark tone={leasesQuery.isError && !leasesQuery.data ? "warn" : leasesQuery.data ? "live" : "neutral"} label={leasesQuery.isError && !leasesQuery.data ? t("读取失败") : leasesQuery.data ? t("数据已同步") : t("等待数据")} />}
+      actions={<ControlButton variant="secondary" size="sm" onPress={refresh} loading={leasesQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>}
+    >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </div>
+      <WorkSurface
+        eyebrow="Lease registry"
+        title={t("当前租约")}
+        description={t("同一账号在租约有效期内保持同一个出口 IP。选择一行查看完整绑定关系。")}
+        meta={leasesQuery.data ? t("共 {{count}} 条", { count: leases.length }) : t("未加载")}
+      >
+        {leasesQuery.isError && !leasesQuery.data ? (
+          <EmptyWorkState title={t("租约读取失败")} detail={formatApiErrorMessage(leasesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leasesQuery.refetch()}>{t("重试")}</ControlButton>} />
+        ) : null}
+        {leasesQuery.isLoading && !leasesQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载租约...")}</div> : null}
+        {!leasesQuery.isLoading && !leasesQuery.isError && leases.length === 0 ? <EmptyWorkState title={t("暂无租约")} detail={t("建立代理连接后，粘定的出口会显示在这里。")} /> : null}
+        {leases.length > 0 ? (
+          <ObjectList>
+            {leases.map((lease) => (
+              <ObjectRow
+                key={`${lease.platform_id}/${lease.account}`}
+                active={selected?.platform_id === lease.platform_id && selected.account === lease.account}
+                onClick={() => setSelected(lease)}
+                leading={<span aria-hidden>↗</span>}
+                title={lease.platform_name || lease.platform_id}
+                subtitle={`${lease.account || t("未命名账号")} · ${lease.node_tag || t("节点标识未知")}`}
+                facts={<><span>{lease.egress_ip || t("出口 IP 未知")}</span><span>{t("到期")} {formatTimestamp(lease.expiry)}</span><span>{t("最后活跃")} {formatTimestamp(lease.last_accessed)}</span></>}
+                status={<RemainingState lease={lease} />}
+                action={<ArrowRight size={14} aria-hidden />}
+              />
+            ))}
+          </ObjectList>
+        ) : null}
+      </WorkSurface>
+      <WorkSurface eyebrow="Lease policy" title={t("租约保持")} description={t("释放后下一次连接会重新选择出口。释放动作按平台和账号地址提交，不改变其他租户或平台的租约。")}>
+        <div className="cp-data-grid">
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("当前租约")}</span><strong className="cp-data-grid__value">{leases.length}</strong></div>
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("自动刷新")}</span><strong className="cp-data-grid__value">60s</strong></div>
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("即将到期")}</span><strong className="cp-data-grid__value">{leases.filter((lease) => { const ms = Date.parse(lease.expiry) - now; return Number.isFinite(ms) && ms > 0 && ms <= LEASE_WARN_MS; }).length}</strong></div>
+          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("释放方式")}</span><strong className="cp-data-grid__value">{t("逐条")}</strong></div>
+        </div>
+      </WorkSurface>
+      <InspectorDrawer
+        open={Boolean(selected) && !releaseTarget}
+        onOpenChange={(open) => { if (!open) setSelected(null); }}
+        title={selected?.platform_name || selected?.platform_id || t("租约")}
+        eyebrow={t("Lease inspector")}
+        footer={selected ? <><ControlButton variant="ghost" size="sm" onPress={() => setSelected(null)}>{t("关闭")}</ControlButton><ControlButton variant="danger" size="sm" onPress={() => setReleaseTarget(selected)}><Unlink size={14} aria-hidden />{t("释放")}</ControlButton></> : undefined}
+      >
+        {selected ? (
+          <div className="cp-stack">
+            <RemainingState lease={selected} />
+            <dl className="cp-detail-facts">
+              <DetailFact label={t("平台") } value={selected.platform_name || selected.platform_id} />
+              <DetailFact label={t("平台 ID")} value={selected.platform_id} mono />
+              <DetailFact label={t("账号")} value={selected.account} mono />
+              <DetailFact label={t("节点") } value={selected.node_tag || t("节点标识未知")} />
+              <DetailFact label={t("出口 IP")} value={selected.egress_ip || t("未知")} mono />
+              <DetailFact label={t("到期时间")} value={formatTimestamp(selected.expiry)} mono />
+              <DetailFact label={t("最后活跃")} value={formatTimestamp(selected.last_accessed)} mono />
+            </dl>
+            <QueryBadge label={t("释放后下一次连接会重新选择出口。")} tone="warn" />
+          </div>
+        ) : null}
+      </InspectorDrawer>
+      <ConfirmDrawer
+        open={Boolean(releaseTarget)}
+        onOpenChange={(open) => { if (!open) setReleaseTarget(null); }}
+        title={t("确认释放租约")}
+        eyebrow={t("Destructive action")}
+        message={t("确定要释放账号 {{account}} 的租约吗？释放后该账号下一次连接会重新选择出口。", { account: releaseTarget?.account ?? "" })}
+        cancelLabel={t("取消")}
+        confirmLabel={t("确认释放")}
+        loading={releaseMutation.isPending}
+        onConfirm={() => { if (releaseTarget) releaseMutation.mutate(releaseTarget); }}
+      />
+    </PageFrame>
   );
 }

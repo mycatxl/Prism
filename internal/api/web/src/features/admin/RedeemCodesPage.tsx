@@ -1,36 +1,23 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { ArrowRight, Copy, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
-import { Button } from "../../components/ui/Button";
 import {
-  DialogContent,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from "../../components/ui/Dialog";
-import { Fieldset, Input } from "../../components/ui/Input";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
-import {
-  Panel,
-  PanelBody,
-  PanelFooter,
-  PanelHeader,
-  PanelToolbar,
-} from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Select } from "../../components/ui/Select";
-import {
-  Table,
-  TableWrap,
-  TBody,
-  TD,
-  TDClip,
-  TDNum,
-  TH,
-  THead,
-  TR,
-} from "../../components/ui/Table";
+  ConfirmDrawer,
+  ControlButton,
+  ControlInput,
+  ControlPagination,
+  ControlSelect,
+  DetailFact,
+  EmptyWorkState,
+  FilterChip,
+  InspectorDrawer,
+  ObjectList,
+  ObjectRow,
+  PageFrame,
+  QueryBadge,
+  StatusMark,
+  WorkSurface,
+} from "../../components/control-plane";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -41,126 +28,66 @@ import { formatMicro, parseAmountToMicro } from "../../lib/money";
 import { createRedeemCodes, deleteRedeemCode, listRedeemCodes } from "./api";
 import type { AdminRedeemCode, AdminRedeemCodeItem } from "./types";
 
-/*
- * RedeemCodesPage mints and withdraws top-up codes, on the Signal Console
- * rhythm: the page header states the page and carries the mint action, the
- * minted batch gets its own panel until it is copied, and one panel carries a
- * toolbar of search + state + refresh over the code list. Amounts are readouts
- * with their unit set small; the state column is the dot-and-word pair.
- *
- * The plaintext of a code exists exactly once: in the response that created it.
- * Everything after that shows only the hint, because the database stores an HMAC
- * and there is nothing to show. That is why minting opens a panel with the codes
- * and tells the operator to copy them now.
- *
- * The list endpoint takes no filters, so search and state narrow the page the
- * cache holds; the limit/offset paging stays server-side exactly as before.
- */
-
 const PAGE_SIZE = 20;
 const NANOS_PER_MILLI = 1_000_000;
+type CodeState = "usable" | "disabled";
+type CodeFilter = "all" | CodeState;
 
 function formatNsTime(ns?: number | null): string {
   if (!ns || ns <= 0) return "-";
   const date = new Date(Math.round(ns / NANOS_PER_MILLI));
   if (Number.isNaN(date.getTime())) return "-";
   const locale = isEnglishLocale(getCurrentLocale()) ? "en-US" : "zh-CN";
-  return new Intl.DateTimeFormat(locale, {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(date);
+  return new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }
-
-/**
- * The state a code is in, as the redeem path will treat it: the server reports
- * an exhausted or expired code as `disabled`, and the list keeps that single
- * split — 可用, or 已失效.
- */
-type CodeState = "usable" | "disabled";
-type CodeFilter = "all" | CodeState;
 
 function classifyCode(code: AdminRedeemCode): CodeState {
   return code.status === "active" ? "usable" : "disabled";
 }
 
-/** The `.state-dot` variant for each code state; `usable` is the live one. */
-const CODE_DOT: Record<CodeState, string> = {
-  usable: "state-dot state-dot--signal",
-  disabled: "state-dot",
-};
-
 export function RedeemCodesPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
-
-  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState(0);
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<CodeFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [selected, setSelected] = useState<AdminRedeemCode | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminRedeemCode | null>(null);
   const [minted, setMinted] = useState<AdminRedeemCodeItem[]>([]);
+  const [formPending, setFormPending] = useState(false);
 
-  const {
-    data: codesData,
-    isLoading,
-    isError,
-    error,
-    isFetching,
-  } = useQuery({
-    queryKey: ["admin-redeem-codes", offset],
-    queryFn: () => listRedeemCodes({ limit: PAGE_SIZE, offset }),
+  const codesQuery = useQuery({
+    queryKey: ["admin-redeem-codes", page * PAGE_SIZE],
+    queryFn: () => listRedeemCodes({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }),
+    placeholderData: (previous) => previous,
   });
-
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteRedeemCode(id),
-    onSuccess: () => {
-      showToast("success", t("兑换码已作废"));
-      setDeleteTarget(null);
-      void queryClient.invalidateQueries({ queryKey: ["admin-redeem-codes"] });
-    },
-    onError: (err) => {
-      showToast("error", formatApiErrorMessage(err, t));
-    },
-  });
-  const codes = useMemo(() => codesData?.items ?? [], [codesData]);
-  const total = codesData?.total ?? 0;
-  const currentPage = Math.floor(offset / PAGE_SIZE) + 1;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-
-  /*
-   * Search and state narrow the rows this page already holds: the needle
-   * matches the hint and the note — the two things that tell a minted code
-   * apart once its plaintext is gone.
-   */
+  const codes = useMemo(() => codesQuery.data?.items ?? [], [codesQuery.data]);
+  const total = codesQuery.data?.total ?? 0;
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return codes.filter((code) => {
       if (stateFilter !== "all" && classifyCode(code) !== stateFilter) return false;
       if (!needle) return true;
-      const haystack = [code.code_hint, code.note].join(" ").toLowerCase();
-      return haystack.includes(needle);
+      return [code.code_hint, code.note].join(" ").toLowerCase().includes(needle);
     });
   }, [codes, search, stateFilter]);
-
   const filtersActive = search.trim() !== "" || stateFilter !== "all";
-  const clearFilters = () => {
-    setSearch("");
-    setStateFilter("all");
-  };
-
-  // The page's own cache entry: the list this panel reads.
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["admin-redeem-codes"] });
-  };
-
+  const clearFilters = () => { setSearch(""); setStateFilter("all"); setPage(0); };
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["admin-redeem-codes"] });
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => deleteRedeemCode(id),
+    onSuccess: () => {
+      showToast("success", t("兑换码已作废"));
+      setDeleteTarget(null);
+      setSelected(null);
+      void queryClient.invalidateQueries({ queryKey: ["admin-redeem-codes"] });
+    },
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
+  });
   const handleCopyAll = () => {
-    const text = minted.map((code) => code.code).join("\n");
-    void copyToClipboard(text).then((ok) => {
+    void copyToClipboard(minted.map((code) => code.code).join("\n")).then((ok) => {
       if (!ok) {
         showToast("error", t("复制失败，请手动选择复制"));
         return;
@@ -168,492 +95,144 @@ export function RedeemCodesPage() {
       showToast("success", t("兑换码已复制到剪贴板"));
     });
   };
+  const statusTone = codesQuery.isError && !codesQuery.data ? "warn" : codesQuery.data ? "live" : "neutral";
 
   return (
-    <Page bleed>
-      <PageHeader
-        title={t("兑换码")}
-        description={t("生成用于余额充值的兑换码。码只显示一次，请生成后立即分发。")}
-        meta={
-          <PageMeta
-            label={t("兑换码总数")}
-            value={codesData ? total.toLocaleString() : "--"}
-          />
-        }
-        actions={
-          <Button variant="primary" onClick={() => setCreateOpen(true)}>
-            <Plus size={16} />
-            <span>{t("生成兑换码")}</span>
-          </Button>
-        }
-      />
-
+    <PageFrame
+      eyebrow="Customers / redemption registry"
+      title={t("兑换码")}
+      description={t("生成用于余额充值的兑换码。码只显示一次，请生成后立即分发。")}
+      meta={<StatusMark tone={statusTone} label={codesQuery.isError && !codesQuery.data ? t("读取失败") : codesQuery.data ? t("目录已同步") : t("等待目录")} />}
+      actions={<><ControlButton variant="secondary" size="sm" onPress={refresh} loading={codesQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton><ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("生成兑换码")}</ControlButton></>}
+    >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="page-content page-content--fill space-y-4">
-        {minted.length > 0 && (
-          <Panel>
-            <PanelHeader
-              title={t("新生成的兑换码")}
-              description={t("这些码不会再显示第二次。关闭此面板后将无法找回。")}
-              meta={t("共 {{count}} 条", { count: minted.length })}
-              actions={
-                <Button variant="secondary" size="sm" onClick={handleCopyAll}>
-                  <Copy size={14} />
-                  <span>{t("全部复制")}</span>
-                </Button>
-              }
-            />
-            <PanelBody className="space-y-1.5">
-              {minted.map((code) => (
-                <div
-                  key={code.id}
-                  className="flex items-center justify-between gap-3 rounded-control border border-rule bg-paper-inset px-3 py-2"
-                >
-                  <span className="mono truncate text-sm tracking-wider text-ink">
-                    {code.code}
-                  </span>
-                  <span className="readout shrink-0 text-xs text-ink-soft">
-                    {formatMicro(code.amount_micro)}
-                    <small>USDT</small>
-                  </span>
-                </div>
-              ))}
-            </PanelBody>
-            <PanelFooter>
-              <Button variant="secondary" onClick={() => setMinted([])}>
-                {t("我已保存，关闭")}
-              </Button>
-            </PanelFooter>
-          </Panel>
-        )}
-
-        <Panel className="flex min-w-0 flex-col">
-          <PanelHeader
-            title={t("兑换码列表")}
-            description={t("已生成的兑换码只显示末四位，用于辨认与作废。")}
-            meta={codesData ? t("共 {{count}} 条", { count: total }) : "--"}
-          />
-
-          <PanelToolbar>
-            <label htmlFor="redeem-codes-search" className="relative block min-w-48 sm:w-64">
-              <Search
-                size={13}
-                aria-hidden
-                className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
-              />
-              <Input
-                id="redeem-codes-search"
-                className="pl-7 text-xs"
-                placeholder={t("搜索兑换码")}
-                aria-label={t("搜索兑换码")}
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setOffset(0);
-                }}
-              />
-            </label>
-            <Select
-              className="w-32"
-              aria-label={t("状态")}
-              value={stateFilter}
-              onChange={(event) => {
-                setStateFilter(event.target.value as CodeFilter);
-                setOffset(0);
-              }}
-            >
-              <option value="all">{t("全部状态")}</option>
-              <option value="usable">{t("可用")}</option>
-              <option value="disabled">{t("已失效")}</option>
-            </Select>
-            {filtersActive && (
-              <Button variant="ghost" size="sm" onClick={clearFilters}>
-                {t("清除筛选")}
-              </Button>
-            )}
-            <div className="ml-auto flex items-center gap-1.5">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={refresh}
-                disabled={isFetching}
-                title={t("刷新")}
-              >
-                <RefreshCw
-                  size={15}
-                  className={isFetching ? "animate-spin" : undefined}
-                />
-                <span>{t("刷新")}</span>
-              </Button>
-            </div>
-          </PanelToolbar>
-
-          {isLoading ? (
-            <PanelBody>
-              <LoadingState label={t("正在加载兑换码...")} />
-            </PanelBody>
-          ) : isError ? (
-            <PanelBody>
-              <ErrorState message={formatApiErrorMessage(error, t)} onRetry={refresh} />
-            </PanelBody>
-          ) : codes.length === 0 ? (
-            <PanelBody>
-              <EmptyState
-                title={t("暂无兑换码")}
-                hint={t("生成兑换码后，可在这里查看使用情况与作废。")}
-                action={
-                  <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                    <Plus size={14} />
-                    <span>{t("生成兑换码")}</span>
-                  </Button>
-                }
-              />
-            </PanelBody>
-          ) : filtered.length === 0 ? (
-            <PanelBody>
-              <EmptyState
-                title={t("没有匹配的兑换码")}
-                hint={t("调整搜索或状态筛选，或清除筛选查看全部。")}
-                action={
-                  <Button variant="secondary" onClick={clearFilters}>
-                    {t("清除筛选")}
-                  </Button>
-                }
-              />
-            </PanelBody>
-          ) : (
-            <TableWrap aria-busy={isFetching}>
-              <Table className="min-w-[960px]">
-                <THead>
-                  <TR>
-                    <TH>{t("末四位")}</TH>
-                    <TH className="text-right">{t("面额")}</TH>
-                    <TH className="text-right">{t("已用 / 次数")}</TH>
-                    <TH>{t("状态")}</TH>
-                    <TH>{t("过期时间")}</TH>
-                    <TH>{t("备注")}</TH>
-                    <TH>{t("创建时间")}</TH>
-                    <TH className="text-right">{t("操作")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {filtered.map((code) => {
-                    const state = classifyCode(code);
-                    return (
-                      <TR key={code.id}>
-                        <TD>
-                          <span className="mono text-sm tracking-wider text-ink">
-                            ****{code.code_hint}
-                          </span>
-                        </TD>
-                        <TDNum className="whitespace-nowrap">
-                          <span className="readout">
-                            {formatMicro(code.amount_micro)}
-                            <small>USDT</small>
-                          </span>
-                        </TDNum>
-                        <TDNum className="whitespace-nowrap">
-                          <span className="readout">
-                            {code.used_count}
-                            <small>
-                              {" "}
-                              / {code.max_uses > 0 ? code.max_uses : t("无限制")}
-                            </small>
-                          </span>
-                        </TDNum>
-                        <TD className="whitespace-nowrap">
-                          <span className="inline-flex items-center gap-2">
-                            <span aria-hidden className={CODE_DOT[state]} />
-                            <span className="state-text">
-                              {state === "usable" ? t("可用") : t("已失效")}
-                            </span>
-                          </span>
-                        </TD>
-                        <TD className="whitespace-nowrap text-xs text-ink-soft">
-                          {code.expires_at_ns > 0
-                            ? formatNsTime(code.expires_at_ns)
-                            : t("永不过期")}
-                        </TD>
-                        <TDClip className="text-xs text-ink-faint">
-                          {code.note || "-"}
-                        </TDClip>
-                        <TD className="whitespace-nowrap readout text-xs text-ink-soft">
-                          {formatNsTime(code.created_at_ns)}
-                        </TD>
-                        <TD className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-ink-faint hover:bg-alert-wash hover:text-alert"
-                            onClick={() => setDeleteTarget(code)}
-                            title={t("作废此兑换码")}
-                            aria-label={t("作废此兑换码")}
-                          >
-                            <Trash2 size={14} />
-                          </Button>
-                        </TD>
-                      </TR>
-                    );
-                  })}
-                </TBody>
-              </Table>
-            </TableWrap>
-          )}
-
-          <PanelFooter>
-            <p className="text-xs text-ink-soft">
-              {filtersActive
-                ? t("第 {{current}} / {{total}} 页 · 本页匹配 {{shown}} 条", {
-                    current: currentPage,
-                    total: totalPages,
-                    shown: filtered.length,
-                  })
-                : t("第 {{current}} / {{total}} 页 (共 {{count}} 条)", {
-                    current: currentPage,
-                    total: totalPages,
-                    count: total,
-                  })}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                disabled={offset === 0}
-                onClick={() => setOffset((prev) => Math.max(0, prev - PAGE_SIZE))}
-              >
-                {t("上一页")}
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={offset + PAGE_SIZE >= total}
-                onClick={() => setOffset((prev) => prev + PAGE_SIZE)}
-              >
-                {t("下一页")}
-              </Button>
-            </div>
-          </PanelFooter>
-        </Panel>
-      </div>
-
-      <CreateRedeemDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
-        onSuccess={(batch) => {
-          setMinted(batch);
-          setCreateOpen(false);
-          showToast("success", t("兑换码已生成，请立即复制保存"));
-          void queryClient.invalidateQueries({ queryKey: ["admin-redeem-codes"] });
-        }}
-      />
-
-      <DialogRoot
-        open={deleteTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null);
-        }}
+      {minted.length > 0 ? <WorkSurface
+        eyebrow="One-time plaintext"
+        title={t("新生成的兑换码")}
+        description={t("这些码不会再显示第二次。关闭此工作面后将无法找回。")}
+        meta={t("共 {{count}} 条", { count: minted.length })}
+        actions={<><ControlButton variant="secondary" size="sm" onPress={handleCopyAll}><Copy size={14} aria-hidden />{t("全部复制")}</ControlButton><ControlButton variant="ghost" size="sm" onPress={() => setMinted([])}>{t("我已保存，关闭")}</ControlButton></>}
       >
-        <DialogPortal>
-          <DialogOverlay />
-          <DialogContent className="w-full max-w-md">
-            <div className="border-b border-rule px-5 py-4">
-              <DialogTitle>{t("作废兑换码")}</DialogTitle>
-            </div>
-            <div className="space-y-3 px-5 py-4 text-sm leading-relaxed text-ink-soft">
-              <p>{t("作废后该码无法再被兑换。已充值的余额不受影响。")}</p>
-              {deleteTarget && (
-                <p className="mono text-sm tracking-wider text-ink">
-                  ****{deleteTarget.code_hint}
-                  <span className="readout ml-2 text-xs text-ink-soft">
-                    {formatMicro(deleteTarget.amount_micro)}
-                    <small>USDT</small>
-                  </span>
-                </p>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-rule bg-rail px-5 py-3">
-              <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
-                {t("取消")}
-              </Button>
-              <Button
-                variant="danger"
-                loading={deleteMutation.isPending}
-                onClick={() => {
-                  if (deleteTarget) deleteMutation.mutate(deleteTarget.id);
-                }}
-              >
-                {t("确认作废")}
-              </Button>
-            </div>
-          </DialogContent>
-        </DialogPortal>
-      </DialogRoot>
+        <ObjectList>
+          {minted.map((code) => <ObjectRow key={code.id} leading={<span className="cp-platform-row__mark" aria-hidden>$</span>} title={code.code} subtitle={t("仅在本次生成结果中可见")} facts={<span className="readout">{formatMicro(code.amount_micro)}<small>USDT</small></span>} status={<QueryBadge tone="warn" label={t("一次性") } />} />)}
+        </ObjectList>
+      </WorkSurface> : null}
 
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </Page>
+      <section className="cp-command">
+        <div className="cp-command__body">
+          <ControlInput label={t("搜索兑换码")} value={search} onChange={(event) => { setSearch(event.target.value); setPage(0); }} placeholder={t("按末四位提示或备注搜索")} />
+          <ControlSelect label={t("状态")} value={stateFilter} onChange={(event) => { setStateFilter(event.target.value as CodeFilter); setPage(0); }}><option value="all">{t("全部状态")}</option><option value="usable">{t("可用")}</option><option value="disabled">{t("已失效")}</option></ControlSelect>
+        </div>
+        <div className="cp-command__actions"><Search size={14} aria-hidden />{filtersActive ? <ControlButton variant="ghost" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : null}</div>
+      </section>
+      {filtersActive ? <div className="cp-active-filters" aria-label={t("当前筛选")}>
+        {search.trim() ? <FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={() => { setSearch(""); setPage(0); }} /> : null}
+        {stateFilter !== "all" ? <FilterChip label={`${t("状态")}: ${stateFilter === "usable" ? t("可用") : t("已失效")}`} onRemove={() => { setStateFilter("all"); setPage(0); }} /> : null}
+      </div> : null}
+
+      <WorkSurface eyebrow="Customer objects" title={t("兑换码列表")} meta={codesQuery.data ? t("共 {{count}} 条", { count: total }) : t("未加载")} description={t("已生成的兑换码只显示末四位，用于辨认与作废。") }>
+        {codesQuery.isError && !codesQuery.data ? <EmptyWorkState title={t("兑换码目录读取失败")} detail={formatApiErrorMessage(codesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void codesQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+        {codesQuery.isLoading && !codesQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载兑换码")}</div> : null}
+        {!codesQuery.isLoading && !codesQuery.isError && codes.length === 0 ? <EmptyWorkState title={t("暂无兑换码")} detail={t("生成兑换码后，可在这里查看使用情况与作废。") } action={<ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("生成兑换码")}</ControlButton>} /> : null}
+        {!codesQuery.isLoading && !codesQuery.isError && codes.length > 0 && filtered.length === 0 ? <EmptyWorkState title={t("没有匹配的兑换码")} detail={t("调整搜索或状态筛选，或清除筛选查看全部。") } action={<ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton>} /> : null}
+        {filtered.length > 0 ? <ObjectList>
+          {filtered.map((code) => <ObjectRow
+            key={code.id}
+            active={selected?.id === code.id}
+            onClick={() => setSelected(code)}
+            leading={<span className="cp-platform-row__mark" aria-hidden>$</span>}
+            title={`****${code.code_hint}`}
+            subtitle={<span className="readout">{formatMicro(code.amount_micro)}<small>USDT</small></span>}
+            facts={<><span>{t("使用")} {code.used_count} / {code.max_uses > 0 ? code.max_uses : t("不限")}</span><span>{t("到期")} {code.expires_at_ns > 0 ? formatNsTime(code.expires_at_ns) : t("永不过期")}</span><span>{t("创建")} {formatNsTime(code.created_at_ns)}</span></>}
+            status={<StatusMark tone={classifyCode(code) === "usable" ? "signal" : "alert"} label={classifyCode(code) === "usable" ? t("可用") : t("已失效")} />}
+            action={<ArrowRight size={14} aria-hidden />}
+          />)}
+        </ObjectList> : null}
+        {codesQuery.data ? <ControlPagination
+          page={page}
+          totalItems={total}
+          pageSize={PAGE_SIZE}
+          pageSizes={[PAGE_SIZE]}
+          disabled={codesQuery.isFetching}
+          labels={{ summary: ({ page: current, pages, start, end, total: count }) => t("第 {{page}} / {{pages}} 页 · {{start}}-{{end}} / {{total}}", { page: current, pages, start, end, total: count }), perPage: t("每页"), pageOption: (size) => `${size} / ${t("页")}`, previous: t("上一页"), next: t("下一页") }}
+          onPageChange={setPage}
+          onPageSizeChange={() => undefined}
+        /> : null}
+      </WorkSurface>
+
+      <InspectorDrawer
+        open={Boolean(selected) && !createOpen}
+        onOpenChange={(open) => { if (!open) setSelected(null); }}
+        title={selected ? `****${selected.code_hint}` : t("兑换码")}
+        eyebrow={t("Customer / redemption inspector")}
+        footer={selected ? <><ControlButton variant="ghost" size="sm" onPress={() => setSelected(null)}>{t("关闭")}</ControlButton><ControlButton variant="danger" size="sm" onPress={() => setDeleteTarget(selected)}><Trash2 size={14} aria-hidden />{t("作废")}</ControlButton></> : undefined}
+      >
+        {selected ? <div className="cp-stack">
+          <div className="cp-platform-inspector__identity"><span className="cp-platform-row__mark" aria-hidden>$</span><div><strong className="mono">****{selected.code_hint}</strong><code>{selected.id}</code></div><StatusMark tone={classifyCode(selected) === "usable" ? "signal" : "alert"} label={classifyCode(selected) === "usable" ? t("可用") : t("已失效")} /></div>
+          <dl className="cp-detail-facts"><DetailFact label={t("面额")} value={<span className="readout">{formatMicro(selected.amount_micro)}<small>USDT</small></span>} mono /><DetailFact label={t("使用次数")} value={`${selected.used_count} / ${selected.max_uses > 0 ? selected.max_uses : t("不限")}`} mono /><DetailFact label={t("过期时间")} value={selected.expires_at_ns > 0 ? formatNsTime(selected.expires_at_ns) : t("永不过期")} mono /><DetailFact label={t("创建时间")} value={formatNsTime(selected.created_at_ns)} mono /><DetailFact label={t("备注")} value={selected.note || "-"} /></dl>
+          <QueryBadge label={t("兑换码明文不会在列表或详情中恢复") } />
+        </div> : null}
+      </InspectorDrawer>
+
+      <InspectorDrawer
+        open={createOpen}
+        onOpenChange={(open) => { if (!open && !formPending) setCreateOpen(false); }}
+        title={t("生成兑换码")}
+        eyebrow={t("Administrator action")}
+        footer={<div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setCreateOpen(false)} isDisabled={formPending}>{t("取消")}</ControlButton><ControlButton type="submit" form="redeem-form" variant="primary" size="sm" isDisabled={formPending} loading={formPending}>{t("生成")}</ControlButton></div>}
+      >
+        {createOpen ? <CreateRedeemContent onPendingChange={setFormPending} onSuccess={(batch) => { setMinted(batch); setCreateOpen(false); showToast("success", t("兑换码已生成，请立即复制保存")); void queryClient.invalidateQueries({ queryKey: ["admin-redeem-codes"] }); }} /> : null}
+      </InspectorDrawer>
+
+      <ConfirmDrawer
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title={t("作废兑换码")}
+        eyebrow={t("Destructive action")}
+        message={<>{t("作废后该码无法再被兑换。已充值的余额不受影响。")} {deleteTarget ? <strong className="mono">****{deleteTarget.code_hint}</strong> : null}</>}
+        cancelLabel={t("取消")}
+        confirmLabel={t("确认作废")}
+        loading={deleteMutation.isPending}
+        onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
+      />
+    </PageFrame>
   );
 }
 
-function CreateRedeemContent({
-  onOpenChange,
-  onSuccess,
-}: {
-  onOpenChange: (open: boolean) => void;
-  onSuccess: (batch: AdminRedeemCodeItem[]) => void;
-}) {
+function CreateRedeemContent({ onPendingChange, onSuccess }: { onPendingChange: (pending: boolean) => void; onSuccess: (batch: AdminRedeemCodeItem[]) => void }) {
   const { t } = useI18n();
   const { toasts, showToast, dismissToast } = useToast();
-
   const [amount, setAmount] = useState("10");
   const [count, setCount] = useState("1");
   const [maxUses, setMaxUses] = useState("1");
   const [expiresInDays, setExpiresInDays] = useState("0");
   const [note, setNote] = useState("");
-
   const createMutation = useMutation({
     mutationFn: () => {
       const amountMicro = parseAmountToMicro(amount);
-      if (amountMicro === null || amountMicro <= 0) {
-        throw new Error(t("请输入有效金额，最多六位小数。"));
-      }
+      if (amountMicro === null || amountMicro <= 0) throw new Error(t("请输入有效金额，最多六位小数。"));
       const parsedCount = Number(count);
-      if (!Number.isInteger(parsedCount) || parsedCount < 1) {
-        throw new Error(t("生成数量必须是不小于 1 的整数。"));
-      }
+      if (!Number.isInteger(parsedCount) || parsedCount < 1) throw new Error(t("生成数量必须是不小于 1 的整数。"));
       const parsedUses = Number(maxUses);
-      if (!Number.isInteger(parsedUses) || parsedUses < 0) {
-        throw new Error(t("可用次数必须是不小于 0 的整数。"));
-      }
+      if (!Number.isInteger(parsedUses) || parsedUses < 0) throw new Error(t("可用次数必须是不小于 0 的整数。"));
       const parsedDays = Number(expiresInDays);
-      if (!Number.isInteger(parsedDays) || parsedDays < 0) {
-        throw new Error(t("有效期必须是不小于 0 的整数。"));
-      }
-      return createRedeemCodes({
-        amount_micro: amountMicro,
-        max_uses: parsedUses,
-        expires_in_days: parsedDays,
-        note,
-        count: parsedCount,
-      });
+      if (!Number.isInteger(parsedDays) || parsedDays < 0) throw new Error(t("有效期必须是不小于 0 的整数。"));
+      return createRedeemCodes({ amount_micro: amountMicro, max_uses: parsedUses, expires_in_days: parsedDays, note, count: parsedCount });
     },
-    onSuccess: (batch) => {
-      onSuccess(batch.codes);
-    },
-    onError: (err) => {
-      showToast("error", formatApiErrorMessage(err, t));
-    },
+    onMutate: () => onPendingChange(true),
+    onSuccess: (batch) => onSuccess(batch.codes),
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
+    onSettled: () => onPendingChange(false),
   });
-
-  return (
-    <>
-      <div className="border-b border-rule px-5 py-4">
-        <DialogTitle>{t("生成兑换码")}</DialogTitle>
-        <p className="mt-1 text-xs text-ink-faint">
-          {t("生成用于余额充值的兑换码。码只显示一次，请生成后立即分发。")}
-        </p>
-      </div>
-      <div className="space-y-4 px-5 py-4">
-        <Fieldset
-          label={t("面额 (USDT)")}
-          hint={t("每个码可充值的金额，最多六位小数。")}
-          htmlFor="redeem-amount"
-        >
-          <Input
-            id="redeem-amount"
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            inputMode="decimal"
-            className="font-mono"
-          />
-        </Fieldset>
-        <Fieldset
-          label={t("生成数量")}
-          hint={t("一次最多生成 100 个。")}
-          htmlFor="redeem-count"
-        >
-          <Input
-            id="redeem-count"
-            value={count}
-            onChange={(event) => setCount(event.target.value)}
-            inputMode="numeric"
-            className="font-mono"
-          />
-        </Fieldset>
-        <div className="grid grid-cols-2 gap-3">
-          <Fieldset
-            label={t("可用次数")}
-            hint={t("0 表示不限次数。")}
-            htmlFor="redeem-uses"
-          >
-            <Input
-              id="redeem-uses"
-              value={maxUses}
-              onChange={(event) => setMaxUses(event.target.value)}
-              inputMode="numeric"
-              className="font-mono"
-            />
-          </Fieldset>
-          <Fieldset
-            label={t("有效期 (天)")}
-            hint={t("0 表示永不过期。")}
-            htmlFor="redeem-expiry"
-          >
-            <Input
-              id="redeem-expiry"
-              value={expiresInDays}
-              onChange={(event) => setExpiresInDays(event.target.value)}
-              inputMode="numeric"
-              className="font-mono"
-            />
-          </Fieldset>
-        </div>
-        <Fieldset label={t("备注")} htmlFor="redeem-note">
-          <Input
-            id="redeem-note"
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            placeholder={t("例如：社区活动第一批")}
-          />
-        </Fieldset>
-      </div>
-      <div className="flex items-center justify-end gap-2 border-t border-rule bg-rail px-5 py-3">
-        <Button variant="secondary" onClick={() => onOpenChange(false)}>
-          {t("取消")}
-        </Button>
-        <Button
-          variant="primary"
-          loading={createMutation.isPending}
-          onClick={() => createMutation.mutate()}
-        >
-          {t("生成")}
-        </Button>
-      </div>
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-    </>
-  );
-}
-
-function CreateRedeemDialog({
-  open,
-  onOpenChange,
-  onSuccess,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSuccess: (batch: AdminRedeemCodeItem[]) => void;
-}) {
-  return (
-    <DialogRoot open={open} onOpenChange={onOpenChange}>
-      <DialogPortal>
-        <DialogOverlay />
-        <DialogContent className="flex w-full max-w-md flex-col">
-          {/*
-           * The content mounts only while the dialog is open, so every mint
-           * starts from the defaults: no amount, count or note survives a
-           * close, whatever route closed it.
-           */}
-          {open && <CreateRedeemContent onOpenChange={onOpenChange} onSuccess={onSuccess} />}
-        </DialogContent>
-      </DialogPortal>
-    </DialogRoot>
-  );
+  return <>
+    <form id="redeem-form" className="cp-form-stack" onSubmit={(event) => { event.preventDefault(); createMutation.mutate(); }}>
+      <ControlInput label={t("面额 (USDT)")} hint={t("每个码可充值的金额，最多六位小数。")} value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" className="font-mono" />
+      <ControlInput label={t("生成数量")} hint={t("一次最多生成 100 个。") } value={count} onChange={(event) => setCount(event.target.value)} inputMode="numeric" className="font-mono" />
+      <div className="cp-form-grid"><ControlInput label={t("可用次数")} hint={t("0 表示不限次数。") } value={maxUses} onChange={(event) => setMaxUses(event.target.value)} inputMode="numeric" className="font-mono" /><ControlInput label={t("有效期 (天)")} hint={t("0 表示永不过期。") } value={expiresInDays} onChange={(event) => setExpiresInDays(event.target.value)} inputMode="numeric" className="font-mono" /></div>
+      <ControlInput label={t("备注")} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t("例如：社区活动第一批")} />
+      {createMutation.isError ? <p className="cp-form-error">{formatApiErrorMessage(createMutation.error, t)}</p> : null}
+    </form>
+    <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+  </>;
 }

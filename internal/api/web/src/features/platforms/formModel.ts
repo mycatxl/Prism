@@ -37,9 +37,6 @@ export const platformFormSchema = z.object({
       message: "平台名称不能为保留字",
     }),
   sticky_ttl: z.string().optional(),
-  regex_filters_text: z.string().optional(),
-  // The region criterion stays line-based so that a legacy platform's negated
-  // entries ("!hk") survive an edit: the picker only toggles positive lines.
   region_filters_text: z.string().optional(),
   ip_types: z.array(z.string()),
   purity_bands: z.array(z.string()),
@@ -50,10 +47,7 @@ export const platformFormSchema = z.object({
   reverse_proxy_fixed_account_header: z.string().optional(),
   allocation_policy: z.enum(allocationPolicies),
   passive_circuit_breaker_disabled: z.boolean(),
-  // The unlock requirements stay line-based ("<check id>:<outcome>"), the same
-  // shape the region criterion uses: it keeps the value the backend stores
-  // (a map) reachable without a nested form array, and an entry the picker
-  // cannot render survives an edit instead of being dropped.
+  // Unlock requirements stay line-based so unknown entries survive an edit.
   required_checks_text: z.string().optional(),
 }).superRefine((value, ctx) => {
   if (
@@ -73,7 +67,6 @@ export type PlatformFormValues = z.infer<typeof platformFormSchema>;
 export const defaultPlatformFormValues: PlatformFormValues = {
   name: "",
   sticky_ttl: "",
-  regex_filters_text: "",
   region_filters_text: "",
   ip_types: [],
   purity_bands: [],
@@ -84,19 +77,15 @@ export const defaultPlatformFormValues: PlatformFormValues = {
   reverse_proxy_fixed_account_header: "Authorization",
   allocation_policy: "BALANCED",
   passive_circuit_breaker_disabled: false,
-  // Empty on purpose: an unlock requirement is an operator decision, and the
-  // product treats an unlock result as a label rather than an admission gate.
   required_checks_text: "",
 };
 
 export function platformToFormValues(platform: Platform): PlatformFormValues {
-  const regexFilters = Array.isArray(platform.regex_filters) ? platform.regex_filters : [];
   const regionFilters = Array.isArray(platform.region_filters) ? platform.region_filters : [];
 
   return {
     name: platform.name,
     sticky_ttl: platform.sticky_ttl,
-    regex_filters_text: regexFilters.join("\n"),
     region_filters_text: regionFilters.join("\n"),
     ip_types: [...(platform.ip_types ?? [])],
     purity_bands: [...(platform.purity_bands ?? [])],
@@ -111,11 +100,6 @@ export function platformToFormValues(platform: Platform): PlatformFormValues {
   };
 }
 
-/**
- * requiredChecksToText renders the stored required_checks map as the line-based
- * form value. Entries are sorted so the same policy always renders the same
- * text, which keeps the dirty check stable.
- */
 export function requiredChecksToText(required: Record<string, string> | undefined | null): string {
   if (!required || typeof required !== "object") {
     return "";
@@ -126,11 +110,6 @@ export function requiredChecksToText(required: Record<string, string> | undefine
     .join("\n");
 }
 
-/**
- * textToRequiredChecks parses the line-based form value back into the map the
- * backend stores. A line without a colon means "any outcome", which the model
- * treats as an empty outcome value.
- */
 export function textToRequiredChecks(text: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of listValues(text)) {
@@ -144,19 +123,10 @@ export function textToRequiredChecks(text: string | undefined): Record<string, s
   return out;
 }
 
-/** listValues reads the values of one newline-separated form field. */
 export function listValues(text: string | undefined): string[] {
   return parseLinesToList(text);
 }
 
-/**
- * toggleListValue adds or removes one value of a newline-separated form field and
- * returns the new text.
- *
- * It is how the multi-select pickers write into the line-based fields: every
- * other line (an entry the operator cannot see in the picker, such as a legacy
- * "!hk" exclusion) is preserved untouched.
- */
 export function toggleListValue(
   text: string | undefined,
   value: string,
@@ -174,16 +144,11 @@ export function toggleListValue(
 }
 
 /**
- * toPlatformCriteria is the single source of the criteria payload: the create /
- * update body and the live preview spec are built from this one function, so the
- * preview can never describe criteria the saved platform would not apply.
- *
- * Every criterion is ANDed with the others and the values inside one criterion
- * are alternatives; an empty list means "do not restrict on this criterion".
+ * The live preview and saved platform payload share this exact criteria shape.
+ * Every list is ANDed by the backend; values in one list are alternatives.
  */
 export function toPlatformCriteria(values: PlatformFormValues): Required<PlatformScopeSpec> {
   return {
-    regex_filters: listValues(values.regex_filters_text),
     region_filters: listValues(values.region_filters_text).map((value) => value.toLowerCase()),
     ip_types: [...values.ip_types],
     purity_bands: [...values.purity_bands],
@@ -205,13 +170,8 @@ function toPlatformPayloadBase(values: PlatformFormValues) {
 }
 
 /**
- * toQualityPolicy builds the policy payload of the unlock-requirement editor.
- *
- * PATCH replaces the whole quality_policy object, so the fields this form does
- * not edit are copied over from the loaded platform: sending only
- * required_checks would silently clear min_purity, allowed_verdicts and the
- * rest. An empty map is sent as undefined, which is the model's "no
- * requirement" value.
+ * PATCH replaces the whole quality_policy object, so fields not edited by this
+ * form are copied from the loaded platform instead of being silently cleared.
  */
 export function toQualityPolicy(
   values: PlatformFormValues,
@@ -224,8 +184,6 @@ export function toQualityPolicy(
   } else {
     policy.required_checks = required;
   }
-  // An all-default policy is the model's zero value: sending it back is the
-  // same as sending nothing, and leaving it out keeps the wire payload clean.
   return Object.keys(policy).length > 0 ? policy : undefined;
 }
 

@@ -1,31 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, RefreshCw } from "lucide-react";
 import { useState, type ReactNode } from "react";
-import { Button } from "../../components/ui/Button";
-import { Page, PageHeader, PageMeta } from "../../components/ui/PageHeader";
 import {
-  Panel,
-  PanelBody,
-  PanelFooter,
-  PanelHeader,
-  PanelToolbar,
-} from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
-import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { Select } from "../../components/ui/Select";
-import { Sparkline } from "../../components/ui/Sparkline";
-import { Switch } from "../../components/ui/Switch";
-import {
-  Table,
-  TableWrap,
-  TBody,
-  TD,
-  TDClip,
-  TDNum,
-  TH,
-  THead,
-  TR,
-} from "../../components/ui/Table";
+  CommandSurface,
+  ControlButton,
+  ControlSelect,
+  ControlSwitch,
+  EmptyWorkState,
+  ObjectList,
+  ObjectRow,
+  PageFrame,
+  QueryBadge,
+  StatusMark,
+  WorkSurface,
+} from "../../components/control-plane";
 import { ToastContainer } from "../../components/ui/Toast";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -43,21 +31,12 @@ import {
   getUsageUsers,
 } from "./api";
 
-/*
- * The operator's usage desk, on the Signal Console rhythm: the page header
- * states the page and carries the statistics window and the refresh, and each
- * region below is one panel - a header that says what it is, a toolbar only
- * where a control belongs, the data grid, and a footer that carries the count.
- * The figures a reader compares - traffic, windows, thresholds - are `cell-num`
- * cells whose units drop into a `<small>`; a status is the dot-and-word pair.
- * The queries, their keys and every interaction are unchanged; only the
- * arrangement moved.
- */
-
 const NANOS_PER_MILLI = 1_000_000;
-
-/** The backend caps this list; the number is stated in the panel description. */
 const ALERT_LIST_LIMIT = 50;
+
+type Translator = (text: string, values?: Record<string, unknown>) => string;
+
+type QueryLike = { isError: boolean; data?: unknown };
 
 function formatNsDate(ns?: number | null): string {
   if (!ns || ns <= 0) return "-";
@@ -71,7 +50,6 @@ function formatNsDate(ns?: number | null): string {
   }).format(date);
 }
 
-/** Alerts are triaged by the clock, so the day is not enough of a timestamp. */
 function formatNsDateTime(ns?: number | null): string {
   if (!ns || ns <= 0) return "-";
   const date = new Date(Math.round(ns / NANOS_PER_MILLI));
@@ -79,20 +57,44 @@ function formatNsDateTime(ns?: number | null): string {
   return formatDateTime(date.toISOString());
 }
 
-/** `threshold_ratio` arrives as a fraction (0-1) and reads as a percentage. */
-function formatThresholdRatio(ratio: number): string {
-  if (!Number.isFinite(ratio)) return "-";
-  return `${(ratio * 100).toFixed(1)}%`;
+function formatCount(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "-";
 }
 
-/** `formatBytes` keeps figure and unit apart; here the unit drops into a `<small>`. */
-function trafficReadout(bytes: number): ReactNode {
-  const [figure, unit] = formatBytes(bytes).split(" ");
+function formatTraffic(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? formatBytes(value) : "-";
+}
+
+function trafficReadout(value: number | null | undefined): ReactNode {
+  const formatted = formatTraffic(value);
+  if (formatted === "-") return formatted;
+  const [figure, unit] = formatted.split(" ");
+  return <><span>{figure}</span><small>{unit}</small></>;
+}
+
+function formatThresholdRatio(ratio: number): string {
+  return Number.isFinite(ratio) ? `${(ratio * 100).toFixed(1)}%` : "-";
+}
+
+function queryTone(query: QueryLike): "live" | "warn" | "neutral" {
+  if (query.isError && !query.data) return "warn";
+  if (query.data) return query.isError ? "warn" : "live";
+  return "neutral";
+}
+
+function queryLabel(query: QueryLike, t: Translator, ready: string): string {
+  if (query.isError && !query.data) return t("读取失败");
+  if (query.data) return query.isError ? t("数据可能已过期") : t(ready);
+  return t("等待数据");
+}
+
+function QueryFailure({ query, t, retry }: { query: { error: unknown; refetch: () => unknown }; t: Translator; retry: () => void }) {
   return (
-    <>
-      {figure}
-      <small>{unit}</small>
-    </>
+    <EmptyWorkState
+      title={t("读取失败")}
+      detail={formatApiErrorMessage(query.error, t)}
+      action={<ControlButton variant="secondary" size="sm" onPress={retry}>{t("重试")}</ControlButton>}
+    />
   );
 }
 
@@ -100,661 +102,152 @@ export function UsagePage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
-  const [days, setDays] = useState<number>(30);
-  /* The console's job is the acknowledgement queue, so the open alerts are the default view. */
+  const [days, setDays] = useState(30);
   const [unacknowledgedOnly, setUnacknowledgedOnly] = useState(true);
 
-  const summaryQuery = useQuery({
-    queryKey: ["admin-usage-summary"],
-    queryFn: getUsageSummary,
-  });
-
-  const dailyQuery = useQuery({
-    queryKey: ["admin-usage-daily", days],
-    queryFn: () => getUsageDaily({ days }),
-  });
-
-  const usersQuery = useQuery({
-    queryKey: ["admin-usage-users", days],
-    queryFn: () => getUsageUsers({ days, limit: 50 }),
-  });
-
-  const platformsQuery = useQuery({
-    queryKey: ["admin-usage-platforms", days],
-    queryFn: () => getUsagePlatforms({ days }),
-  });
-
-  const plansQuery = useQuery({
-    queryKey: ["admin-usage-plans", days],
-    queryFn: () => getUsagePlans({ days }),
-  });
-
+  const summaryQuery = useQuery({ queryKey: ["admin-usage-summary"], queryFn: getUsageSummary });
+  const dailyQuery = useQuery({ queryKey: ["admin-usage-daily", days], queryFn: () => getUsageDaily({ days }) });
+  const usersQuery = useQuery({ queryKey: ["admin-usage-users", days], queryFn: () => getUsageUsers({ days, limit: 50 }) });
+  const platformsQuery = useQuery({ queryKey: ["admin-usage-platforms", days], queryFn: () => getUsagePlatforms({ days }) });
+  const plansQuery = useQuery({ queryKey: ["admin-usage-plans", days], queryFn: () => getUsagePlans({ days }) });
   const alertsQuery = useQuery({
     queryKey: ["admin-usage-alerts", unacknowledgedOnly],
-    queryFn: () =>
-      getUsageAlerts({
-        limit: ALERT_LIST_LIMIT,
-        unacknowledged: unacknowledgedOnly,
-      }),
+    queryFn: () => getUsageAlerts({ limit: ALERT_LIST_LIMIT, unacknowledged: unacknowledgedOnly }),
   });
 
-  const isRefreshing =
-    summaryQuery.isFetching ||
-    dailyQuery.isFetching ||
-    usersQuery.isFetching ||
-    plansQuery.isFetching ||
-    platformsQuery.isFetching ||
-    alertsQuery.isFetching;
-
-  const handleRefresh = () => {
-    void summaryQuery.refetch();
-    void dailyQuery.refetch();
-    void usersQuery.refetch();
-    void plansQuery.refetch();
-    void platformsQuery.refetch();
-    void alertsQuery.refetch();
+  const isRefreshing = [summaryQuery, dailyQuery, usersQuery, platformsQuery, plansQuery, alertsQuery].some((query) => query.isFetching);
+  const refresh = () => {
+    void Promise.all([
+      summaryQuery.refetch(),
+      dailyQuery.refetch(),
+      usersQuery.refetch(),
+      platformsQuery.refetch(),
+      plansQuery.refetch(),
+      alertsQuery.refetch(),
+    ]);
   };
 
-  /*
-   * Acknowledging writes through to the same meters the page reads, so the usage
-   * queries are re-read with the list. A repeat acknowledge answers 404 because
-   * the alert is already closed, and the failure path re-reads the list too, so
-   * the stale row leaves the screen instead of waiting for a manual refresh.
-   */
   const acknowledgeMutation = useMutation({
     mutationFn: (id: string) => acknowledgeAlert(id),
-    onSuccess: () => {
+    onSuccess: async () => {
       showToast("success", t("告警已确认"));
-      void queryClient.invalidateQueries({ queryKey: ["admin-usage-alerts"] });
-      handleRefresh();
+      await queryClient.invalidateQueries({ queryKey: ["admin-usage-alerts"] });
+      refresh();
     },
-    onError: (err) => {
-      showToast("error", formatApiErrorMessage(err, t));
+    onError: (error) => {
+      showToast("error", formatApiErrorMessage(error, t));
       void queryClient.invalidateQueries({ queryKey: ["admin-usage-alerts"] });
     },
   });
 
   const summary = summaryQuery.data;
   const dailyItems = dailyQuery.data?.items ?? [];
-  const sparklineValues = dailyItems.map((d) => d.total_bytes);
   const userItems = usersQuery.data?.items ?? [];
   const platformItems = platformsQuery.data?.items ?? [];
   const planItems = plansQuery.data?.items ?? [];
   const alertItems = alertsQuery.data?.items ?? [];
-  const unacknowledgedCount = alertItems.filter(
-    (alert) => alert.acknowledged_at_ns <= 0,
-  ).length;
-
-  const showDaily = !dailyQuery.isLoading && !dailyQuery.isError;
-  const showUsers = !usersQuery.isLoading && !usersQuery.isError;
-  const showPlatforms = !platformsQuery.isLoading && !platformsQuery.isError;
-  const showPlans = !plansQuery.isLoading && !plansQuery.isError;
-  const showAlerts = !alertsQuery.isLoading && !alertsQuery.isError;
+  const unacknowledgedCount = alertItems.filter((alert) => alert.acknowledged_at_ns <= 0).length;
 
   return (
-    <Page bleed>
-      <PageHeader
-        title={t("用量")}
-        description={t("全站资源用量、用户流量排名与每日用量趋势统计。")}
-        meta={<PageMeta label={t("统计周期")} value={t("最近 {{days}} 天", { days })} />}
-        actions={
-          <>
-            <Select
-              aria-label={t("统计周期")}
-              className="w-28"
-              value={String(days)}
-              onChange={(e) => setDays(Number(e.target.value))}
-            >
-              <option value="7">{t("最近 7 天")}</option>
-              <option value="30">{t("最近 30 天")}</option>
-              <option value="90">{t("最近 90 天")}</option>
-            </Select>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={isRefreshing}
-              title={t("刷新")}
-            >
-              <RefreshCw
-                size={14}
-                className={isRefreshing ? "animate-spin" : undefined}
-              />
-              <span>{t("刷新")}</span>
-            </Button>
-          </>
-        }
-      />
-
+    <PageFrame
+      eyebrow="Customers / usage"
+      title={t("用量")}
+      description={t("全站资源用量、用户流量排名与每日用量趋势统计。")}
+      meta={<StatusMark tone={queryTone(summaryQuery)} label={queryLabel(summaryQuery, t, "数据已同步")} />}
+      actions={
+        <>
+          <ControlSelect aria-label={t("统计周期")} value={String(days)} onChange={(event) => setDays(Number(event.target.value))}>
+            <option value="7">{t("最近 7 天")}</option>
+            <option value="30">{t("最近 30 天")}</option>
+            <option value="90">{t("最近 90 天")}</option>
+          </ControlSelect>
+          <ControlButton variant="secondary" size="sm" onPress={refresh} loading={isRefreshing}>
+            <RefreshCw size={14} aria-hidden />
+            {t("刷新")}
+          </ControlButton>
+        </>
+      }
+    >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="page-content page-content--fill">
-        {/* Site meters: one strip of readouts, not five framed cards. */}
-        {summaryQuery.isError ? (
-          <Panel>
-            <PanelBody>
-              <ErrorState
-                message={formatApiErrorMessage(summaryQuery.error, t)}
-                onRetry={() => void summaryQuery.refetch()}
-              />
-            </PanelBody>
-          </Panel>
-        ) : summaryQuery.isLoading ? (
-          <Panel>
-            <PanelBody>
-              <LoadingState label={t("正在加载用量概览...")} />
-            </PanelBody>
-          </Panel>
-        ) : (
-          <ReadoutStrip
-            aria-busy={summaryQuery.isFetching}
-            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
-          >
-            <ReadoutCell>
-              <Readout
-                label={t("活跃用户")}
-                value={String(summary?.active_users ?? 0)}
-                unit={t("人")}
-                tone="signal"
-              />
-            </ReadoutCell>
-            <ReadoutCell>
-              <Readout
-                label={t("总用户数")}
-                value={String(summary?.total_users ?? 0)}
-                unit={t("人")}
-                tone="ink"
-              />
-            </ReadoutCell>
-            <ReadoutCell>
-              <Readout
-                label={t("今日全站流量")}
-                value={formatBytes(summary?.today_bytes ?? 0)}
-                tone="ink"
-              />
-            </ReadoutCell>
-            <ReadoutCell>
-              <Readout
-                label={t("本周期总流量")}
-                value={formatBytes(summary?.period_bytes ?? 0)}
-                tone="ink"
-              />
-            </ReadoutCell>
-            <ReadoutCell>
-              <Readout
-                label={t("即将到期用户")}
-                value={String(summary?.expiring_soon_users ?? 0)}
-                unit={t("人")}
-                hint={
-                  summary?.expiring_within_days
-                    ? t("未来 {{days}} 天内", { days: summary.expiring_within_days })
-                    : undefined
-                }
-                tone={
-                  (summary?.expiring_soon_users ?? 0) > 0 ? "warn" : "muted"
-                }
-              />
-            </ReadoutCell>
-          </ReadoutStrip>
-        )}
+      <WorkSurface
+        eyebrow="Customers / service meters"
+        title={t("用量摘要")}
+        meta={t("最近 {{days}} 天", { days })}
+        description={t("只显示用量接口返回的真实汇总；缺少字段时保持未知。")}
+      >
+        {summaryQuery.isError && !summaryQuery.data ? <QueryFailure query={summaryQuery} t={t} retry={() => void summaryQuery.refetch()} /> : null}
+        {summaryQuery.isLoading && !summaryQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载用量概览...")}</div> : null}
+        {summary ? (
+          <div className="cp-data-grid" aria-busy={summaryQuery.isFetching}>
+            <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("活跃用户")}</span><strong className="cp-data-grid__value">{formatCount(summary.active_users)}</strong><span className="cp-data-grid__hint">{t("当前活跃账号")}</span></div>
+            <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("总用户数")}</span><strong className="cp-data-grid__value">{formatCount(summary.total_users)}</strong><span className="cp-data-grid__hint">{t("服务端汇总")}</span></div>
+            <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("今日全站流量")}</span><strong className="cp-data-grid__value">{formatTraffic(summary.today_bytes)}</strong><span className="cp-data-grid__hint">{t("今日记录")}</span></div>
+            <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("本周期总流量")}</span><strong className="cp-data-grid__value">{formatTraffic(summary.period_bytes)}</strong><span className="cp-data-grid__hint">{t("当前统计周期")}</span></div>
+            <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("即将到期用户")}</span><strong className="cp-data-grid__value">{formatCount(summary.expiring_soon_users)}</strong><span className="cp-data-grid__hint">{summary.expiring_within_days > 0 ? t("未来 {{days}} 天内", { days: summary.expiring_within_days }) : t("窗口未返回")}</span></div>
+          </div>
+        ) : null}
+      </WorkSurface>
 
-        {/* Daily traffic trend */}
-        <Panel className="flex min-w-0 flex-col">
-          <PanelHeader
-            title={t("每日流量趋势")}
-            description={t("所选时间范围内的全站每日流量消耗趋势。")}
-            actions={
-              sparklineValues.length >= 2 ? (
-                <div className="w-36">
-                  <Sparkline values={sparklineValues} tone="accent" height={28} />
-                </div>
-              ) : undefined
-            }
-          />
-          {dailyQuery.isLoading ? (
-            <PanelBody>
-              <LoadingState label={t("正在加载每日流量...")} />
-            </PanelBody>
-          ) : null}
-          {dailyQuery.isError ? (
-            <PanelBody>
-              <ErrorState
-                message={formatApiErrorMessage(dailyQuery.error, t)}
-                onRetry={() => void dailyQuery.refetch()}
-              />
-            </PanelBody>
-          ) : null}
-          {showDaily && dailyItems.length === 0 ? (
-            <PanelBody>
-              <EmptyState
-                title={t("暂无每日流量数据")}
-                hint={t("所选时间窗口内未记录到流量数据。")}
-              />
-            </PanelBody>
-          ) : null}
-          {showDaily && dailyItems.length > 0 ? (
-            <TableWrap aria-busy={dailyQuery.isFetching}>
-              <Table className="min-w-[480px]">
-                <THead>
-                  <TR>
-                    <TH>{t("日期")}</TH>
-                    <TH className="text-right">{t("入站流量")}</TH>
-                    <TH className="text-right">{t("出站流量")}</TH>
-                    <TH className="text-right">{t("合计流量")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {dailyItems.map((day) => (
-                    <TR key={day.day_ns}>
-                      <TDClip className="readout whitespace-nowrap text-xs">
-                        {formatNsDate(day.day_ns)}
-                      </TDClip>
-                      <TDNum className="whitespace-nowrap text-xs text-ink-soft">
-                        <span className="readout">{trafficReadout(day.ingress_bytes)}</span>
-                      </TDNum>
-                      <TDNum className="whitespace-nowrap text-xs text-ink-soft">
-                        <span className="readout">{trafficReadout(day.egress_bytes)}</span>
-                      </TDNum>
-                      <TDNum className="whitespace-nowrap text-xs">
-                        <span className="readout">{trafficReadout(day.total_bytes)}</span>
-                      </TDNum>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </TableWrap>
-          ) : null}
-          {showDaily && dailyItems.length > 0 ? (
-            <PanelFooter>
-              <p className="text-xs text-ink-soft">
-                {t("共 {{count}} 天", { count: dailyItems.length })}
-              </p>
-            </PanelFooter>
-          ) : null}
-        </Panel>
+      <WorkSurface
+        eyebrow="Customers / daily evidence"
+        title={t("每日流量趋势")}
+        meta={dailyQuery.data ? t("共 {{count}} 天", { count: dailyItems.length }) : t("未加载")}
+        description={t("按日期展开接口返回的入站、出站和合计流量；不在缺少数据时绘制趋势。")}
+      >
+        {dailyQuery.isError && !dailyQuery.data ? <QueryFailure query={dailyQuery} t={t} retry={() => void dailyQuery.refetch()} /> : null}
+        {dailyQuery.isLoading && !dailyQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载每日流量...")}</div> : null}
+        {!dailyQuery.isLoading && !dailyQuery.isError && dailyItems.length === 0 ? <EmptyWorkState title={t("暂无每日流量数据")} detail={t("所选时间窗口内未记录到流量数据。" )} /> : null}
+        {dailyItems.length ? <ObjectList>{dailyItems.map((day) => <ObjectRow key={day.day_ns} leading={<span className="cp-platform-row__mark" aria-hidden>DAY</span>} title={formatNsDate(day.day_ns)} subtitle={t("每日流量证据")} facts={<><span>{t("入站")} <span className="readout">{trafficReadout(day.ingress_bytes)}</span></span><span>{t("出站")} <span className="readout">{trafficReadout(day.egress_bytes)}</span></span><span>{t("合计")} <span className="readout">{trafficReadout(day.total_bytes)}</span></span></>} status={<QueryBadge label={t("已记录")} tone="signal" />} />)}</ObjectList> : null}
+      </WorkSurface>
 
-        {/* User usage ranking: the closest thing to a tenant detail ledger the API carries. */}
-        <Panel className="flex min-w-0 flex-col">
-          <PanelHeader
-            title={t("用户用量排行")}
-            description={t("统计所选时间窗口内流量消耗最高的用户（前 50 名）。")}
-          />
-          {usersQuery.isLoading ? (
-            <PanelBody>
-              <LoadingState label={t("正在加载用户用量排行...")} />
-            </PanelBody>
-          ) : null}
-          {usersQuery.isError ? (
-            <PanelBody>
-              <ErrorState
-                message={formatApiErrorMessage(usersQuery.error, t)}
-                onRetry={() => void usersQuery.refetch()}
-              />
-            </PanelBody>
-          ) : null}
-          {showUsers && userItems.length === 0 ? (
-            <PanelBody>
-              <EmptyState
-                title={t("暂无用户用量数据")}
-                hint={t("所选时间窗口内未记录到用户流量。")}
-              />
-            </PanelBody>
-          ) : null}
-          {showUsers && userItems.length > 0 ? (
-            <TableWrap aria-busy={usersQuery.isFetching}>
-              <Table className="min-w-[720px]">
-                <THead>
-                  <TR>
-                    <TH>{t("用户名")}</TH>
-                    <TH>{t("套餐")}</TH>
-                    <TH className="text-right">{t("入站流量")}</TH>
-                    <TH className="text-right">{t("出站流量")}</TH>
-                    <TH className="text-right">{t("合计流量")}</TH>
-                    <TH className="text-right">{t("周期用量")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {userItems.map((u) => (
-                    <TR key={u.user_id}>
-                      <TDClip className="font-medium text-ink">{u.username}</TDClip>
-                      <TDClip className="text-xs text-ink-soft">
-                        {u.plan_name || "-"}
-                      </TDClip>
-                      <TDNum className="whitespace-nowrap text-xs text-ink-soft">
-                        <span className="readout">{trafficReadout(u.ingress_bytes)}</span>
-                      </TDNum>
-                      <TDNum className="whitespace-nowrap text-xs text-ink-soft">
-                        <span className="readout">{trafficReadout(u.egress_bytes)}</span>
-                      </TDNum>
-                      <TDNum className="whitespace-nowrap text-xs">
-                        <span className="readout">{trafficReadout(u.total_bytes)}</span>
-                      </TDNum>
-                      <TDNum className="whitespace-nowrap text-xs">
-                        <span className="readout">
-                          {formatBytes(u.period_used_bytes)} /{" "}
-                          {u.traffic_bytes > 0
-                            ? formatBytes(u.traffic_bytes)
-                            : t("不限")}
-                        </span>
-                      </TDNum>
-                    </TR>
-                  ))}
-                </TBody>
-              </Table>
-            </TableWrap>
-          ) : null}
-          {showUsers && userItems.length > 0 ? (
-            <PanelFooter>
-              <p className="text-xs text-ink-soft">
-                {t("共 {{count}} 名用户", { count: userItems.length })}
-              </p>
-            </PanelFooter>
-          ) : null}
-        </Panel>
+      <WorkSurface
+        eyebrow="Customers / account ranking"
+        title={t("用户用量排行")}
+        meta={usersQuery.data ? t("共 {{count}} 名用户", { count: userItems.length }) : t("未加载")}
+        description={t("统计所选时间窗口内流量消耗最高的用户，最多显示前 50 名。")}
+      >
+        {usersQuery.isError && !usersQuery.data ? <QueryFailure query={usersQuery} t={t} retry={() => void usersQuery.refetch()} /> : null}
+        {usersQuery.isLoading && !usersQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载用户用量排行...")}</div> : null}
+        {!usersQuery.isLoading && !usersQuery.isError && userItems.length === 0 ? <EmptyWorkState title={t("暂无用户用量数据")} detail={t("所选时间窗口内未记录到用户流量。" )} /> : null}
+        {userItems.length ? <ObjectList>{userItems.map((user) => <ObjectRow key={user.user_id} leading={<span className="cp-platform-row__mark" aria-hidden>USR</span>} title={user.username || user.user_id} subtitle={user.plan_name || t("无活跃订阅")} facts={<><span>{t("入站")} <span className="readout">{trafficReadout(user.ingress_bytes)}</span></span><span>{t("出站")} <span className="readout">{trafficReadout(user.egress_bytes)}</span></span><span>{t("合计")} <span className="readout">{trafficReadout(user.total_bytes)}</span></span><span>{t("周期用量")} <span className="readout">{formatTraffic(user.period_used_bytes)} / {user.traffic_bytes > 0 ? formatTraffic(user.traffic_bytes) : t("不限")}</span></span></>} status={<QueryBadge label={user.expires_at_ns > 0 ? formatNsDate(user.expires_at_ns) : t("未提供")} />} />)}</ObjectList> : null}
+      </WorkSurface>
 
-        {/* Two smaller distributions side by side */}
-        <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
-          {/* Platform usage distribution */}
-          <Panel className="flex min-w-0 flex-col">
-            <PanelHeader
-              title={t("平台用量分布")}
-              description={t("各平台在所选时间窗口内的流量分发情况。")}
-            />
-            {platformsQuery.isLoading ? (
-              <PanelBody>
-                <LoadingState label={t("正在加载平台用量...")} />
-              </PanelBody>
-            ) : null}
-            {platformsQuery.isError ? (
-              <PanelBody>
-                <ErrorState
-                  message={formatApiErrorMessage(platformsQuery.error, t)}
-                  onRetry={() => void platformsQuery.refetch()}
-                />
-              </PanelBody>
-            ) : null}
-            {showPlatforms && platformItems.length === 0 ? (
-              <PanelBody>
-                <EmptyState
-                  title={t("暂无平台用量数据")}
-                  hint={t("所选时间窗口内未记录到平台流量。")}
-                />
-              </PanelBody>
-            ) : null}
-            {showPlatforms && platformItems.length > 0 ? (
-              <TableWrap aria-busy={platformsQuery.isFetching}>
-                <Table>
-                  <THead>
-                    <TR>
-                      <TH>{t("平台标识")}</TH>
-                      <TH>{t("平台名称")}</TH>
-                      <TH className="text-right">{t("合计流量")}</TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {platformItems.map((p) => (
-                      <TR key={p.platform_id}>
-                        <TDClip className="readout text-xs" title={p.platform_id}>
-                          {p.platform_id}
-                        </TDClip>
-                        <TDClip className="font-medium text-ink">
-                          {p.platform_name || p.platform_id}
-                        </TDClip>
-                        <TDNum className="whitespace-nowrap text-xs">
-                          <span className="readout">{trafficReadout(p.total_bytes)}</span>
-                        </TDNum>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              </TableWrap>
-            ) : null}
-            {showPlatforms && platformItems.length > 0 ? (
-              <PanelFooter>
-                <p className="text-xs text-ink-soft">
-                  {t("共 {{count}} 个平台", { count: platformItems.length })}
-                </p>
-              </PanelFooter>
-            ) : null}
-          </Panel>
-
-          {/* Plan usage distribution: what each plan carries, not what one account did. */}
-          <Panel className="flex min-w-0 flex-col">
-            <PanelHeader
-              title={t("套餐用量分布")}
-              description={t("每个套餐当前承载的账号数与流量占用。")}
-            />
-            {plansQuery.isLoading ? (
-              <PanelBody>
-                <LoadingState label={t("正在加载套餐用量...")} />
-              </PanelBody>
-            ) : null}
-            {plansQuery.isError ? (
-              <PanelBody>
-                <ErrorState
-                  message={formatApiErrorMessage(plansQuery.error, t)}
-                  onRetry={() => void plansQuery.refetch()}
-                />
-              </PanelBody>
-            ) : null}
-            {showPlans && planItems.length === 0 ? (
-              <PanelBody>
-                <EmptyState
-                  title={t("暂无套餐用量数据")}
-                  hint={t("所选时间窗口内没有套餐承载流量。")}
-                />
-              </PanelBody>
-            ) : null}
-            {showPlans && planItems.length > 0 ? (
-              <TableWrap aria-busy={plansQuery.isFetching}>
-                <Table>
-                  <THead>
-                    <TR>
-                      <TH>{t("套餐")}</TH>
-                      <TH className="text-right">{t("订阅账号")}</TH>
-                      <TH className="text-right">{t("窗口流量")}</TH>
-                      <TH className="text-right">{t("本周期已用")}</TH>
-                    </TR>
-                  </THead>
-                  <TBody>
-                    {planItems.map((p) => (
-                      <TR key={p.plan_id || "unsubscribed"}>
-                        <TDClip className="font-medium text-ink">
-                          {p.plan_name || t("无活跃订阅")}
-                        </TDClip>
-                        <TDNum className="whitespace-nowrap text-xs">
-                          <span className="readout">{p.subscribers}</span>
-                        </TDNum>
-                        <TDNum className="whitespace-nowrap text-xs">
-                          <span className="readout">{trafficReadout(p.total_bytes)}</span>
-                        </TDNum>
-                        <TDNum className="whitespace-nowrap text-xs">
-                          <span className="readout">{trafficReadout(p.period_bytes)}</span>
-                        </TDNum>
-                      </TR>
-                    ))}
-                  </TBody>
-                </Table>
-              </TableWrap>
-            ) : null}
-            {showPlans && planItems.length > 0 ? (
-              <PanelFooter>
-                <p className="text-xs text-ink-soft">
-                  {t("共 {{count}} 个套餐", { count: planItems.length })}
-                </p>
-              </PanelFooter>
-            ) : null}
-          </Panel>
-        </div>
-
-        {/* Usage anomaly alerts: what the detector flagged, and the queue to clear. */}
-        <Panel className="flex min-w-0 flex-col">
-          <PanelHeader
-            title={t("异常告警")}
-            description={t(
-              "用量异常检测结果，按检测时间倒序排列，最多显示最近 {{limit}} 条。",
-              { limit: ALERT_LIST_LIMIT },
-            )}
-            meta={
-              <span className="inline-flex shrink-0 items-center gap-2">
-                <span
-                  aria-hidden
-                  className={
-                    unacknowledgedCount > 0 ? "state-dot state-dot--warn" : "state-dot"
-                  }
-                />
-                <span className="state-text">
-                  {t("未确认 {{count}} 条", { count: unacknowledgedCount })}
-                </span>
-              </span>
-            }
-          />
-          <PanelToolbar>
-            <span className="text-xs text-ink-soft">
-              {unacknowledgedOnly ? t("仅显示未确认") : t("全部告警")}
-            </span>
-            <Switch
-              aria-label={unacknowledgedOnly ? t("仅显示未确认") : t("全部告警")}
-              checked={unacknowledgedOnly}
-              onCheckedChange={setUnacknowledgedOnly}
-            />
-            <Button
-              variant="secondary"
-              size="sm"
-              className="ml-auto"
-              onClick={() => void alertsQuery.refetch()}
-              disabled={alertsQuery.isFetching}
-              title={t("刷新")}
-            >
-              <RefreshCw
-                size={14}
-                className={alertsQuery.isFetching ? "animate-spin" : undefined}
-              />
-              <span>{t("刷新")}</span>
-            </Button>
-          </PanelToolbar>
-          {alertsQuery.isLoading ? (
-            <PanelBody>
-              <LoadingState label={t("正在加载异常告警...")} />
-            </PanelBody>
-          ) : null}
-          {alertsQuery.isError ? (
-            <PanelBody>
-              <ErrorState
-                message={formatApiErrorMessage(alertsQuery.error, t)}
-                onRetry={() => void alertsQuery.refetch()}
-              />
-            </PanelBody>
-          ) : null}
-          {showAlerts && alertItems.length === 0 ? (
-            <PanelBody>
-              <EmptyState
-                title={unacknowledgedOnly ? t("暂无未确认告警") : t("暂无异常告警")}
-                hint={
-                  unacknowledgedOnly
-                    ? t("所有已检测到的用量异常均已确认。")
-                    : t("用量检测尚未发现异常。")
-                }
-              />
-            </PanelBody>
-          ) : null}
-          {showAlerts && alertItems.length > 0 ? (
-            <TableWrap aria-busy={alertsQuery.isFetching}>
-              <Table className="min-w-[860px]">
-                <THead>
-                  <TR>
-                    <TH>{t("检测时间")}</TH>
-                    <TH>{t("账号")}</TH>
-                    <TH>{t("套餐")}</TH>
-                    <TH className="text-right">{t("检测窗口")}</TH>
-                    <TH className="text-right">{t("阈值比例")}</TH>
-                    <TH className="text-right">{t("已用 / 额度")}</TH>
-                    <TH>{t("状态")}</TH>
-                    <TH className="text-right">{t("操作")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
-                  {alertItems.map((alert) => {
-                    const acknowledged = alert.acknowledged_at_ns > 0;
-                    const acknowledging =
-                      acknowledgeMutation.isPending && acknowledgeMutation.variables === alert.id;
-                    return (
-                      <TR key={alert.id}>
-                        <TDClip className="readout whitespace-nowrap text-xs">
-                          {formatNsDateTime(alert.detected_at_ns)}
-                        </TDClip>
-                        <TDClip className="text-ink">
-                          <span className="font-semibold">
-                            {alert.username || alert.user_id}
-                          </span>
-                          {alert.username ? (
-                            <span className="ml-1.5 readout text-xs text-ink-faint">
-                              {alert.user_id}
-                            </span>
-                          ) : null}
-                        </TDClip>
-                        <TDClip className="text-xs text-ink-soft">
-                          {alert.plan_name || t("无活跃订阅")}
-                        </TDClip>
-                        <TDNum className="whitespace-nowrap text-xs text-ink-soft">
-                          {t("{{minutes}} 分钟", { minutes: alert.window_minutes })}
-                        </TDNum>
-                        <TDNum className="whitespace-nowrap text-xs text-ink-soft">
-                          {formatThresholdRatio(alert.threshold_ratio)}
-                        </TDNum>
-                        <TDNum className="whitespace-nowrap text-xs">
-                          <span className="readout">
-                            {formatBytes(alert.used_bytes)} /{" "}
-                            {alert.quota_bytes > 0
-                              ? formatBytes(alert.quota_bytes)
-                              : t("不限")}
-                          </span>
-                        </TDNum>
-                        <TD className="whitespace-nowrap">
-                          <span className="inline-flex items-center gap-2">
-                            <span
-                              aria-hidden
-                              className={
-                                acknowledged ? "state-dot" : "state-dot state-dot--warn"
-                              }
-                            />
-                            <span className="state-text">
-                              {acknowledged ? t("已确认") : t("未确认")}
-                            </span>
-                          </span>
-                        </TD>
-                        <TD className="text-right">
-                          {acknowledged ? (
-                            <span className="text-xs text-ink-faint">-</span>
-                          ) : (
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              loading={acknowledging}
-                              onClick={() => acknowledgeMutation.mutate(alert.id)}
-                              title={t("确认告警")}
-                            >
-                              <Check size={14} />
-                              <span>{t("确认")}</span>
-                            </Button>
-                          )}
-                        </TD>
-                      </TR>
-                    );
-                  })}
-                </TBody>
-              </Table>
-            </TableWrap>
-          ) : null}
-          {showAlerts && alertItems.length > 0 ? (
-            <PanelFooter>
-              <p className="text-xs text-ink-soft">
-                {t("共 {{count}} 条", { count: alertItems.length })}
-              </p>
-            </PanelFooter>
-          ) : null}
-        </Panel>
+      <div className="cp-split">
+        <WorkSurface eyebrow="Customers / platform distribution" title={t("平台用量分布")} meta={platformsQuery.data ? t("共 {{count}} 个平台", { count: platformItems.length }) : t("未加载")} description={t("各平台在所选时间窗口内的真实流量分发。")}>
+          {platformsQuery.isError && !platformsQuery.data ? <QueryFailure query={platformsQuery} t={t} retry={() => void platformsQuery.refetch()} /> : null}
+          {platformsQuery.isLoading && !platformsQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载平台用量...")}</div> : null}
+          {!platformsQuery.isLoading && !platformsQuery.isError && platformItems.length === 0 ? <EmptyWorkState title={t("暂无平台用量数据")} detail={t("所选时间窗口内未记录到平台流量。" )} /> : null}
+          {platformItems.length ? <ObjectList>{platformItems.map((platform) => <ObjectRow key={platform.platform_id} leading={<span className="cp-platform-row__mark" aria-hidden>PLT</span>} title={platform.platform_name || platform.platform_id} subtitle={platform.platform_id} facts={<span>{t("合计流量")} <span className="readout">{trafficReadout(platform.total_bytes)}</span></span>} status={<QueryBadge label={t("已记录")} tone="signal" />} />)}</ObjectList> : null}
+        </WorkSurface>
+        <WorkSurface eyebrow="Customers / plan distribution" title={t("套餐用量分布")} meta={plansQuery.data ? t("共 {{count}} 个套餐", { count: planItems.length }) : t("未加载")} description={t("每个套餐当前承载的账号数与流量占用。") }>
+          {plansQuery.isError && !plansQuery.data ? <QueryFailure query={plansQuery} t={t} retry={() => void plansQuery.refetch()} /> : null}
+          {plansQuery.isLoading && !plansQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载套餐用量...")}</div> : null}
+          {!plansQuery.isLoading && !plansQuery.isError && planItems.length === 0 ? <EmptyWorkState title={t("暂无套餐用量数据")} detail={t("所选时间窗口内没有套餐承载流量。" )} /> : null}
+          {planItems.length ? <ObjectList>{planItems.map((plan) => <ObjectRow key={plan.plan_id || "unsubscribed"} leading={<span className="cp-platform-row__mark" aria-hidden>PLN</span>} title={plan.plan_name || t("无活跃订阅")} subtitle={t("{{count}} 个订阅账号", { count: plan.subscribers })} facts={<><span>{t("窗口流量")} <span className="readout">{trafficReadout(plan.total_bytes)}</span></span><span>{t("本周期已用")} <span className="readout">{trafficReadout(plan.period_bytes)}</span></span></>} status={<QueryBadge label={t("已记录")} tone="signal" />} />)}</ObjectList> : null}
+        </WorkSurface>
       </div>
-    </Page>
+
+      <WorkSurface
+        eyebrow="Customers / anomaly queue"
+        title={t("异常告警")}
+        meta={alertsQuery.data ? t("未确认 {{count}} 条", { count: unacknowledgedCount }) : t("未加载")}
+        description={t("用量异常检测结果按检测时间倒序排列，最多显示最近 {{limit}} 条。", { limit: ALERT_LIST_LIMIT })}
+      >
+        <CommandSurface actions={<ControlButton variant="secondary" size="sm" onPress={() => void alertsQuery.refetch()} loading={alertsQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>}>
+          <ControlSwitch label={t("仅显示未确认")} hint={unacknowledgedOnly ? t("当前只读取开放告警。") : t("当前同时读取已确认告警。")} isSelected={unacknowledgedOnly} onChange={setUnacknowledgedOnly} />
+        </CommandSurface>
+        {alertsQuery.isError && !alertsQuery.data ? <QueryFailure query={alertsQuery} t={t} retry={() => void alertsQuery.refetch()} /> : null}
+        {alertsQuery.isLoading && !alertsQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载异常告警...")}</div> : null}
+        {!alertsQuery.isLoading && !alertsQuery.isError && alertItems.length === 0 ? <EmptyWorkState title={unacknowledgedOnly ? t("暂无未确认告警") : t("暂无异常告警")} detail={unacknowledgedOnly ? t("所有已检测到的用量异常均已确认。") : t("用量检测尚未发现异常。")} /> : null}
+        {alertItems.length ? <ObjectList>{alertItems.map((alert) => {
+          const acknowledged = alert.acknowledged_at_ns > 0;
+          const acknowledging = acknowledgeMutation.isPending && acknowledgeMutation.variables === alert.id;
+          return <ObjectRow key={alert.id} leading={<span className="cp-platform-row__mark" aria-hidden>ALT</span>} title={alert.username || alert.user_id} subtitle={`${formatNsDateTime(alert.detected_at_ns)} · ${alert.plan_name || t("无活跃订阅")}`} facts={<><span>{t("检测窗口")} {alert.window_minutes} {t("分钟")}</span><span>{t("阈值比例")} {formatThresholdRatio(alert.threshold_ratio)}</span><span>{t("已用 / 额度")} {formatTraffic(alert.used_bytes)} / {alert.quota_bytes > 0 ? formatTraffic(alert.quota_bytes) : t("不限")}</span></>} status={<StatusMark tone={acknowledged ? "signal" : "warn"} label={acknowledged ? t("已确认") : t("未确认")} />} action={acknowledged ? <QueryBadge label={t("已确认")} /> : <ControlButton variant="secondary" size="sm" onPress={() => acknowledgeMutation.mutate(alert.id)} loading={acknowledging}><Check size={14} aria-hidden />{t("确认")}</ControlButton>} />;
+        })}</ObjectList> : null}
+      </WorkSurface>
+    </PageFrame>
   );
 }
+
+export default UsagePage;

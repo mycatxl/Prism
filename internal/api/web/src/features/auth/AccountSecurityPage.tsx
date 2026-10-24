@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
 import { KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Button } from "../../components/ui/Button";
-import { Fieldset, Input, Textarea } from "../../components/ui/Input";
-import { Page, PageHeader } from "../../components/ui/PageHeader";
-import { ErrorState } from "../../components/ui/QueryState";
-import { Panel, PanelBody, PanelHeader } from "../../components/ui/Panel";
+import {
+  ControlButton,
+  ControlInput,
+  ControlTextarea,
+  PageFrame,
+  QueryBadge,
+  StatusMark,
+  WorkSurface,
+} from "../../components/control-plane";
 import { useI18n } from "../../i18n";
 import { apiRequest, ApiError, fetchSession } from "../../lib/api-client";
 import { useAuthStore, clearSession, setSession, type SessionInfo } from "./auth-store";
@@ -53,10 +57,6 @@ export function AccountSecurityPage() {
   const [totpCode, setTotpCode] = useState("");
   const [totpError, setTotpError] = useState("");
   const [totpMessage, setTotpMessage] = useState("");
-  // Removing the factor turns two credentials back into one, so the endpoint
-  // behind the button requires the current password. Collecting it here is the
-  // whole of the console's half: the server does the comparison, and a session
-  // cookie on its own cannot perform the downgrade.
   const [disablePassword, setDisablePassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [enrolPromptSpent, setEnrolPromptSpent] = useState(false);
@@ -64,22 +64,12 @@ export function AccountSecurityPage() {
   const user = session.user;
   const hasTotp = user?.has_totp === true;
 
-  /*
-   * The `?enrol=1` flag is a one-shot prompt (RequireAuth sends a user whose
-   * account still owes a TOTP enrolment here). It must be spent exactly once:
-   * when this effect keyed off `enrolment` and the cancel button only cleared
-   * that state, the URL still said `enrol=1`, the condition came straight back
-   * and every cancel issued another POST /auth/totp/enrol — leaving a trail of
-   * pending secrets on the server. `enrolPromptSpent` consumes the flag, and
-   * cancelling also drops the flag from the URL so the panel stays closed.
-   */
   useEffect(() => {
     if (searchParams.get("enrol") !== "1" || hasTotp || enrolPromptSpent) return;
     setEnrolPromptSpent(true);
     void startEnrolment();
-  // `startEnrolment` is redefined every render; the guard above is what makes the
-  // call once-only, not the dependency list.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // `startEnrolment` is intentionally guarded by the one-shot URL state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, hasTotp, enrolPromptSpent]);
 
   async function startEnrolment() {
@@ -96,7 +86,6 @@ export function AccountSecurityPage() {
     }
   }
 
-  /** Drops the one-shot `?enrol=1` prompt so the effect above cannot fire again. */
   function clearEnrolFlag() {
     if (searchParams.get("enrol") === null) return;
     const next = new URLSearchParams(searchParams);
@@ -104,7 +93,6 @@ export function AccountSecurityPage() {
     setSearchParams(next, { replace: true });
   }
 
-  /** Closes the panel for good: no new pending secret, no surviving URL flag. */
   function cancelEnrolment() {
     setEnrolment(null);
     setTotpCode("");
@@ -138,11 +126,6 @@ export function AccountSecurityPage() {
     }
   }
 
-  /*
-   * The current password goes with the request every time: the endpoint refuses
-   * without it, and a refusal here is shown in the panel rather than treated as
-   * a broken session.
-   */
   async function disableTotp() {
     setTotpError("");
     setTotpMessage("");
@@ -187,110 +170,84 @@ export function AccountSecurityPage() {
     }
   }
 
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   return (
-    <Page>
-      <PageHeader
-        title={t("账户安全")}
-        description={t("管理密码与双因素认证，保护控制台访问。")}
-        meta={<span className="readout text-xs text-ink-soft">{user.username}</span>}
-      />
+    <PageFrame
+      eyebrow="Account / security"
+      title={t("账户安全")}
+      description={t("管理密码与双因素认证，保护控制台访问。")}
+      meta={<QueryBadge label={user.username} tone="neutral" />}
+    >
+      <div className="workbench-layout">
+        <WorkSurface
+          eyebrow="Credential policy"
+          title={t("修改密码")}
+          description={t("修改后，账户的所有现有会话都会立即失效。")}
+          actions={<StatusMark tone="warn" label={t("修改后需要重新登录")} />}
+        >
+          <form className="cp-form-stack" onSubmit={(event) => { event.preventDefault(); void changePassword(); }}>
+            <ControlInput label={t("当前密码")} type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+            <ControlInput label={t("新密码")} hint={t("至少 12 个字符。")} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            <ControlInput label={t("确认新密码")} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+            {passwordError ? <p role="alert" className="cp-form-error">{passwordError}</p> : null}
+            {passwordMessage ? <p role="status" className="cp-form-success">{passwordMessage}</p> : null}
+            <div className="cp-drawer-actions">
+              <ControlButton type="submit" variant="primary" size="sm" isDisabled={busy || !currentPassword || !newPassword || !confirmPassword} loading={busy}>
+                <KeyRound size={14} aria-hidden />
+                {t("更新密码")}
+              </ControlButton>
+            </div>
+          </form>
+        </WorkSurface>
 
-      <div className="mx-auto grid w-full max-w-5xl gap-4 py-4 lg:grid-cols-2">
-        <Panel>
-          <PanelHeader title={t("修改密码")} description={t("修改后，账户的所有现有会话都会立即失效。")} />
-          <PanelBody className="space-y-4">
-            <Fieldset label={t("当前密码")} htmlFor="current-password">
-              <Input id="current-password" type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
-            </Fieldset>
-            <Fieldset label={t("新密码")} hint={t("至少 12 个字符。")} htmlFor="new-password">
-              <Input id="new-password" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-            </Fieldset>
-            <Fieldset label={t("确认新密码")} htmlFor="confirm-password">
-              <Input id="confirm-password" type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
-            </Fieldset>
-            {passwordError ? <ErrorState message={passwordError} /> : null}
-            {passwordMessage ? <p role="status" className="text-sm text-signal">{passwordMessage}</p> : null}
-            <Button variant="primary" onClick={() => void changePassword()} disabled={busy || !currentPassword || !newPassword || !confirmPassword}>
-              <KeyRound size={14} aria-hidden />
-              {t("更新密码")}
-            </Button>
-          </PanelBody>
-        </Panel>
-
-        <Panel>
-          <PanelHeader title={t("双因素认证")} description={t("使用身份验证器为登录增加一次性验证码。")} />
-          <PanelBody className="space-y-4">
-            {hasTotp ? (
-              <>
-                <div className="flex items-start gap-3 rounded-card-sm border border-signal/30 bg-signal-wash p-3 text-sm text-ink-soft">
-                  <ShieldCheck size={18} className="mt-0.5 shrink-0 text-signal" aria-hidden />
-                  <div>
-                    <p className="font-medium text-ink">{t("双因素认证已启用")}</p>
-                    <p className="mt-1 text-xs leading-relaxed">{t("每次登录都需要身份验证器生成的 6 位验证码。")}</p>
+        <WorkSurface
+          eyebrow="Authenticator"
+          title={t("双因素认证")}
+          description={t("使用身份验证器为登录增加一次性验证码。")}
+          actions={<StatusMark tone={hasTotp ? "signal" : "warn"} label={hasTotp ? t("已启用") : t("未启用")} />}
+        >
+          {hasTotp ? (
+            <div className="cp-stack">
+              <div className="cp-notice cp-notice--signal">
+                <ShieldCheck size={18} aria-hidden />
+                <div><strong>{t("双因素认证已启用")}</strong><p>{t("每次登录都需要身份验证器生成的 6 位验证码。")}</p></div>
+              </div>
+              {totpError ? <p role="alert" className="cp-form-error">{totpError}</p> : null}
+              <ControlInput label={t("当前密码")} hint={t("关闭双因素认证需要确认当前密码。") } type="password" autoComplete="current-password" value={disablePassword} onChange={(event) => setDisablePassword(event.target.value)} />
+              <ControlButton variant="secondary" size="sm" onPress={() => void disableTotp()} isDisabled={busy || !disablePassword} loading={busy}>
+                <ShieldOff size={14} aria-hidden />
+                {t("停用双因素认证")}
+              </ControlButton>
+            </div>
+          ) : (
+            <div className="cp-stack">
+              <p className="cp-muted">{t("尚未启用双因素认证。管理员可以在这里生成身份验证器配置并确认。")}</p>
+              {enrolment ? (
+                <div className="cp-inset-stack">
+                  <ControlTextarea label={t("身份验证器配置 URI")} readOnly value={enrolment.uri} rows={3} className="font-mono" />
+                  <ControlInput label={t("手动设置密钥")} readOnly value={enrolment.secret} className="font-mono" />
+                  <ControlInput label={t("确认验证码")} hint={t("在身份验证器中添加账户后，输入当前显示的 6 位验证码。") } inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={totpCode} onChange={(event) => setTotpCode(event.target.value)} className="font-mono" />
+                  {totpError ? <p role="alert" className="cp-form-error">{totpError}</p> : null}
+                  <div className="cp-drawer-actions">
+                    <ControlButton variant="primary" size="sm" onPress={() => void confirmEnrolment()} isDisabled={busy || !totpCode} loading={busy}>{t("确认并启用")}</ControlButton>
+                    <ControlButton variant="ghost" size="sm" onPress={cancelEnrolment} isDisabled={busy}>{t("取消")}</ControlButton>
                   </div>
                 </div>
-                {totpError ? <ErrorState message={totpError} /> : null}
-                <Fieldset
-                  label={t("当前密码")}
-                  hint={t("关闭双因素认证需要确认当前密码。")}
-                  htmlFor="disable-current-password"
-                >
-                  <Input
-                    id="disable-current-password"
-                    type="password"
-                    autoComplete="current-password"
-                    value={disablePassword}
-                    onChange={(event) => setDisablePassword(event.target.value)}
-                  />
-                </Fieldset>
-                <Button variant="secondary" onClick={() => void disableTotp()} disabled={busy || !disablePassword}>
-                  <ShieldOff size={14} aria-hidden />
-                  {t("停用双因素认证")}
-                </Button>
-              </>
-            ) : (
-              <>
-                <p className="text-sm leading-relaxed text-ink-soft">{t("尚未启用双因素认证。管理员可以在这里生成身份验证器配置并确认。")}</p>
-                {enrolment ? (
-                  <div className="space-y-4 rounded-card-sm border border-rule bg-paper-inset p-3">
-                    <Fieldset label={t("身份验证器配置 URI")} htmlFor="totp-uri">
-                      <Textarea id="totp-uri" readOnly value={enrolment.uri} className="font-mono text-xs" rows={3} />
-                    </Fieldset>
-                    <Fieldset label={t("手动设置密钥")} htmlFor="totp-secret">
-                      <Input id="totp-secret" readOnly value={enrolment.secret} className="font-mono tracking-[0.12em]" />
-                    </Fieldset>
-                    <Fieldset label={t("确认验证码")} hint={t("在身份验证器中添加账户后，输入当前显示的 6 位验证码。")} htmlFor="totp-code">
-                      <Input id="totp-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={totpCode} onChange={(event) => setTotpCode(event.target.value)} className="font-mono tracking-[0.25em]" />
-                    </Fieldset>
-                    {totpError ? <ErrorState message={totpError} /> : null}
-                    <div className="flex flex-wrap gap-2">
-                      <Button variant="primary" onClick={() => void confirmEnrolment()} disabled={busy || !totpCode}>
-                        {t("确认并启用")}
-                      </Button>
-                      <Button variant="ghost" onClick={cancelEnrolment} disabled={busy}>
-                        {t("取消")}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {totpError ? <ErrorState message={totpError} /> : null}
-                    {totpMessage ? <p role="status" className="text-sm text-signal">{totpMessage}</p> : null}
-                    <Button variant="primary" onClick={() => void startEnrolment()} disabled={busy}>
-                      <ShieldCheck size={14} aria-hidden />
-                      {t("开始设置双因素认证")}
-                    </Button>
-                  </>
-                )}
-              </>
-            )}
-          </PanelBody>
-        </Panel>
+              ) : (
+                <>
+                  {totpError ? <p role="alert" className="cp-form-error">{totpError}</p> : null}
+                  {totpMessage ? <p role="status" className="cp-form-success">{totpMessage}</p> : null}
+                  <ControlButton variant="primary" size="sm" onPress={() => void startEnrolment()} isDisabled={busy} loading={busy}>
+                    <ShieldCheck size={14} aria-hidden />
+                    {t("开始设置双因素认证")}
+                  </ControlButton>
+                </>
+              )}
+            </div>
+          )}
+        </WorkSurface>
       </div>
-    </Page>
+    </PageFrame>
   );
 }
