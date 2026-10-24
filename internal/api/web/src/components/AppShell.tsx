@@ -197,17 +197,17 @@ export function AppShell() {
   return (
     <div className={cn("cp-shell", isAdmin ? "cp-shell--ops" : "cp-shell--me")} data-tier={isAdmin ? "ops" : "me"}>
       <a className="cp-skip" href="#cp-main">{t("跳到正文")}</a>
-      <aside className="cp-rail" aria-label={railTitle}>
+      <nav className="cp-rail" aria-label={t("主导航")}>
         <RailContent items={navItems} pathname={location.pathname} isAdmin={isAdmin} t={t} />
         <div className="cp-rail__foot">
           <StatusMark tone={status.tone} label={status.label} />
           <span className="cp-rail__version">{version || (online ? "ready" : "offline")}</span>
           <div className="cp-rail__prefs"><LanguageSwitcher collapsed /><ThemeSwitcher /></div>
         </div>
-      </aside>
+      </nav>
 
       <InspectorDrawer open={railOpen} onOpenChange={setRailOpen} title={railTitle} eyebrow="Prism" placement="left">
-        <nav className="cp-mobile-rail" aria-label={railTitle}>
+        <nav className="cp-mobile-rail" aria-label={t("主导航")}>
           <RailContent items={navItems} pathname={location.pathname} isAdmin={isAdmin} t={t} onNavigate={() => setRailOpen(false)} />
         </nav>
       </InspectorDrawer>
