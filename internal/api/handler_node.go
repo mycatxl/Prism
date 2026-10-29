@@ -144,6 +144,14 @@ type nodeListPageResponse struct {
 	Offset                 int                   `json:"offset"`
 	UniqueEgressIPs        int                   `json:"unique_egress_ips"`
 	UniqueHealthyEgressIPs int                   `json:"unique_healthy_egress_ips"`
+	Scanned                int                   `json:"scanned"`
+	HasMore                bool                  `json:"has_more"`
+	HasNext                bool                  `json:"has_next"`
+	HasPrevious            bool                  `json:"has_previous"`
+	NextCursor             string                `json:"next_cursor,omitempty"`
+	PreviousCursor         string                `json:"previous_cursor,omitempty"`
+	UniqueEgressIPsLower   bool                  `json:"unique_egress_ips_lower_bound"`
+	UniqueHealthyIPsLower  bool                  `json:"unique_healthy_egress_ips_lower_bound"`
 }
 
 func countUniqueEgressIPs(nodes []service.NodeSummary) int {
@@ -274,12 +282,6 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 			filters.ProbedSince = &t
 		}
 
-		nodes, err := cp.ListNodes(filters)
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
-
 		sorting, ok := parseSortingOrWriteInvalid(w, r, []string{
 			"tag", "created_at", "failure_count", "region",
 			"purity_score", "latency", "assessed_at",
@@ -287,27 +289,44 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		sortNodeSummaries(nodes, sorting)
 
 		pg, ok := parsePaginationOrWriteInvalid(w, r)
 		if !ok {
 			return
 		}
-		// the node_egress display facts of the page are read in one
-		// batch (never one query per node); the assessment itself already came
-		// from the in-memory projection.
-		page := PaginateSlice(nodes, pg)
-		cp.FillNodeIntelEgress(r.Context(), page)
-		// the per-provider quality evidence of the page, in one batched
-		// query. The assessment itself already came from the projection.
-		cp.FillNodeQualityEvidence(r.Context(), page)
+		queryHash := nodeCursorQueryHash(q)
+		var cursor *nodeListCursor
+		if token := q.Get("cursor"); token != "" {
+			decoded, err := decodeNodeListCursor(token, queryHash, sorting, pg.Limit)
+			if err != nil {
+				writeInvalidArgument(w, err.Error())
+				return
+			}
+			cursor = &decoded
+		}
+
+		page, err := collectNodeListPage(r.Context(), cp, filters, sorting, pg, queryHash, cursor)
+		if err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
+		}
+		cp.FillNodeIntelEgress(r.Context(), page.Items)
+		cp.FillNodeQualityEvidence(r.Context(), page.Items)
 		WriteJSON(w, http.StatusOK, nodeListPageResponse{
-			Items:                  page,
-			Total:                  len(nodes),
+			Items:                  page.Items,
+			Total:                  page.Total,
 			Limit:                  pg.Limit,
-			Offset:                 pg.Offset,
-			UniqueEgressIPs:        countUniqueEgressIPs(nodes),
-			UniqueHealthyEgressIPs: countUniqueHealthyAndEnabledEgressIPs(nodes),
+			Offset:                 page.Offset,
+			UniqueEgressIPs:        page.UniqueEgressIPs,
+			UniqueHealthyEgressIPs: page.UniqueHealthyEgressIPs,
+			Scanned:                page.Scanned,
+			HasMore:                page.HasNext,
+			HasNext:                page.HasNext,
+			HasPrevious:            page.HasPrevious,
+			NextCursor:             page.NextCursor,
+			PreviousCursor:         page.PreviousCursor,
+			UniqueEgressIPsLower:   page.UniqueEgressIPsTruncated,
+			UniqueHealthyIPsLower:  page.UniqueHealthyEgressIPsTruncated,
 		})
 	}
 }

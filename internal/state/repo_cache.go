@@ -1,9 +1,12 @@
 package state
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	"prism/internal/model"
 )
@@ -286,6 +289,102 @@ func (r *CacheRepo) LoadAllSubscriptionNodes() ([]model.SubscriptionNode, error)
 		result = append(result, sn)
 	}
 	return result, rows.Err()
+}
+
+// SubscriptionNodeHash is the bounded selector row used by intel scope
+// expansion. Tags are intentionally omitted because scope matching only needs
+// the stable key and the persisted eviction flag.
+type SubscriptionNodeHash struct {
+	SubscriptionID string
+	NodeHash       string
+	Evicted        bool
+}
+
+// SubscriptionNodeHashPage is one keyset page ordered by
+// (subscription_id, node_hash).
+type SubscriptionNodeHashPage struct {
+	Nodes              []SubscriptionNodeHash
+	LastSubscriptionID string
+	LastNodeHash       string
+	Scanned            int64
+	Complete           bool
+}
+
+// PageSubscriptionNodeHashes reads a bounded keyset page without materializing
+// the subscription_nodes table. The caller owns selector/filter semantics; this
+// method only provides stable persistence traversal.
+func (r *CacheRepo) PageSubscriptionNodeHashes(ctx context.Context, subscriptionIDs []string, afterSubscriptionID, afterNodeHash string, limit int) (SubscriptionNodeHashPage, error) {
+	if limit <= 0 {
+		return SubscriptionNodeHashPage{Complete: true}, nil
+	}
+	ids := make([]string, 0, len(subscriptionIDs))
+	seen := make(map[string]struct{}, len(subscriptionIDs))
+	for _, id := range subscriptionIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return SubscriptionNodeHashPage{Complete: true}, nil
+	}
+	sort.Strings(ids)
+
+	db := r.db
+	if db == nil {
+		return SubscriptionNodeHashPage{}, fmt.Errorf("page subscription nodes: cache database is unavailable")
+	}
+	args := make([]any, 0, len(ids)*2+4)
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	placeholderList := strings.Join(placeholders, ",")
+	query := "SELECT current.subscription_id, current.node_hash, current.evicted FROM subscription_nodes AS current WHERE current.subscription_id IN (" + placeholderList + ")"
+	if strings.TrimSpace(afterSubscriptionID) != "" || strings.TrimSpace(afterNodeHash) != "" {
+		query += " AND (current.subscription_id > ? OR (current.subscription_id = ? AND current.node_hash > ?))"
+		args = append(args, afterSubscriptionID, afterSubscriptionID, afterNodeHash)
+	}
+	// The keyset is ordered by subscription first, but the scope is a union:
+	// an active row from a later selected subscription must not emit a node that
+	// an earlier selected subscription already emitted. Evicted rows do not
+	// suppress a later active row; if every row is evicted, only the earliest
+	// one survives so the caller records one skip rather than many.
+	query += " AND NOT EXISTS (SELECT 1 FROM subscription_nodes AS prior WHERE prior.node_hash = current.node_hash AND prior.subscription_id IN (" + placeholderList + ") AND prior.subscription_id < current.subscription_id AND (current.evicted != 0 OR prior.evicted = 0))"
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	query += " ORDER BY current.subscription_id, current.node_hash LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return SubscriptionNodeHashPage{}, err
+	}
+	defer rows.Close()
+
+	page := SubscriptionNodeHashPage{Nodes: make([]SubscriptionNodeHash, 0, limit)}
+	for rows.Next() {
+		var row SubscriptionNodeHash
+		if err := rows.Scan(&row.SubscriptionID, &row.NodeHash, &row.Evicted); err != nil {
+			return SubscriptionNodeHashPage{}, err
+		}
+		page.Nodes = append(page.Nodes, row)
+		page.Scanned++
+		page.LastSubscriptionID = row.SubscriptionID
+		page.LastNodeHash = row.NodeHash
+	}
+	if err := rows.Err(); err != nil {
+		return SubscriptionNodeHashPage{}, err
+	}
+	page.Complete = len(page.Nodes) < limit
+	return page, nil
 }
 
 // --- internal helpers ---

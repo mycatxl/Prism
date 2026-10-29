@@ -323,11 +323,11 @@ func (s *Service) AutoEnqueueCounters() (created, skipped, dropped, failed int64
 	return s.auto.counters()
 }
 
-// AutoEnqueueSubscriptions creates the automatic jobs of for a batch of
-// subscriptions. It honours intel_enabled (through the job manager) and the
-// per-subscription auto_intel flag, merges the node hashes of one subscription
-// into a single job, and refuses - with a named error - a batch that exceeds the
-// per-job node cap instead of truncating it.
+// AutoEnqueueSubscriptions creates the automatic jobs for a batch of
+// subscriptions. It honours intel_enabled and the per-subscription auto_intel
+// flag. Small refreshes retain their explicit-hash compatibility path; a large
+// refresh becomes one persistent subscription scope and is expanded by the
+// bounded production resolver.
 func (s *Service) AutoEnqueueSubscriptions(ctx context.Context, subs []SubscriptionAutoIntel, autoChecks bool) (int, int, error) {
 	if s == nil || s.manager == nil {
 		return 0, 0, nil
@@ -355,13 +355,19 @@ func (s *Service) AutoEnqueueSubscriptions(ctx context.Context, subs []Subscript
 			skipped++
 			continue
 		}
+		scope := jobs.Scope{NodeHashes: hashes}
 		if len(hashes) > jobs.MaxNodesPerJob {
-			return created, skipped, fmt.Errorf("%w: subscription %s: %d > %d",
-				jobs.ErrTooManyNodes, subID, len(hashes), jobs.MaxNodesPerJob)
+			if !s.manager.SupportsScopePages() {
+				return created, skipped, fmt.Errorf("%w: subscription %s: %d > %d", jobs.ErrTooManyNodes, subID, len(hashes), jobs.MaxNodesPerJob)
+			}
+			// The persisted subscription-node keyset is the source of the
+			// paged parent scope. It avoids copying the whole refresh wave into
+			// jobs.request_json and preserves the 200k per-item safety bound.
+			scope = jobs.Scope{SubscriptionIDs: []string{subID}}
 		}
 		if _, err := s.manager.Create(ctx, jobs.Request{
 			Kind:  kind,
-			Scope: jobs.Scope{NodeHashes: hashes},
+			Scope: scope,
 		}, jobs.CreatedBySubscription(subID), jobs.PrioritySubscription); err != nil {
 			if errors.Is(err, jobs.ErrDisabled) {
 				return created, skipped, ErrAutoEnqueueDisabled

@@ -1031,3 +1031,71 @@ func TestViaNodeBudget_RequiresANodeHash(t *testing.T) {
 		t.Fatal("a via-node consume without a node hash must fail")
 	}
 }
+
+func TestExpandJobScope_CommitsPageAndCursorAtomically(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if err := st.CreateJob(ctx, Job{
+		ID: "paged", Kind: "intel", Status: JobQueued, Priority: 10,
+		RequestJSON: `{"kind":"intel","scope":{"all":true}}`,
+		CreatedBy:   "system", CreatedAtNs: 100, ScopeMode: ScopeModePaged,
+		ScopeComplete: false,
+	}, nil); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	first, err := st.ExpandJobScope(ctx, "paged", ScopeExpansionBatch{
+		Nodes: []string{"node-b", "node-a", "node-b", " "}, Cursor: "cursor-1",
+		Scanned: 4, Matched: 3, Skipped: 1, NowNs: 200, PendingBudget: 8,
+	})
+	if err != nil {
+		t.Fatalf("first expansion: %v", err)
+	}
+	if first.Enqueued != 2 || first.Job.Total != 2 || first.Job.ScopeCursor != "cursor-1" ||
+		first.Job.ScopeComplete || first.Job.ScopeScanned != 4 || first.Job.ScopeMatched != 3 ||
+		first.Job.ScopeEnqueued != 2 || first.Job.ScopeSkipped != 1 {
+		t.Fatalf("first result = %+v", first)
+	}
+
+	second, err := st.ExpandJobScope(ctx, "paged", ScopeExpansionBatch{
+		Nodes: []string{"node-b", "node-c"}, Cursor: "cursor-2", Complete: true,
+		Scanned: 2, Matched: 2, NowNs: 300, PendingBudget: 8,
+	})
+	if err != nil {
+		t.Fatalf("second expansion: %v", err)
+	}
+	if second.Enqueued != 1 || second.Job.Total != 3 || !second.Job.ScopeComplete ||
+		second.Job.ScopeCursor != "cursor-2" || second.Job.ScopeScanned != 6 ||
+		second.Job.ScopeMatched != 5 || second.Job.ScopeEnqueued != 3 || second.Pending != 3 {
+		t.Fatalf("second result = %+v", second)
+	}
+	items, err := st.ListJobItems(ctx, JobItemFilter{JobID: "paged", Limit: 10})
+	if err != nil || len(items) != 3 {
+		t.Fatalf("items = %d (err %v), want 3", len(items), err)
+	}
+}
+
+func TestExpandJobScope_BackpressureDoesNotAdvanceCursor(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	if err := st.CreateJob(ctx, Job{
+		ID: "paged", Kind: "intel", Status: JobQueued, Priority: 10,
+		RequestJSON: `{"kind":"intel"}`, CreatedBy: "system", CreatedAtNs: 100,
+		ScopeMode: ScopeModePaged, ScopeComplete: false,
+	}, []JobItem{{NodeHash: "existing", NextRunAtNs: 100, UpdatedAtNs: 100}}); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	result, err := st.ExpandJobScope(ctx, "paged", ScopeExpansionBatch{
+		Nodes: []string{"new-a", "new-b"}, Cursor: "cursor-1", NowNs: 200, PendingBudget: 2,
+	})
+	if err != nil {
+		t.Fatalf("expansion: %v", err)
+	}
+	if !result.Backpressured || result.Enqueued != 0 || result.Job.ScopeCursor != "" {
+		t.Fatalf("result = %+v, want an unchanged backpressured parent", result)
+	}
+	items, err := st.ListJobItems(ctx, JobItemFilter{JobID: "paged", Limit: 10})
+	if err != nil || len(items) != 1 {
+		t.Fatalf("items = %d (err %v), want 1", len(items), err)
+	}
+}

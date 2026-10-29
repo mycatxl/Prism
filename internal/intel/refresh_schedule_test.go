@@ -2,6 +2,7 @@ package intel
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
 	"reflect"
 	"testing"
@@ -33,13 +34,28 @@ func (c refreshCensus) KnownNodeHashes() map[string]struct{} { return c }
 // newRefreshService assembles a Service whose job manager is never started, so a
 // created job stays queued and a test can inspect it without a worker racing in.
 func newRefreshServiceBare(t *testing.T, now time.Time) (*Service, *store.Store) {
+	return newRefreshService(t, now, false)
+}
+
+func newRefreshServicePaged(t *testing.T, now time.Time) (*Service, *store.Store) {
+	return newRefreshService(t, now, true)
+}
+
+func newRefreshService(t *testing.T, now time.Time, paged bool) (*Service, *store.Store) {
 	t.Helper()
 	st := openIntelStore(t)
+	var scopePage jobs.ScopePageResolver
+	if paged {
+		scopePage = jobs.ScopePageResolverFunc(func(context.Context, jobs.Scope, string, int) (jobs.ScopePage, error) {
+			return jobs.ScopePage{Complete: true}, nil
+		})
+	}
 	svc, err := NewService(Options{
 		Store: st,
 		Scope: jobs.ScopeResolverFunc(func(_ context.Context, scope jobs.Scope) ([]string, error) {
 			return scope.NodeHashes, nil
 		}),
+		ScopePage: scopePage,
 		Config: func() jobs.Config {
 			return jobs.Config{Enabled: true, MaxRunningJobs: 1}.Normalize()
 		},
@@ -59,6 +75,16 @@ func newRefreshServiceBare(t *testing.T, now time.Time) (*Service, *store.Store)
 func newRefreshServiceWithSchedule(t *testing.T, now time.Time) (*Service, *store.Store) {
 	t.Helper()
 	svc, st := newRefreshServiceBare(t, now)
+	svc.EnableRefreshSchedule(RefreshScheduleOptions{
+		Schedule: func() string { return "0 4 * * *" },
+		Logf:     func(string, ...any) {},
+	})
+	return svc, st
+}
+
+func newRefreshServiceWithPagedSchedule(t *testing.T, now time.Time) (*Service, *store.Store) {
+	t.Helper()
+	svc, st := newRefreshServicePaged(t, now)
 	svc.EnableRefreshSchedule(RefreshScheduleOptions{
 		Schedule: func() string { return "0 4 * * *" },
 		Logf:     func(string, ...any) {},
@@ -193,9 +219,9 @@ func TestRefreshScopeDropsNodesThePoolForgot(t *testing.T) {
 	}
 }
 
-// TestRefreshScheduleCreatesTheSystemJob checks the contract of the created
-// job: created_by "system:refresh", priority 10, and the kind the auto-checks
-// switch selects.
+// TestRefreshScheduleCreatesTheSystemJob checks the contract of the paged
+// parent: created_by "system:refresh", priority 10, the selected kind, and a
+// persisted RefreshStale scope with no materialized job items.
 func TestRefreshScheduleCreatesTheSystemJob(t *testing.T) {
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 
@@ -207,7 +233,7 @@ func TestRefreshScheduleCreatesTheSystemJob(t *testing.T) {
 			wantKind = jobs.KindFull
 		}
 		t.Run(name, func(t *testing.T) {
-			svc, st := newRefreshServiceWithSchedule(t, now)
+			svc, st := newRefreshServiceWithPagedSchedule(t, now)
 			seedAllThreeConditions(t, st, now)
 			svc.EnableRefreshSchedule(RefreshScheduleOptions{
 				Schedule:   func() string { return "0 4 * * *" },
@@ -243,13 +269,27 @@ func TestRefreshScheduleCreatesTheSystemJob(t *testing.T) {
 			if job.Status != store.JobQueued {
 				t.Fatalf("status = %q, want %q (the manager must not have started)", job.Status, store.JobQueued)
 			}
-			if job.Total < 1 {
-				t.Fatalf("job total = %d, want the stale nodes", job.Total)
+			if job.ScopeMode != store.ScopeModePaged || job.ScopeComplete || job.Total != 0 {
+				t.Fatalf("parent scope state = mode:%q complete:%v total:%d, want paged/incomplete/0", job.ScopeMode, job.ScopeComplete, job.Total)
+			}
+			items, err := st.ListJobItems(context.Background(), store.JobItemFilter{JobID: job.ID})
+			if err != nil {
+				t.Fatalf("ListJobItems: %v", err)
+			}
+			if len(items) != 0 {
+				t.Fatalf("paged refresh created %d materialized items", len(items))
+			}
+			var req jobs.Request
+			if err := json.Unmarshal([]byte(job.RequestJSON), &req); err != nil {
+				t.Fatalf("decode request_json: %v", err)
+			}
+			if !req.Scope.RefreshStale || req.Scope.RefreshStaleChecks != autoChecks {
+				t.Fatalf("request scope = %+v, want refresh_stale=true and checks=%v", req.Scope, autoChecks)
 			}
 
 			createdCount, lastRunNs, scanned, lastErr := svc.RefreshScheduleStats()
-			if createdCount != 1 || lastRunNs != now.UnixNano() || scanned < 1 || lastErr != "" {
-				t.Fatalf("stats = (%d, %d, %d, %q), want (1, %d, >=1, \"\")",
+			if createdCount != 1 || lastRunNs != now.UnixNano() || scanned != 0 || lastErr != "" {
+				t.Fatalf("stats = (%d, %d, %d, %q), want (1, %d, 0, \"\")",
 					createdCount, lastRunNs, scanned, lastErr, now.UnixNano())
 			}
 		})
@@ -280,6 +320,34 @@ func TestRefreshScheduleSkipsWhenNothingIsStale(t *testing.T) {
 	}
 	if len(list) != 0 {
 		t.Fatalf("jobs = %d, want none", len(list))
+	}
+}
+
+// TestRefreshScheduleCreatesParentWhenNoNodesAreStale proves that the paged
+// producer does not scan or materialize the full refresh scope just to discover
+// an empty page. The parent is left for the resolver to complete asynchronously.
+func TestRefreshScheduleCreatesParentWhenNoNodesAreStale(t *testing.T) {
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	svc, st := newRefreshServiceWithPagedSchedule(t, now)
+	seedEgress(t, st, now, refreshFreshHash, "198.51.100.13", time.Minute)
+	svc.EnableRefreshSchedule(RefreshScheduleOptions{
+		Schedule: func() string { return "0 4 * * *" },
+		Logf:     func(string, ...any) {},
+	})
+
+	created, err := svc.RunRefreshNow(context.Background())
+	if err != nil {
+		t.Fatalf("RunRefreshNow: %v", err)
+	}
+	if created != 1 {
+		t.Fatalf("created = %d, want 1 parent job", created)
+	}
+	list, err := st.ListJobs(context.Background(), "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(list) != 1 || list[0].ScopeMode != store.ScopeModePaged || list[0].ScopeComplete || list[0].Total != 0 {
+		t.Fatalf("jobs = %+v, want one incomplete empty parent", list)
 	}
 }
 

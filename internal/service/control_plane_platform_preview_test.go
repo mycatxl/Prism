@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"net/netip"
 	"testing"
 	"time"
@@ -199,5 +200,67 @@ func TestPreviewFilter_RegionNegation_UnknownRegionExcluded(t *testing.T) {
 		if node.NodeHash == fixture.unknownHash {
 			t.Fatalf("node with unknown region %s should not match region filters", fixture.unknownHash)
 		}
+	}
+}
+
+func TestPlatformPreviewsBoundLargePoolsAndReportTruncation(t *testing.T) {
+	const poolSize = previewScanLimit + 1
+	subMgr := topology.NewSubscriptionManager()
+	sub := subscription.NewSubscription("bulk", "bulk", "https://example.com/bulk", true, false)
+	subMgr.Register(sub)
+	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		SubLookup:              subMgr.Lookup,
+		MaxLatencyTableEntries: 1,
+		MaxConsecutiveFailures: func() int { return 3 },
+		LatencyDecayWindow:     func() time.Duration { return 10 * time.Minute },
+	})
+	for i := 0; i < poolSize; i++ {
+		raw := []byte(fmt.Sprintf("{\"type\":\"ss\",\"server\":\"node-%d.example\",\"port\":443}", i))
+		hash := node.HashFromRawOptions(raw)
+		pool.AddNodeFromSub(hash, raw, sub.ID)
+		sub.ManagedNodes().StoreNode(hash, subscription.ManagedNode{Tags: []string{"all"}})
+		entry, ok := pool.GetEntry(hash)
+		if !ok {
+			t.Fatalf("entry %s missing after insertion", hash)
+		}
+		entry.SetEgressIP(netip.MustParseAddr("192.0.2.1"))
+		outbound := testutil.NewNoopOutbound()
+		entry.Outbound.Store(&outbound)
+	}
+	cp := &ControlPlaneService{Pool: pool, SubMgr: subMgr}
+	makeFixtureNodesRoutable(t, cp)
+	req := PreviewFilterRequest{PlatformSpec: &PlatformSpecFilter{RegexFilters: []string{".*"}}}
+
+	scope, err := cp.PreviewPlatformScope(req)
+	if err != nil {
+		t.Fatalf("PreviewPlatformScope: %v", err)
+	}
+	if scope.Scanned != previewScanLimit || scope.Matched != previewScanLimit || !scope.Truncated {
+		t.Fatalf("scope scanned/matched/truncated = %d/%d/%v, want %d/%d/true",
+			scope.Scanned, scope.Matched, scope.Truncated, previewScanLimit, previewScanLimit)
+	}
+	if len(scope.Sample) != previewSampleLimit {
+		t.Fatalf("scope sample length = %d, want %d", len(scope.Sample), previewSampleLimit)
+	}
+
+	facets, err := cp.PlatformNodeFacets()
+	if err != nil {
+		t.Fatalf("PlatformNodeFacets: %v", err)
+	}
+	if facets.TotalNodes != poolSize || facets.Scanned != previewScanLimit || !facets.Truncated {
+		t.Fatalf("facets total/scanned/truncated = %d/%d/%v, want %d/%d/true",
+			facets.TotalNodes, facets.Scanned, facets.Truncated, poolSize, previewScanLimit)
+	}
+
+	page, err := cp.PreviewFilterPageReport(req, 10, 0)
+	if err != nil {
+		t.Fatalf("PreviewFilterPageReport: %v", err)
+	}
+	if page.Scanned != previewScanLimit || page.Matched != previewScanLimit || !page.Truncated || len(page.Nodes) != 10 {
+		t.Fatalf("page scanned/matched/truncated/items = %d/%d/%v/%d, want %d/%d/true/10",
+			page.Scanned, page.Matched, page.Truncated, len(page.Nodes), previewScanLimit, previewScanLimit)
+	}
+	if _, err := cp.PreviewFilter(req); err == nil {
+		t.Fatal("legacy PreviewFilter must reject a partial result")
 	}
 }

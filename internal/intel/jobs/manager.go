@@ -35,14 +35,20 @@ const cleanupInterval = 24 * time.Hour
 // vacuumInterval is the weekly PRAGMA optimize / VACUUM period of
 const vacuumInterval = 7 * 24 * time.Hour
 
-// Options configures a Manager. Store, Runner and Scope are required.
+// Options configures a Manager. Store, Runner and one of Scope or ScopePage are required.
 type Options struct {
 	Store  *store.Store
 	Runner StepRunner
 	Scope  ScopeResolver
-	Config ConfigProvider
-	Clock  Clock
-	Census NodeCensus
+	// ScopePage enables persistent, bounded expansion. Scope is retained as a
+	// compatibility resolver for existing callers and tests.
+	ScopePage ScopePageResolver
+	// ScopeValidator re-checks nodes at execution time so removed or changed
+	// nodes become explicit skipped items instead of failed probes.
+	ScopeValidator ScopeValidator
+	Config         ConfigProvider
+	Clock          Clock
+	Census         NodeCensus
 	// ProviderSpecs and Lookup enable the per-provider queue workers.
 	ProviderSpecs ProviderSpecSource
 	Lookup        OnlineLookup
@@ -78,9 +84,11 @@ type Stats struct {
 
 // Manager owns the node worker pool, the job lifecycle and the SSE hub.
 type Manager struct {
-	store  *store.Store
-	runner StepRunner
-	scope  ScopeResolver
+	store          *store.Store
+	runner         StepRunner
+	scope          ScopeResolver
+	scopePage      ScopePageResolver
+	scopeValidator ScopeValidator
 
 	config ConfigProvider
 	clock  Clock
@@ -117,8 +125,8 @@ type Manager struct {
 	lastVacuumNs       atomic.Int64
 }
 
-// New builds a Manager. It panics on a missing Store, Runner or Scope, matching
-// the constructor contract of R5.
+// New builds a Manager. It panics on a missing Store, Runner or scope resolver,
+// matching the constructor contract of R5.
 func New(opts Options) *Manager {
 	if opts.Store == nil {
 		panic("jobs.New: Store is required")
@@ -126,8 +134,8 @@ func New(opts Options) *Manager {
 	if opts.Runner == nil {
 		panic("jobs.New: Runner is required")
 	}
-	if opts.Scope == nil {
-		panic("jobs.New: Scope is required")
+	if opts.Scope == nil && opts.ScopePage == nil {
+		panic("jobs.New: Scope or ScopePage is required")
 	}
 	clock := opts.Clock
 	if clock == nil {
@@ -151,18 +159,20 @@ func New(opts Options) *Manager {
 	}
 
 	m := &Manager{
-		store:  opts.Store,
-		runner: opts.Runner,
-		scope:  opts.Scope,
-		config: config,
-		clock:  clock,
-		census: opts.Census,
-		idGen:  idGen,
-		logf:   logf,
-		tick:   tick,
-		owner:  "intel-worker-" + newShortID(),
-		hub:    newHub(time.Second),
-		stopCh: make(chan struct{}),
+		store:          opts.Store,
+		runner:         opts.Runner,
+		scope:          opts.Scope,
+		scopePage:      opts.ScopePage,
+		scopeValidator: opts.ScopeValidator,
+		config:         config,
+		clock:          clock,
+		census:         opts.Census,
+		idGen:          idGen,
+		logf:           logf,
+		tick:           tick,
+		owner:          "intel-worker-" + newShortID(),
+		hub:            newHub(time.Second),
+		stopCh:         make(chan struct{}),
 
 		progress: make(map[string]jobProgress),
 	}
@@ -186,6 +196,12 @@ func (m *Manager) Config() Config { return m.config().Normalize() }
 
 // Enabled reports whether automatic and manual job creation is allowed.
 func (m *Manager) Enabled() bool { return m.Config().Enabled }
+
+// SupportsScopePages reports whether this manager can persist and expand a scope as a bounded parent job.
+// Callers that need to preserve compatibility with a materialized-only manager can fall back explicitly.
+func (m *Manager) SupportsScopePages() bool {
+	return m != nil && m.scopePage != nil
+}
 
 // Recover clears the leases left behind by a crash. Running jobs stay running so
 // the worker pool continues them after the restart.
@@ -234,7 +250,9 @@ func (m *Manager) Stop() {
 	m.wg.Wait()
 }
 
-// Create validates the request, expands the scope and persists the job.
+// Create validates the request and persists either a materialized compatibility
+// job or a paged parent job. Paged jobs are expanded by the scheduler so the
+// request path never owns the full scope or a million-row SQLite transaction.
 func (m *Manager) Create(ctx context.Context, req Request, createdBy string, priority int) (store.Job, error) {
 	cfg := m.Config()
 	if !cfg.Enabled {
@@ -243,14 +261,12 @@ func (m *Manager) Create(ctx context.Context, req Request, createdBy string, pri
 	if err := req.Validate(); err != nil {
 		return store.Job{}, err
 	}
-
-	nodes, err := m.scope.ResolveScope(ctx, req.Scope)
-	if err != nil {
-		return store.Job{}, err
-	}
-	nodes = normalizeHashes(nodes)
-	if len(nodes) > MaxNodesPerJob {
-		return store.Job{}, fmt.Errorf("%w: %d > %d", ErrTooManyNodes, len(nodes), MaxNodesPerJob)
+	if m.scopePage != nil {
+		if validator, ok := m.scopePage.(ScopeRequestValidator); ok {
+			if err := validator.ValidateScope(ctx, req.Scope); err != nil {
+				return store.Job{}, err
+			}
+		}
 	}
 
 	requestJSON, err := json.Marshal(req)
@@ -260,22 +276,41 @@ func (m *Manager) Create(ctx context.Context, req Request, createdBy string, pri
 
 	now := m.nowNs()
 	job := store.Job{
-		ID:          m.idGen(),
-		Kind:        string(req.Kind),
-		Status:      store.JobQueued,
-		Priority:    priority,
-		RequestJSON: string(requestJSON),
-		CreatedBy:   createdBy,
-		CreatedAtNs: now,
+		ID:            m.idGen(),
+		Kind:          string(req.Kind),
+		Status:        store.JobQueued,
+		Priority:      priority,
+		RequestJSON:   string(requestJSON),
+		CreatedBy:     createdBy,
+		CreatedAtNs:   now,
+		ScopeMode:     store.ScopeModeMaterialized,
+		ScopeComplete: true,
 	}
-	items := make([]store.JobItem, 0, len(nodes))
-	for _, hash := range nodes {
-		items = append(items, store.JobItem{
-			NodeHash:    hash,
-			Status:      store.ItemQueued,
-			NextRunAtNs: now,
-			UpdatedAtNs: now,
-		})
+	var items []store.JobItem
+	if m.scopePage == nil {
+		if m.scope == nil {
+			return store.Job{}, fmt.Errorf("scope resolver is unavailable")
+		}
+		nodes, err := m.scope.ResolveScope(ctx, req.Scope)
+		if err != nil {
+			return store.Job{}, err
+		}
+		nodes = normalizeHashes(nodes)
+		if len(nodes) > MaxNodesPerJob {
+			return store.Job{}, fmt.Errorf("%w: %d > %d", ErrTooManyNodes, len(nodes), MaxNodesPerJob)
+		}
+		items = make([]store.JobItem, 0, len(nodes))
+		for _, hash := range nodes {
+			items = append(items, store.JobItem{
+				NodeHash:    hash,
+				Status:      store.ItemQueued,
+				NextRunAtNs: now,
+				UpdatedAtNs: now,
+			})
+		}
+	} else {
+		job.ScopeMode = store.ScopeModePaged
+		job.ScopeComplete = false
 	}
 	if err := m.store.CreateJob(ctx, job, items); err != nil {
 		return store.Job{}, err
@@ -284,8 +319,9 @@ func (m *Manager) Create(ctx context.Context, req Request, createdBy string, pri
 	if err != nil {
 		return store.Job{}, err
 	}
-	if len(items) == 0 {
-		// A scope that expands to nothing settles immediately.
+	if m.scopePage == nil && len(items) == 0 {
+		// A materialized scope that expands to nothing settles immediately. A
+		// paged scope stays active until its continuation reports completion.
 		created, err = m.store.RefreshJob(ctx, job.ID, now)
 		if err != nil {
 			return store.Job{}, err
@@ -388,17 +424,110 @@ func (m *Manager) scheduleLoop() {
 	}
 }
 
+// expandActiveScopes advances each paged parent by at most one bounded page,
+// subject to one global per-pass budget. The resolver is called only while the
+// job has pending capacity; the store then commits the returned page and cursor atomically.
+func (m *Manager) expandActiveScopes(ctx context.Context, active []store.Job) {
+	if m.scopePage == nil {
+		return
+	}
+	// Keep the whole scheduling pass bounded as well as each parent. A busy
+	// installation may have many queued paged parents, but expansion must not
+	// turn one tick into an unbounded SQLite write burst.
+	remainingBudget := ScopePendingBudget
+	for _, job := range active {
+		if remainingBudget <= 0 {
+			return
+		}
+		if job.ScopeMode != store.ScopeModePaged || job.ScopeComplete || job.Terminal() {
+			continue
+		}
+		counters, err := m.store.JobItemCounters(ctx, job.ID)
+		if err != nil {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] scope expansion counters for %s: %v", job.ID, err)
+			continue
+		}
+		pending := counters.Queued + counters.Running
+		remaining := ScopePendingBudget - pending
+		if remaining <= 0 {
+			continue
+		}
+		limit := DefaultScopeExpansionBatch
+		if limit > remaining {
+			limit = remaining
+		}
+		if limit > remainingBudget {
+			limit = remainingBudget
+		}
+
+		scope, err := scopeFromJob(job)
+		if err != nil {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] decode scope for %s: %v", job.ID, err)
+			continue
+		}
+		page, err := m.scopePage.ResolveScopePage(ctx, scope, job.ScopeCursor, limit)
+		if err != nil {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] resolve scope page for %s: %v", job.ID, err)
+			continue
+		}
+		if len(page.Nodes) > limit {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] scope page for %s returned %d nodes over limit %d", job.ID, len(page.Nodes), limit)
+			continue
+		}
+		if page.Scanned < 0 || page.Matched < 0 || page.Skipped < 0 || page.Scanned > int64(limit) {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] scope page for %s returned invalid counters scanned=%d matched=%d skipped=%d limit=%d", job.ID, page.Scanned, page.Matched, page.Skipped, limit)
+			continue
+		}
+		work := page.Scanned
+		if work < int64(len(page.Nodes)) {
+			work = int64(len(page.Nodes))
+		}
+		if work == 0 {
+			work = 1
+		}
+		if work > int64(remainingBudget) {
+			work = int64(remainingBudget)
+		}
+		remainingBudget -= int(work)
+
+		result, err := m.store.ExpandJobScope(ctx, job.ID, store.ScopeExpansionBatch{
+			Nodes:         page.Nodes,
+			Cursor:        page.Cursor,
+			Scanned:       page.Scanned,
+			Matched:       page.Matched,
+			Skipped:       page.Skipped,
+			Complete:      page.Complete,
+			NowNs:         m.nowNs(),
+			PendingBudget: ScopePendingBudget,
+		})
+		if err != nil {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] commit scope page for %s: %v", job.ID, err)
+			continue
+		}
+		if result.Backpressured {
+			continue
+		}
+		if result.Enqueued > 0 || page.Scanned > 0 || page.Matched > 0 || page.Skipped > 0 || page.Complete {
+			m.publish(ctx, job.ID, true)
+		}
+	}
+}
+
+func scopeFromJob(job store.Job) (Scope, error) {
+	var req Request
+	if err := json.Unmarshal([]byte(job.RequestJSON), &req); err != nil {
+		return Scope{}, fmt.Errorf("request_json: %w", err)
+	}
+	return req.Scope, nil
+}
+
 // refreshActiveJobs picks the jobs allowed to run. Running jobs keep their slot
-// so newly created high-priority jobs queue behind them instead of preempting
-// in-flight work. Two cases override that order:
-//
-//   - a running job that has settled no item for jobStallYield is sorted behind
-//     the queued jobs, so a job whose items are all parked behind a closed gate
-//     yields to work that can actually progress. It keeps its slot when nothing
-//     else wants it;
-//   - a job stalled that way for jobStallTimeout while another job waits for a
-//     slot is settled as partial and leaves the set, so it reaches a terminal
-//     state instead of lingering as running forever.
 func (m *Manager) refreshActiveJobs(cfg Config) {
 	ctx := context.Background()
 	active, err := m.store.ListActiveJobs(ctx, maxActiveJobsFetched)
@@ -406,6 +535,15 @@ func (m *Manager) refreshActiveJobs(cfg Config) {
 		m.schedulingFailures.Add(1)
 		m.logf("[intel] list active jobs: %v", err)
 		return
+	}
+	if m.scopePage != nil {
+		m.expandActiveScopes(ctx, active)
+		active, err = m.store.ListActiveJobs(ctx, maxActiveJobsFetched)
+		if err != nil {
+			m.schedulingFailures.Add(1)
+			m.logf("[intel] refresh active jobs after scope expansion: %v", err)
+			return
+		}
 	}
 	m.trackProgress(active)
 
@@ -628,6 +766,25 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 		// failed its pending items). The item is already accounted for, so stop
 		// without writing anything back - a late defer would reopen the job.
 		return
+	}
+	if m.scopeValidator != nil && job.ScopeMode == store.ScopeModePaged {
+		scope, err := scopeFromJob(job)
+		if err != nil {
+			m.logf("[intel] decode scope for item %s/%s: %v", item.JobID, item.NodeHash, err)
+			m.deferItem(parent, item, item.StepIndex, m.nowNs()+int64(backoff(item.Attempts-1)), CodeScopeValidationError, nil)
+			return
+		}
+		valid, err := m.scopeValidator.ValidateScopeNode(parent, scope, item.NodeHash)
+		if err != nil {
+			m.logf("[intel] validate scope for item %s/%s: %v", item.JobID, item.NodeHash, err)
+			m.deferItem(parent, item, item.StepIndex, m.nowNs()+int64(backoff(item.Attempts-1)), CodeScopeValidationError, nil)
+			return
+		}
+		if !valid {
+			m.finishItem(parent, item, store.ItemSkipped, CodeScopeNoLongerMatches,
+				map[string]any{"reason": CodeScopeNoLongerMatches})
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(parent, itemTimeout)

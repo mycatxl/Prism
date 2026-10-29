@@ -9,21 +9,33 @@ import (
 
 // Progress is one SSE frame payload.
 type Progress struct {
-	Done    int    `json:"done"`
-	Failed  int    `json:"failed"`
-	Skipped int    `json:"skipped"`
-	Total   int    `json:"total"`
-	Status  string `json:"status"`
+	Done          int    `json:"done"`
+	Failed        int    `json:"failed"`
+	Skipped       int    `json:"skipped"`
+	Total         int    `json:"total"`
+	Status        string `json:"status"`
+	ScopeMode     string `json:"scope_mode"`
+	ScopeComplete bool   `json:"scope_complete"`
+	ScopeScanned  int64  `json:"scope_scanned"`
+	ScopeMatched  int64  `json:"scope_matched"`
+	ScopeEnqueued int64  `json:"scope_enqueued"`
+	ScopeSkipped  int64  `json:"scope_skipped"`
 }
 
 // ProgressFromRow maps the store view onto the SSE payload.
 func ProgressFromRow(view store.JobProgress) Progress {
 	return Progress{
-		Done:    view.Done,
-		Failed:  view.Failed,
-		Skipped: view.Skipped,
-		Total:   view.Total,
-		Status:  view.Status,
+		Done:          view.Done,
+		Failed:        view.Failed,
+		Skipped:       view.Skipped,
+		Total:         view.Total,
+		Status:        view.Status,
+		ScopeMode:     view.ScopeMode,
+		ScopeComplete: view.ScopeComplete,
+		ScopeScanned:  view.ScopeScanned,
+		ScopeMatched:  view.ScopeMatched,
+		ScopeEnqueued: view.ScopeEnqueued,
+		ScopeSkipped:  view.ScopeSkipped,
 	}
 }
 

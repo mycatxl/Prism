@@ -30,18 +30,21 @@ const (
 	JobPartial   = "partial"
 	JobFailed    = "failed"
 	JobCanceled  = "canceled"
+
+	ScopeModeMaterialized = "materialized"
+	ScopeModePaged        = "paged"
 )
 
-// MaxNormalizedJSONBytes caps the normalised quality.Evidence blob ( 8 KiB).
+// MaxNormalizedJSONBytes caps the normalised quality.Evidence blob (8 KiB).
 const MaxNormalizedJSONBytes = 8 * 1024
 
-// MaxRawJSONBytes caps a stored provider response ( 32 KiB).
+// MaxRawJSONBytes caps a stored provider response (32 KiB).
 const MaxRawJSONBytes = 32 * 1024
 
-// MaxResultJSONBytes caps the per-step job item summary ( 4 KiB).
+// MaxResultJSONBytes caps the per-step job item summary (4 KiB).
 const MaxResultJSONBytes = 4 * 1024
 
-// MaxDetailJSONBytes caps a node check detail blob ( 4 KiB).
+// MaxDetailJSONBytes caps a node check detail blob (4 KiB).
 const MaxDetailJSONBytes = 4 * 1024
 
 // EgressFamilies are the two address families tracked by node_egress.
@@ -191,20 +194,27 @@ type QueueItem struct {
 
 // Job is one row of the jobs table.
 type Job struct {
-	ID           string `json:"id"`
-	Kind         string `json:"kind"`
-	Status       string `json:"status"`
-	Priority     int    `json:"priority"`
-	RequestJSON  string `json:"request_json"`
-	Total        int    `json:"total"`
-	Done         int    `json:"done"`
-	Failed       int    `json:"failed"`
-	Skipped      int    `json:"skipped"`
-	CreatedBy    string `json:"created_by"`
-	CreatedAtNs  int64  `json:"created_at_ns"`
-	StartedAtNs  int64  `json:"started_at_ns"`
-	FinishedAtNs int64  `json:"finished_at_ns"`
-	Error        string `json:"error"`
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Status        string `json:"status"`
+	Priority      int    `json:"priority"`
+	RequestJSON   string `json:"request_json"`
+	Total         int    `json:"total"`
+	Done          int    `json:"done"`
+	Failed        int    `json:"failed"`
+	Skipped       int    `json:"skipped"`
+	CreatedBy     string `json:"created_by"`
+	CreatedAtNs   int64  `json:"created_at_ns"`
+	StartedAtNs   int64  `json:"started_at_ns"`
+	FinishedAtNs  int64  `json:"finished_at_ns"`
+	Error         string `json:"error"`
+	ScopeMode     string `json:"scope_mode"`
+	ScopeComplete bool   `json:"scope_complete"`
+	ScopeCursor   string `json:"scope_cursor"`
+	ScopeScanned  int64  `json:"scope_scanned"`
+	ScopeMatched  int64  `json:"scope_matched"`
+	ScopeEnqueued int64  `json:"scope_enqueued"`
+	ScopeSkipped  int64  `json:"scope_skipped"`
 }
 
 // Active reports whether the job still occupies a worker slot.
@@ -248,6 +258,34 @@ type JobProgress struct {
 	Canceled           int    `json:"canceled"`
 	Pending            int    `json:"pending"`
 	PendingOnlineItems int    `json:"pending_online_lookups"`
+	ScopeMode          string `json:"scope_mode"`
+	ScopeComplete      bool   `json:"scope_complete"`
+	ScopeCursor        string `json:"-"`
+	ScopeScanned       int64  `json:"scope_scanned"`
+	ScopeMatched       int64  `json:"scope_matched"`
+	ScopeEnqueued      int64  `json:"scope_enqueued"`
+	ScopeSkipped       int64  `json:"scope_skipped"`
+}
+
+// ScopeExpansionBatch is one bounded resolver page applied to a paged job.
+// Nodes are de-duplicated against the job's existing items by the store.
+type ScopeExpansionBatch struct {
+	Nodes         []string
+	Cursor        string
+	Scanned       int64
+	Matched       int64
+	Skipped       int64
+	Complete      bool
+	NowNs         int64
+	PendingBudget int
+}
+
+// ScopeExpansionResult reports the atomic page commit and any backpressure.
+type ScopeExpansionResult struct {
+	Job           Job
+	Enqueued      int
+	Pending       int
+	Backpressured bool
 }
 
 // truncateJSON bounds a JSON blob to max bytes while keeping valid JSON when the

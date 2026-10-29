@@ -1005,11 +1005,15 @@ func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEn
 	return ns
 }
 
-// PreviewFilter returns nodes matching the given filter spec.
+// PreviewFilter returns the bounded result only when the scan was complete.
+// Callers that can expose partial-result metadata should use PreviewFilterReport.
 func (s *ControlPlaneService) PreviewFilter(req PreviewFilterRequest) ([]NodeSummary, error) {
 	report, err := s.PreviewFilterReport(req)
 	if err != nil {
 		return nil, err
+	}
+	if report.Truncated {
+		return nil, fmt.Errorf("preview filter scan stopped after %d nodes; use PreviewFilterReport to inspect partial results", report.Scanned)
 	}
 	return report.Nodes, nil
 }
@@ -1020,12 +1024,15 @@ const (
 	PreviewExcludedRegion = "region"
 )
 
-// PreviewFilterResult is the preview outcome: the matching nodes plus
-// the per-rule exclusion counters, so a caller can see why a platform's routable
-// view is smaller than the node pool.
+// PreviewFilterResult is a bounded preview report. Nodes contains only the
+// requested page; Matched counts matches in the scanned window. When Truncated
+// is true, Matched and ExcludedBy are lower bounds.
 type PreviewFilterResult struct {
 	Nodes      []NodeSummary
 	ExcludedBy map[string]int
+	Scanned    int
+	Matched    int
+	Truncated  bool
 }
 
 // previewCriteria resolves the node-selection criteria one preview request
@@ -1088,34 +1095,39 @@ const previewScanLimit = 20000
 // the UI shows; the sample only exists to prove which nodes match.
 const previewSampleLimit = 8
 
-// PreviewFilterReport runs the preview and returns the excluded_by
-// counters with it.
-//
-// Every criterion is evaluated by platform.MatchNodeCriteria — the same
-// predicate the routable-view rebuild uses — and a node is counted under the
-// first criterion that rejects it (the platform.Reason* constants, with a
-// quality rejection reported as its own admission reason such as
-// QUALITY_MIN_PURITY).
-//
-// The counters keep the two legacy keys of this endpoint: a rejected tag rule
-// stays "regex" and a rejected region stays "region". The runtime health gates
-// (disabled, unhealthy, no egress, no latency) are deliberately NOT applied
-// here: this endpoint answers "which criteria exclude a node", so a node that is
-// merely unhealthy right now must still be reported under its criteria counter.
-// The form preview (PreviewPlatformScope) does apply them, because it answers
-// "how many nodes would the platform actually load".
-//
-// The quality policy is the platform's own policy, unless the request carries an
-// explicit quality_policy, which wins (that is what the preview UI experiments
-// with).
-//
-// Unlike PreviewPlatformScope this endpoint returns every matching node and is
-// therefore unbounded: it exists for the explain view, not for the
-// interactive form preview.
+// PreviewFilterReport returns the first bounded page for compatibility. Use
+// PreviewFilterPageReport when serving a paginated endpoint.
 func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (PreviewFilterResult, error) {
+	return s.PreviewFilterPageReport(req, previewScanLimit, 0)
+}
+
+// PreviewFilterPageReport evaluates at most previewScanLimit pool entries and
+// retains only the requested page of matching summaries. Matched and ExcludedBy
+// describe the scanned window; when Truncated is true they are lower bounds.
+func (s *ControlPlaneService) PreviewFilterPageReport(
+	req PreviewFilterRequest,
+	limit int,
+	offset int,
+) (PreviewFilterResult, error) {
+	if s == nil || s.Pool == nil {
+		return PreviewFilterResult{}, internal("preview filter", fmt.Errorf("service not initialized"))
+	}
 	criteria, svcErr := s.previewCriteria(req)
 	if svcErr != nil {
 		return PreviewFilterResult{}, svcErr
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > previewScanLimit {
+		limit = previewScanLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	pageEnd := previewScanLimit
+	if offset < previewScanLimit && limit <= previewScanLimit-offset {
+		pageEnd = offset + limit
 	}
 
 	var subLookup node.SubLookupFunc
@@ -1127,19 +1139,29 @@ func (s *ControlPlaneService) PreviewFilterReport(req PreviewFilterRequest) (Pre
 		snap = projection
 	}
 	now := time.Now().UTC()
-
-	result := make([]NodeSummary, 0, 32)
-	excluded := make(map[string]int, 8)
+	geoLookup := s.geoLookupFunc()
+	result := PreviewFilterResult{
+		Nodes:      make([]NodeSummary, 0, min(limit, previewSampleLimit)),
+		ExcludedBy: make(map[string]int, 8),
+	}
 	s.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
-		ok, reason := platform.MatchNodeCriteriaForPreview(criteria, entry, subLookup, s.geoLookupFunc(), nil, snap, now)
+		if result.Scanned >= previewScanLimit {
+			result.Truncated = true
+			return false
+		}
+		result.Scanned++
+		ok, reason := platform.MatchNodeCriteriaForPreview(criteria, entry, subLookup, geoLookup, nil, snap, now)
 		if !ok {
-			excluded[previewExclusionKey(reason)]++
+			result.ExcludedBy[previewExclusionKey(reason)]++
 			return true
 		}
-		result = append(result, s.nodeEntryToSummary(h, entry))
+		if result.Matched >= offset && result.Matched < pageEnd {
+			result.Nodes = append(result.Nodes, s.nodeEntryToSummary(h, entry))
+		}
+		result.Matched++
 		return true
 	})
-	return PreviewFilterResult{Nodes: result, ExcludedBy: excluded}, nil
+	return result, nil
 }
 
 // previewExclusionKey maps an admission reason onto the exclusion counter key of

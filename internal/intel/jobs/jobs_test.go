@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"path/filepath"
 	"strings"
@@ -96,7 +97,8 @@ func TestParseKindAndValidate(t *testing.T) {
 	if err := (Request{Kind: "intel", Checks: []string{""}}).Validate(); err == nil {
 		t.Fatal("expected an error for an empty check id")
 	}
-	if !(Scope{}).Empty() || (Scope{All: true}).Empty() {
+	if !(Scope{}).Empty() || (Scope{All: true}).Empty() ||
+		!(Scope{RefreshStaleChecks: true}).Empty() || (Scope{RefreshStale: true, RefreshStaleChecks: true}).Empty() {
 		t.Fatal("Scope.Empty is wrong")
 	}
 }
@@ -179,6 +181,94 @@ func newTestManager(t *testing.T, st *store.Store, clock Clock, runner StepRunne
 		Clock:  clock,
 		Logf:   func(string, ...any) {},
 	})
+}
+
+type rejectingScopePage struct{ err error }
+
+func (r rejectingScopePage) ResolveScopePage(context.Context, Scope, string, int) (ScopePage, error) {
+	return ScopePage{}, r.err
+}
+
+func (r rejectingScopePage) ValidateScope(context.Context, Scope) error { return r.err }
+
+func TestManager_PagedScopeRequestValidationPreventsPersistence(t *testing.T) {
+	st := newTestStore(t)
+	clock := newFakeClock(time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC))
+	sentinel := errors.New("invalid scope filter")
+	m := New(Options{
+		Store:     st,
+		Runner:    &scriptedRunner{},
+		ScopePage: rejectingScopePage{err: sentinel},
+		Config:    enabledConfig(),
+		Clock:     clock,
+		Logf:      func(string, ...any) {},
+	})
+
+	if _, err := m.Create(context.Background(), Request{Kind: KindIntel, Scope: Scope{All: true}}, CreatedByAdmin(), PriorityManual); !errors.Is(err, sentinel) {
+		t.Fatalf("Create error = %v, want %v", err, sentinel)
+	}
+	jobs, err := st.ListJobs(context.Background(), "", 10, 0)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("persisted jobs = %d, want no parent after request validation failure", len(jobs))
+	}
+}
+
+func TestManager_PagedScopeEmptyPageAdvancesCursor(t *testing.T) {
+	st := newTestStore(t)
+	clock := newFakeClock(time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC))
+	var cursors []string
+	resolver := ScopePageResolverFunc(func(_ context.Context, _ Scope, cursor string, _ int) (ScopePage, error) {
+		cursors = append(cursors, cursor)
+		if cursor == "" {
+			return ScopePage{Cursor: "empty-page-1", Scanned: 3}, nil
+		}
+		return ScopePage{Nodes: []string{"node-after-empty"}, Cursor: "done", Scanned: 1, Matched: 1, Complete: true}, nil
+	})
+	m := New(Options{
+		Store:     st,
+		Runner:    &scriptedRunner{},
+		ScopePage: resolver,
+		Config:    enabledConfig(),
+		Clock:     clock,
+		Logf:      func(string, ...any) {},
+	})
+
+	job, err := m.Create(context.Background(), Request{Kind: KindEgress, Scope: Scope{All: true}}, CreatedByAdmin(), PriorityManual)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	m.refreshActiveJobs(m.Config())
+	first, err := st.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after empty page: %v", err)
+	}
+	if first.ScopeComplete || first.ScopeCursor != "empty-page-1" || first.Status != store.JobQueued || first.Total != 0 {
+		t.Fatalf("parent after empty page = %+v, want queued/incomplete with cursor", first)
+	}
+
+	m.refreshActiveJobs(m.Config())
+	second, err := st.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after resumed page: %v", err)
+	}
+	if !second.ScopeComplete || second.ScopeCursor != "done" || second.Total != 1 || second.ScopeScanned != 4 || second.ScopeMatched != 1 {
+		t.Fatalf("parent after resumed page = %+v", second)
+	}
+	if len(cursors) != 2 || cursors[0] != "" || cursors[1] != "empty-page-1" {
+		t.Fatalf("resolver cursors = %v, want empty-page-1 continuation", cursors)
+	}
+
+	drain(t, m, clock, 10)
+	settled, err := st.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob after execution: %v", err)
+	}
+	if settled.Status != store.JobSucceeded || settled.Done != 1 {
+		t.Fatalf("settled parent = %+v, want one successful item", settled)
+	}
 }
 
 // drain runs the scheduler and the worker pool until no job is active, without
@@ -1034,5 +1124,152 @@ func TestBudgetWait(t *testing.T) {
 	}
 	if got := budgetWait(store.ProviderState{}, now); got != providerSleepMax {
 		t.Fatalf("exhausted wait = %s", got)
+	}
+}
+
+func TestManager_PagedScopeExpandsInBoundedPages(t *testing.T) {
+	st := newTestStore(t)
+	clock := newFakeClock(time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC))
+	runner := &scriptedRunner{}
+	var pages []string
+	resolver := ScopePageResolverFunc(func(_ context.Context, _ Scope, cursor string, limit int) (ScopePage, error) {
+		if limit <= 0 || limit > DefaultScopeExpansionBatch {
+			t.Fatalf("resolver limit = %d", limit)
+		}
+		pages = append(pages, cursor)
+		switch cursor {
+		case "":
+			return ScopePage{Nodes: []string{"node-a", "node-b"}, Cursor: "cursor-1", Scanned: 2, Matched: 2}, nil
+		case "cursor-1":
+			return ScopePage{Nodes: []string{"node-c"}, Cursor: "cursor-2", Scanned: 1, Matched: 1, Complete: true}, nil
+		default:
+			return ScopePage{Complete: true}, nil
+		}
+	})
+	m := New(Options{
+		Store:     st,
+		Runner:    runner,
+		ScopePage: resolver,
+		Config:    enabledConfig(),
+		Clock:     clock,
+		Logf:      func(string, ...any) {},
+	})
+
+	job, err := m.Create(context.Background(), Request{Kind: KindEgress, Scope: Scope{All: true}}, CreatedByAdmin(), PriorityManual)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if job.ScopeMode != store.ScopeModePaged || job.ScopeComplete || job.Total != 0 {
+		t.Fatalf("created parent = %+v", job)
+	}
+
+	drain(t, m, clock, 30)
+	settled, err := st.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if settled.Status != store.JobSucceeded || settled.Total != 3 || !settled.ScopeComplete ||
+		settled.ScopeScanned != 3 || settled.ScopeMatched != 3 || settled.ScopeEnqueued != 3 {
+		t.Fatalf("settled parent = %+v", settled)
+	}
+	if len(pages) != 2 || pages[0] != "" || pages[1] != "cursor-1" {
+		t.Fatalf("resolver pages = %v, want two stable continuations", pages)
+	}
+}
+
+func TestManager_PagedScopeSkipsNodeThatNoLongerMatches(t *testing.T) {
+	st := newTestStore(t)
+	clock := newFakeClock(time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC))
+	m := New(Options{
+		Store:  st,
+		Runner: &scriptedRunner{},
+		ScopePage: ScopePageResolverFunc(func(context.Context, Scope, string, int) (ScopePage, error) {
+			return ScopePage{Nodes: []string{"removed"}, Complete: true}, nil
+		}),
+		ScopeValidator: ScopeValidatorFunc(func(context.Context, Scope, string) (bool, error) {
+			return false, nil
+		}),
+		Config: enabledConfig(),
+		Clock:  clock,
+		Logf:   func(string, ...any) {},
+	})
+
+	job, err := m.Create(context.Background(), Request{Kind: KindEgress, Scope: Scope{All: true}}, CreatedByAdmin(), PriorityManual)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	drain(t, m, clock, 10)
+	item, ok, err := st.GetJobItem(context.Background(), job.ID, "removed")
+	if err != nil || !ok {
+		t.Fatalf("GetJobItem: ok=%v err=%v", ok, err)
+	}
+	if item.Status != store.ItemSkipped || item.ErrorCode != CodeScopeNoLongerMatches {
+		t.Fatalf("item = %+v, want scope skip", item)
+	}
+	settled, err := st.GetJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if settled.Status != store.JobSucceeded || settled.Skipped != 1 {
+		t.Fatalf("settled = %+v, want succeeded with one skipped item", settled)
+	}
+}
+
+func TestManager_PagedScopeExpansionHasGlobalPassBudget(t *testing.T) {
+	st := newTestStore(t)
+	clock := newFakeClock(time.Date(2026, 10, 26, 8, 0, 0, 0, time.UTC))
+	nodes := make([]string, DefaultScopeExpansionBatch)
+	for i := range nodes {
+		nodes[i] = fmt.Sprintf("node-%04d", i)
+	}
+	resolver := ScopePageResolverFunc(func(_ context.Context, _ Scope, _ string, limit int) (ScopePage, error) {
+		if limit != DefaultScopeExpansionBatch {
+			return ScopePage{}, fmt.Errorf("limit = %d, want %d", limit, DefaultScopeExpansionBatch)
+		}
+		return ScopePage{
+			Nodes:    nodes,
+			Cursor:   "done",
+			Scanned:  int64(len(nodes)),
+			Matched:  int64(len(nodes)),
+			Complete: true,
+		}, nil
+	})
+	m := New(Options{
+		Store:     st,
+		Runner:    &scriptedRunner{},
+		ScopePage: resolver,
+		Config:    enabledConfig(),
+		Clock:     clock,
+		Logf:      func(string, ...any) {},
+	})
+
+	ids := make([]string, 0, 9)
+	for i := 0; i < 9; i++ {
+		job, err := m.Create(context.Background(), Request{Kind: KindEgress, Scope: Scope{All: true}}, CreatedByAdmin(), PriorityManual)
+		if err != nil {
+			t.Fatalf("Create %d: %v", i, err)
+		}
+		ids = append(ids, job.ID)
+	}
+
+	m.refreshActiveJobs(m.Config())
+
+	expanded, untouched := 0, 0
+	for _, id := range ids {
+		count, err := st.CountJobItems(context.Background(), id, "")
+		if err != nil {
+			t.Fatalf("CountJobItems %s: %v", id, err)
+		}
+		switch count {
+		case DefaultScopeExpansionBatch:
+			expanded++
+		case 0:
+			untouched++
+		default:
+			t.Fatalf("job %s item count = %d, want 0 or %d", id, count, DefaultScopeExpansionBatch)
+		}
+	}
+	if expanded != ScopePendingBudget/DefaultScopeExpansionBatch || untouched != 1 {
+		t.Fatalf("expanded=%d untouched=%d, want expanded=%d untouched=1", expanded, untouched, ScopePendingBudget/DefaultScopeExpansionBatch)
 	}
 }

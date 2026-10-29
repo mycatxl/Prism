@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -48,95 +50,252 @@ type NodeFilters struct {
 }
 
 // ListNodes returns nodes from the pool with optional filters.
+//
+// This compatibility method is intentionally materializing; HTTP list handlers
+// should use RangeFilteredNodes so large pools do not become one response-sized
+// intermediate slice.
 func (s *ControlPlaneService) ListNodes(filters NodeFilters) ([]NodeSummary, error) {
-	var subLookup node.SubLookupFunc
-	if s != nil && s.Pool != nil {
-		subLookup = s.Pool.MakeSubLookup()
+	result := make([]NodeSummary, 0)
+	_, err := s.RangeFilteredNodes(filters, func(_ node.Hash, summary NodeSummary) bool {
+		result = append(result, summary)
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// NodeListStats are aggregate facts accumulated while traversing the pool.
+// Distinct-IP sets have a fixed cap and report when their counts are lower
+// bounds, avoiding memory proportional to pool size.
+type NodeListStats struct {
+	Scanned                         int
+	Total                           int
+	UniqueEgressIPs                 int
+	UniqueHealthyEgressIPs          int
+	UniqueEgressIPsTruncated        bool
+	UniqueHealthyEgressIPsTruncated bool
+}
+
+const nodeListUniqueIPLimit = 65_536
+
+type boundedStringSet struct {
+	values    map[string]struct{}
+	limit     int
+	truncated bool
+}
+
+func newBoundedStringSet(limit int) boundedStringSet {
+	return boundedStringSet{values: make(map[string]struct{}, min(limit, 256)), limit: limit}
+}
+
+func (s *boundedStringSet) Add(value string) {
+	if value == "" {
+		return
+	}
+	if _, ok := s.values[value]; ok {
+		return
+	}
+	if len(s.values) >= s.limit {
+		s.truncated = true
+		return
+	}
+	s.values[value] = struct{}{}
+}
+
+// RangeFilteredNodes walks the selected node set and invokes visit once per
+// match. It keeps no candidate slice. Returning false from visit stops traversal.
+func (s *ControlPlaneService) RangeFilteredNodes(
+	filters NodeFilters,
+	visit func(node.Hash, NodeSummary) bool,
+) (NodeListStats, error) {
+	return s.RangeFilteredNodesContext(context.Background(), filters, visit)
+}
+
+// RangeFilteredNodesContext is the cancelable summary-compatible form.
+func (s *ControlPlaneService) RangeFilteredNodesContext(
+	ctx context.Context,
+	filters NodeFilters,
+	visit func(node.Hash, NodeSummary) bool,
+) (NodeListStats, error) {
+	return s.RangeFilteredNodeEntriesContext(ctx, filters, func(hash node.Hash, entry *node.NodeEntry) bool {
+		return visit(hash, s.nodeEntryToSummary(hash, entry))
+	})
+}
+
+// RangeFilteredNodeEntriesContext scans without allocating full summaries. This
+// is the list path's primitive: callers retain only selected rows and build
+// response summaries after the bounded selection is complete.
+func (s *ControlPlaneService) RangeFilteredNodeEntriesContext(
+	ctx context.Context,
+	filters NodeFilters,
+	visit func(node.Hash, *node.NodeEntry) bool,
+) (NodeListStats, error) {
+	var stats NodeListStats
+	if s == nil || s.Pool == nil {
+		return stats, internal("list nodes", fmt.Errorf("service not initialized"))
+	}
+	if visit == nil {
+		return stats, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
-	// If platform_id filter, get the platform view.
-	var platformView map[node.Hash]struct{}
+	subLookup := s.Pool.MakeSubLookup()
+	var platformView interface {
+		Contains(node.Hash) bool
+		Size() int
+		Range(func(node.Hash) bool)
+	}
 	if filters.PlatformID != nil {
 		plat, ok := s.Pool.GetPlatform(*filters.PlatformID)
 		if !ok {
-			return nil, notFound("platform not found")
+			return stats, notFound("platform not found")
 		}
-		platformView = make(map[node.Hash]struct{}, plat.View().Size())
-		plat.View().Range(func(h node.Hash) bool {
-			platformView[h] = struct{}{}
-			return true
-		})
+		platformView = plat.View()
 	}
 
-	var subNodes map[node.Hash]struct{}
+	var managedNodes *subscription.ManagedNodes
 	if filters.SubscriptionID != nil {
+		if s.SubMgr == nil {
+			return stats, notFound("subscription not found")
+		}
 		sub := s.SubMgr.Lookup(*filters.SubscriptionID)
 		if sub == nil {
-			return nil, notFound("subscription not found")
+			return stats, notFound("subscription not found")
 		}
-		subNodes = make(map[node.Hash]struct{})
-		sub.ManagedNodes().RangeNodes(func(h node.Hash, managed subscription.ManagedNode) bool {
-			if managed.Evicted {
-				return true
-			}
-			subNodes[h] = struct{}{}
-			return true
-		})
+		managedNodes = sub.ManagedNodes()
 	}
 
-	var result []NodeSummary
-	appendIfMatched := func(h node.Hash, entry *node.NodeEntry) {
-		if !s.nodeEntryMatchesFilters(entry, filters, subLookup) {
-			return
+	allIPs := newBoundedStringSet(nodeListUniqueIPLimit)
+	healthyIPs := newBoundedStringSet(nodeListUniqueIPLimit)
+	var scanErr error
+	visitHash := func(h node.Hash) bool {
+		if err := ctx.Err(); err != nil {
+			scanErr = err
+			return false
 		}
-		result = append(result, s.nodeEntryToSummary(h, entry))
-	}
-
-	appendIfMatchedHash := func(h node.Hash) {
+		stats.Scanned++
 		entry, ok := s.Pool.GetEntry(h)
-		if !ok {
-			return
+		if !ok || !s.nodeEntryMatchesFilters(entry, filters, subLookup) {
+			return true
 		}
-		appendIfMatched(h, entry)
+		stats.Total++
+		if ip := entry.GetEgressIP(); ip.IsValid() {
+			ipString := ip.String()
+			allIPs.Add(ipString)
+			if !s.Pool.IsNodeDisabled(h) && entry.HasOutbound() && entry.CircuitOpenSince.Load() <= 0 {
+				healthyIPs.Add(ipString)
+			}
+		}
+		return visit(h, entry)
 	}
 
 	switch {
-	case platformView != nil && subNodes != nil:
-		// Iterate the smaller candidate set, then intersect by membership.
-		if len(platformView) <= len(subNodes) {
-			for h := range platformView {
-				if _, ok := subNodes[h]; !ok {
-					continue
+	case platformView != nil && managedNodes != nil:
+		if platformView.Size() <= managedNodes.Size() {
+			platformView.Range(func(h node.Hash) bool {
+				managed, ok := managedNodes.LoadNode(h)
+				if !ok || managed.Evicted {
+					return true
 				}
-				appendIfMatchedHash(h)
-			}
+				return visitHash(h)
+			})
 		} else {
-			for h := range subNodes {
-				if _, ok := platformView[h]; !ok {
-					continue
+			managedNodes.RangeNodes(func(h node.Hash, managed subscription.ManagedNode) bool {
+				if managed.Evicted || !platformView.Contains(h) {
+					return true
 				}
-				appendIfMatchedHash(h)
-			}
+				return visitHash(h)
+			})
 		}
 	case platformView != nil:
-		for h := range platformView {
-			appendIfMatchedHash(h)
-		}
-	case subNodes != nil:
-		for h := range subNodes {
-			appendIfMatchedHash(h)
-		}
-	default:
-		s.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
-			appendIfMatched(h, entry)
-			return true
+		platformView.Range(visitHash)
+	case managedNodes != nil:
+		managedNodes.RangeNodes(func(h node.Hash, managed subscription.ManagedNode) bool {
+			if managed.Evicted {
+				return true
+			}
+			return visitHash(h)
 		})
+	default:
+		s.Pool.Range(func(h node.Hash, _ *node.NodeEntry) bool { return visitHash(h) })
 	}
 
-	if result == nil {
-		result = []NodeSummary{}
+	if scanErr != nil {
+		return stats, scanErr
 	}
-	return result, nil
+	stats.UniqueEgressIPs = len(allIPs.values)
+	stats.UniqueHealthyEgressIPs = len(healthyIPs.values)
+	stats.UniqueEgressIPsTruncated = allIPs.truncated
+	stats.UniqueHealthyEgressIPsTruncated = healthyIPs.truncated
+	return stats, nil
+}
+
+// NodeListSortKey returns only the field needed by the node list comparator.
+func (s *ControlPlaneService) NodeListSortKey(hash node.Hash, entry *node.NodeEntry, sortBy string) NodeListSortKey {
+	key := NodeListSortKey{NodeHash: hash.Hex(), Present: true}
+	if entry == nil {
+		return key
+	}
+	switch sortBy {
+	case "created_at":
+		key.Text = entry.CreatedAt.UTC().Format(time.RFC3339Nano)
+	case "failure_count":
+		key.Integer = int64(entry.FailureCount.Load())
+	case "region":
+		key.Text = entry.GetRegion(nil)
+		if s.GeoIP != nil {
+			key.Text = entry.GetRegion(s.GeoIP.Lookup)
+		}
+	case "purity_score", "assessed_at":
+		ip := entry.GetEgressIP()
+		if ip.IsValid() && s.Intel != nil {
+			if lite, ok := s.Intel.Snapshot().Assessment(ip); ok {
+				if sortBy == "purity_score" {
+					if score := lite.ScoreValue(); score != nil {
+						key.Integer = int64(*score)
+					} else {
+						key.Present = false
+					}
+				} else {
+					key.Integer = lite.ComputedAt
+					key.Present = lite.ComputedAt > 0
+				}
+			} else {
+				key.Present = false
+			}
+		} else {
+			key.Present = false
+		}
+	case "latency":
+		if s.RuntimeCfg != nil {
+			if cfg := s.RuntimeCfg.Load(); cfg != nil {
+				if average, ok := node.AverageEWMAForDomainsMs(entry, cfg.LatencyAuthorities); ok {
+					key.Number = average
+				} else {
+					key.Present = false
+				}
+			} else {
+				key.Present = false
+			}
+		} else {
+			key.Present = false
+		}
+	default:
+		key.Text = s.Pool.ResolveNodeDisplayTag(hash)
+	}
+	return key
+}
+
+type NodeListSortKey struct {
+	NodeHash string
+	Text     string
+	Integer  int64
+	Number   float64
+	Present  bool
 }
 
 func (s *ControlPlaneService) nodeEntryMatchesFilters(

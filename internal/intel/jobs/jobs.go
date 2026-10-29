@@ -178,6 +178,13 @@ const (
 	// sseBufferSize bounds one subscriber queue; a slow client that fills it has
 	// messages dropped and counted instead of blocking the worker pool.
 	sseBufferSize = 8
+	// DefaultScopeExpansionBatch bounds one persisted scope expansion transaction.
+	DefaultScopeExpansionBatch = 1024
+	// MaxScopeExpansionBatch is the absolute page size accepted from a resolver.
+	MaxScopeExpansionBatch = 8192
+	// ScopePendingBudget bounds queued and running items per paged parent job. The
+	// expander waits for workers to consume items before it appends another page.
+	ScopePendingBudget = 8192
 )
 
 // Errors surfaced to the API layer.
@@ -194,10 +201,15 @@ const (
 	// CodeItemTimeout marks an item whose pipeline ran out of its itemTimeout
 	// budget while a step was still executing.
 	CodeItemTimeout = "ITEM_TIMEOUT"
-	// CodeJobTimeout marks an item failed by the job-level timeout sweep of
-	//: the job as a whole ran past jobTimeout and its pending items were
-	// failed so the job stops holding a max_running_jobs slot.
+	// CodeJobTimeout marks an item failed by the job-level timeout sweep:
+	// the job as a whole ran past its budget and its pending items were failed
+	// so the job stops holding a max_running_jobs slot.
 	CodeJobTimeout = "JOB_TIMEOUT"
+	// CodeScopeNoLongerMatches records an item removed from the live scope before
+	// execution.
+	CodeScopeNoLongerMatches = "SCOPE_NO_LONGER_MATCHES"
+	// CodeScopeValidationError keeps a transient membership lookup retryable.
+	CodeScopeValidationError = "SCOPE_VALIDATION_ERROR"
 )
 
 // Scope selects the nodes of a job. Every entry is a union.
@@ -207,12 +219,17 @@ type Scope struct {
 	PlatformIDs     []string          `json:"platform_ids"`
 	NodeHashes      []string          `json:"node_hashes"`
 	Filter          map[string]string `json:"filter"`
+	// RefreshStale selects nodes with expired evidence/checks or stale egress
+	// observations. It is used by the scheduled refresh producer and is paged
+	// from intel.db instead of materializing its full result.
+	RefreshStale       bool `json:"refresh_stale,omitempty"`
+	RefreshStaleChecks bool `json:"refresh_stale_checks,omitempty"`
 }
 
 // Empty reports whether the scope selects nothing implicitly.
 func (s Scope) Empty() bool {
 	return !s.All && len(s.SubscriptionIDs) == 0 && len(s.PlatformIDs) == 0 &&
-		len(s.NodeHashes) == 0 && len(s.Filter) == 0
+		len(s.NodeHashes) == 0 && len(s.Filter) == 0 && !s.RefreshStale
 }
 
 // Request is the POST /api/v1/intel/jobs body.
@@ -270,10 +287,57 @@ func (f StepRunnerFunc) RunStep(ctx context.Context, kind Kind, step Step, jobID
 	return f(ctx, kind, step, jobID, nodeHash)
 }
 
-// ScopeResolver expands a job scope into node hashes. The expansion happens
-// server-side and is a union of every selector.
+// ScopeResolver expands a job scope into node hashes. Every entry is a union.
+// It remains as a compatibility adapter for callers and tests that already
+// provide a materialized scope resolver.
 type ScopeResolver interface {
 	ResolveScope(ctx context.Context, scope Scope) ([]string, error)
+}
+
+// ScopePage is one bounded continuation result. Cursor is opaque to the manager
+// and is committed together with the page's job_items.
+type ScopePage struct {
+	Nodes    []string
+	Cursor   string
+	Scanned  int64
+	Matched  int64
+	Skipped  int64
+	Complete bool
+}
+
+// ScopePageResolver enumerates a scope without returning the full node set.
+type ScopePageResolver interface {
+	ResolveScopePage(ctx context.Context, scope Scope, cursor string, limit int) (ScopePage, error)
+}
+
+// ScopePageResolverFunc adapts a function to ScopePageResolver.
+type ScopePageResolverFunc func(ctx context.Context, scope Scope, cursor string, limit int) (ScopePage, error)
+
+// ResolveScopePage implements ScopePageResolver.
+func (f ScopePageResolverFunc) ResolveScopePage(ctx context.Context, scope Scope, cursor string, limit int) (ScopePage, error) {
+	return f(ctx, scope, cursor, limit)
+}
+
+// ScopeValidator checks whether a node selected earlier still belongs to the
+// current scope. A false result is recorded as skipped immediately before the
+// item pipeline starts.
+type ScopeValidator interface {
+	ValidateScopeNode(ctx context.Context, scope Scope, nodeHash string) (bool, error)
+}
+
+// ScopeValidatorFunc adapts a function to ScopeValidator.
+type ScopeValidatorFunc func(ctx context.Context, scope Scope, nodeHash string) (bool, error)
+
+// ValidateScopeNode implements ScopeValidator.
+func (f ScopeValidatorFunc) ValidateScopeNode(ctx context.Context, scope Scope, nodeHash string) (bool, error) {
+	return f(ctx, scope, nodeHash)
+}
+
+// ScopeRequestValidator validates a scope definition before a paged parent job
+// is persisted, so malformed filters fail in the request rather than retrying
+// forever in the background expander.
+type ScopeRequestValidator interface {
+	ValidateScope(ctx context.Context, scope Scope) error
 }
 
 // ScopeResolverFunc adapts a function to ScopeResolver.

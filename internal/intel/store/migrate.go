@@ -15,10 +15,9 @@ const (
 	migrationsPath = "migrations"
 
 	// Keep these markers in sync with the SQL files under migrations/.
-	intelVersionBaseSchema        = 1
-	intelVersionViaNodeNodeBudget = 2
 	intelVersionViaNodeBlock      = 3
-	intelLatestVersion            = intelVersionViaNodeBlock
+	intelVersionJobScopeExpansion = 4
+	intelLatestVersion            = intelVersionJobScopeExpansion
 
 	migrationTable = "schema_migrations"
 )

@@ -24,6 +24,10 @@ var ErrJobNotActive = errors.New("job is not active")
 // RefreshJob, move a settled job out of its terminal status (see).
 var ErrJobItemSettled = errors.New("job item already settled")
 
+// ErrScopeExpansionStalled is returned when an incomplete resolver page does
+// not advance the persisted cursor.
+var ErrScopeExpansionStalled = errors.New("scope expansion cursor did not advance")
+
 // CreateJob inserts a job and its node items in one transaction.
 func (s *Store) CreateJob(ctx context.Context, job Job, items []JobItem) error {
 	db, err := s.conn()
@@ -39,22 +43,29 @@ func (s *Store) CreateJob(ctx context.Context, job Job, items []JobItem) error {
 	if job.RequestJSON == "" {
 		job.RequestJSON = "{}"
 	}
+	if job.ScopeMode == "" {
+		job.ScopeMode = ScopeModeMaterialized
+	}
+	if job.ScopeMode == ScopeModeMaterialized {
+		job.ScopeComplete = true
+	}
 
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO jobs (id, kind, status, priority, request_json, total, done, failed, skipped,
-			created_by, created_at_ns, started_at_ns, finished_at_ns, error)
-		VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?, ?)`,
+			created_by, created_at_ns, started_at_ns, finished_at_ns, error, scope_mode,
+			scope_complete, scope_cursor, scope_scanned, scope_matched, scope_enqueued, scope_skipped)
+		VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		job.ID, job.Kind, job.Status, job.Priority, job.RequestJSON, len(items),
-		job.CreatedBy, job.CreatedAtNs, job.StartedAtNs, job.FinishedAtNs, job.Error); err != nil {
+		job.CreatedBy, job.CreatedAtNs, job.StartedAtNs, job.FinishedAtNs, job.Error,
+		job.ScopeMode, boolInt(job.ScopeComplete), job.ScopeCursor, job.ScopeScanned,
+		job.ScopeMatched, job.ScopeEnqueued, job.ScopeSkipped); err != nil {
 		return err
 	}
-
 	if len(items) > 0 {
 		stmt, err := tx.PrepareContext(ctx, `
 			INSERT INTO job_items (job_id, node_hash, status, step_index, attempts, next_run_at_ns,
@@ -78,6 +89,147 @@ func (s *Store) CreateJob(ctx context.Context, job Job, items []JobItem) error {
 	}
 
 	return tx.Commit()
+}
+
+// ExpandJobScope commits one bounded paged-scope result. The job row and all
+// newly inserted items move together, so a crash cannot advance the cursor
+// without persisting the corresponding work.
+func (s *Store) ExpandJobScope(ctx context.Context, jobID string, batch ScopeExpansionBatch) (ScopeExpansionResult, error) {
+	db, err := s.conn()
+	if err != nil {
+		return ScopeExpansionResult{}, err
+	}
+	if strings.TrimSpace(jobID) == "" {
+		return ScopeExpansionResult{}, fmt.Errorf("expand job scope: job id is required")
+	}
+	if batch.Scanned < 0 || batch.Matched < 0 || batch.Skipped < 0 {
+		return ScopeExpansionResult{}, fmt.Errorf("expand job scope: page counters must be non-negative")
+	}
+	if !batch.Complete && strings.TrimSpace(batch.Cursor) == "" {
+		return ScopeExpansionResult{}, ErrScopeExpansionStalled
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return ScopeExpansionResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	job, err := scanJob(tx.QueryRowContext(ctx, jobSelect+` WHERE id = ?`, jobID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ScopeExpansionResult{}, ErrJobNotFound
+	}
+	if err != nil {
+		return ScopeExpansionResult{}, err
+	}
+	result := ScopeExpansionResult{Job: job}
+	if job.ScopeMode != ScopeModePaged || job.ScopeComplete || job.Terminal() {
+		return result, nil
+	}
+	if !batch.Complete && batch.Cursor == job.ScopeCursor {
+		return ScopeExpansionResult{}, ErrScopeExpansionStalled
+	}
+
+	var pending int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM job_items WHERE job_id = ? AND status IN (?, ?)`,
+		jobID, ItemQueued, ItemRunning).Scan(&pending); err != nil {
+		return ScopeExpansionResult{}, err
+	}
+	nodes := uniqueScopeNodes(batch.Nodes)
+	newNodes := len(nodes)
+	if newNodes > 0 {
+		args := make([]any, 0, 1+len(nodes))
+		args = append(args, jobID)
+		for _, nodeHash := range nodes {
+			args = append(args, nodeHash)
+		}
+		var existing int
+		query := `SELECT COUNT(*) FROM job_items WHERE job_id = ? AND node_hash IN (` + placeholders(len(nodes)) + `)`
+		if err := tx.QueryRowContext(ctx, query, args...).Scan(&existing); err != nil {
+			return ScopeExpansionResult{}, err
+		}
+		newNodes -= existing
+	}
+	result.Pending = pending
+	if batch.PendingBudget > 0 && pending+newNodes > batch.PendingBudget {
+		result.Backpressured = true
+		return result, nil
+	}
+
+	nowNs := batch.NowNs
+	if nowNs == 0 {
+		nowNs = job.CreatedAtNs
+	}
+	inserted := 0
+	if len(nodes) > 0 {
+		stmt, err := tx.PrepareContext(ctx, `
+			INSERT OR IGNORE INTO job_items
+				(job_id, node_hash, status, step_index, attempts, next_run_at_ns,
+				 lease_owner, lease_until_ns, result_json, error_code, updated_at_ns)
+			VALUES (?, ?, ?, 0, 0, ?, '', 0, '{}', '', ?)`)
+		if err != nil {
+			return ScopeExpansionResult{}, err
+		}
+		for _, nodeHash := range nodes {
+			res, err := stmt.ExecContext(ctx, jobID, nodeHash, ItemQueued, nowNs, nowNs)
+			if err != nil {
+				_ = stmt.Close()
+				return ScopeExpansionResult{}, err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				inserted++
+			}
+		}
+		if err := stmt.Close(); err != nil {
+			return ScopeExpansionResult{}, err
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE jobs SET total = ?, scope_complete = ?, scope_cursor = ?,
+			scope_scanned = scope_scanned + ?, scope_matched = scope_matched + ?,
+			scope_enqueued = scope_enqueued + ?, scope_skipped = scope_skipped + ?
+		WHERE id = ? AND scope_mode = ? AND scope_complete = 0`,
+		job.Total+inserted, boolInt(batch.Complete), batch.Cursor, batch.Scanned,
+		batch.Matched, inserted, batch.Skipped, jobID, ScopeModePaged); err != nil {
+		return ScopeExpansionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ScopeExpansionResult{}, err
+	}
+
+	job.Total += inserted
+	job.ScopeComplete = batch.Complete
+	job.ScopeCursor = batch.Cursor
+	job.ScopeScanned += batch.Scanned
+	job.ScopeMatched += batch.Matched
+	job.ScopeEnqueued += int64(inserted)
+	job.ScopeSkipped += batch.Skipped
+	result.Job = job
+	result.Enqueued = inserted
+	result.Pending = pending + inserted
+	return result, nil
+}
+
+func uniqueScopeNodes(nodes []string) []string {
+	if len(nodes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(nodes))
+	out := make([]string, 0, len(nodes))
+	for _, nodeHash := range nodes {
+		nodeHash = strings.TrimSpace(nodeHash)
+		if nodeHash == "" {
+			continue
+		}
+		if _, ok := seen[nodeHash]; ok {
+			continue
+		}
+		seen[nodeHash] = struct{}{}
+		out = append(out, nodeHash)
+	}
+	return out
 }
 
 // GetJob returns one job row.
@@ -664,15 +816,9 @@ func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attem
 	if err != nil {
 		return Job{}, err
 	}
-	// The job row is read first and the item counters second, and the order is
-	// load bearing. The guarded UPDATE below compares the row it writes against
-	// the row read here, so this snapshot must never be *newer* than the
-	// counters it publishes. Read the other way round - counters first, row
-	// second - a publisher could take its counters before another publisher
-	// settled the job and its row after, and would then hold a fresh row and
-	// stale counters at once: the guard matched the row against itself, and the
-	// settlement was overwritten by the counters from before it (a succeeded
-	// job with done=2 written back as done=1).
+	// Read the job row before the item counters. The guarded UPDATE below
+	// compares every written row value against this snapshot, so a concurrent
+	// publisher cannot write stale counters or resurrect a canceled job.
 	job, err := s.GetJob(ctx, jobID)
 	if err != nil {
 		return Job{}, err
@@ -693,6 +839,13 @@ func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attem
 		if finishedAt == 0 {
 			finishedAt = nowNs
 		}
+	case job.ScopeMode == ScopeModePaged && !job.ScopeComplete:
+		// An empty item window is normal while the next resolver page is
+		// waiting for budget. The parent remains active until the cursor says
+		// the scope is complete.
+		if status == JobRunning && pending == 0 {
+			status = JobQueued
+		}
 	case pending > 0:
 		if status == JobQueued && counters.Running > 0 {
 			status = JobRunning
@@ -708,13 +861,6 @@ func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attem
 	if s.refreshHook != nil {
 		s.refreshHook()
 	}
-
-	// The WHERE clause carries every column this statement writes, with the
-	// values the row had when it was read, so a concurrent publisher makes the
-	// UPDATE match no row and the stale state is never written back. The
-	// counters alone are not enough: CancelJob rewrites only `status`, and a
-	// publisher that read the row before the cancel would otherwise put the
-	// canceled job back to running (its counters are unchanged by a cancel).
 	res, err := db.ExecContext(ctx, `
 		UPDATE jobs SET status = ?, total = ?, done = ?, failed = ?, skipped = ?,
 			finished_at_ns = ?
@@ -726,10 +872,6 @@ func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attem
 		return Job{}, err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		// The row changed under us (a missing row cannot reach this point:
-		// GetJob above would have returned ErrJobNotFound). Recompute from a
-		// fresh read - or, at the bound, return what was read and write
-		// nothing rather than overwrite the newer state.
 		if attempt+1 >= refreshJobPublishAttempts {
 			return job, nil
 		}
@@ -763,6 +905,13 @@ func (s *Store) JobProgressView(ctx context.Context, jobID string) (JobProgress,
 		Canceled:           counters.Canceled,
 		Pending:            counters.Queued + counters.Running,
 		PendingOnlineItems: pendingLookups,
+		ScopeMode:          job.ScopeMode,
+		ScopeComplete:      job.ScopeComplete,
+		ScopeCursor:        job.ScopeCursor,
+		ScopeScanned:       job.ScopeScanned,
+		ScopeMatched:       job.ScopeMatched,
+		ScopeEnqueued:      job.ScopeEnqueued,
+		ScopeSkipped:       job.ScopeSkipped,
 	}, nil
 }
 
@@ -821,7 +970,8 @@ func (s *Store) DeleteJobsFinishedBefore(ctx context.Context, beforeNs int64) (i
 }
 
 const jobSelect = `SELECT id, kind, status, priority, request_json, total, done, failed, skipped,
-	created_by, created_at_ns, started_at_ns, finished_at_ns, error FROM jobs`
+	created_by, created_at_ns, started_at_ns, finished_at_ns, error, scope_mode, scope_complete,
+	scope_cursor, scope_scanned, scope_matched, scope_enqueued, scope_skipped FROM jobs`
 
 const jobItemSelect = `SELECT job_id, node_hash, status, step_index, attempts, next_run_at_ns,
 	lease_owner, lease_until_ns, result_json, error_code, updated_at_ns FROM job_items`
@@ -854,9 +1004,13 @@ func collectJobItems(rows *sql.Rows) ([]JobItem, error) {
 
 func scanJob(row rowScanner) (Job, error) {
 	var job Job
+	var scopeComplete int
 	err := row.Scan(&job.ID, &job.Kind, &job.Status, &job.Priority, &job.RequestJSON,
 		&job.Total, &job.Done, &job.Failed, &job.Skipped, &job.CreatedBy,
-		&job.CreatedAtNs, &job.StartedAtNs, &job.FinishedAtNs, &job.Error)
+		&job.CreatedAtNs, &job.StartedAtNs, &job.FinishedAtNs, &job.Error,
+		&job.ScopeMode, &scopeComplete, &job.ScopeCursor, &job.ScopeScanned,
+		&job.ScopeMatched, &job.ScopeEnqueued, &job.ScopeSkipped)
+	job.ScopeComplete = scopeComplete != 0
 	return job, err
 }
 
@@ -880,4 +1034,11 @@ func placeholders(n int) string {
 		b.WriteByte('?')
 	}
 	return b.String()
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }

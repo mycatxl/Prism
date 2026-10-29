@@ -194,9 +194,9 @@ func (r *refreshScheduler) nextDelay(now time.Time) (time.Duration, error) {
 	return next.Sub(now), nil
 }
 
-// runOnce resolves the scope and creates one job. It returns 1 when a job was
-// created and 0 when nothing was stale - an empty scope is a normal outcome of a
-// daily pass, not an error.
+// runOnce creates one bounded refresh parent job. When the production manager
+// has a page resolver, the stale sources are read by that resolver in resumable
+// batches; a materialized-only manager keeps the old bounded compatibility path.
 func (r *refreshScheduler) runOnce(ctx context.Context) (created int, err error) {
 	defer func() {
 		if r.runHook != nil {
@@ -209,23 +209,32 @@ func (r *refreshScheduler) runOnce(ctx context.Context) (created int, err error)
 
 	now := r.svc.clock.Now().UTC()
 	kind := jobs.SubscriptionKindOf(r.autoChecks())
-
-	hashes, err := r.collectScope(ctx, now, kind)
-	if err != nil {
-		r.recordError(err)
-		return 0, err
+	scope := jobs.Scope{
+		RefreshStale:       true,
+		RefreshStaleChecks: kind == jobs.KindFull,
 	}
-	r.lastScanned.Store(int64(len(hashes)))
-	if len(hashes) == 0 {
-		r.lastRunNs.Store(now.UnixNano())
-		r.recordError(nil)
-		r.opts.Logf("[intel] scheduled refresh: nothing is stale, no job created")
-		return 0, nil
+	if !r.svc.manager.SupportsScopePages() {
+		hashes, err := r.collectScope(ctx, now, kind)
+		if err != nil {
+			r.recordError(err)
+			return 0, err
+		}
+		r.lastScanned.Store(int64(len(hashes)))
+		if len(hashes) == 0 {
+			r.lastRunNs.Store(now.UnixNano())
+			r.recordError(nil)
+			r.opts.Logf("[intel] scheduled refresh: nothing is stale, no job created")
+			return 0, nil
+		}
+		scope = jobs.Scope{NodeHashes: hashes}
+	} else {
+		// Scope scanning happens in the manager's bounded expansion loop.
+		r.lastScanned.Store(0)
 	}
 
 	if _, err := r.svc.manager.Create(ctx, jobs.Request{
 		Kind:  kind,
-		Scope: jobs.Scope{NodeHashes: hashes},
+		Scope: scope,
 	}, jobs.CreatedByRefresh(), jobs.PriorityRefresh); err != nil {
 		r.recordError(err)
 		return 0, err
@@ -234,7 +243,11 @@ func (r *refreshScheduler) runOnce(ctx context.Context) (created int, err error)
 	r.created.Add(1)
 	r.lastRunNs.Store(now.UnixNano())
 	r.recordError(nil)
-	r.opts.Logf("[intel] scheduled refresh: created a kind=%s job for %d node(s)", kind, len(hashes))
+	if scope.RefreshStale {
+		r.opts.Logf("[intel] scheduled refresh: created a kind=%s paged parent job (checks=%t)", kind, scope.RefreshStaleChecks)
+	} else {
+		r.opts.Logf("[intel] scheduled refresh: created a kind=%s compatibility job for %d node(s)", kind, len(scope.NodeHashes))
+	}
 	return 1, nil
 }
 

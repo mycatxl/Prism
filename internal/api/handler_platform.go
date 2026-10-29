@@ -198,15 +198,15 @@ func HandleRebuildPlatform(cp *service.ControlPlaneService) http.HandlerFunc {
 	}
 }
 
-// previewFilterResponse is the preview envelope: the standard page
-// plus the excluded_by counters. The page fields are embedded, so the
-// pagination contract (items/total/limit/offset) stays exactly the one every
-// other list endpoint uses.
+// previewFilterResponse is the bounded preview envelope. Total is exact when
+// truncated is false and is a lower bound otherwise; estimated is false because
+// the service does not extrapolate from a partial scan.
 type previewFilterResponse struct {
 	PageResponse[service.NodeSummary]
-	// ExcludedBy counts the nodes rejected per rule, keyed by "regex",
-	// "region" and the quality admission reasons (QUALITY_MIN_PURITY, ...).
 	ExcludedBy map[string]int `json:"excluded_by"`
+	Scanned    int            `json:"scanned"`
+	Truncated  bool           `json:"truncated"`
+	Estimated  bool           `json:"estimated"`
 }
 
 // HandlePreviewFilter returns a handler for POST /api/v1/platforms/preview-filter.
@@ -221,30 +221,32 @@ func HandlePreviewFilter(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeInvalidArgument(w, "platform_id: must be a valid UUID")
 			return
 		}
-		report, err := cp.PreviewFilterReport(req)
-		if err != nil {
-			writeServiceError(w, err)
-			return
-		}
 		pg, ok := parsePaginationOrWriteInvalid(w, r)
 		if !ok {
 			return
 		}
-		items := PaginateSlice(report.Nodes, pg)
-		cp.FillNodeIntelEgress(r.Context(), items)
-		cp.FillNodeQualityEvidence(r.Context(), items)
+		report, err := cp.PreviewFilterPageReport(req, pg.Limit, pg.Offset)
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		cp.FillNodeIntelEgress(r.Context(), report.Nodes)
+		cp.FillNodeQualityEvidence(r.Context(), report.Nodes)
 		excludedBy := report.ExcludedBy
 		if excludedBy == nil {
 			excludedBy = map[string]int{}
 		}
 		WriteJSON(w, http.StatusOK, previewFilterResponse{
 			PageResponse: PageResponse[service.NodeSummary]{
-				Items:  items,
-				Total:  len(report.Nodes),
+				Items:  report.Nodes,
+				Total:  report.Matched,
 				Limit:  pg.Limit,
 				Offset: pg.Offset,
 			},
 			ExcludedBy: excludedBy,
+			Scanned:    report.Scanned,
+			Truncated:  report.Truncated,
+			Estimated:  false,
 		})
 	}
 }

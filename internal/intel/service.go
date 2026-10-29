@@ -175,11 +175,13 @@ func (r pipelineRunner) reuseFreshEgress(ctx context.Context, kind jobs.Kind, no
 
 // Options configures the intel service.
 type Options struct {
-	Store    *store.Store
-	Clock    jobs.Clock
-	Config   jobs.ConfigProvider
-	Scope    jobs.ScopeResolver
-	Handlers StepHandlers
+	Store          *store.Store
+	Clock          jobs.Clock
+	Config         jobs.ConfigProvider
+	Scope          jobs.ScopeResolver
+	ScopePage      jobs.ScopePageResolver
+	ScopeValidator jobs.ScopeValidator
+	Handlers       StepHandlers
 	// Prober overrides the built-in egress probe of step 1.
 	Prober *egress.Probe
 	// ProviderSpecs and Lookup enable the provider queue workers.
@@ -310,6 +312,8 @@ func NewService(opts Options) (*Service, error) {
 		Store:             opts.Store,
 		Runner:            pipelineRunner{handlers: svc.handlers, prober: prober, onChange: opts.OnEgressChange},
 		Scope:             opts.Scope,
+		ScopePage:         opts.ScopePage,
+		ScopeValidator:    opts.ScopeValidator,
 		Config:            opts.Config,
 		Clock:             clock,
 		Census:            opts.Census,

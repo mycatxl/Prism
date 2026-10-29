@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -34,7 +36,8 @@ import (
 // a scope that exceeds the bound fails with jobs.ErrTooManyNodes.
 const maxIntelScopeNodes = jobs.MaxNodesPerJob
 
-// intelGeoDirName is the directory below $PRISM_CACHE_DIR that holds the
+const intelScopeStaleEgressWindow = 48 * time.Hour
+
 // offline databases.
 const intelGeoDirName = "geo"
 
@@ -124,8 +127,10 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	}
 
 	svc, err := intel.NewService(intel.Options{
-		Store: intelStore,
-		Scope: jobs.ScopeResolverFunc(a.resolveIntelScope),
+		Store:          intelStore,
+		Scope:          jobs.ScopeResolverFunc(a.resolveIntelScope),
+		ScopePage:      a,
+		ScopeValidator: a,
 		// Step 1 stays the built-in egress probe. Every other step is now a real
 		// /handler, so no step degrades to a no-op skip any more.
 		Prober:        prober,
@@ -629,6 +634,434 @@ func (a *prismApp) resolveIntelScope(_ context.Context, scope jobs.Scope) ([]str
 }
 
 // scopeHashes renders the selected node hashes in a stable order.
+const (
+	intelScopePhaseExplicit     = "explicit"
+	intelScopePhasePool         = "pool"
+	intelScopePhaseSubscription = "subscription"
+	intelScopePhaseRefresh      = "refresh"
+	intelScopePhaseDone         = "done"
+	intelScopeCursorVersion     = 1
+)
+
+type intelScopeCursor struct {
+	Version          int    `json:"v"`
+	Phase            string `json:"p"`
+	ExplicitIndex    int    `json:"e,omitempty"`
+	PoolCursor       string `json:"pool,omitempty"`
+	SubscriptionID   string `json:"sub_id,omitempty"`
+	SubscriptionHash string `json:"sub_hash,omitempty"`
+	RefreshCursor    string `json:"refresh,omitempty"`
+}
+
+func encodeIntelScopeCursor(cursor intelScopeCursor) (string, error) {
+	cursor.Version = intelScopeCursorVersion
+	raw, err := json.Marshal(cursor)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeIntelScopeCursor(raw string) (intelScopeCursor, error) {
+	if strings.TrimSpace(raw) == "" {
+		return intelScopeCursor{Version: intelScopeCursorVersion, Phase: intelScopePhaseExplicit}, nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return intelScopeCursor{}, fmt.Errorf("%w: invalid scope cursor: %v", jobs.ErrInvalidJob, err)
+	}
+	var cursor intelScopeCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil {
+		return intelScopeCursor{}, fmt.Errorf("%w: invalid scope cursor: %v", jobs.ErrInvalidJob, err)
+	}
+	if cursor.Version != intelScopeCursorVersion {
+		return intelScopeCursor{}, fmt.Errorf("%w: unsupported scope cursor version %d", jobs.ErrInvalidJob, cursor.Version)
+	}
+	return cursor, nil
+}
+
+func canonicalIntelScopeHashes(raw []string) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		hash, err := node.ParseHex(value)
+		if err != nil {
+			return nil, fmt.Errorf("%w: malformed node hash %q", jobs.ErrInvalidJob, value)
+		}
+		canonical := hash.String()
+		if _, ok := seen[canonical]; ok {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		out = append(out, canonical)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+func (a *prismApp) validateIntelScope(scope jobs.Scope) error {
+	if unknown := unknownScopeFilterKeys(scope.Filter); len(unknown) > 0 {
+		return fmt.Errorf("%w: unknown scope filter key(s) %s", jobs.ErrInvalidJob, strings.Join(unknown, ", "))
+	}
+	_, err := canonicalIntelScopeHashes(scope.NodeHashes)
+	return err
+}
+
+func (a *prismApp) scopePoolSelector(scope jobs.Scope, filter nodeFilter) bool {
+	return scope.All || len(scope.PlatformIDs) > 0 ||
+		(filter.constrained() && len(scope.SubscriptionIDs) == 0 && len(scope.PlatformIDs) == 0)
+}
+
+func (a *prismApp) firstIntelScopePhase(scope jobs.Scope, filter nodeFilter) string {
+	if hashes, _ := canonicalIntelScopeHashes(scope.NodeHashes); len(hashes) > 0 {
+		return intelScopePhaseExplicit
+	}
+	if a.scopePoolSelector(scope, filter) && a != nil && a.topoRuntime != nil && a.topoRuntime.pool != nil {
+		return intelScopePhasePool
+	}
+	if len(scope.SubscriptionIDs) > 0 {
+		return intelScopePhaseSubscription
+	}
+	if scope.RefreshStale {
+		return intelScopePhaseRefresh
+	}
+	return intelScopePhaseDone
+}
+
+func (a *prismApp) nextIntelScopePhase(scope jobs.Scope, filter nodeFilter, current string) string {
+	switch current {
+	case intelScopePhaseExplicit:
+		if a.scopePoolSelector(scope, filter) && a != nil && a.topoRuntime != nil && a.topoRuntime.pool != nil {
+			return intelScopePhasePool
+		}
+		if len(scope.SubscriptionIDs) > 0 {
+			return intelScopePhaseSubscription
+		}
+		if scope.RefreshStale {
+			return intelScopePhaseRefresh
+		}
+	case intelScopePhasePool:
+		if len(scope.SubscriptionIDs) > 0 {
+			return intelScopePhaseSubscription
+		}
+		if scope.RefreshStale {
+			return intelScopePhaseRefresh
+		}
+	case intelScopePhaseSubscription:
+		if scope.RefreshStale {
+			return intelScopePhaseRefresh
+		}
+	}
+	return intelScopePhaseDone
+}
+
+// ResolveScopePage implements the production bounded scope resolver. It keeps
+// only an opaque continuation and the current page; the pool and cache sources
+// remain authoritative and are never materialized into one large slice.
+func (a *prismApp) ResolveScopePage(ctx context.Context, scope jobs.Scope, rawCursor string, limit int) (jobs.ScopePage, error) {
+	if err := a.validateIntelScope(scope); err != nil {
+		return jobs.ScopePage{}, err
+	}
+	if limit <= 0 {
+		return jobs.ScopePage{Complete: true}, nil
+	}
+	if limit > jobs.MaxScopeExpansionBatch {
+		limit = jobs.MaxScopeExpansionBatch
+	}
+	cursor, err := decodeIntelScopeCursor(rawCursor)
+	if err != nil {
+		return jobs.ScopePage{}, err
+	}
+	filter := newNodeFilter(scope.Filter, a.intelScopeGeoLookup(), a.intelScopeSnapshot())
+	explicit, err := canonicalIntelScopeHashes(scope.NodeHashes)
+	if err != nil {
+		return jobs.ScopePage{}, err
+	}
+	explicitSet := make(map[string]struct{}, len(explicit))
+	for _, hash := range explicit {
+		explicitSet[hash] = struct{}{}
+	}
+	isExplicit := func(hash node.Hash) bool {
+		_, ok := explicitSet[hash.String()]
+		return ok
+	}
+	if cursor.Phase == "" {
+		cursor.Phase = a.firstIntelScopePhase(scope, filter)
+	}
+
+	poolPhaseEnabled := a.scopePoolSelector(scope, filter) && a != nil && a.topoRuntime != nil && a.topoRuntime.pool != nil
+	wantedSubscriptions := make(map[string]struct{}, len(scope.SubscriptionIDs))
+	for _, id := range scope.SubscriptionIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			wantedSubscriptions[id] = struct{}{}
+		}
+	}
+	poolSelected := func(hash node.Hash) bool {
+		if !poolPhaseEnabled {
+			return false
+		}
+		entry, ok := a.topoRuntime.pool.GetEntry(hash)
+		if !ok || entry == nil || !filter.matches(entry) {
+			return false
+		}
+		if len(scope.PlatformIDs) == 0 {
+			return true
+		}
+		for _, platformID := range scope.PlatformIDs {
+			plat, ok := a.topoRuntime.pool.GetPlatform(strings.TrimSpace(platformID))
+			if ok && plat.View().Contains(hash) {
+				return true
+			}
+		}
+		return false
+	}
+	subscriptionSelected := func(hash node.Hash) bool {
+		if len(wantedSubscriptions) == 0 || a == nil || a.topoRuntime == nil || a.topoRuntime.pool == nil {
+			return false
+		}
+		entry, ok := a.topoRuntime.pool.GetEntry(hash)
+		if !ok || entry == nil || (filter.constrained() && !filter.matches(entry)) {
+			return false
+		}
+		for _, id := range entry.SubscriptionIDs() {
+			if _, ok := wantedSubscriptions[id]; ok {
+				return true
+			}
+		}
+		return false
+	}
+
+	page := jobs.ScopePage{Nodes: make([]string, 0, limit)}
+	seen := make(map[string]struct{}, limit)
+	add := func(hash string) {
+		if len(page.Nodes) >= limit {
+			return
+		}
+		if _, ok := seen[hash]; ok {
+			return
+		}
+		seen[hash] = struct{}{}
+		page.Nodes = append(page.Nodes, hash)
+		page.Matched++
+	}
+
+	for len(page.Nodes) < limit && page.Scanned < int64(limit) && cursor.Phase != intelScopePhaseDone {
+		switch cursor.Phase {
+		case intelScopePhaseExplicit:
+			for cursor.ExplicitIndex < len(explicit) && len(page.Nodes) < limit && page.Scanned < int64(limit) {
+				hash := explicit[cursor.ExplicitIndex]
+				cursor.ExplicitIndex++
+				page.Scanned++
+				add(hash)
+			}
+			if cursor.ExplicitIndex >= len(explicit) {
+				cursor.Phase = a.nextIntelScopePhase(scope, filter, cursor.Phase)
+			}
+
+		case intelScopePhasePool:
+			if a == nil || a.topoRuntime == nil || a.topoRuntime.pool == nil {
+				cursor.Phase = a.nextIntelScopePhase(scope, filter, cursor.Phase)
+				continue
+			}
+			poolPage, err := a.topoRuntime.pool.PageNodeHashes(cursor.PoolCursor, limit-int(page.Scanned))
+			if err != nil {
+				return jobs.ScopePage{}, err
+			}
+			page.Scanned += poolPage.Scanned
+			cursor.PoolCursor = poolPage.Cursor
+			for _, hash := range poolPage.Hashes {
+				entry, ok := a.topoRuntime.pool.GetEntry(hash)
+				if !ok || !filter.matches(entry) {
+					page.Skipped++
+					continue
+				}
+				matched := len(scope.PlatformIDs) == 0
+				for _, platformID := range scope.PlatformIDs {
+					plat, ok := a.topoRuntime.pool.GetPlatform(strings.TrimSpace(platformID))
+					if ok && plat.View().Contains(hash) {
+						matched = true
+						break
+					}
+				}
+				if matched && !isExplicit(hash) {
+					add(hash.String())
+				} else {
+					page.Skipped++
+				}
+			}
+			if poolPage.Complete {
+				cursor.Phase = a.nextIntelScopePhase(scope, filter, cursor.Phase)
+			}
+
+		case intelScopePhaseSubscription:
+			if a == nil || a.stateEngine == nil {
+				return jobs.ScopePage{}, fmt.Errorf("resolve subscription scope: state engine unavailable")
+			}
+			subPage, err := a.stateEngine.PageSubscriptionNodeHashes(ctx, scope.SubscriptionIDs, cursor.SubscriptionID, cursor.SubscriptionHash, limit-int(page.Scanned))
+			if err != nil {
+				return jobs.ScopePage{}, fmt.Errorf("resolve subscription scope page: %w", err)
+			}
+			page.Scanned += subPage.Scanned
+			cursor.SubscriptionID = subPage.LastSubscriptionID
+			cursor.SubscriptionHash = subPage.LastNodeHash
+			for _, row := range subPage.Nodes {
+				if row.Evicted {
+					page.Skipped++
+					continue
+				}
+				hash, err := node.ParseHex(strings.TrimSpace(row.NodeHash))
+				if err != nil {
+					page.Skipped++
+					continue
+				}
+				if filter.constrained() {
+					if a.topoRuntime == nil || a.topoRuntime.pool == nil {
+						page.Skipped++
+						continue
+					}
+					entry, ok := a.topoRuntime.pool.GetEntry(hash)
+					if !ok || !filter.matches(entry) {
+						page.Skipped++
+						continue
+					}
+				}
+				if isExplicit(hash) || (poolPhaseEnabled && poolSelected(hash)) {
+					page.Skipped++
+					continue
+				}
+				add(hash.String())
+			}
+			if subPage.Complete {
+				cursor.Phase = a.nextIntelScopePhase(scope, filter, cursor.Phase)
+			}
+
+		case intelScopePhaseRefresh:
+			if a == nil || a.intelStore == nil {
+				return jobs.ScopePage{}, fmt.Errorf("resolve refresh scope: intel store unavailable")
+			}
+			now := time.Now().UTC()
+			refreshPage, err := a.intelStore.PageRefreshNodeHashes(ctx, now.UnixNano(), now.Add(-intelScopeStaleEgressWindow).UnixNano(), scope.RefreshStaleChecks, cursor.RefreshCursor, limit-int(page.Scanned))
+			if err != nil {
+				return jobs.ScopePage{}, fmt.Errorf("resolve refresh scope page: %w", err)
+			}
+			page.Scanned += refreshPage.Scanned
+			cursor.RefreshCursor = refreshPage.Cursor
+			for _, rawHash := range refreshPage.NodeHashes {
+				hash, err := node.ParseHex(strings.TrimSpace(rawHash))
+				if err != nil {
+					page.Skipped++
+					continue
+				}
+				if filter.constrained() {
+					if a.topoRuntime == nil || a.topoRuntime.pool == nil {
+						page.Skipped++
+						continue
+					}
+					entry, ok := a.topoRuntime.pool.GetEntry(hash)
+					if !ok || !filter.matches(entry) {
+						page.Skipped++
+						continue
+					}
+				}
+				if isExplicit(hash) || (poolPhaseEnabled && poolSelected(hash)) || subscriptionSelected(hash) {
+					page.Skipped++
+					continue
+				}
+				add(hash.String())
+			}
+			if refreshPage.Complete {
+				cursor.Phase = a.nextIntelScopePhase(scope, filter, cursor.Phase)
+			}
+
+		default:
+			cursor.Phase = intelScopePhaseDone
+		}
+	}
+
+	page.Complete = cursor.Phase == intelScopePhaseDone
+	page.Cursor, err = encodeIntelScopeCursor(cursor)
+	if err != nil {
+		return jobs.ScopePage{}, fmt.Errorf("encode scope cursor: %w", err)
+	}
+	return page, nil
+}
+
+// ValidateScopeNode implements the execution-time membership check. Explicit
+// hashes are authoritative for filtering; every other selector is evaluated
+// against the current pool and current platform views.
+func (a *prismApp) ValidateScopeNode(ctx context.Context, scope jobs.Scope, nodeHash string) (bool, error) {
+	if err := a.validateIntelScope(scope); err != nil {
+		return false, err
+	}
+	hash, err := node.ParseHex(strings.TrimSpace(nodeHash))
+	if err != nil {
+		return false, nil
+	}
+	if a == nil || a.topoRuntime == nil || a.topoRuntime.pool == nil {
+		return false, nil
+	}
+	entry, ok := a.topoRuntime.pool.GetEntry(hash)
+	if !ok || entry == nil {
+		return false, nil
+	}
+
+	for _, explicit := range scope.NodeHashes {
+		parsed, parseErr := node.ParseHex(strings.TrimSpace(explicit))
+		if parseErr == nil && parsed == hash {
+			return true, nil
+		}
+	}
+
+	filter := newNodeFilter(scope.Filter, a.intelScopeGeoLookup(), a.intelScopeSnapshot())
+	selected := scope.All || (len(scope.SubscriptionIDs) == 0 && len(scope.PlatformIDs) == 0 && filter.constrained())
+	if len(scope.SubscriptionIDs) > 0 {
+		wanted := make(map[string]struct{}, len(scope.SubscriptionIDs))
+		for _, id := range scope.SubscriptionIDs {
+			wanted[strings.TrimSpace(id)] = struct{}{}
+		}
+		for _, id := range entry.SubscriptionIDs() {
+			if _, ok := wanted[id]; ok {
+				selected = true
+				break
+			}
+		}
+	}
+	for _, platformID := range scope.PlatformIDs {
+		plat, ok := a.topoRuntime.pool.GetPlatform(strings.TrimSpace(platformID))
+		if ok && plat.View().Contains(hash) {
+			selected = true
+			break
+		}
+	}
+	if scope.RefreshStale && !selected {
+		if a.intelStore == nil {
+			return false, fmt.Errorf("validate refresh scope: intel store unavailable")
+		}
+		now := time.Now().UTC()
+		needsRefresh, err := a.intelStore.NodeNeedsRefresh(ctx, hash.String(), now.UnixNano(), now.Add(-intelScopeStaleEgressWindow).UnixNano(), scope.RefreshStaleChecks)
+		if err != nil {
+			return false, fmt.Errorf("validate refresh scope: %w", err)
+		}
+		selected = needsRefresh
+	}
+	if !selected {
+		return false, nil
+	}
+	return !filter.constrained() || filter.matches(entry), nil
+}
+
+// ValidateScope implements jobs.ScopeRequestValidator.
+func (a *prismApp) ValidateScope(_ context.Context, scope jobs.Scope) error {
+	return a.validateIntelScope(scope)
+}
+
 func scopeHashes(selected map[string]struct{}) []string {
 	out := make([]string, 0, len(selected))
 	for hash := range selected {

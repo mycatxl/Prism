@@ -2,6 +2,7 @@ package intel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -29,6 +30,31 @@ func newAutoEnqueueService(t *testing.T, enabled *bool) *Service {
 	})
 	if err != nil {
 		t.Fatalf("new service: %v", err)
+	}
+	return svc
+}
+
+// newAutoEnqueuePagedService wires the production-style page resolver while
+// keeping the manager stopped, so a large automatic scope can be inspected as
+// a parent job without expanding it in the test.
+func newAutoEnqueuePagedService(t *testing.T, enabled *bool) *Service {
+	t.Helper()
+	st := openIntelStore(t)
+	svc, err := NewService(Options{
+		Store: st,
+		Scope: jobs.ScopeResolverFunc(func(_ context.Context, scope jobs.Scope) ([]string, error) {
+			return scope.NodeHashes, nil
+		}),
+		ScopePage: jobs.ScopePageResolverFunc(func(context.Context, jobs.Scope, string, int) (jobs.ScopePage, error) {
+			return jobs.ScopePage{Complete: true}, nil
+		}),
+		Config: func() jobs.Config {
+			return jobs.Config{Enabled: *enabled, NodeWorkers: 1, MaxRunningJobs: 1}
+		},
+		Logf: t.Logf,
+	})
+	if err != nil {
+		t.Fatalf("new paged service: %v", err)
 	}
 	return svc
 }
@@ -106,36 +132,57 @@ func TestSubscriptionAutoEnqueueHonoursFlags(t *testing.T) {
 	enabled = true
 }
 
-// TestAutoEnqueueRefusesOverLimitBatch covers R4: a batch above the per-job node
-// cap fails with the named limit error instead of being truncated.
-func TestAutoEnqueueRefusesOverLimitBatch(t *testing.T) {
+// TestAutoEnqueueLargeBatchUsesPagedScope covers the two creation contracts:
+// production page-aware managers persist a subscription parent, while an older
+// materialized-only manager refuses the same over-limit input explicitly.
+func TestAutoEnqueueLargeBatchUsesPagedScope(t *testing.T) {
 	ctx := context.Background()
 	enabled := true
-	svc := newAutoEnqueueService(t, &enabled)
-	st := svc.Store()
 
 	tooMany := make([]string, 0, jobs.MaxNodesPerJob+1)
 	for i := 0; i <= jobs.MaxNodesPerJob; i++ {
 		tooMany = append(tooMany, fmt.Sprintf("%032x", i))
 	}
 
-	created, err := svc.AutoEnqueueSubscriptionNodes(ctx, "sub-huge", true, tooMany, false)
-	if created {
-		t.Fatal("an over-limit batch must not create a job")
+	paged := newAutoEnqueuePagedService(t, &enabled)
+	pagedStore := paged.Store()
+	created, err := paged.AutoEnqueueSubscriptionNodes(ctx, "sub-huge", true, tooMany, false)
+	if err != nil || !created {
+		t.Fatalf("page-aware large batch = created:%v err:%v, want one parent job", created, err)
 	}
-	if !errors.Is(err, jobs.ErrTooManyNodes) {
-		t.Fatalf("over-limit batch error = %v, want jobs.ErrTooManyNodes", err)
+	job, ok, err := findSubscriptionJob(ctx, pagedStore, "sub-huge")
+	if err != nil || !ok {
+		t.Fatalf("large subscription parent missing: ok=%v err=%v", ok, err)
 	}
-	count, err := st.CountJobs(ctx, "")
+	if job.ScopeMode != store.ScopeModePaged || job.ScopeComplete || job.Total != 0 {
+		t.Fatalf("large subscription job = mode:%q complete:%v total:%d, want paged/incomplete/0", job.ScopeMode, job.ScopeComplete, job.Total)
+	}
+	var req jobs.Request
+	if err := json.Unmarshal([]byte(job.RequestJSON), &req); err != nil {
+		t.Fatalf("decode request_json: %v", err)
+	}
+	if len(req.Scope.SubscriptionIDs) != 1 || req.Scope.SubscriptionIDs[0] != "sub-huge" || len(req.Scope.NodeHashes) != 0 {
+		t.Fatalf("large subscription scope = %+v, want only sub-huge", req.Scope)
+	}
+	items, err := pagedStore.ListJobItems(ctx, store.JobItemFilter{JobID: job.ID})
 	if err != nil {
-		t.Fatalf("count jobs: %v", err)
+		t.Fatalf("ListJobItems: %v", err)
 	}
-	if count != 0 {
-		t.Fatalf("jobs after an over-limit batch = %d, want 0", count)
+	if len(items) != 0 {
+		t.Fatalf("large subscription parent materialized %d items", len(items))
 	}
 
-	// The job manager enforces the same cap for manual jobs.
-	if _, err := svc.CreateJob(ctx, jobs.Request{
+	materialized := newAutoEnqueueService(t, &enabled)
+	created, err = materialized.AutoEnqueueSubscriptionNodes(ctx, "sub-huge", true, tooMany, false)
+	if created || !errors.Is(err, jobs.ErrTooManyNodes) {
+		t.Fatalf("materialized-only large batch = created:%v err:%v, want ErrTooManyNodes", created, err)
+	}
+	if count, err := materialized.Store().CountJobs(ctx, ""); err != nil || count != 0 {
+		t.Fatalf("materialized-only jobs = %d (err %v), want none", count, err)
+	}
+
+	// The hard per-job cap remains in force for a materialized manual request.
+	if _, err := materialized.CreateJob(ctx, jobs.Request{
 		Kind:  jobs.KindIntel,
 		Scope: jobs.Scope{NodeHashes: tooMany},
 	}, jobs.CreatedByAdmin(), jobs.PriorityManual); !errors.Is(err, jobs.ErrTooManyNodes) {

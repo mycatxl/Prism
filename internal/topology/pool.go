@@ -4,14 +4,17 @@
 package topology
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/netip"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/btree"
 	"github.com/puzpuzpuz/xsync/v4"
 	"prism/internal/netutil"
 	"prism/internal/node"
@@ -23,6 +26,7 @@ import (
 // GlobalNodePool is the system's single source of truth for nodes.
 // It uses xsync.Map for concurrent access and xsync.Compute for atomic
 // AddNodeFromSub / RemoveNodeFromSub operations.
+
 type GlobalNodePool struct {
 	nodes *xsync.Map[node.Hash, *node.NodeEntry]
 
@@ -30,6 +34,12 @@ type GlobalNodePool struct {
 	platMu         sync.RWMutex
 	platformByID   map[string]*platform.Platform // id -> platform
 	platformByName map[string]*platform.Platform // name -> platform
+
+	// hashIndex is the stable traversal order for resumable scope expansion.
+	// xsync.Map remains the concurrent lookup store; this index only owns hash
+	// ordering and is updated under hashIndexMu with the map mutation.
+	hashIndexMu sync.RWMutex
+	hashIndex   *btree.BTreeG[node.Hash]
 
 	// Subscription lookup — injected by SubscriptionManager.
 	subLookup func(subID string) *subscription.Subscription
@@ -104,7 +114,10 @@ func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 	}
 
 	return &GlobalNodePool{
-		nodes:                  xsync.NewMap[node.Hash, *node.NodeEntry](),
+		nodes: xsync.NewMap[node.Hash, *node.NodeEntry](),
+		hashIndex: btree.NewG(64, func(a, b node.Hash) bool {
+			return bytes.Compare(a[:], b[:]) < 0
+		}),
 		subLookup:              cfg.SubLookup,
 		geoLookup:              cfg.GeoLookup,
 		qualityLookup:          cfg.QualityLookup,
@@ -130,6 +143,7 @@ func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 // After mutation, notifies all platforms to re-evaluate the node.
 func (p *GlobalNodePool) AddNodeFromSub(hash node.Hash, rawOpts json.RawMessage, subID string) {
 	isNew := false
+	p.hashIndexMu.Lock()
 	p.nodes.Compute(hash, func(entry *node.NodeEntry, loaded bool) (*node.NodeEntry, xsync.ComputeOp) {
 		if !loaded {
 			createdAt := time.Now()
@@ -141,6 +155,8 @@ func (p *GlobalNodePool) AddNodeFromSub(hash node.Hash, rawOpts json.RawMessage,
 		entry.AddSubscriptionID(subID)
 		return entry, xsync.UpdateOp
 	})
+	p.hashIndex.ReplaceOrInsert(hash)
+	p.hashIndexMu.Unlock()
 
 	if isNew {
 		if p.onNodeAdded != nil {
@@ -164,6 +180,7 @@ func (p *GlobalNodePool) AddNodeFromSub(hash node.Hash, rawOpts json.RawMessage,
 func (p *GlobalNodePool) RemoveNodeFromSub(hash node.Hash, subID string) {
 	wasDeleted := false
 	var deletedEntry *node.NodeEntry // capture entry before map deletion
+	p.hashIndexMu.Lock()
 	p.nodes.Compute(hash, func(entry *node.NodeEntry, loaded bool) (*node.NodeEntry, xsync.ComputeOp) {
 		if !loaded {
 			return entry, xsync.CancelOp // idempotent no-op
@@ -176,6 +193,10 @@ func (p *GlobalNodePool) RemoveNodeFromSub(hash node.Hash, subID string) {
 		}
 		return entry, xsync.UpdateOp
 	})
+	if wasDeleted {
+		p.hashIndex.Delete(hash)
+	}
+	p.hashIndexMu.Unlock()
 
 	if p.onSubNodeChanged != nil {
 		p.onSubNodeChanged(subID, hash, false)
@@ -195,6 +216,59 @@ func (p *GlobalNodePool) GetEntry(hash node.Hash) (*node.NodeEntry, bool) {
 	return p.nodes.Load(hash)
 }
 
+// NodeHashPage is one stable, bounded traversal page of the pool. Hashes are
+// returned in ascending byte order; Cursor is the last hash scanned, not the
+// last hash returned by a selector, so filtered pages can still make progress.
+type NodeHashPage struct {
+	Hashes   []node.Hash
+	Cursor   string
+	Scanned  int64
+	Complete bool
+}
+
+// PageNodeHashes walks the stable hash index after cursor and scans at most
+// limit entries. The cursor is currently the canonical lowercase node hash.
+// Deletions between pages are harmless: the next greater hash remains the
+// continuation point.
+func (p *GlobalNodePool) PageNodeHashes(cursor string, limit int) (NodeHashPage, error) {
+	if limit <= 0 {
+		return NodeHashPage{Complete: true}, nil
+	}
+	var after node.Hash
+	hasCursor := strings.TrimSpace(cursor) != ""
+	if hasCursor {
+		parsed, err := node.ParseHex(strings.TrimSpace(cursor))
+		if err != nil {
+			return NodeHashPage{}, fmt.Errorf("pool cursor: %w", err)
+		}
+		after = parsed
+	}
+
+	p.hashIndexMu.RLock()
+	defer p.hashIndexMu.RUnlock()
+
+	page := NodeHashPage{Hashes: make([]node.Hash, 0, limit)}
+	visit := func(hash node.Hash) bool {
+		if hasCursor && hash == after {
+			return true
+		}
+		page.Scanned++
+		page.Cursor = hash.String()
+		page.Hashes = append(page.Hashes, hash)
+		return len(page.Hashes) < limit
+	}
+	if hasCursor {
+		p.hashIndex.AscendGreaterOrEqual(after, visit)
+	} else {
+		p.hashIndex.Ascend(visit)
+	}
+	page.Complete = len(page.Hashes) < limit
+	if page.Complete && page.Scanned == 0 {
+		page.Cursor = strings.TrimSpace(cursor)
+	}
+	return page, nil
+}
+
 // Range iterates all nodes in the pool.
 func (p *GlobalNodePool) Range(fn func(node.Hash, *node.NodeEntry) bool) {
 	p.nodes.Range(fn)
@@ -208,7 +282,13 @@ func (p *GlobalNodePool) Size() int {
 // LoadNodeFromBootstrap inserts a node during bootstrap recovery.
 // No dirty-marks, no platform notifications.
 func (p *GlobalNodePool) LoadNodeFromBootstrap(entry *node.NodeEntry) {
+	if entry == nil {
+		return
+	}
+	p.hashIndexMu.Lock()
 	p.nodes.Store(entry.Hash, entry)
+	p.hashIndex.ReplaceOrInsert(entry.Hash)
+	p.hashIndexMu.Unlock()
 }
 
 // RegisterPlatform adds a platform to receive dirty notifications.
