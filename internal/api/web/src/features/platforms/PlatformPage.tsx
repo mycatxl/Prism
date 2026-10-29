@@ -16,12 +16,12 @@ import {
   InspectorDrawer,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -87,7 +87,7 @@ function PlatformPageNavigator({
   const { t } = useI18n();
   const current = Math.min(Math.max(0, page), Math.max(0, totalPages - 1));
   return (
-    <div className="cp-pagination">
+    <div className="workspace-pagination">
       <span>
         {t("第 {{page}} / {{pages}} 页 · {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -100,12 +100,13 @@ function PlatformPageNavigator({
       <div>
         <ControlSelect
           aria-label={t("每页")}
-          value={pageSize}
+          selectedKey={String(pageSize)}
           disabled={disabled}
-          onChange={(event) => onPageSizeChange(Number(event.target.value))}
-        >
-          {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} / {t("页")}</option>)}
-        </ControlSelect>
+          items={PAGE_SIZE_OPTIONS.map((size) => ({ id: String(size), label: `${size} / ${t("页")}` }))}
+          onSelectionChange={(key) => {
+            if (key !== null) onPageSizeChange(Number(key));
+          }}
+        />
         <ControlButton
           variant="ghost"
           size="sm"
@@ -141,11 +142,11 @@ function CriteriaSummary({ platform }: { platform: Platform }) {
     ...platform.subscription_filters.map((value) => `${t("订阅")} ${value}`),
   ];
   return criteria.length > 0 ? (
-    <div className="cp-platform-criteria-summary">
+    <div className="workspace-platform-criteria-summary">
       {criteria.slice(0, 4).map((item) => <QueryBadge key={item} label={item} />)}
       {criteria.length > 4 ? <span>+{criteria.length - 4}</span> : null}
     </div>
-  ) : <span className="cp-muted">{t("不限制节点条件")}</span>;
+  ) : <span className="workspace-muted">{t("不限制节点条件")}</span>;
 }
 
 export function PlatformPage() {
@@ -235,6 +236,8 @@ export function PlatformPage() {
   });
   const createEmptyAccountBehavior = useWatch({ control: createForm.control, name: "reverse_proxy_empty_account_behavior" });
   const createPassiveCircuitBreakerDisabled = useWatch({ control: createForm.control, name: "passive_circuit_breaker_disabled" });
+  const createMissAction = useWatch({ control: createForm.control, name: "reverse_proxy_miss_action" });
+  const createAllocationPolicy = useWatch({ control: createForm.control, name: "allocation_policy" });
   const createMutation = useMutation({
     mutationFn: createPlatform,
     onSuccess: async (created) => {
@@ -254,7 +257,7 @@ export function PlatformPage() {
   const statusTone = platformsQuery.isError ? "warn" : platformsQuery.isSuccess ? "live" : "neutral";
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Delivery / platform registry"
       title={t("平台")}
       description={t("管理管理员定义的交付平台、节点准入条件、接入关系和租约入口。租户只能使用已授权的平台。")}
@@ -270,37 +273,36 @@ export function PlatformPage() {
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <section className="cp-command cp-platform-command">
-        <div className="cp-command__body">
+      <section className="workspace-command workspace-platform-command">
+        <div className="workspace-command__body">
           <ControlInput
             label={t("搜索平台")}
             value={keyword}
             onChange={(event) => updateParam("keyword", event.target.value)}
             placeholder={t("按平台名称或标识搜索")}
-            className="cp-platform-command__search"
+            className="workspace-platform-command__search"
           />
           <ControlSelect
             label={t("路由状态")}
-            value={status}
-            onChange={(event) => updateParam("status", event.target.value)}
-          >
-            {statusOptions.map((item) => <option key={item.value} value={item.value}>{t(item.label)}</option>)}
-          </ControlSelect>
+            selectedKey={status}
+            items={statusOptions.map((item) => ({ id: item.value, label: t(item.label) }))}
+            onSelectionChange={(key) => updateParam("status", key ?? "")}
+          />
         </div>
-        <div className="cp-command__actions">
-          <Search size={14} aria-hidden className="cp-platform-command__icon" />
+        <div className="workspace-command__actions">
+          <Search size={14} aria-hidden className="workspace-platform-command__icon" />
           {hasActiveFilters ? <ControlButton variant="ghost" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : null}
         </div>
       </section>
 
       {hasActiveFilters ? (
-        <div className="cp-active-filters" aria-label={t("当前筛选")}>
+        <div className="workspace-active-filters" aria-label={t("当前筛选")}>
           {settledKeyword ? <FilterChip label={`${t("关键词")}: ${settledKeyword}`} onRemove={() => updateParam("keyword", "")} /> : null}
           {status !== "all" ? <FilterChip label={`${t("路由状态")}: ${t(statusOptions.find((item) => item.value === status)?.label ?? status)}`} onRemove={() => updateParam("status", "")} /> : null}
         </div>
       ) : null}
 
-      <WorkSurface
+      <WorkspaceCard headerless
         eyebrow="Platform objects"
         title={t("平台目录")}
         meta={platformsQuery.data ? t("{{count}} 个平台", { count: totalPlatforms }) : t("未加载")}
@@ -314,7 +316,7 @@ export function PlatformPage() {
           />
         ) : null}
         {platformsQuery.isLoading && !platformsQuery.data ? (
-          <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在读取平台目录")}</div>
+          <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在读取平台目录")}</div>
         ) : null}
         {!platformsQuery.isLoading && !platformsQuery.isError && visiblePlatforms.length === 0 ? (
           <EmptyWorkState
@@ -324,7 +326,7 @@ export function PlatformPage() {
           />
         ) : null}
         {visiblePlatforms.length > 0 ? (
-          <ObjectList className="cp-platform-list">
+          <ObjectList className="workspace-platform-list">
             {visiblePlatforms.map((platform) => {
               const state = platformStatus(platform);
               const upstream = platform.subscription_filters.map((id) => subscriptionNameById.get(id) ?? id);
@@ -337,7 +339,7 @@ export function PlatformPage() {
                   key={platform.id}
                   active={platform.id === selected}
                   onClick={() => openInspector(platform.id)}
-                  leading={<span className="cp-platform-row__mark" aria-hidden>{platform.name.slice(0, 1).toUpperCase()}</span>}
+                  leading={<span className="workspace-platform-row__mark" aria-hidden>{platform.name.slice(0, 1).toUpperCase()}</span>}
                   title={platform.name}
                   subtitle={`${platform.id === ZERO_UUID ? t("内置平台") : t("管理员平台")} · ${upstream[0] ?? t("不限订阅")}`}
                   facts={<><span>{t("可路由")} {platform.routable_node_count.toLocaleString()}</span><span>{t("租约")} {activeLeases === null ? "—" : activeLeases.toLocaleString()}</span><span>{t("套餐")} {planCount === null ? "—" : planCount.toLocaleString()}</span><span>{formatRelativeTime(platform.updated_at)}</span></>}
@@ -359,25 +361,25 @@ export function PlatformPage() {
             onPageSizeChange={(next) => { updateParam("size", String(next), false); updateParam("page", "0", false); }}
           />
         ) : null}
-      </WorkSurface>
+      </WorkspaceCard>
 
       <InspectorDrawer
         open={Boolean(selected) && !createOpen}
         onOpenChange={(open) => { if (!open) closeInspector(); }}
         title={selectedPlatform?.name ?? selected.slice(0, 12)}
         eyebrow={t("Platform inspector")}
-        footer={selectedPlatform ? <div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={closeInspector}>{t("关闭")}</ControlButton><ControlButton variant="primary" size="sm" onPress={() => navigate(`${opsPaths.platforms}/${selectedPlatform.id}`)}><ExternalLink size={14} aria-hidden />{t("打开完整工作面")}</ControlButton></div> : undefined}
+        footer={selectedPlatform ? <div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={closeInspector}>{t("关闭")}</ControlButton><ControlButton variant="primary" size="sm" onPress={() => navigate(`${opsPaths.platforms}/${selectedPlatform.id}`)}><ExternalLink size={14} aria-hidden />{t("打开完整工作面")}</ControlButton></div> : undefined}
       >
-        {selectedQuery.isLoading && !selectedPlatform ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在读取平台")}</div> : null}
+        {selectedQuery.isLoading && !selectedPlatform ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在读取平台")}</div> : null}
         {selectedQuery.isError && !selectedPlatform ? <EmptyWorkState title={t("平台读取失败")} detail={formatApiErrorMessage(selectedQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void selectedQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
         {selectedPlatform ? (
-          <div className="cp-platform-inspector">
-            <div className="cp-platform-inspector__identity">
-              <span className="cp-platform-row__mark" aria-hidden>{selectedPlatform.name.slice(0, 1).toUpperCase()}</span>
+          <div className="workspace-platform-inspector">
+            <div className="workspace-platform-inspector__identity">
+              <span className="workspace-platform-row__mark" aria-hidden>{selectedPlatform.name.slice(0, 1).toUpperCase()}</span>
               <div><strong>{selectedPlatform.name}</strong><code>{selectedPlatform.id}</code></div>
               <StatusMark tone={platformStatus(selectedPlatform).tone === "alert" ? "alert" : "signal"} label={t(platformStatus(selectedPlatform).label)} />
             </div>
-            <dl className="cp-detail-facts">
+            <dl className="workspace-detail-facts">
               <DetailFact label={t("可路由节点")} value={selectedPlatform.routable_node_count.toLocaleString()} mono />
               <DetailFact label={t("租约保持") } value={formatGoDuration(selectedPlatform.sticky_ttl, t("默认"))} mono />
               <DetailFact label={t("节点分配")} value={t(allocationPolicyLabel[selectedPlatform.allocation_policy])} />
@@ -385,9 +387,9 @@ export function PlatformPage() {
               <DetailFact label={t("空账号行为")} value={t(emptyAccountBehaviorLabel[selectedPlatform.reverse_proxy_empty_account_behavior])} />
               <DetailFact label={t("最近更新")} value={formatDateTime(selectedPlatform.updated_at)} mono />
             </dl>
-            <section className="cp-platform-inspector__section"><h3>{t("节点准入")}</h3><CriteriaSummary platform={selectedPlatform} /></section>
-            <section className="cp-platform-inspector__section"><h3>{t("关系")}</h3><p>{selectedPlatform.subscription_filters.length ? t("绑定 {{count}} 个订阅来源", { count: selectedPlatform.subscription_filters.length }) : t("未限制订阅来源")}</p><p>{plansQuery.data ? t("{{count}} 个套餐可引用此平台", { count: plansQuery.data.items.filter((plan) => (plan.platforms ?? []).length === 0 || (plan.platforms ?? []).includes(selectedPlatform.name)).length }) : t("套餐关系暂不可用")}</p></section>
-            {selectedPlatform.regex_filters.length > 0 ? <p className="cp-legacy-note">{t("此平台仍包含历史节点名规则；新配置不会创建或修改该规则。")}</p> : null}
+            <section className="workspace-platform-inspector__section"><h3>{t("节点准入")}</h3><CriteriaSummary platform={selectedPlatform} /></section>
+            <section className="workspace-platform-inspector__section"><h3>{t("关系")}</h3><p>{selectedPlatform.subscription_filters.length ? t("绑定 {{count}} 个订阅来源", { count: selectedPlatform.subscription_filters.length }) : t("未限制订阅来源")}</p><p>{plansQuery.data ? t("{{count}} 个套餐可引用此平台", { count: plansQuery.data.items.filter((plan) => (plan.platforms ?? []).length === 0 || (plan.platforms ?? []).includes(selectedPlatform.name)).length }) : t("套餐关系暂不可用")}</p></section>
+            {selectedPlatform.regex_filters.length > 0 ? <p className="workspace-legacy-note">{t("此平台仍包含历史节点名规则；新配置不会创建或修改该规则。")}</p> : null}
           </div>
         ) : null}
       </InspectorDrawer>
@@ -397,31 +399,49 @@ export function PlatformPage() {
         onOpenChange={(open) => { if (!open) closeCreate(); }}
         title={t("新建平台")}
         eyebrow={t("Administrator action")}
-        footer={<div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={closeCreate}>{t("取消")}</ControlButton><ControlButton type="submit" form="platform-create-form" variant="primary" isDisabled={createMutation.isPending} loading={createMutation.isPending}>{t("确认创建")}</ControlButton></div>}
+        footer={<div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={closeCreate}>{t("取消")}</ControlButton><ControlButton type="submit" form="platform-create-form" variant="primary" isDisabled={createMutation.isPending} loading={createMutation.isPending}>{t("确认创建")}</ControlButton></div>}
       >
-        <form id="platform-create-form" className="cp-form-stack" onSubmit={onCreateSubmit}>
+        <form id="platform-create-form" className="workspace-form-stack" onSubmit={onCreateSubmit}>
           <ControlInput label={t("名称")} hint={t(platformNameRuleHint)} aria-invalid={Boolean(createForm.formState.errors.name) || undefined} {...createForm.register("name")} />
-          {createForm.formState.errors.name?.message ? <p className="cp-form-error">{t(createForm.formState.errors.name.message)}</p> : null}
+          {createForm.formState.errors.name?.message ? <p className="workspace-form-error">{t(createForm.formState.errors.name.message)}</p> : null}
           <ControlInput label={t("租约保持时长（可选）")} placeholder={t("例如 168h")} {...createForm.register("sticky_ttl")} />
-          <ControlSelect label={t("反向代理账号解析出错策略")} {...createForm.register("reverse_proxy_miss_action")}>
-            {missActions.map((item) => <option key={item} value={item}>{t(missActionLabel[item])}</option>)}
-          </ControlSelect>
-          <ControlSelect label={t("节点分配策略")} {...createForm.register("allocation_policy")}>
-            {allocationPolicies.map((item) => <option key={item} value={item}>{t(allocationPolicyLabel[item])}</option>)}
-          </ControlSelect>
+          <ControlSelect
+            label={t("反向代理账号解析出错策略")}
+            selectedKey={createMissAction}
+            items={missActions.map((item) => ({ id: item, label: t(missActionLabel[item]) }))}
+            onSelectionChange={(key) => {
+              const next = missActions.find((action) => action === key);
+              if (next) createForm.setValue("reverse_proxy_miss_action", next, { shouldDirty: true });
+            }}
+          />
+          <ControlSelect
+            label={t("节点分配策略")}
+            selectedKey={createAllocationPolicy}
+            items={allocationPolicies.map((item) => ({ id: item, label: t(allocationPolicyLabel[item]) }))}
+            onSelectionChange={(key) => {
+              const next = allocationPolicies.find((policy) => policy === key);
+              if (next) createForm.setValue("allocation_policy", next, { shouldDirty: true });
+            }}
+          />
           <ControlSwitch
             isSelected={Boolean(createPassiveCircuitBreakerDisabled)}
             onChange={(value) => createForm.setValue("passive_circuit_breaker_disabled", value, { shouldDirty: true })}
             label={t("禁用请求失败熔断")}
             hint={t("开启后，代理请求失败不会增加节点熔断计数；主动探测不受影响。")}
           />
-          <ControlSelect label={t("反向代理账号为空行为")} {...createForm.register("reverse_proxy_empty_account_behavior")}>
-            {emptyAccountBehaviors.map((item) => <option key={item} value={item}>{t(emptyAccountBehaviorLabel[item])}</option>)}
-          </ControlSelect>
+          <ControlSelect
+            label={t("反向代理账号为空行为")}
+            selectedKey={createEmptyAccountBehavior}
+            items={emptyAccountBehaviors.map((item) => ({ id: item, label: t(emptyAccountBehaviorLabel[item]) }))}
+            onSelectionChange={(key) => {
+              const next = emptyAccountBehaviors.find((behavior) => behavior === key);
+              if (next) createForm.setValue("reverse_proxy_empty_account_behavior", next, { shouldDirty: true });
+            }}
+          />
           {createEmptyAccountBehavior === "FIXED_HEADER" ? <ControlTextarea label={t("用于提取 Account 的 Headers（每行一个）")} rows={3} placeholder={t("每行一个，例如 Authorization 或 X-Account-Id")} {...createForm.register("reverse_proxy_fixed_account_header")} /> : null}
           <NodeCriteriaFields form={createForm} idPrefix="create" />
         </form>
       </InspectorDrawer>
-    </PageFrame>
+    </WorkspacePage>
   );
 }

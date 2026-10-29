@@ -14,12 +14,12 @@ import {
   InspectorDrawer,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -106,7 +106,7 @@ export function KeysPage() {
   };
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Self Service / access"
       title={t("我的密钥")}
       description={t("管理用于访问各平台代理服务的凭据密钥，支持平台授权与 IP 白名单控制。")}
@@ -123,10 +123,10 @@ export function KeysPage() {
       <CommandSurface actions={normalizedSearch ? <ControlButton variant="ghost" size="sm" onPress={clearSearch}>{t("清除筛选")}</ControlButton> : <QueryBadge label={t("按名称或凭据前缀过滤")} />}>
         <ControlInput label={t("搜索密钥")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("按名称或凭据前缀过滤...")} />
       </CommandSurface>
-      {normalizedSearch ? <div className="cp-active-filters"><FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={clearSearch} /></div> : null}
+      {normalizedSearch ? <div className="workspace-active-filters"><FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={clearSearch} /></div> : null}
       {limitReached ? <QueryBadge label={t("配额已满")} tone="warn" /> : null}
 
-      <WorkSurface
+      <WorkspaceCard headerless
         eyebrow="Credential registry"
         title={t("全部凭据密钥")}
         description={t("每个密钥均包含独立平台访问策略与调用凭据，可随业务随时撤销。")}
@@ -135,7 +135,7 @@ export function KeysPage() {
         {keysQuery.isError && !keysQuery.data ? (
           <EmptyWorkState title={t("读取失败")} detail={formatApiErrorMessage(keysQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void keysQuery.refetch()}>{t("重试")}</ControlButton>} />
         ) : null}
-        {keysQuery.isLoading && !keysQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载密钥列表...")}</div> : null}
+        {keysQuery.isLoading && !keysQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载密钥列表...")}</div> : null}
         {!keysQuery.isLoading && !keysQuery.isError && filteredKeys.length === 0 ? <EmptyWorkState title={t("暂无访问密钥")} detail={rawKeys.length === 0 ? t("点击右上角“创建密钥”生成首个代理凭据。") : t("未找到匹配的密钥记录。")} action={rawKeys.length === 0 ? <ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("创建密钥")}</ControlButton> : undefined} /> : null}
         {filteredKeys.length > 0 ? (
           <ObjectList>
@@ -154,7 +154,7 @@ export function KeysPage() {
             ))}
           </ObjectList>
         ) : null}
-      </WorkSurface>
+      </WorkspaceCard>
 
       <InspectorDrawer
         open={Boolean(selected) && !createOpen}
@@ -164,9 +164,9 @@ export function KeysPage() {
         footer={selected ? <><ControlButton variant="ghost" size="sm" onPress={() => setSelected(null)}>{t("关闭")}</ControlButton><ControlButton variant="danger" size="sm" onPress={() => setDeleteTarget(selected)}><Trash2 size={14} aria-hidden />{t("删除")}</ControlButton></> : undefined}
       >
         {selected ? (
-          <div className="cp-stack">
+          <div className="workspace-stack">
             <StatusMark tone={keyTone(selected.status)} label={keyStatusLabel(selected.status, t)} />
-            <dl className="cp-detail-facts">
+            <dl className="workspace-detail-facts">
               <DetailFact label={t("密钥名称")} value={selected.name || t("未命名密钥")} />
               <DetailFact label={t("凭据前缀")} value={selected.credential_hint} mono />
               <DetailFact label={t("状态")} value={keyStatusLabel(selected.status, t)} />
@@ -205,7 +205,7 @@ export function KeysPage() {
         loading={deleteMutation.isPending}
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
       />
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 
@@ -271,12 +271,12 @@ function CreateKeyDrawer({
       eyebrow={t("Self Service")}
       footer={<><ControlButton variant="ghost" size="sm" onPress={() => onOpenChange(false)} isDisabled={createMutation.isPending}>{t("取消")}</ControlButton><ControlButton type="submit" form="create-key-form" variant="primary" size="sm" loading={createMutation.isPending}>{createMutation.isPending ? t("正在创建...") : t("确认创建")}</ControlButton></>}
     >
-      <form id="create-key-form" className="cp-form-stack" onSubmit={handleSubmit}>
-        {errorMsg ? <p role="alert" className="cp-form-error">{errorMsg}</p> : null}
+      <form id="create-key-form" className="workspace-form-stack" onSubmit={handleSubmit}>
+        {errorMsg ? <p role="alert" className="workspace-form-error">{errorMsg}</p> : null}
         <ControlInput id={nameId} label={`${t("密钥名称")} *`} value={name} onChange={(event) => setName(event.target.value)} placeholder={t("例如: 生产环境客户端")} />
-        <div className="cp-field">
-          <span className="cp-field__label">{t("授权平台（可选，不选则允许套餐下所有平台）")}</span>
-          {platforms.length === 0 ? <p className="cp-muted">{t("当前套餐未限定特定平台，密钥默认可用所有平台。")}</p> : <div className="grid gap-2 border border-rule bg-paper-inset p-3">{platforms.map((platform) => <ControlCheckbox key={platform.platform_id} isSelected={selectedPlatforms.includes(platform.platform_id)} onChange={() => togglePlatform(platform.platform_id)} label={platform.platform_name || platform.platform_id} hint={platform.platform_id} />)}</div>}
+        <div className="workspace-field">
+          <span className="workspace-field__label">{t("授权平台（可选，不选则允许套餐下所有平台）")}</span>
+          {platforms.length === 0 ? <p className="workspace-muted">{t("当前套餐未限定特定平台，密钥默认可用所有平台。")}</p> : <div className="grid gap-2 border border-rule bg-paper-inset p-3">{platforms.map((platform) => <ControlCheckbox key={platform.platform_id} isSelected={selectedPlatforms.includes(platform.platform_id)} onChange={() => togglePlatform(platform.platform_id)} label={platform.platform_name || platform.platform_id} hint={platform.platform_id} />)}</div>}
         </div>
         <ControlTextarea id={ipId} label={t("IP 白名单 (可选，多个逗号或换行分隔)")} value={ipRaw} onChange={(event) => setIpRaw(event.target.value)} placeholder={t("留空不限制，或填: 1.2.3.4, 5.6.7.8/24")} rows={4} />
         <ControlInput id={expiresId} label={t("有效天数 (可选)")} type="number" min="1" value={expiresInDays} onChange={(event) => setExpiresInDays(event.target.value)} placeholder={t("留空则永不过期")} />
@@ -309,11 +309,11 @@ function SecretOnceDrawer({ data, onClose }: { data: CreateKeyResponse | null; o
       eyebrow={t("Sensitive value")}
       footer={<ControlButton variant="primary" size="sm" onPress={onClose}>{t("我已保存，关闭")}</ControlButton>}
     >
-      <div className="cp-stack">
+      <div className="workspace-stack">
         <StatusMark tone="warn" label={t("请立即复制并妥善保管此凭据！出于安全考虑，该密钥将不再向任何人展示。")} />
         <ControlInput label={t("明文访问凭据")} readOnly value={data?.credential || ""} className="font-mono" />
         <ControlButton variant="secondary" size="sm" onPress={handleCopy}><>{copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}</>{copied ? t("已复制") : t("复制")}</ControlButton>
-        {copyError ? <p role="alert" className="cp-form-error">{copyError}</p> : null}
+        {copyError ? <p role="alert" className="workspace-form-error">{copyError}</p> : null}
         <QueryBadge label={t("关闭后将不再显示明文凭据")} tone="warn" />
       </div>
     </InspectorDrawer>

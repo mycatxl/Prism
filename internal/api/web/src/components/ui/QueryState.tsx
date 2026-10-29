@@ -2,81 +2,91 @@ import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
-import { Button } from "./Button";
+import { ControlButton } from "../control-plane";
 
-/**
- * The three states every data region passes through, in one component so they look
- * the same everywhere: loading, failed, and empty.
- *
- * Loading uses a static, shimmer-free skeleton stack so it never loops a
- * decorative animation and naturally respects reduced motion.
- */
 export function LoadingState({ label, className }: { label?: string; className?: string }) {
   const { t } = useI18n();
   return (
-    <div
-      className={cn(
-        "flex flex-col items-center justify-center gap-3 py-10 text-sm text-ink-soft",
-        className,
-      )}
-      role="status"
-    >
-      <div aria-hidden className="flex w-full max-w-xs flex-col gap-2 px-4">
-        <div className="h-2.5 w-3/4 rounded-control border border-rule-faint bg-paper-inset" />
-        <div className="h-2.5 w-1/2 rounded-control border border-rule-faint bg-paper-inset/75" />
+    <div className={cn("workspace-state workspace-state--loading", className)} role="status">
+      <div aria-hidden className="workspace-state__skeleton">
+        <span />
+        <span />
+        <span />
       </div>
       <span>{label ? t(label) : t("读取中")}</span>
     </div>
   );
 }
 
-export function ErrorState({
-  message,
-  onRetry,
-  className,
-}: {
-  message: ReactNode;
-  onRetry?: () => void;
-  className?: string;
-}) {
+export function ErrorState({ message, onRetry, className }: { message: ReactNode; onRetry?: () => void; className?: string }) {
   const { t } = useI18n();
   return (
-    <div
-      className={cn(
-        "flex flex-col items-start gap-2.5 rounded-card-sm border border-alert/35 bg-alert-wash px-4 py-3 text-sm text-alert",
-        className,
-      )}
-      role="alert"
-    >
-      <div className="flex items-start gap-2">
-        <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-        <div className="min-w-0">{message}</div>
+    <div className={cn("workspace-state workspace-state--error", className)} role="alert">
+      <div className="workspace-state__message">
+        <AlertTriangle size={16} aria-hidden />
+        <div>{message}</div>
       </div>
-      {onRetry && (
-        <Button size="sm" variant="secondary" onClick={onRetry} className="border-alert/40">
-          {t("重试")}
-        </Button>
-      )}
+      {onRetry ? <ControlButton size="sm" variant="secondary" onPress={onRetry}>{t("重试")}</ControlButton> : null}
     </div>
   );
 }
 
-export function EmptyState({
-  title,
-  hint,
-  action,
-  className,
-}: {
-  title: ReactNode;
-  hint?: ReactNode;
-  action?: ReactNode;
-  className?: string;
-}) {
+export function EmptyState({ title, hint, action, className }: { title: ReactNode; hint?: ReactNode; action?: ReactNode; className?: string }) {
   return (
-    <div className={cn("flex flex-col items-center gap-2 py-12 text-center", className)}>
-      <p className="text-sm font-semibold text-ink">{title}</p>
-      {hint && <p className="max-w-sm text-xs leading-relaxed text-ink-soft">{hint}</p>}
-      {action && <div className="mt-1.5">{action}</div>}
+    <div className={cn("workspace-state workspace-state--empty", className)}>
+      <span className="workspace-state__empty-mark" aria-hidden />
+      <p>{title}</p>
+      {hint ? <span>{hint}</span> : null}
+      {action ? <div>{action}</div> : null}
+    </div>
+  );
+}
+export type QueryPhase =
+  | "loading"
+  | "ready"
+  | "revalidating"
+  | "stale"
+  | "empty"
+  | "partial"
+  | "offline"
+  | "reconnecting"
+  | "permission-denied"
+  | "error";
+
+type QueryStateProps = {
+  phase: QueryPhase;
+  children?: ReactNode;
+  title?: ReactNode;
+  message?: ReactNode;
+  action?: ReactNode;
+  onRetry?: () => void;
+  className?: string;
+};
+
+export function QueryState({ phase, children, title, message, action, onRetry, className }: QueryStateProps) {
+  const { t } = useI18n();
+
+  if (phase === "ready") return <>{children}</>;
+  if (phase === "loading") return <LoadingState label={typeof message === "string" ? message : undefined} className={className} />;
+  if (phase === "error" || phase === "permission-denied") {
+    return <ErrorState message={message ?? (phase === "permission-denied" ? t("无权查看此内容") : t("读取失败"))} onRetry={onRetry} className={className} />;
+  }
+  if (phase === "empty") {
+    return <EmptyState title={title ?? t("暂无数据")} hint={message} action={action} className={className} />;
+  }
+
+  const phaseMessage: Record<Exclude<QueryPhase, "loading" | "ready" | "empty" | "error" | "permission-denied">, ReactNode> = {
+    revalidating: t("正在刷新"),
+    stale: t("数据可能已过期"),
+    partial: t("部分数据可用"),
+    offline: t("网络不可用"),
+    reconnecting: t("正在重新连接"),
+  };
+
+  return (
+    <div className={cn("workspace-query-state", `workspace-query-state--${phase}`, className)} role="status">
+      <span>{message ?? phaseMessage[phase]}</span>
+      {action ?? (onRetry ? <ControlButton size="sm" variant="secondary" onPress={onRetry}>{t("重试")}</ControlButton> : null)}
     </div>
   );
 }

@@ -27,6 +27,7 @@ const ready = i18next.use(initReactI18next).init({
   fallbackLng: DEFAULT_LOCALE,
   supportedLngs: ["zh-CN", "en-US"],
   resources: {},
+  react: { useSuspense: false },
   interpolation: { escapeValue: false },
   keySeparator: false,
   nsSeparator: false,

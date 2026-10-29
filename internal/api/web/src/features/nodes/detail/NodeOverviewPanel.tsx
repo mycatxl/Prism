@@ -1,5 +1,5 @@
 import { Badge } from "../../../components/ui/Badge";
-import { Panel, PanelBody, PanelHeader } from "../../../components/ui/Panel";
+import { WorkspaceCard } from "../../../components/control-plane";
 import { ErrorState } from "../../../components/ui/QueryState";
 import { Stat, StatStrip } from "../../../components/ui/StatStrip";
 import { useI18n } from "../../../i18n";
@@ -30,16 +30,15 @@ export function NodeOverviewPanel({
   const regionName = node.region ? getRegionName(node.region.toUpperCase()) : undefined;
 
   return (
-    <Panel>
-      <PanelHeader
-        title={t("节点概要")}
-        meta={
-          <Badge tone={state.tone} dot>
-            {t(state.label)}
-          </Badge>
-        }
-      />
-      <PanelBody className="space-y-3">
+    <WorkspaceCard
+      title={t("节点概要")}
+      meta={
+        <Badge tone={state.tone} dot>
+          {t(state.label)}
+        </Badge>
+      }
+    >
+      <div className="space-y-3">
         <StatStrip className="sm:grid-cols-2 lg:grid-cols-4">
           <Stat
             label={t("状态")}
@@ -47,15 +46,15 @@ export function NodeOverviewPanel({
               <span className="flex items-center gap-2">
                 <span
                   aria-hidden
-                  className={cn("state-dot", state.tone !== "neutral" && `state-dot--${state.tone}`)}
+                  className={cn("workspace-status-dot", state.tone !== "neutral" && `workspace-status-dot--${state.tone}`)}
                 />
-                <span className="state-text">{t(state.label)}</span>
+                <span className="workspace-status-text">{t(state.label)}</span>
               </span>
             }
           />
           <Stat
             label={t("参考延迟")}
-            value={node.reference_latency_ms === undefined ? "--" : `${Math.round(node.reference_latency_ms)} ms`}
+            value={node.reference_latency_ms == null ? "--" : `${Math.round(node.reference_latency_ms)} ms`}
           />
           <Stat label={t("连续失败")} value={node.failure_count} />
           <Stat label={t("出口 IP")} value={node.egress_ip || "--"} hint={node.egress_ip ? undefined : t("未获取到出口 IP")} />
@@ -92,7 +91,7 @@ export function NodeOverviewPanel({
         </StatStrip>
 
         {node.last_error && <ErrorState message={node.last_error} />}
-      </PanelBody>
-    </Panel>
+      </div>
+    </WorkspaceCard>
   );
 }

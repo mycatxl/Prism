@@ -118,11 +118,11 @@ function CheckboxList({
   };
 
   return (
-    <div role="group" aria-label={name} className="cp-criteria-options">
+    <div role="group" aria-label={name} className="workspace-criteria-options">
       {options.length === 0 ? (
-        <p className="cp-muted">{t("当前节点池里没有可选值")}</p>
+        <p className="workspace-muted">{t("当前节点池里没有可选值")}</p>
       ) : (
-        <div className="cp-criteria-options__items">
+        <div className="workspace-criteria-options__items">
           {options.map((option) => {
             const checked = selected.includes(option.value);
             return (
@@ -138,7 +138,7 @@ function CheckboxList({
           })}
         </div>
       )}
-      <p className="cp-criteria-options__summary">
+      <p className="workspace-criteria-options__summary">
         {selected.length === 0
           ? t("不限（任何值都通过）")
           : t("已选 {{count}} 项；命中任意一项即通过本项", { count: selected.length })}
@@ -157,10 +157,10 @@ function CriterionField({
   children: ReactNode;
 }) {
   return (
-    <div className="cp-criteria-field">
-      <div className="cp-criteria-field__title">{label}</div>
+    <div className="workspace-criteria-field">
+      <div className="workspace-criteria-field__title">{label}</div>
       {children}
-      {hint ? <p className="cp-criteria-field__hint">{hint}</p> : null}
+      {hint ? <p className="workspace-criteria-field__hint">{hint}</p> : null}
     </div>
   );
 }
@@ -184,7 +184,7 @@ function ScopePreview({ criteriaKey, criteria }: { criteriaKey: string; criteria
   });
 
   if (preview.isError) {
-    return <p className="cp-form-error">{t("预览失败：无法连接后端，保存时仍会校验。")}</p>;
+    return <p className="workspace-form-error">{t("预览失败：无法连接后端，保存时仍会校验。")}</p>;
   }
 
   const result = preview.data;
@@ -200,8 +200,8 @@ function ScopePreview({ criteriaKey, criteria }: { criteriaKey: string; criteria
     : [];
 
   return (
-    <div className="cp-scope-preview" aria-live="polite">
-      <div className="cp-scope-preview__head">
+    <div className="workspace-scope-preview" aria-live="polite">
+      <div className="workspace-scope-preview__head">
         <strong>{headline}</strong>
         {preview.isFetching && debouncedKey === criteriaKey ? <span>{t("刷新中…")}</span> : null}
         {result?.truncated ? (
@@ -210,7 +210,7 @@ function ScopePreview({ criteriaKey, criteria }: { criteriaKey: string; criteria
       </div>
 
       {result && result.sample.length > 0 ? (
-        <div className="cp-scope-preview__sample">
+        <div className="workspace-scope-preview__sample">
           {result.sample.map((node) => (
             <QueryBadge
               key={node.node_hash}
@@ -224,11 +224,11 @@ function ScopePreview({ criteriaKey, criteria }: { criteriaKey: string; criteria
       ) : null}
 
       {result && result.matched === 0 ? (
-        <p className="cp-form-warning">{t("当前条件没有匹配到任何节点；请减少条件或放宽取值。")}</p>
+        <p className="workspace-form-warning">{t("当前条件没有匹配到任何节点；请减少条件或放宽取值。")}</p>
       ) : null}
 
       {exclusions.length > 0 ? (
-        <p className="cp-scope-preview__exclusions">
+        <p className="workspace-scope-preview__exclusions">
           {t("被排除的原因（首个命中的条件）：")}{" "}
           {exclusions
             .map(([reason, count]) => {
@@ -289,9 +289,9 @@ export function NodeCriteriaFields({
   );
 
   return (
-    <div className="cp-criteria">
-      <div className="cp-criteria__intro">
-        <div className="cp-criteria__title">
+    <div className="workspace-criteria">
+      <div className="workspace-criteria__intro">
+        <div className="workspace-criteria__title">
           <span>{t("平台加载的节点")}</span>
           <QueryBadge tone="signal" label={t("条件同时生效（AND）")} />
         </div>
@@ -306,11 +306,11 @@ export function NodeCriteriaFields({
               : t("选项来自当前节点池（共 {{total}} 个节点）", { total: facets.total_nodes })}
           </span>
         ) : facetsQuery.isError ? (
-          <span className="cp-form-error">{t("节点池选项暂时不可用，仍可保存已有条件。")}</span>
+          <span className="workspace-form-error">{t("节点池选项暂时不可用，仍可保存已有条件。")}</span>
         ) : null}
       </div>
 
-      <div className="cp-criteria__grid">
+      <div className="workspace-criteria__grid">
         <CriterionField label={t("国家 / 地区")} hint={t("取自节点的出口地区（GeoIP 或探测结果）。")}>
           <CheckboxList
             idPrefix={idPrefix}
@@ -374,7 +374,7 @@ export function NodeCriteriaFields({
       <ScopePreview criteriaKey={criteriaKey} criteria={values} />
 
       {regionValues.some((value) => value.startsWith("!")) ? (
-        <div className="cp-criteria__legacy">
+        <div className="workspace-criteria__legacy">
           <span>{t("保留的地区排除项（旧配置）：")}</span>
           {regionValues
             .filter((value) => value.startsWith("!"))
@@ -400,12 +400,12 @@ export function NodeCriteriaFields({
         </div>
       ) : null}
 
-      <details className="cp-criteria__advanced">
+      <details className="workspace-criteria__advanced">
         <summary>
           <ChevronDown size={14} aria-hidden />
           {t("高级：解锁要求（可选）")}
         </summary>
-        <div className="cp-criteria__advanced-body">
+        <div className="workspace-criteria__advanced-body">
           <UnlockRequirementsField form={form} />
         </div>
       </details>
@@ -443,37 +443,36 @@ function UnlockRequirementsField({ form }: { form: UseFormReturn<PlatformFormVal
     );
 
   return (
-    <div className="cp-unlock-requirements">
+    <div className="workspace-unlock-requirements">
       <div>
         <strong>{t("解锁要求")}</strong>
         <p>{t("留空表示不要求任何解锁结果。勾选后，缺少对应检测结果的节点不会进入该平台。")}</p>
       </div>
       {entries.length === 0 ? (
-        <p className="cp-muted">{t("未设置解锁要求。")}</p>
+        <p className="workspace-muted">{t("未设置解锁要求。")}</p>
       ) : (
-        <div className="cp-unlock-requirements__list">
+        <div className="workspace-unlock-requirements__list">
           {entries.map((entry) => {
             const rule = checks.find((check) => check.id === entry.checkID);
             const label = rule?.name && rule.name !== rule.id ? `${rule.name} (${entry.checkID})` : entry.checkID;
             return (
-              <div key={entry.checkID} className="cp-unlock-requirement">
+              <div key={entry.checkID} className="workspace-unlock-requirement">
                 <span title={entry.checkID}>{label}</span>
                 <ControlSelect
                   aria-label={t("要求的结果")}
-                  value={entry.outcome}
-                  onChange={(event) =>
+                  selectedKey={entry.outcome}
+                  items={[
+                    { id: "", label: t("任意结果") },
+                    ...INTEL_CHECK_OUTCOMES.map((outcome) => ({ id: outcome, label: outcome })),
+                  ]}
+                  onSelectionChange={(key) =>
                     write(
                       entries.map((item) =>
-                        item.checkID === entry.checkID ? { ...item, outcome: event.target.value } : item,
+                        item.checkID === entry.checkID ? { ...item, outcome: key ?? "" } : item,
                       ),
                     )
                   }
-                >
-                  <option value="">{t("任意结果")}</option>
-                  {INTEL_CHECK_OUTCOMES.map((outcome) => (
-                    <option key={outcome} value={outcome}>{outcome}</option>
-                  ))}
-                </ControlSelect>
+                />
                 <ControlButton
                   type="button"
                   variant="ghost"
@@ -482,7 +481,7 @@ function UnlockRequirementsField({ form }: { form: UseFormReturn<PlatformFormVal
                   aria-label={t("移除")}
                   onPress={() => write(entries.filter((item) => item.checkID !== entry.checkID))}
                 >
-                  <X size={12} aria-hidden />
+                  <X size={14} aria-hidden />
                 </ControlButton>
               </div>
             );
@@ -491,24 +490,23 @@ function UnlockRequirementsField({ form }: { form: UseFormReturn<PlatformFormVal
       )}
       <ControlSelect
         aria-label={t("添加解锁要求")}
-        value=""
-        onChange={(event) => {
-          const checkID = event.target.value;
-          if (checkID && !chosen.has(checkID)) {
-            write([...entries, { checkID, outcome: "" }]);
+        selectedKey=""
+        items={[
+          { id: "", label: t("添加解锁要求…") },
+          ...checks
+            .filter((check) => !chosen.has(check.id))
+            .map((check) => ({
+              id: check.id,
+              label: check.name && check.name !== check.id ? `${check.name} (${check.id})` : check.id,
+            })),
+        ]}
+        onSelectionChange={(key) => {
+          if (key && !chosen.has(key)) {
+            write([...entries, { checkID: key, outcome: "" }]);
           }
         }}
-      >
-        <option value="">{t("添加解锁要求…")}</option>
-        {checks
-          .filter((check) => !chosen.has(check.id))
-          .map((check) => (
-            <option key={check.id} value={check.id}>
-              {check.name && check.name !== check.id ? `${check.name} (${check.id})` : check.id}
-            </option>
-          ))}
-      </ControlSelect>
-      {checksQuery.isError ? <p className="cp-form-error">{t("检测项读取失败，稍后可重试。")}</p> : null}
+      />
+      {checksQuery.isError ? <p className="workspace-form-error">{t("检测项读取失败，稍后可重试。")}</p> : null}
     </div>
   );
 }

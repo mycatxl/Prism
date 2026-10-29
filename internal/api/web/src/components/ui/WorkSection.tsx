@@ -1,3 +1,4 @@
+import { Surface as HeroSurface } from "@heroui/react";
 import type { ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
@@ -17,22 +18,22 @@ export function WorkSection({
   className?: string;
 }) {
   return (
-    <section className={cn("work-section", className)}>
-      <header className="work-section__header">
+    <HeroSurface className={cn("workspace-section", className)} variant="secondary" role="region">
+      <header className="workspace-section__header">
         <div className="min-w-0">
-          <div className="work-section__title-row">
-            <h2 className="work-section__title">{title}</h2>
-            {meta ? <span className="work-section__meta">{meta}</span> : null}
+          <div className="workspace-section__title-row">
+            <h2 className="workspace-section__title">{title}</h2>
+            {meta ? <span className="workspace-section__meta">{meta}</span> : null}
           </div>
-          {description ? <p className="work-section__description">{description}</p> : null}
+          {description ? <p className="workspace-section__description">{description}</p> : null}
         </div>
-        {actions ? <div className="work-section__actions">{actions}</div> : null}
+        {actions ? <div className="workspace-section__actions">{actions}</div> : null}
       </header>
-      <div className="work-section__body">{children}</div>
-    </section>
+      <div className="workspace-section__body">{children}</div>
+    </HeroSurface>
   );
 }
 
 export function WorkSectionLabel({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn("work-section__label", className)}>{children}</div>;
+  return <div className={cn("workspace-section__label", className)}>{children}</div>;
 }

@@ -34,6 +34,14 @@ type ApiNodePage = {
   offset?: number | string | null;
   unique_egress_ips?: number | string | null;
   unique_healthy_egress_ips?: number | string | null;
+  scanned?: number | string | null;
+  has_more?: boolean;
+  has_next?: boolean;
+  has_previous?: boolean;
+  next_cursor?: string | null;
+  previous_cursor?: string | null;
+  unique_egress_ips_lower_bound?: boolean;
+  unique_healthy_egress_ips_lower_bound?: boolean;
 };
 
 function isApiNodeSummary(value: unknown): value is ApiNodeSummary {
@@ -166,10 +174,11 @@ function appendNodeFilters(query: URLSearchParams, filters: NodeListQuery): void
 export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): Promise<PageResponse<NodeSummary>> {
   const query = new URLSearchParams({
     limit: String(filters.limit ?? 50),
-    offset: String(filters.offset ?? 0),
     sort_by: filters.sort_by || "tag",
     sort_order: filters.sort_order || "asc",
   });
+  if (filters.cursor) query.set("cursor", filters.cursor);
+  else query.set("offset", String(filters.offset ?? 0));
 
   appendNodeFilters(query, filters);
 
@@ -182,6 +191,14 @@ export async function listNodes(filters: NodeListQuery, signal?: AbortSignal): P
     offset: normalizeCount(data?.offset, filters.offset ?? 0),
     unique_egress_ips: normalizeOptionalCount(data?.unique_egress_ips),
     unique_healthy_egress_ips: normalizeOptionalCount(data?.unique_healthy_egress_ips),
+    scanned: normalizeOptionalCount(data?.scanned) ?? undefined,
+    has_more: typeof data?.has_more === "boolean" ? data.has_more : undefined,
+    has_next: typeof data?.has_next === "boolean" ? data.has_next : undefined,
+    has_previous: typeof data?.has_previous === "boolean" ? data.has_previous : undefined,
+    next_cursor: typeof data?.next_cursor === "string" ? data.next_cursor : undefined,
+    previous_cursor: typeof data?.previous_cursor === "string" ? data.previous_cursor : undefined,
+    unique_egress_ips_lower_bound: typeof data?.unique_egress_ips_lower_bound === "boolean" ? data.unique_egress_ips_lower_bound : undefined,
+    unique_healthy_egress_ips_lower_bound: typeof data?.unique_healthy_egress_ips_lower_bound === "boolean" ? data.unique_healthy_egress_ips_lower_bound : undefined,
   };
 }
 

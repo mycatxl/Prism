@@ -3,7 +3,7 @@ import { Link2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { ControlButton, ControlSelect, DetailFact, EmptyWorkState, StatusMark, WorkSurface } from "../../components/control-plane";
+import { ControlButton, ControlSelect, DetailFact, EmptyWorkState, StatusMark, WorkspaceCard } from "../../components/control-plane";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { apiRequest } from "../../lib/api-client";
@@ -555,14 +555,14 @@ function TrendLineChart({ data, lines, yTickFormatter, tooltipValueFormatter, em
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
           />
           <YAxis
             width="auto"
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
             tickFormatter={(value) => formatYAxis(toNumber(value))}
             domain={[0, "auto"]}
           />
@@ -661,7 +661,7 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
             tickFormatter={(value) => formatLatency(toNumber(value))}
           />
           <YAxis
@@ -670,7 +670,7 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 11 }}
+            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
             tickFormatter={(value) => formatShortNumber(toNumber(value))}
           />
           <Tooltip
@@ -839,8 +839,8 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
         : t("等待监控数据");
 
   return (
-    <div className="cp-stack">
-      <WorkSurface
+    <div className="workspace-stack">
+      <WorkspaceCard
         eyebrow="Delivery / telemetry"
         title={t("平台监控")}
         meta={<StatusMark tone={monitorTone} label={monitorLabel} />}
@@ -848,17 +848,15 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
         actions={
           <ControlSelect
             label={t("时间范围")}
-            className="cp-monitor-range"
+            className="workspace-monitor-range"
             aria-label={t("时间范围")}
-            value={rangeKey}
-            onChange={(event) => setRangeKey(event.target.value as RangeKey)}
-          >
-            {RANGE_OPTIONS.map((option) => (
-              <option key={option.key} value={option.key}>
-                {t(option.label)}
-              </option>
-            ))}
-          </ControlSelect>
+            selectedKey={rangeKey}
+            items={RANGE_OPTIONS.map((option) => ({ id: option.key, label: t(option.label) }))}
+            onSelectionChange={(key) => {
+              const next = RANGE_OPTIONS.find((option) => option.key === key);
+              if (next) setRangeKey(next.key);
+            }}
+          />
         }
       >
         {monitorError && !hasAnyData && !isInitialLoading ? (
@@ -868,87 +866,87 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
             action={<ControlButton variant="secondary" size="sm" onPress={() => void Promise.all([realtimeQuery.refetch(), historyQuery.refetch(), snapshotQuery.refetch()])}>{t("重试")}</ControlButton>}
           />
         ) : null}
-        {monitorError && hasAnyData ? <p className="cp-notice cp-notice--warn">{formatApiErrorMessage(monitorError, t)}</p> : null}
-        {isInitialLoading ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("平台监控数据加载中...")}</div> : null}
+        {monitorError && hasAnyData ? <p className="workspace-notice workspace-notice--warn">{formatApiErrorMessage(monitorError, t)}</p> : null}
+        {isInitialLoading ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("平台监控数据加载中...")}</div> : null}
         {!hasAnyData && !monitorError && !isInitialLoading ? <EmptyWorkState title={t("暂无平台监控数据")} detail={t("当前时间范围内没有服务端监控样本。")} /> : null}
         {hasAnyData ? (
-          <div className="cp-data-grid cp-monitor-summary" aria-busy={isRefreshing}>
-            <div className="cp-data-grid__cell">
-              <span className="cp-data-grid__label">{t("活跃租约")}</span>
-              <strong className="cp-data-grid__value">{formatKnownMetric(latestActiveLeases, realtimeAvailable)}</strong>
-              <span className="cp-data-grid__hint">{realtimeAvailable ? t("当前实时值") : t("未加载")}</span>
-              <Link to={`${opsPaths.platforms}/${encodeURIComponent(platform.id)}?tab=ops#platform-lease-management`} className="cp-metric-link"><Link2 size={12} aria-hidden />{t("租约管理")}</Link>
+          <div className="workspace-data-grid workspace-monitor-summary" aria-busy={isRefreshing}>
+            <div className="workspace-data-grid__cell">
+              <span className="workspace-data-grid__label">{t("活跃租约")}</span>
+              <strong className="workspace-data-grid__value">{formatKnownMetric(latestActiveLeases, realtimeAvailable)}</strong>
+              <span className="workspace-data-grid__hint">{realtimeAvailable ? t("当前实时值") : t("未加载")}</span>
+              <Link to={`${opsPaths.platforms}/${encodeURIComponent(platform.id)}?tab=ops#platform-lease-management`} className="workspace-metric-link"><Link2 size={14} aria-hidden />{t("租约管理")}</Link>
             </div>
-            <div className="cp-data-grid__cell">
-              <span className="cp-data-grid__label">{t("请求成功率")}</span>
-              <strong className="cp-data-grid__value">{formatKnownMetric(requestSuccessRatio, requestsAvailable, formatPercent)}</strong>
-              <span className="cp-data-grid__hint">{requestsAvailable ? `${t("成功")} ${formatCount(successRequests)} / ${t("总计")} ${formatCount(totalRequests)}` : t("未加载")}</span>
+            <div className="workspace-data-grid__cell">
+              <span className="workspace-data-grid__label">{t("请求成功率")}</span>
+              <strong className="workspace-data-grid__value">{formatKnownMetric(requestSuccessRatio, requestsAvailable, formatPercent)}</strong>
+              <span className="workspace-data-grid__hint">{requestsAvailable ? `${t("成功")} ${formatCount(successRequests)} / ${t("总计")} ${formatCount(totalRequests)}` : t("未加载")}</span>
             </div>
-            <div className="cp-data-grid__cell">
-              <span className="cp-data-grid__label">{t("可路由节点")}</span>
-              <strong className="cp-data-grid__value">{formatKnownMetric(snapshotNodePool?.routable_node_count, snapshotPoolAvailable)}</strong>
-              <span className="cp-data-grid__hint">{snapshotPoolAvailable ? `${t("出口 IP")} ${formatCount(snapshotNodePool?.egress_ip_count ?? 0)}` : t("未加载")}</span>
-              <Link to={`${opsPaths.nodes}?platform_id=${encodeURIComponent(platform.id)}`} className="cp-metric-link"><Link2 size={12} aria-hidden />{t("节点视图")}</Link>
+            <div className="workspace-data-grid__cell">
+              <span className="workspace-data-grid__label">{t("可路由节点")}</span>
+              <strong className="workspace-data-grid__value">{formatKnownMetric(snapshotNodePool?.routable_node_count, snapshotPoolAvailable)}</strong>
+              <span className="workspace-data-grid__hint">{snapshotPoolAvailable ? `${t("出口 IP")} ${formatCount(snapshotNodePool?.egress_ip_count ?? 0)}` : t("未加载")}</span>
+              <Link to={`${opsPaths.nodes}?platform_id=${encodeURIComponent(platform.id)}`} className="workspace-metric-link"><Link2 size={14} aria-hidden />{t("节点视图")}</Link>
             </div>
-            <div className="cp-data-grid__cell">
-              <span className="cp-data-grid__label">{t("租约 P50 存活时长")}</span>
-              <strong className="cp-data-grid__value">{formatKnownMetric(latestP50LeaseMs, leaseLifetimeAvailable, formatLeaseDuration)}</strong>
-              <span className="cp-data-grid__hint">{leaseLifetimeAvailable ? t("历史租约时长统计") : t("未加载")}</span>
+            <div className="workspace-data-grid__cell">
+              <span className="workspace-data-grid__label">{t("租约 P50 存活时长")}</span>
+              <strong className="workspace-data-grid__value">{formatKnownMetric(latestP50LeaseMs, leaseLifetimeAvailable, formatLeaseDuration)}</strong>
+              <span className="workspace-data-grid__hint">{leaseLifetimeAvailable ? t("历史租约时长统计") : t("未加载")}</span>
             </div>
           </div>
         ) : null}
-      </WorkSurface>
+      </WorkspaceCard>
 
       {hasAnyData ? (
         <>
-          <div className="cp-monitor-grid">
-            <WorkSurface eyebrow="Telemetry / leases" title={t("活跃租约趋势")} meta={isRefreshing ? t("监控数据刷新中") : undefined} description={t("平台实时租约数量")} className="cp-monitor-surface">
-              <div className="cp-monitor-chart"><TrendLineChart data={leaseTrendData} emptyText={t("暂无租约实时数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "var(--color-live)" }]} /></div>
-            </WorkSurface>
+          <div className="workspace-monitor-grid">
+            <WorkspaceCard eyebrow="Telemetry / leases" title={t("活跃租约趋势")} meta={isRefreshing ? t("监控数据刷新中") : undefined} description={t("平台实时租约数量")} className="workspace-monitor-surface">
+              <div className="workspace-monitor-chart"><TrendLineChart data={leaseTrendData} emptyText={t("暂无租约实时数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "var(--color-live)" }]} /></div>
+            </WorkspaceCard>
 
-            <WorkSurface eyebrow="Telemetry / requests" title={t("请求统计")} description={t("总请求数 / 成功请求数")} className="cp-monitor-surface">
-              <div className="cp-monitor-chart"><TrendLineChart data={requestTrendData} emptyText={t("暂无请求统计数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "total_requests", name: t("总请求数"), color: "var(--color-live)" }, { dataKey: "success_requests", name: t("成功请求数"), color: "var(--color-signal)" }]} /></div>
-              <dl className="cp-detail-facts cp-monitor-facts">
+            <WorkspaceCard eyebrow="Telemetry / requests" title={t("请求统计")} description={t("总请求数 / 成功请求数")} className="workspace-monitor-surface">
+              <div className="workspace-monitor-chart"><TrendLineChart data={requestTrendData} emptyText={t("暂无请求统计数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "total_requests", name: t("总请求数"), color: "var(--color-live)" }, { dataKey: "success_requests", name: t("成功请求数"), color: "var(--color-signal)" }]} /></div>
+              <dl className="workspace-detail-facts workspace-monitor-facts">
                 <DetailFact label={t("总请求")} value={formatKnownMetric(totalRequests, requestsAvailable)} mono />
                 <DetailFact label={t("成功请求")} value={formatKnownMetric(successRequests, requestsAvailable)} mono />
               </dl>
-            </WorkSurface>
+            </WorkspaceCard>
 
-            <WorkSurface eyebrow="Telemetry / lease lifetime" title={t("租约存活分位趋势")} description="P1 / P5 / P50" className="cp-monitor-surface">
-              <div className="cp-monitor-chart"><TrendLineChart data={leaseLifetimeTrendData} emptyText={t("暂无租约生命周期数据")} yTickFormatter={formatLatency} tooltipValueFormatter={formatLeaseDuration} lines={[{ dataKey: "p1_ms", name: "P1", color: "var(--color-ink-faint)" }, { dataKey: "p5_ms", name: "P5", color: "var(--color-live)" }, { dataKey: "p50_ms", name: "P50", color: "var(--color-signal)" }]} /></div>
-              <dl className="cp-detail-facts cp-monitor-facts cp-monitor-facts--three">
+            <WorkspaceCard eyebrow="Telemetry / lease lifetime" title={t("租约存活分位趋势")} description="P1 / P5 / P50" className="workspace-monitor-surface">
+              <div className="workspace-monitor-chart"><TrendLineChart data={leaseLifetimeTrendData} emptyText={t("暂无租约生命周期数据")} yTickFormatter={formatLatency} tooltipValueFormatter={formatLeaseDuration} lines={[{ dataKey: "p1_ms", name: "P1", color: "var(--color-ink-faint)" }, { dataKey: "p5_ms", name: "P5", color: "var(--color-live)" }, { dataKey: "p50_ms", name: "P50", color: "var(--color-signal)" }]} /></div>
+              <dl className="workspace-detail-facts workspace-monitor-facts workspace-monitor-facts--three">
                 <DetailFact label="P1" value={formatKnownMetric(latestLeaseLifetime?.p1_ms, leaseLifetimeAvailable, formatLeaseDuration)} mono />
                 <DetailFact label="P5" value={formatKnownMetric(latestLeaseLifetime?.p5_ms, leaseLifetimeAvailable, formatLeaseDuration)} mono />
                 <DetailFact label="P50" value={formatKnownMetric(latestLeaseLifetime?.p50_ms, leaseLifetimeAvailable, formatLeaseDuration)} mono />
               </dl>
-            </WorkSurface>
+            </WorkspaceCard>
 
-            <WorkSurface eyebrow="Telemetry / node pool" title={t("平台节点快照")} description={t("当前平台节点池与延迟样本")} className="cp-monitor-surface">
-              <dl className="cp-detail-facts cp-monitor-facts cp-monitor-facts--four">
+            <WorkspaceCard eyebrow="Telemetry / node pool" title={t("平台节点快照")} description={t("当前平台节点池与延迟样本")} className="workspace-monitor-surface">
+              <dl className="workspace-detail-facts workspace-monitor-facts workspace-monitor-facts--four">
                 <DetailFact label={t("可路由节点数")} value={formatKnownMetric(snapshotNodePool?.routable_node_count, snapshotPoolAvailable)} mono />
                 <DetailFact label={t("出口 IP 数")} value={formatKnownMetric(snapshotNodePool?.egress_ip_count, snapshotPoolAvailable)} mono />
                 <DetailFact label={t("延迟样本数")} value={formatKnownMetric(snapshotLatency?.sample_count, snapshotLatencyAvailable)} mono />
                 <DetailFact label={t("快照更新时间")} value={snapshotLatencyAvailable && snapshotLatency?.generated_at ? formatClock(snapshotLatency.generated_at) : "—"} mono />
               </dl>
-            </WorkSurface>
+            </WorkspaceCard>
 
-            <WorkSurface eyebrow="Telemetry / access latency" title={t("访问延迟分布（历史最新桶）")} description={t("历史访问延迟分布")} className="cp-monitor-surface cp-monitor-surface--wide">
-              <div className="cp-monitor-chart"><LatencyHistogram buckets={latestAccessLatency?.buckets ?? []} emptyText={t("暂无访问延迟分布数据")} /></div>
-              <dl className="cp-detail-facts cp-monitor-facts cp-monitor-facts--three">
+            <WorkspaceCard eyebrow="Telemetry / access latency" title={t("访问延迟分布（历史最新桶）")} description={t("历史访问延迟分布")} className="workspace-monitor-surface workspace-monitor-surface--wide">
+              <div className="workspace-monitor-chart"><LatencyHistogram buckets={latestAccessLatency?.buckets ?? []} emptyText={t("暂无访问延迟分布数据")} /></div>
+              <dl className="workspace-detail-facts workspace-monitor-facts workspace-monitor-facts--three">
                 <DetailFact label={t("时间")} value={accessLatencyAvailable ? formatClock(latestAccessLatency?.bucket_end ?? "") : "—"} mono />
                 <DetailFact label={t("样本")} value={formatKnownMetric(latestAccessLatency?.sample_count, accessLatencyAvailable)} mono />
                 <DetailFact label={t("溢出")} value={formatKnownMetric(latestAccessLatency?.overflow_count, accessLatencyAvailable)} mono />
               </dl>
-            </WorkSurface>
+            </WorkspaceCard>
 
-            <WorkSurface eyebrow="Telemetry / node latency" title={t("节点延迟分布（实时快照）")} description={t("实时节点延迟分布快照")} className="cp-monitor-surface cp-monitor-surface--wide">
-              <div className="cp-monitor-chart"><LatencyHistogram buckets={snapshotLatency?.buckets ?? []} emptyText={t("暂无节点延迟快照数据")} /></div>
-              <dl className="cp-detail-facts cp-monitor-facts cp-monitor-facts--three">
+            <WorkspaceCard eyebrow="Telemetry / node latency" title={t("节点延迟分布（实时快照）")} description={t("实时节点延迟分布快照")} className="workspace-monitor-surface workspace-monitor-surface--wide">
+              <div className="workspace-monitor-chart"><LatencyHistogram buckets={snapshotLatency?.buckets ?? []} emptyText={t("暂无节点延迟快照数据")} /></div>
+              <dl className="workspace-detail-facts workspace-monitor-facts workspace-monitor-facts--three">
                 <DetailFact label={t("样本")} value={formatKnownMetric(snapshotLatency?.sample_count, snapshotLatencyAvailable)} mono />
                 <DetailFact label={t("溢出")} value={formatKnownMetric(snapshotLatency?.overflow_count, snapshotLatencyAvailable)} mono />
                 <DetailFact label={t("分桶")} value={snapshotLatencyAvailable ? `${formatCount(snapshotLatency?.bin_width_ms ?? 0)}ms` : "—"} mono />
               </dl>
-            </WorkSurface>
+            </WorkspaceCard>
           </div>
         </>
       ) : null}

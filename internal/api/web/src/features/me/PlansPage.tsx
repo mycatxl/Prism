@@ -8,12 +8,12 @@ import {
   InspectorDrawer,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
@@ -60,7 +60,12 @@ export function PlansPage() {
   });
 
   const plans = plansQuery.data?.items ?? [];
-  const balance = balanceQuery.data?.balance_micro ?? 0;
+  /*
+   * A balance that has not loaded is unknown, not zero: a funded account shown
+   * "0" is told it cannot buy anything, and the drawer would then render a
+   * negative "balance after" out of a number nobody ever read.
+   */
+  const balance = balanceQuery.data?.balance_micro ?? null;
   const refreshing = plansQuery.isFetching || balanceQuery.isFetching;
 
   const refresh = () => {
@@ -69,14 +74,19 @@ export function PlansPage() {
   };
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Self Service / billing"
       title={t("购买套餐")}
       description={t("用余额购买或更换套餐，扣款与生效同时完成。")}
       meta={<StatusMark tone={plansQuery.isError && !plansQuery.data ? "warn" : plansQuery.data ? "live" : "neutral"} label={plansQuery.isError && !plansQuery.data ? t("读取失败") : plansQuery.data ? t("目录已同步") : t("等待目录")} />}
       actions={
         <>
-          <QueryBadge label={`${t("当前余额")} ${formatMicro(balance)} USDT`} tone="signal" />
+          <QueryBadge
+            label={balance === null
+              ? `${t("当前余额")} ${balanceQuery.isError ? t("读取失败") : t("未知")}`
+              : `${t("当前余额")} ${formatMicro(balance)} USDT`}
+            tone="signal"
+          />
           <ControlButton variant="secondary" size="sm" onPress={refresh} loading={refreshing}>
             <RefreshCw size={14} aria-hidden />
             {t("刷新")}
@@ -85,7 +95,7 @@ export function PlansPage() {
       }
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      <WorkSurface
+      <WorkspaceCard
         eyebrow="Purchasable catalog"
         title={t("可购买套餐")}
         description={t("价格按 USDT 计，一个周期扣一次。只有服务端返回的 active、可售套餐会显示在这里。")}
@@ -99,7 +109,7 @@ export function PlansPage() {
           />
         ) : null}
         {plansQuery.isLoading && !plansQuery.data ? (
-          <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载可购买套餐...")}</div>
+          <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载可购买套餐...")}</div>
         ) : null}
         {!plansQuery.isLoading && !plansQuery.isError && plans.length === 0 ? (
           <EmptyWorkState title={t("暂无可购买套餐")} detail={t("当前没有对外开放的套餐，请联系运营人员。")} />
@@ -126,19 +136,19 @@ export function PlansPage() {
             ))}
           </ObjectList>
         ) : null}
-      </WorkSurface>
-      <WorkSurface
+      </WorkspaceCard>
+      <WorkspaceCard
         eyebrow="Purchase boundary"
         title={t("购买说明")}
         description={t("购买后当前订阅会被替换，未用完的流量不结转。余额不足时服务端不会扣款。")}
       >
-        <div className="cp-data-grid">
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("余额")}</span><strong className="cp-data-grid__value">{formatMicro(balance)}</strong></div>
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("可售套餐")}</span><strong className="cp-data-grid__value">{plans.length}</strong></div>
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("扣款单位")}</span><strong className="cp-data-grid__value">USDT</strong></div>
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("购买状态")}</span><strong className="cp-data-grid__value">{plansQuery.isError ? t("未知") : t("可查询")}</strong></div>
+        <div className="workspace-data-grid">
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("余额")}</span><strong className="workspace-data-grid__value">{balance === null ? "—" : formatMicro(balance)}</strong></div>
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("可售套餐")}</span><strong className="workspace-data-grid__value">{plans.length}</strong></div>
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("扣款单位")}</span><strong className="workspace-data-grid__value">USDT</strong></div>
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("购买状态")}</span><strong className="workspace-data-grid__value">{plansQuery.isError ? t("未知") : t("可查询")}</strong></div>
         </div>
-      </WorkSurface>
+      </WorkspaceCard>
       {buying ? (
         <PurchaseDrawer
           key={buying.id}
@@ -158,7 +168,7 @@ export function PlansPage() {
           }}
         />
       ) : null}
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 
@@ -169,7 +179,8 @@ function PurchaseDrawer({
   onCommitted,
 }: {
   plan: PurchasablePlan;
-  balanceMicro: number;
+  /** `null` when the balance read has not produced a number. */
+  balanceMicro: number | null;
   onClose: () => void;
   onCommitted: (result: PurchaseResult) => void;
 }) {
@@ -183,7 +194,10 @@ function PurchaseDrawer({
       onCommitted(next);
     },
   });
-  const insufficient = balanceMicro < plan.price_micro;
+  // A missing balance is not a comparison: the purchase is blocked because the
+  // number is absent, and the drawer says exactly that instead of guessing.
+  const balanceUnknown = balanceMicro === null;
+  const insufficient = balanceMicro !== null && balanceMicro < plan.price_micro;
 
   return (
     <InspectorDrawer
@@ -201,7 +215,7 @@ function PurchaseDrawer({
       ) : (
         <>
           <ControlButton variant="ghost" size="sm" onPress={onClose} isDisabled={buyMutation.isPending}>{t("取消")}</ControlButton>
-          <ControlButton variant="primary" size="sm" onPress={() => buyMutation.mutate()} isDisabled={buyMutation.isPending || insufficient} loading={buyMutation.isPending}>
+          <ControlButton variant="primary" size="sm" onPress={() => buyMutation.mutate()} isDisabled={buyMutation.isPending || balanceUnknown || insufficient} loading={buyMutation.isPending}>
             <ShoppingCart size={14} aria-hidden />
             {buyMutation.isPending ? t("正在购买...") : insufficient ? t("余额不足") : t("确认购买")}
           </ControlButton>
@@ -209,9 +223,9 @@ function PurchaseDrawer({
       )}
     >
       {result ? (
-        <div className="cp-stack">
+        <div className="workspace-stack">
           <StatusMark tone={result.replayed ? "warn" : "signal"} label={result.replayed ? t("重复请求，已存在的订阅生效") : t("购买成功")} />
-          <dl className="cp-detail-facts">
+          <dl className="workspace-detail-facts">
             <DetailFact label={t("套餐")} value={result.subscription.plan_name} />
             <DetailFact label={t("本次扣款")} value={result.replayed ? t("未扣费") : `${formatMicro(result.charged_micro)} USDT`} mono />
             <DetailFact label={t("当前余额")} value={`${formatMicro(result.balance_micro)} USDT`} mono />
@@ -220,16 +234,17 @@ function PurchaseDrawer({
           <QueryBadge label={t("服务端已返回本次幂等请求的最终结果")} tone={result.replayed ? "warn" : "signal"} />
         </div>
       ) : (
-        <div className="cp-stack">
-          <p className="cp-muted">{t("扣款与套餐生效同时完成，余额不足时不会扣款。")}</p>
-          <dl className="cp-detail-facts">
+        <div className="workspace-stack">
+          <p className="workspace-muted">{t("扣款与套餐生效同时完成，余额不足时不会扣款。")}</p>
+          <dl className="workspace-detail-facts">
             <DetailFact label={t("套餐")} value={plan.name} />
             <DetailFact label={t("有效期")} value={plan.duration_days > 0 ? t("{{days}} 天", { days: plan.duration_days }) : t("永久有效")} mono />
             <DetailFact label={t("重置周期")} value={periodLabel(plan.period, t)} />
             <DetailFact label={t("扣款金额")} value={`${formatMicro(plan.price_micro)} USDT`} mono />
-            <DetailFact label={t("扣款后余额")} value={`${formatMicro(balanceMicro - plan.price_micro)} USDT`} mono />
+            <DetailFact label={t("扣款后余额")} value={balanceMicro === null ? "—" : insufficient ? t("余额不足") : `${formatMicro(balanceMicro - plan.price_micro)} USDT`} mono />
           </dl>
-          {buyMutation.isError ? <p className="cp-form-error">{formatApiErrorMessage(buyMutation.error, t)}</p> : null}
+          {balanceUnknown ? <p role="alert" className="workspace-form-error">{t("余额未知，无法确认购买")}</p> : null}
+          {buyMutation.isError ? <p className="workspace-form-error">{formatApiErrorMessage(buyMutation.error, t)}</p> : null}
         </div>
       )}
     </InspectorDrawer>

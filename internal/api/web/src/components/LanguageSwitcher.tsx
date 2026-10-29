@@ -1,5 +1,6 @@
 import { Languages } from "lucide-react";
-import { Button } from "./ui/Button";
+import { ControlButton } from "./control-plane";
+import { Tooltip } from "./ui/Tooltip";
 import { cn } from "../lib/cn";
 import { useI18n } from "../i18n";
 
@@ -18,17 +19,18 @@ export function LanguageSwitcher({
   if (collapsed) {
     const next = locale === "zh-CN" ? "en-US" : "zh-CN";
     return (
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className={cn("text-ink-soft hover:text-ink", className)}
-        onClick={() => setLocale(next)}
-        aria-label={t("切换语言")}
-        title={t("切换语言")}
-      >
-        <Languages size={14} aria-hidden />
-      </Button>
+      <Tooltip content={t("切换语言")}>
+        <ControlButton
+          type="button"
+          variant="ghost"
+          size="icon"
+          className={cn("text-ink-soft hover:text-ink", className)}
+          onPress={() => setLocale(next)}
+          aria-label={t("切换语言")}
+        >
+          <Languages size={14} aria-hidden />
+        </ControlButton>
+      </Tooltip>
     );
   }
 
@@ -49,12 +51,12 @@ export function LanguageSwitcher({
       ).map(([value, label]) => {
         const active = locale === value;
         return (
-          <Button
+          <ControlButton
             key={value}
             type="button"
             variant="ghost"
             size="sm"
-            onClick={() => setLocale(value)}
+            onPress={() => setLocale(value)}
             aria-pressed={active}
             className={cn(
               "rounded-[calc(var(--radius-control)-2px)] px-2 text-2xs",
@@ -64,7 +66,7 @@ export function LanguageSwitcher({
             )}
           >
             {label}
-          </Button>
+          </ControlButton>
         );
       })}
     </div>

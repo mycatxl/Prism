@@ -21,18 +21,18 @@ const here = dirname(fileURLToPath(import.meta.url));
 const cssPath = join(here, "..", "src", "styles", "design.css");
 
 const FORBIDDEN_LAYER = /@media\s*\(\s*min-width\s*:\s*1536px\s*\)/;
-const FLUID_BOXES = /\.(?:shell|shell-bar|shell-main|page-content)(?![\w-])/;
+const FLUID_BOXES = /\.(?:workspace-shell|workspace-topbar|workspace-main|workspace-page)(?![\w-])/;
 /* A page surface is a flow box. Only overlays — the sheet, the drawer, the skip
    link, the scrim — are taken out of flow, and they are not in this list. */
-const PANES = /\.(?:panel|page-header|table-wrap|data-grid)(?![\w-])/;
+const PANES = /\.(?:workspace-surface-card|workspace-card|workspace-page-header|workspace-table__scroll|workspace-data-grid)(?![\w-])/;
 const REQUIRED_RULES = [
-  ".shell",
-  ".shell-bar",
-  ".shell-nav",
-  ".shell-main",
-  ".page-header",
-  ".panel",
-  ".data-grid",
+  ".workspace-shell",
+  ".workspace-topbar",
+  ".workspace-nav",
+  ".workspace-main",
+  ".workspace-page",
+  ".workspace-card",
+  ".workspace-data-grid",
 ];
 /*
  * Retired names. Each belonged to a design the console no longer has: a

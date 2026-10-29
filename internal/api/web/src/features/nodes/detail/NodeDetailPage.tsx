@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Globe2, ShieldCheck, Zap } from "lucide-react";
-import { Link, useParams } from "react-router-dom";
-import { Badge } from "../../../components/ui/Badge";
-import { Button } from "../../../components/ui/Button";
-import { Page, PageHeader, PageMeta } from "../../../components/ui/PageHeader";
-import { Panel, PanelBody } from "../../../components/ui/Panel";
+import { useNavigate, useParams } from "react-router-dom";
+import {
+  ControlButton,
+  ControlToastContainer,
+  QueryBadge,
+  WorkspaceCard,
+  WorkspacePage,
+} from "../../../components/control-plane";
 import { ErrorState, LoadingState } from "../../../components/ui/QueryState";
-import { ToastContainer } from "../../../components/ui/Toast";
 import { useToast } from "../../../hooks/useToast";
 import { useI18n } from "../../../i18n";
 import { formatApiErrorMessage } from "../../../lib/error-message";
@@ -35,6 +37,7 @@ import { nodeName, nodeStatus } from "./nodeMeta";
 export function NodeDetailPage() {
   const { nodeId } = useParams<{ nodeId: string }>();
   const hash = (nodeId ?? "").trim();
+  const navigate = useNavigate();
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
@@ -132,91 +135,86 @@ export function NodeDetailPage() {
   const probeDisabled = !detail || !detail.has_outbound || probe.isPending;
 
   return (
-    <Page bleed>
-      <PageHeader
-        title={detail ? nodeName(detail) : hash.slice(0, 12)}
-        description={<code className="readout text-xs text-ink-faint">{hash || "--"}</code>}
-        meta={
-          detail && state ? (
-            <>
-              <Badge tone={state.tone} dot>
-                {t(state.label)}
-              </Badge>
-              <PageMeta label={t("地区")} value={regionName ?? "--"} />
-              <PageMeta label={t("出口 IP")} value={detail.egress_ip || "--"} />
-            </>
-          ) : undefined
-        }
-        actions={
+    <WorkspacePage
+      eyebrow="Inventory / node detail"
+      title={detail ? nodeName(detail) : hash.slice(0, 12)}
+      description={<code className="readout text-xs text-ink-faint">{hash || "--"}</code>}
+      meta={
+        detail && state ? (
           <>
-            <Button variant="secondary" size="sm" asChild>
-              <Link to={opsPaths.nodes}>
-                <ArrowLeft size={15} aria-hidden />
-                {t("返回列表")}
-              </Link>
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={refresh}
-              disabled={detailQuery.isFetching}
-            >
-              {t("刷新")}
-            </Button>
-            <Button
-              size="sm"
-              disabled={qualityProbe.isPending || !detail?.has_outbound || qualityStatus.data?.enabled === false}
-              onClick={() => detail && qualityProbe.mutate(detail.node_hash)}
-            >
-              <ShieldCheck size={15} aria-hidden />
-              {t("更新网络特征")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={probeDisabled}
-              onClick={() => runProbe("egress")}
-            >
-              <Globe2 size={15} aria-hidden />
-              {t("出口探测")}
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={probeDisabled}
-              onClick={() => runProbe("latency")}
-            >
-              <Zap size={15} aria-hidden />
-              {t("延迟探测")}
-            </Button>
+            <QueryBadge label={t(state.label)} tone={state.tone === "outline" || state.tone === "accent" ? "neutral" : state.tone} />
+            <span className="workspace-page-meta">
+              <span className="micro">{t("地区")}</span>
+              <span className="readout text-xs text-ink-soft">{regionName ?? "--"}</span>
+            </span>
+            <span className="workspace-page-meta">
+              <span className="micro">{t("出口 IP")}</span>
+              <span className="readout text-xs text-ink-soft">{detail.egress_ip || "--"}</span>
+            </span>
           </>
-        }
-      />
+        ) : undefined
+      }
+      actions={
+        <>
+          <ControlButton variant="secondary" size="sm" onPress={() => navigate(opsPaths.nodes)}>
+            <ArrowLeft size={15} aria-hidden />
+            {t("返回列表")}
+          </ControlButton>
+          <ControlButton
+            variant="secondary"
+            size="sm"
+            onPress={refresh}
+            isDisabled={detailQuery.isFetching}
+          >
+            {t("刷新")}
+          </ControlButton>
+          <ControlButton
+            size="sm"
+            isDisabled={qualityProbe.isPending || !detail?.has_outbound || qualityStatus.data?.enabled === false}
+            onPress={() => detail && qualityProbe.mutate(detail.node_hash)}
+          >
+            <ShieldCheck size={15} aria-hidden />
+            {t("更新网络特征")}
+          </ControlButton>
+          <ControlButton
+            variant="secondary"
+            size="sm"
+            isDisabled={probeDisabled}
+            onPress={() => runProbe("egress")}
+          >
+            <Globe2 size={15} aria-hidden />
+            {t("出口探测")}
+          </ControlButton>
+          <ControlButton
+            variant="secondary"
+            size="sm"
+            isDisabled={probeDisabled}
+            onPress={() => runProbe("latency")}
+          >
+            <Zap size={15} aria-hidden />
+            {t("延迟探测")}
+          </ControlButton>
+        </>
+      }
+    >
+      <ControlToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-
-      <div className="page-content page-content--split">
+      <div className="workspace-detail-grid">
         {!hash ? (
-          <Panel>
-            <PanelBody>
-              <ErrorState message={t("节点 ID 缺失，无法加载详情。")} />
-            </PanelBody>
-          </Panel>
+          <WorkspaceCard title={t("节点详情")}>
+            <ErrorState message={t("节点 ID 缺失，无法加载详情。")} />
+          </WorkspaceCard>
         ) : detailQuery.isError && !detail ? (
-          <Panel>
-            <PanelBody>
-              <ErrorState
-                message={formatApiErrorMessage(detailQuery.error, t)}
-                onRetry={() => void detailQuery.refetch()}
-              />
-            </PanelBody>
-          </Panel>
+          <WorkspaceCard title={t("节点详情")}>
+            <ErrorState
+              message={formatApiErrorMessage(detailQuery.error, t)}
+              onRetry={() => void detailQuery.refetch()}
+            />
+          </WorkspaceCard>
         ) : detailQuery.isLoading && !detail ? (
-          <Panel>
-            <PanelBody>
-              <LoadingState label={t("正在加载节点详情...")} />
-            </PanelBody>
-          </Panel>
+          <WorkspaceCard title={t("节点详情")}>
+            <LoadingState label={t("正在加载节点详情...")} />
+          </WorkspaceCard>
         ) : detail ? (
           <>
             <div className="flex min-w-0 flex-col gap-4">
@@ -254,6 +252,6 @@ export function NodeDetailPage() {
           </>
         ) : null}
       </div>
-    </Page>
+    </WorkspacePage>
   );
 }

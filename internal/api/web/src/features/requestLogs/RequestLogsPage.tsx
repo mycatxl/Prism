@@ -2,18 +2,30 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Eraser, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Badge } from "../../components/ui/Badge";
-import { Button } from "../../components/ui/Button";
-import { Input } from "../../components/ui/Input";
-import { Page, PageHeader } from "../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar, SectionTitle } from "../../components/ui/Panel";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/QueryState";
+import {
+  CommandSurface,
+  ControlButton,
+  ControlInput,
+  ControlSelect,
+  ControlTable,
+  ControlTableBody,
+  ControlTableCell,
+  ControlTableClipCell,
+  ControlTableColumn,
+  ControlTableHead,
+  ControlTableNumericCell,
+  ControlTableRow,
+  ControlTableWrap,
+  ControlTabs,
+  InspectorDrawer,
+  QueryBadge,
+  SectionHeading,
+  WorkspaceCard,
+  WorkspacePage,
+} from "../../components/control-plane";
+import { ErrorState, EmptyState, LoadingState } from "../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../components/ui/Readout";
-import { Select } from "../../components/ui/Select";
-import { Sheet } from "../../components/ui/Sheet";
-import { Table, TableWrap, TBody, TD, TDClip, TDNum, TH, THead, TR } from "../../components/ui/Table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/Tabs";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -58,6 +70,19 @@ const defaultFilters: FilterDraft = {
 };
 const FILTER_DEBOUNCE_MS = 100;
 const PAGE_SIZE_OPTIONS = [20, 50, 100, 200, 500, 1000, 2000] as const;
+
+const PROXY_TYPE_FILTER_OPTIONS: Array<{ id: ProxyTypeFilter; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "1", label: "HTTP 正向代理" },
+  { id: "2", label: "HTTP 反向代理" },
+  { id: "3", label: "SOCKS5 正向代理" },
+];
+
+const NET_OK_FILTER_OPTIONS: Array<{ id: BoolFilter; label: string }> = [
+  { id: "all", label: "全部" },
+  { id: "true", label: "成功" },
+  { id: "false", label: "失败" },
+];
 
 const PAYLOAD_TABS = ["request", "response"] as const;
 type PayloadTab = (typeof PAYLOAD_TABS)[number];
@@ -407,36 +432,34 @@ function LogsPagination({
 }) {
   const { t } = useI18n();
   return (
-    <PanelFooter className="justify-between gap-3">
-      <p className="text-xs text-ink-soft">
+    <div className="workspace-pagination">
+      <p>
         {hasMore
           ? t("第 {{page}} 页 · 有更多数据", { page: pageIndex + 1 })
           : t("第 {{page}} 页 · 无更多数据", { page: pageIndex + 1 })}
       </p>
-      <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1.5 text-xs text-ink-soft">
-          <span>{t("每页")}</span>
-          <Select
+      <div className="workspace-pagination__actions">
+        <div className="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span aria-hidden>{t("每页")}</span>
+          <ControlSelect
+            aria-label={t("每页")}
             className="w-auto"
-            value={String(pageSize)}
+            selectedKey={String(pageSize)}
             disabled={disabled}
-            onChange={(event) => onPageSizeChange(Number(event.target.value))}
-          >
-            {PAGE_SIZE_OPTIONS.map((size) => (
-              <option key={size} value={size}>
-                {size}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <Button variant="secondary" size="sm" onClick={onPrev} disabled={disabled || pageIndex <= 0}>
+            items={PAGE_SIZE_OPTIONS.map((size) => ({ id: String(size), label: String(size) }))}
+            onSelectionChange={(key) => {
+              if (key !== null) onPageSizeChange(Number(key));
+            }}
+          />
+        </div>
+        <ControlButton variant="secondary" size="sm" onPress={onPrev} isDisabled={disabled || pageIndex <= 0}>
           {t("上一页")}
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onNext} disabled={disabled || !hasMore}>
+        </ControlButton>
+        <ControlButton variant="secondary" size="sm" onPress={onNext} isDisabled={disabled || !hasMore}>
           {t("下一页")}
-        </Button>
+        </ControlButton>
       </div>
-    </PanelFooter>
+    </div>
   );
 }
 
@@ -512,15 +535,26 @@ export function RequestLogsPage() {
 
   const logsQuery = useQuery({
     queryKey: ["request-logs", activeFilters, cursor],
-    queryFn: () => listRequestLogs({ ...activeFilters, cursor }),
+    queryFn: async () => ({
+      ...(await listRequestLogs({ ...activeFilters, cursor })),
+      pageIndex,
+    }),
     refetchInterval: pageIndex === 0 ? 15_000 : false,
     placeholderData: (prev) => prev,
   });
 
-  const logs = logsQuery.data?.items ?? EMPTY_LOGS;
-  const isPageTransitioning = logsQuery.isFetching && logsQuery.isPlaceholderData;
-
-  const visibleLogs = isPageTransitioning ? EMPTY_LOGS : logs;
+  const [lastPage, setLastPage] = useState<typeof logsQuery.data>(undefined);
+  if (logsQuery.data !== undefined && !logsQuery.isPlaceholderData && logsQuery.data !== lastPage) {
+    setLastPage(logsQuery.data);
+  }
+  const pageData = logsQuery.data ?? lastPage;
+  const logs = pageData?.items ?? EMPTY_LOGS;
+  const hasData = pageData !== undefined;
+  const isPageTransitioning = logsQuery.isFetching && (logsQuery.isPlaceholderData || (hasData && logsQuery.data === undefined));
+  const visibleLogs = logs;
+  const isInitialLoading = logsQuery.isLoading && !hasData;
+  const hasStaleError = logsQuery.isError && hasData;
+  const settledPageIndex = pageData?.pageIndex ?? pageIndex;
 
   const selectedLog = useMemo(() => {
     if (!selectedLogId) {
@@ -624,7 +658,7 @@ export function RequestLogsPage() {
   const payloadData = decodedPayload.data ?? { headers: "", body: "" };
   const payloadDecodePending = decodedPayload.isFetching;
 
-  const hasMore = Boolean(logsQuery.data?.has_more && logsQuery.data?.next_cursor);
+  const hasMore = Boolean(pageData?.has_more && pageData?.next_cursor);
 
   const renderProxyTypeBadge = useCallback((proxyType: number, context: "table" | "drawer" = "table") => {
     const known = proxyType === 1 || proxyType === 2 || proxyType === 3;
@@ -642,9 +676,9 @@ export function RequestLogsPage() {
     }
 
     return (
-      <Badge tone="outline" title={t(proxyTypeLabel(proxyType))}>
-        {label}
-      </Badge>
+      <span title={t(proxyTypeLabel(proxyType))}>
+        <QueryBadge label={label} />
+      </span>
     );
   }, [t]);
 
@@ -671,47 +705,45 @@ export function RequestLogsPage() {
         detailLog.upstream_err_msg),
   );
 
-  const showList = !logsQuery.isLoading && !isPageTransitioning && !logsQuery.isError;
+  const showList = hasData && !isInitialLoading;
 
   return (
-    <Page bleed>
-      <PageHeader
-        title={t("请求日志")}
-        meta={
-          !configQuery.isLoading && configQuery.data ? (
-            <Link
-              to={opsPaths.config}
-              className="flex shrink-0 items-center transition-opacity hover:opacity-80"
-              aria-label={
-                configQuery.data.request_log_enabled
-                  ? t("请求日志已开启，前往系统配置")
-                  : t("请求日志未开启，前往系统配置")
-              }
-            >
-              <span className="flex items-center gap-2">
-                <span
-                  aria-hidden
-                  className={cn(
-                    "state-dot",
-                    configQuery.data.request_log_enabled ? "state-dot--signal" : "state-dot--warn",
-                  )}
-                />
-                <span className="state-text">{configQuery.data.request_log_enabled ? t("已开启") : t("未开启")}</span>
-              </span>
-            </Link>
-          ) : undefined
-        }
-      />
-
+    <WorkspacePage
+      eyebrow="Governance / request logs"
+      title={t("请求日志")}
+      description={t("按时间、平台、目标和网络结果筛选保留请求日志。")}
+      meta={
+        !configQuery.isLoading && configQuery.data ? (
+          <Link
+            to={opsPaths.config}
+            className="flex shrink-0 items-center transition-opacity hover:opacity-80"
+            aria-label={
+              configQuery.data.request_log_enabled
+                ? t("请求日志已开启，前往系统配置")
+                : t("请求日志未开启，前往系统配置")
+            }
+          >
+            <span className="flex items-center gap-2">
+              <span
+                aria-hidden
+                className={cn(
+                  "workspace-status-dot",
+                  configQuery.data.request_log_enabled ? "workspace-status-dot--signal" : "workspace-status-dot--warn",
+                )}
+              />
+              <span className="workspace-status-text">{configQuery.data.request_log_enabled ? t("已开启") : t("未开启")}</span>
+            </span>
+          </Link>
+        ) : undefined
+      }
+    >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="page-content page-content--fill">
-        <Panel className="flex min-w-0 flex-col">
-          <PanelHeader title={t("请求日志")} />
-
-          <PanelToolbar className="filter-toolbar filter-toolbar--dense grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <WorkspaceCard headerless eyebrow="Governance / request logs" title={t("请求日志")} className="min-w-0">
+        <CommandSurface className="workspace-filter-toolbar workspace-filter-toolbar--dense">
+          <div className="grid w-full gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <FilterField id="logs-from" label={t("开始时间")} warning={rangeInvalid ? t("时间范围错误：开始时间必须早于结束时间，已暂不应用结束时间筛选。") : undefined}>
-              <Input
+              <ControlInput
                 id="logs-from"
                 className="readout"
                 type="datetime-local"
@@ -721,7 +753,7 @@ export function RequestLogsPage() {
             </FilterField>
 
             <FilterField id="logs-to" label={t("结束时间")}>
-              <Input
+              <ControlInput
                 id="logs-to"
                 className="readout"
                 type="datetime-local"
@@ -731,7 +763,7 @@ export function RequestLogsPage() {
             </FilterField>
 
             <FilterField id="logs-platform-name" label={t("平台")}>
-              <Input
+              <ControlInput
                 id="logs-platform-name"
                 value={filters.platform_name}
                 onChange={(event) => updateFilter("platform_name", event.target.value)}
@@ -739,7 +771,7 @@ export function RequestLogsPage() {
             </FilterField>
 
             <FilterField id="logs-account" label={t("账号")}>
-              <Input
+              <ControlInput
                 id="logs-account"
                 className="readout text-xs"
                 value={filters.account}
@@ -748,7 +780,7 @@ export function RequestLogsPage() {
             </FilterField>
 
             <FilterField id="logs-target-host" label={t("目标主机")}>
-              <Input
+              <ControlInput
                 id="logs-target-host"
                 className="readout text-xs"
                 value={filters.target_host}
@@ -757,7 +789,7 @@ export function RequestLogsPage() {
             </FilterField>
 
             <FilterField id="logs-egress-ip" label={t("出口 IP")}>
-              <Input
+              <ControlInput
                 id="logs-egress-ip"
                 className="readout text-xs"
                 inputMode="numeric"
@@ -766,37 +798,34 @@ export function RequestLogsPage() {
               />
             </FilterField>
 
-            <FilterField id="logs-proxy-type" label={t("代理类型")}>
-              <Select
-                id="logs-proxy-type"
-                value={filters.proxy_type}
-                onChange={(event) => updateFilter("proxy_type", event.target.value as ProxyTypeFilter)}
-              >
-                <option value="all">{t("全部")}</option>
-                <option value="1">{t("HTTP 正向代理")}</option>
-                <option value="2">{t("HTTP 反向代理")}</option>
-                <option value="3">{t("SOCKS5 正向代理")}</option>
-              </Select>
-            </FilterField>
+            <ControlSelect
+              label={t("代理类型")}
+              className="min-w-0"
+              selectedKey={filters.proxy_type}
+              items={PROXY_TYPE_FILTER_OPTIONS.map((option) => ({ id: option.id, label: t(option.label) }))}
+              onSelectionChange={(key) => {
+                const next = PROXY_TYPE_FILTER_OPTIONS.find((option) => option.id === key)?.id;
+                if (next) updateFilter("proxy_type", next);
+              }}
+            />
 
-            <FilterField id="logs-net-ok" label={t("网络状态")}>
-              <Select
-                id="logs-net-ok"
-                value={filters.net_ok}
-                onChange={(event) => updateFilter("net_ok", event.target.value as BoolFilter)}
-              >
-                <option value="all">{t("全部")}</option>
-                <option value="true">{t("成功")}</option>
-                <option value="false">{t("失败")}</option>
-              </Select>
-            </FilterField>
+            <ControlSelect
+              label={t("网络状态")}
+              className="min-w-0"
+              selectedKey={filters.net_ok}
+              items={NET_OK_FILTER_OPTIONS.map((option) => ({ id: option.id, label: t(option.label) }))}
+              onSelectionChange={(key) => {
+                const next = NET_OK_FILTER_OPTIONS.find((option) => option.id === key)?.id;
+                if (next) updateFilter("net_ok", next);
+              }}
+            />
 
             <FilterField
               id="logs-http-status"
               label={t("HTTP 状态")}
               warning={httpStatusInvalid ? t("HTTP 状态码需为 100-599 的整数，当前输入暂不应用。") : undefined}
             >
-              <Input
+              <ControlInput
                 id="logs-http-status"
                 className="readout"
                 inputMode="numeric"
@@ -807,61 +836,64 @@ export function RequestLogsPage() {
             </FilterField>
 
             <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-1 lg:justify-end">
-              <Button
+              <ControlButton
                 size="sm"
                 variant="secondary"
-                onClick={() => void logsQuery.refetch()}
-                disabled={logsQuery.isFetching}
+                onPress={() => void logsQuery.refetch()}
+                isDisabled={logsQuery.isFetching}
               >
                 <RefreshCw size={14} className={logsQuery.isFetching ? "animate-spin" : undefined} />
                 {t("刷新")}
-              </Button>
-              <Button size="sm" variant="secondary" onClick={resetFilters}>
+              </ControlButton>
+              <ControlButton size="sm" variant="secondary" onPress={resetFilters}>
                 <Eraser size={14} />
                 {t("重置")}
-              </Button>
+              </ControlButton>
             </div>
-          </PanelToolbar>
+          </div>
+        </CommandSurface>
 
-          {logsQuery.isLoading || isPageTransitioning ? (
-            <PanelBody>
+          {isInitialLoading ? (
+            <div>
               <LoadingState label={t("正在加载日志...")} />
-            </PanelBody>
+            </div>
           ) : null}
 
-          {logsQuery.isError ? (
-            <PanelBody>
+          {isPageTransitioning ? <p className="workspace-muted"><span className="workspace-spinner" aria-hidden />{t("更新中...")}</p> : null}
+
+          {logsQuery.isError && !hasData ? (
+            <div>
               <ErrorState
                 message={formatApiErrorMessage(logsQuery.error, t)}
                 onRetry={() => void logsQuery.refetch()}
               />
-            </PanelBody>
+            </div>
           ) : null}
 
-          {showList && !visibleLogs.length ? (
-            <PanelBody>
+          {hasStaleError ? <div className="workspace-notice workspace-notice--warn"><span>{t("数据可能已过期")} · {formatApiErrorMessage(logsQuery.error, t)}</span><ControlButton variant="ghost" size="sm" onPress={() => void logsQuery.refetch()}>{t("重试")}</ControlButton></div> : null}
+
+          {showList && !isPageTransitioning && !logsQuery.isError && !visibleLogs.length ? (
+            <div>
               <EmptyState title={t("没有匹配日志")} />
-            </PanelBody>
+            </div>
           ) : null}
 
           {visibleLogs.length ? (
-            <TableWrap>
-              <Table>
-                <THead>
-                  <TR>
-                    <TH>{t("时间")}</TH>
-                    <TH>{t("代理")}</TH>
-                    <TH>{t("平台 / 账号")}</TH>
-                    <TH>{t("目标")}</TH>
-                    <TH>{t("HTTP")}</TH>
-                    <TH>{t("网络")}</TH>
-                    <TH className="text-right">{t("首字耗时")}</TH>
-                    <TH className="text-right">{t("总耗时")}</TH>
-                    <TH className="text-right">{t("流量")}</TH>
-                    <TH>{t("节点")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
+            <ControlTableWrap>
+              <ControlTable>
+                <ControlTableHead>
+                  <ControlTableColumn>{t("时间")}</ControlTableColumn>
+                  <ControlTableColumn>{t("代理")}</ControlTableColumn>
+                  <ControlTableColumn>{t("平台 / 账号")}</ControlTableColumn>
+                  <ControlTableColumn isRowHeader>{t("目标")}</ControlTableColumn>
+                  <ControlTableColumn>{t("HTTP")}</ControlTableColumn>
+                  <ControlTableColumn>{t("网络")}</ControlTableColumn>
+                  <ControlTableColumn className="text-right">{t("首字耗时")}</ControlTableColumn>
+                  <ControlTableColumn className="text-right">{t("总耗时")}</ControlTableColumn>
+                  <ControlTableColumn className="text-right">{t("流量")}</ControlTableColumn>
+                  <ControlTableColumn>{t("节点")}</ControlTableColumn>
+                </ControlTableHead>
+                <ControlTableBody>
                   {visibleLogs.map((log) => {
                     const timeParts = splitDateTime(log.ts);
                     const stamp = `${timeParts.date} ${timeParts.time}`;
@@ -870,56 +902,50 @@ export function RequestLogsPage() {
                     const egress = log.egress_ip || "-";
                     const http = `${log.http_method || "-"} ${log.http_status || "-"}`;
                     return (
-                      <TR
+                      <ControlTableRow
                         key={log.id}
-                        tabIndex={0}
                         className="cursor-pointer"
                         selected={drawerVisible && detailLogId === log.id}
-                        aria-selected={drawerVisible && detailLogId === log.id}
-                        onClick={() => openDrawer(log.id)}
-                        onKeyDown={(event) => {
-                          if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-                            event.preventDefault();
-                            openDrawer(log.id);
-                          }
-                        }}
+                        onAction={() => openDrawer(log.id)}
                       >
-                        <TDClip className="readout whitespace-nowrap text-xs" title={log.ts}>
+                        <ControlTableClipCell className="readout whitespace-nowrap text-xs" title={log.ts}>
                           {stamp}
-                        </TDClip>
-                        <TD>{renderProxyTypeBadge(log.proxy_type)}</TD>
-                        <TDClip className="text-xs" title={`${platform} · ${account}`}>
+                        </ControlTableClipCell>
+                        <ControlTableCell>{renderProxyTypeBadge(log.proxy_type)}</ControlTableCell>
+                        <ControlTableClipCell className="text-xs" title={`${platform} · ${account}`}>
                           {platform}
                           <span className="readout text-ink-faint"> · {account}</span>
-                        </TDClip>
-                        <TDClip className="readout text-xs" title={log.target_url || log.target_host}>
+                        </ControlTableClipCell>
+                        <ControlTableClipCell className="readout text-xs" title={log.target_url || log.target_host}>
                           {log.target_host || "-"}
-                        </TDClip>
-                        <TDClip className="readout text-xs text-ink-soft" title={http}>
+                        </ControlTableClipCell>
+                        <ControlTableClipCell className="readout text-xs text-ink-soft" title={http}>
                           {http}
-                        </TDClip>
-                        <TD>
+                        </ControlTableClipCell>
+                        <ControlTableCell>
                           <span className="flex items-center gap-2">
                             <span
                               aria-hidden
-                              className={cn("state-dot", log.net_ok ? "state-dot--signal" : "state-dot--warn")}
+                              className={cn("workspace-status-dot", log.net_ok ? "workspace-status-dot--signal" : "workspace-status-dot--warn")}
                             />
-                            <span className="state-text">{log.net_ok ? t("成功") : t("失败")}</span>
+                            <span className="workspace-status-text">{log.net_ok ? t("成功") : t("失败")}</span>
                           </span>
-                        </TD>
-                        <TDNum className="text-xs text-ink-soft">
+                        </ControlTableCell>
+                        <ControlTableNumericCell className="text-xs text-ink-soft">
                           {formatOptionalDurationMs(log.first_byte_duration_ms)}
-                        </TDNum>
-                        <TDNum className="text-xs">{formatDurationMs(log.duration_ms)}</TDNum>
-                        <TDNum className="text-xs text-ink-soft">
+                        </ControlTableNumericCell>
+                        <ControlTableNumericCell className="text-xs">{formatDurationMs(log.duration_ms)}</ControlTableNumericCell>
+                        <ControlTableNumericCell className="text-xs text-ink-soft">
                           {formatBytes((log.ingress_bytes || 0) + (log.egress_bytes || 0))}
-                        </TDNum>
-                        <TDClip className="text-xs" title={`${log.node_tag || "-"} · ${egress}`}>
+                        </ControlTableNumericCell>
+                        <ControlTableClipCell className="text-xs" title={`${log.node_tag || "-"} · ${egress}`}>
                           {log.node_tag ? (
                             <Link
                               to={`${opsPaths.nodes}?tag_keyword=${encodeURIComponent(log.node_tag)}`}
                               title={t("在节点池搜索 {{tag}}", { tag: log.node_tag })}
                               className="text-signal-deep hover:underline"
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onKeyDown={(event) => event.stopPropagation()}
                               onClick={(event) => event.stopPropagation()}
                             >
                               {log.node_tag}
@@ -928,28 +954,27 @@ export function RequestLogsPage() {
                             <span className="text-ink-faint">-</span>
                           )}
                           <span className="readout text-ink-faint"> · {egress}</span>
-                        </TDClip>
-                      </TR>
+                        </ControlTableClipCell>
+                      </ControlTableRow>
                     );
                   })}
-                </TBody>
-              </Table>
-            </TableWrap>
+                </ControlTableBody>
+              </ControlTable>
+            </ControlTableWrap>
           ) : null}
 
           <LogsPagination
-            pageIndex={pageIndex}
+            pageIndex={settledPageIndex}
             hasMore={hasMore}
             pageSize={filters.limit}
-            disabled={isPageTransitioning}
+            disabled={isPageTransitioning || logsQuery.isError}
             onPageSizeChange={(limit) => updateFilter("limit", limit)}
             onPrev={movePrev}
             onNext={moveNext}
           />
-        </Panel>
-      </div>
+        </WorkspaceCard>
 
-      <Sheet
+      <InspectorDrawer
         open={drawerVisible}
         onOpenChange={(open) => {
           if (!open) {
@@ -957,13 +982,12 @@ export function RequestLogsPage() {
           }
         }}
         title={detailLog ? detailLog.target_host || detailLog.account || t("请求日志详情") : t("请求日志详情")}
-        description={detailLog ? <span className="readout text-xs text-ink-faint">{detailLog.id}</span> : undefined}
-        width="lg"
+        eyebrow={detailLog ? <span className="workspace-mono text-2xs text-ink-faint">{detailLog.id}</span> : t("请求日志")}
       >
         {detailLog ? (
           <div className="flex flex-col gap-5">
             <section>
-              <SectionTitle>{t("日志摘要")}</SectionTitle>
+              <SectionHeading>{t("日志摘要")}</SectionHeading>
               <p className="text-xs leading-relaxed text-ink-soft">{t("请求时间、协议结果与平台路由信息。")}</p>
 
               {detailQuery.isError ? (
@@ -1018,7 +1042,7 @@ export function RequestLogsPage() {
             </section>
 
             <section className="border-t border-rule pt-4">
-              <SectionTitle>{t("诊断")}</SectionTitle>
+              <SectionHeading>{t("诊断")}</SectionHeading>
               <p className="text-xs leading-relaxed text-ink-soft">{t("异常排查与连接状态分析。")}</p>
 
               {hasDiagnostics ? (
@@ -1058,15 +1082,13 @@ export function RequestLogsPage() {
 
               {!detailLog.prism_error && !detailLog.upstream_stage && !detailLog.upstream_err_kind && !detailLog.upstream_err_msg ? (
                 <div className="mt-3">
-                  <Badge tone="signal" dot>
-                    {t("当前请求未产生异常诊断信息")}
-                  </Badge>
+                  <QueryBadge label={t("当前请求未产生异常诊断信息")} tone="signal" />
                 </div>
               ) : null}
             </section>
 
             <section className="border-t border-rule pt-4">
-              <SectionTitle>{t("目标与节点")}</SectionTitle>
+              <SectionHeading>{t("目标与节点")}</SectionHeading>
               <p className="text-xs leading-relaxed text-ink-soft">{t("请求目标与命中节点信息。")}</p>
 
               <div className="mt-3 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-3">
@@ -1095,55 +1117,55 @@ export function RequestLogsPage() {
             </section>
 
             <section className="border-t border-rule pt-4">
-              <SectionTitle>{t("报文内容")}</SectionTitle>
+              <SectionHeading>{t("报文内容")}</SectionHeading>
               <p className="text-xs leading-relaxed text-ink-soft">{t("查看请求/响应内容。")}</p>
 
               {!detailLog.payload_present ? (
                 <p className="mt-3 text-xs text-ink-soft">{t("该条日志未记录报文内容。")}</p>
               ) : (
-                <Tabs
-                  value={payloadTab}
-                  className="mt-3"
-                  onValueChange={(next) => setPayloadTab(next === "response" ? "response" : "request")}
-                >
-                  <TabsList>
-                    {PAYLOAD_TABS.map((tab) => (
-                      <TabsTrigger key={tab} value={tab}>
-                        {payloadTabLabels[tab]}
-                        {truncatedFor(tab) ? <Badge tone="warn">{t("已截断")}</Badge> : null}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
+                <>
+                  <ControlTabs
+                    label={t("报文内容")}
+                    selectedKey={payloadTab}
+                    onSelectionChange={(next) => setPayloadTab(next === "response" ? "response" : "request")}
+                    items={PAYLOAD_TABS.map((tab) => ({
+                      id: tab,
+                      label: (
+                        <>
+                          {payloadTabLabels[tab]}
+                          {truncatedFor(tab) ? <QueryBadge label={t("已截断")} tone="warn" /> : null}
+                        </>
+                      ),
+                    }))}
+                  />
 
-                  <TabsContent value={payloadTab}>
-                    {payloadQuery.isError ? (
-                      <div className="mt-3">
-                        <ErrorState
-                          message={formatApiErrorMessage(payloadQuery.error, t)}
-                          onRetry={() => void payloadQuery.refetch()}
-                        />
-                      </div>
-                    ) : null}
+                {payloadQuery.isError ? (
+                  <div className="mt-3">
+                    <ErrorState
+                      message={formatApiErrorMessage(payloadQuery.error, t)}
+                      onRetry={() => void payloadQuery.refetch()}
+                    />
+                  </div>
+                ) : null}
 
-                    {(payloadQuery.isFetching || payloadDecodePending) && !(payloadData.headers || payloadData.body) ? (
-                      <LoadingState label={t("加载报文内容中...")} />
-                    ) : (
-                      <div className="mt-3 flex flex-col gap-2">
-                        <pre className="readout max-h-72 overflow-auto rounded-control border border-rule bg-paper-sunk px-3 py-2 text-2xs leading-relaxed break-words whitespace-pre-wrap">
-                          {payloadData.headers || t("（空 Headers）")}
-                        </pre>
-                        <pre className="readout max-h-96 overflow-auto rounded-control border border-rule bg-paper-sunk px-3 py-2 text-2xs leading-relaxed break-words whitespace-pre-wrap">
-                          {payloadData.body || t("（空 Body）")}
-                        </pre>
-                      </div>
-                    )}
-                  </TabsContent>
-                </Tabs>
+                {(payloadQuery.isFetching || payloadDecodePending) && !(payloadData.headers || payloadData.body) ? (
+                  <LoadingState label={t("加载报文内容中...")} />
+                ) : (
+                  <div className="mt-3 flex flex-col gap-2">
+                    <pre className="workspace-code-block max-h-72 overflow-auto">
+                      {payloadData.headers || t("（空 Headers）")}
+                    </pre>
+                    <pre className="workspace-code-block max-h-96 overflow-auto">
+                      {payloadData.body || t("（空 Body）")}
+                    </pre>
+                  </div>
+                )}
+                </>
               )}
             </section>
           </div>
         ) : null}
-      </Sheet>
-    </Page>
+      </InspectorDrawer>
+    </WorkspacePage>
   );
 }

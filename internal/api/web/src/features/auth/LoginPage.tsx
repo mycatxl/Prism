@@ -1,12 +1,20 @@
-import { zodResolver } from "@hookform/resolvers/zod";
-import { Eye, EyeOff } from "lucide-react";
+import {
+  Button as HeroButton,
+  Description as HeroDescription,
+  FieldError as HeroFieldError,
+  Input as HeroInput,
+  Label as HeroLabel,
+  TextField as HeroTextField,
+} from "@heroui/react";
+import { Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
-import { Button } from "../../components/ui/Button";
-import { Fieldset, Input } from "../../components/ui/Input";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { PrismMark } from "../../components/PrismMark";
 import { ErrorState } from "../../components/ui/QueryState";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { ApiError, fetchSession, login } from "../../lib/api-client";
 import { homePathFor } from "../../lib/roles";
@@ -101,107 +109,110 @@ export function LoginPage() {
   });
 
   return (
-    <main className="login-shell ground">
-      <section className="login-card-shell">
-        <div className="login-card panel">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="36" height="36" className="size-9 rounded-control" />
-              <div className="min-w-0">
-                <span className="block text-base font-semibold tracking-tight">Prism</span>
-                <span className="block text-xs text-ink-faint">{t("管理控制台")}</span>
-              </div>
-            </div>
-            <LanguageSwitcher />
+    <main className="access-shell access-shell--login">
+      <div className="access-login">
+        <header className="access-login__topbar">
+          <div className="access-login__brand" aria-label="Prism">
+            <PrismMark size={30} className="access-login__mark" />
+            <strong>Prism</strong>
+          </div>
+          <LanguageSwitcher />
+        </header>
+
+        <section className="access-login__panel" aria-labelledby="login-title">
+          <div className="access-login__heading">
+            <span className="access-login__eyebrow">{t("账户入口")}</span>
+            <h1 id="login-title">{t("欢迎回来")}</h1>
+            <p>{t("使用你的 Prism 账号登录。")}</p>
           </div>
 
-          <div className="mt-5">
-            <h1 className="text-xl font-semibold text-ink">{t("欢迎回来")}</h1>
-            <p className="mt-1 text-sm leading-relaxed text-ink-soft">{t("使用你的 Prism 账号登录。")}</p>
+          <div className="access-login__signals" aria-label={t("账户入口")}>
+            <span><ShieldCheck size={15} aria-hidden />{t("安全 Cookie 会话")}</span>
+            <span><LockKeyhole size={15} aria-hidden />{t("双因素认证可用")}</span>
           </div>
 
-          <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
-            <Fieldset label={t("用户名")} htmlFor="username">
-              <Input
+          <form className="access-form access-login__form" onSubmit={onSubmit} noValidate>
+            <HeroTextField className="workspace-field" isInvalid={Boolean(errors.username)}>
+              <HeroLabel>{t("用户名")}</HeroLabel>
+              <HeroInput
                 id="username"
+                className="workspace-input"
                 autoComplete="username"
                 autoCapitalize="none"
-                invalid={Boolean(errors.username)}
                 {...register("username")}
               />
-              {errors.username?.message ? (
-                <p role="alert" className="text-xs text-alert">
-                  {t(errors.username.message)}
-                </p>
-              ) : null}
-            </Fieldset>
+              {errors.username?.message ? <HeroFieldError>{t(errors.username.message)}</HeroFieldError> : null}
+            </HeroTextField>
 
-            <Fieldset label={t("密码")} htmlFor="password">
-              <div className="flex items-start gap-1.5">
-                <Input
+            <div className="access-login__password">
+              <HeroTextField className="workspace-field" isInvalid={Boolean(errors.password)}>
+                <HeroLabel>{t("密码")}</HeroLabel>
+                <HeroInput
                   id="password"
-                  className="min-w-0 flex-1"
                   type={isPasswordVisible ? "text" : "password"}
+                  className="workspace-input access-login__password-input"
                   autoComplete="current-password"
-                  invalid={Boolean(errors.password)}
                   {...register("password")}
                 />
-                <Button
+                {errors.password?.message ? <HeroFieldError>{t(errors.password.message)}</HeroFieldError> : null}
+              </HeroTextField>
+              <Tooltip triggerClassName="access-login__password-toggle-trigger" content={isPasswordVisible ? t("隐藏密码") : t("显示密码")}>
+                <HeroButton
                   type="button"
-                  variant="quiet"
-                  size="icon"
-                  className="shrink-0 text-ink-faint hover:text-ink"
+                  variant="ghost"
+                  size="sm"
+                  isIconOnly
+                  className="workspace-button access-login__password-toggle"
                   aria-label={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
-                  title={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
-                  onClick={() => setIsPasswordVisible((visible) => !visible)}
+                  onPress={() => setIsPasswordVisible((visible) => !visible)}
                 >
                   {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
-                </Button>
-              </div>
-              {errors.password?.message ? (
-                <p role="alert" className="text-xs text-alert">
-                  {t(errors.password.message)}
-                </p>
-              ) : null}
-            </Fieldset>
+                </HeroButton>
+              </Tooltip>
+            </div>
 
-            <Fieldset label={t("身份验证码")} hint={t("启用双因素认证后填写身份验证器中的 6 位验证码。")} htmlFor="totp">
-              <Input
+            <HeroTextField className="workspace-field" isInvalid={Boolean(errors.totp)}>
+              <HeroLabel>{t("身份验证码")}</HeroLabel>
+              <HeroInput
                 id="totp"
+                className="workspace-input"
                 inputMode="numeric"
                 autoComplete="one-time-code"
-                className="font-mono tracking-[0.25em]"
                 maxLength={6}
-                invalid={Boolean(errors.totp)}
                 {...register("totp")}
               />
               {errors.totp?.message ? (
-                <p role="alert" className="text-xs text-alert">
-                  {t(errors.totp.message)}
-                </p>
-              ) : null}
-            </Fieldset>
+                <HeroFieldError>{t(errors.totp.message)}</HeroFieldError>
+              ) : (
+                <HeroDescription>{t("启用双因素认证后填写身份验证器中的 6 位验证码。")}</HeroDescription>
+              )}
+            </HeroTextField>
 
             {submitError ? <ErrorState message={submitError} /> : null}
-            <Button type="submit" variant="primary" className="w-full" disabled={isSubmitting} loading={isSubmitting}>
+            <HeroButton
+              type="submit"
+              variant="primary"
+              fullWidth
+              className="workspace-button access-login__submit"
+              isDisabled={isSubmitting}
+              aria-busy={isSubmitting || undefined}
+            >
+              {isSubmitting ? <span className="workspace-spinner" aria-hidden /> : null}
               {t("登录")}
-            </Button>
+            </HeroButton>
           </form>
 
-          <p className="mt-5 border-t border-rule pt-3 text-xs leading-relaxed text-ink-faint">
-            {t("登录状态由安全 Cookie 保持，不会把密码或会话令牌写入浏览器存储。")}
-          </p>
-
-          {registrationMode === "open" || registrationMode === "invite" ? (
-            <p className="mt-3 text-xs leading-relaxed text-ink-faint">
-              {t("还没有账号？")}
-              <Link className="ml-1 text-accent underline-offset-2 hover:underline" to="/register">
-                {t("注册")}
-              </Link>
-            </p>
-          ) : null}
-        </div>
-      </section>
+          <footer className="access-login__footer">
+            <p>{t("登录状态由安全 Cookie 保持，不会把密码或会话令牌写入浏览器存储。")}</p>
+            {registrationMode === "open" || registrationMode === "invite" ? (
+              <p>
+                {t("还没有账号？")}
+                <Link to="/register">{t("注册")}</Link>
+              </p>
+            ) : null}
+          </footer>
+        </section>
+      </div>
     </main>
   );
 }

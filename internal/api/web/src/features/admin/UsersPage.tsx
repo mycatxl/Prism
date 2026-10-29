@@ -14,12 +14,12 @@ import {
   InspectorDrawer,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
@@ -31,7 +31,9 @@ import { formatRelativeTime } from "../../lib/time";
 import { adminPlansQueryKey, createUser, deleteUser, getUserBalance, listPlans, listUsers, updateUser } from "./api";
 import type { AdminPlan, AdminUser, CreateUserInput } from "./types";
 
-const PAGE_SIZE = 20;
+const DEFAULT_PAGE_SIZE = 20;
+/** What the admin list endpoints accept; the server caps a single page at 100. */
+const PAGE_SIZE_OPTIONS = [20, 50, 100];
 const NANOS_PER_MILLI = 1_000_000;
 
 function formatNsTime(ns?: number | null): string {
@@ -66,6 +68,7 @@ export function UsersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [roleFilter, setRoleFilter] = useState("all");
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [createOpen, setCreateOpen] = useState(false);
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
@@ -75,10 +78,10 @@ export function UsersPage() {
       q: settledSearch.trim() || undefined,
       status: statusFilter === "all" ? undefined : statusFilter,
       role: roleFilter === "all" ? undefined : roleFilter,
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
+      limit: pageSize,
+      offset: page * pageSize,
     }),
-    [page, roleFilter, settledSearch, statusFilter],
+    [page, pageSize, roleFilter, settledSearch, statusFilter],
   );
   const usersQuery = useQuery({
     queryKey: ["admin-users", queryParams],
@@ -124,7 +127,7 @@ export function UsersPage() {
   const statusTone = usersQuery.isError && !usersQuery.data ? "warn" : usersQuery.data ? "live" : "neutral";
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Customers / user registry"
       title={t("用户")}
       description={t("管理系统用户、角色分配、套餐与访问权限。选择对象打开 inspector，完整账户工作面保留在用户详情页。")}
@@ -142,8 +145,8 @@ export function UsersPage() {
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <section className="cp-command">
-        <div className="cp-command__body">
+      <section className="workspace-command">
+        <div className="workspace-command__body">
           <ControlInput
             label={t("搜索用户")}
             value={search}
@@ -155,44 +158,50 @@ export function UsersPage() {
           />
           <ControlSelect
             label={t("状态")}
-            value={statusFilter}
-            onChange={(event) => {
-              setStatusFilter(event.target.value);
-              setPage(0);
+            items={[
+              { id: "all", label: t("全部状态") },
+              { id: "active", label: t("正常") },
+              { id: "disabled", label: t("已停用") },
+            ]}
+            selectedKey={statusFilter}
+            onSelectionChange={(key) => {
+              if (key !== null) {
+                setStatusFilter(key);
+                setPage(0);
+              }
             }}
-          >
-            <option value="all">{t("全部状态")}</option>
-            <option value="active">{t("正常")}</option>
-            <option value="disabled">{t("已停用")}</option>
-          </ControlSelect>
+          />
           <ControlSelect
             label={t("角色")}
-            value={roleFilter}
-            onChange={(event) => {
-              setRoleFilter(event.target.value);
-              setPage(0);
+            items={[
+              { id: "all", label: t("全部角色") },
+              { id: "user", label: t("普通用户") },
+              { id: "admin", label: t("管理员") },
+            ]}
+            selectedKey={roleFilter}
+            onSelectionChange={(key) => {
+              if (key !== null) {
+                setRoleFilter(key);
+                setPage(0);
+              }
             }}
-          >
-            <option value="all">{t("全部角色")}</option>
-            <option value="user">{t("普通用户")}</option>
-            <option value="admin">{t("管理员")}</option>
-          </ControlSelect>
+          />
         </div>
-        <div className="cp-command__actions">
+        <div className="workspace-command__actions">
           <Search size={14} aria-hidden />
           {filtersActive ? <ControlButton variant="ghost" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : null}
         </div>
       </section>
 
       {filtersActive ? (
-        <div className="cp-active-filters" aria-label={t("当前筛选")}>
+        <div className="workspace-active-filters" aria-label={t("当前筛选")}>
           {search.trim() ? <FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={() => { setSearch(""); setPage(0); }} /> : null}
           {statusFilter !== "all" ? <FilterChip label={`${t("状态")}: ${statusFilter === "active" ? t("正常") : t("已停用")}`} onRemove={() => { setStatusFilter("all"); setPage(0); }} /> : null}
           {roleFilter !== "all" ? <FilterChip label={`${t("角色")}: ${roleFilter === "admin" ? t("管理员") : t("普通用户")}`} onRemove={() => { setRoleFilter("all"); setPage(0); }} /> : null}
         </div>
       ) : null}
 
-      <WorkSurface
+      <WorkspaceCard headerless
         eyebrow="Customer objects"
         title={t("用户目录")}
         meta={usersQuery.data ? t("共 {{count}} 个用户", { count: total }) : t("未加载")}
@@ -201,7 +210,7 @@ export function UsersPage() {
         {usersQuery.isError && !usersQuery.data ? (
           <EmptyWorkState title={t("用户目录读取失败")} detail={formatApiErrorMessage(usersQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void usersQuery.refetch()}>{t("重试")}</ControlButton>} />
         ) : null}
-        {usersQuery.isLoading && !usersQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载用户列表")}</div> : null}
+        {usersQuery.isLoading && !usersQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载用户列表")}</div> : null}
         {!usersQuery.isLoading && !usersQuery.isError && users.length === 0 ? (
           <EmptyWorkState
             title={t(filtersActive ? "没有匹配的用户" : "暂无用户")}
@@ -218,7 +227,7 @@ export function UsersPage() {
                   key={user.id}
                   active={selected?.id === user.id}
                   onClick={() => setSelected(user)}
-                  leading={<span className="cp-platform-row__mark" aria-hidden>{user.username.slice(0, 1).toUpperCase()}</span>}
+                  leading={<span className="workspace-platform-row__mark" aria-hidden>{user.username.slice(0, 1).toUpperCase()}</span>}
                   title={user.username}
                   subtitle={`${user.role === "admin" ? t("管理员") : t("普通用户")} · ${t("{{count}} 个密钥", { count: user.key_count })}`}
                   facts={<><span>{t("余额")} <UserBalanceCell userId={user.id} /></span><span>{t("注册")} {formatNsTime(user.created_at_ns)}</span><span>{t("最近活动")} {formatNsRelative(user.last_login_ns)}</span></>}
@@ -233,7 +242,8 @@ export function UsersPage() {
           <ControlPagination
             page={page}
             totalItems={total}
-            pageSize={PAGE_SIZE}
+            pageSize={pageSize}
+            pageSizes={PAGE_SIZE_OPTIONS}
             disabled={usersQuery.isFetching}
             labels={{
               summary: ({ page: current, pages, start, end, total: count }) => t("第 {{page}} / {{pages}} 页 · {{start}}-{{end}} / {{total}}", { page: current, pages, start, end, total: count }),
@@ -243,10 +253,10 @@ export function UsersPage() {
               next: t("下一页"),
             }}
             onPageChange={setPage}
-            onPageSizeChange={() => undefined}
+            onPageSizeChange={(next) => { setPageSize(next); setPage(0); }}
           />
         ) : null}
-      </WorkSurface>
+      </WorkspaceCard>
 
       <InspectorDrawer
         open={Boolean(selected) && !createOpen}
@@ -272,13 +282,13 @@ export function UsersPage() {
         ) : undefined}
       >
         {selected ? (
-          <div className="cp-stack">
-            <div className="cp-platform-inspector__identity">
-              <span className="cp-platform-row__mark" aria-hidden>{selected.username.slice(0, 1).toUpperCase()}</span>
+          <div className="workspace-stack">
+            <div className="workspace-platform-inspector__identity">
+              <span className="workspace-platform-row__mark" aria-hidden>{selected.username.slice(0, 1).toUpperCase()}</span>
               <div><strong>{selected.username}</strong><code>{selected.id}</code></div>
               <StatusMark tone={selected.status === "active" ? "signal" : "alert"} label={selected.status === "active" ? t("正常") : t("已停用")} />
             </div>
-            <dl className="cp-detail-facts">
+            <dl className="workspace-detail-facts">
               <DetailFact label={t("角色")} value={selected.role === "admin" ? t("管理员") : t("普通用户")} />
               <DetailFact label={t("余额")} value={<UserBalanceCell userId={selected.id} />} mono />
               <DetailFact label={t("访问密钥")} value={selected.key_count} mono />
@@ -286,15 +296,15 @@ export function UsersPage() {
               <DetailFact label={t("注册时间")} value={formatNsTime(selected.created_at_ns)} mono />
               <DetailFact label={t("最近登录")} value={formatNsTime(selected.last_login_ns)} mono />
             </dl>
-            <WorkSurface eyebrow="Subscription" title={t("当前套餐")}>
+            <WorkspaceCard eyebrow="Subscription" title={t("当前套餐")}>
               {selected.subscription ? (
-                <dl className="cp-detail-facts">
+                <dl className="workspace-detail-facts">
                   <DetailFact label={t("套餐")} value={selected.subscription.plan_name} />
                   <DetailFact label={t("状态")} value={selected.subscription.status} />
                   <DetailFact label={t("到期时间")} value={formatNsTime(selected.subscription.expires_at_ns)} mono />
                 </dl>
-              ) : <p className="cp-muted">{t("当前没有订阅")}</p>}
-            </WorkSurface>
+              ) : <p className="workspace-muted">{t("当前没有订阅")}</p>}
+            </WorkspaceCard>
             <QueryBadge label={t("完整用量、账本、密钥和运营动作在用户详情页") } />
           </div>
         ) : null}
@@ -305,7 +315,7 @@ export function UsersPage() {
         onOpenChange={setCreateOpen}
         title={t("新建用户")}
         eyebrow={t("Administrator action")}
-        footer={<div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setCreateOpen(false)}>{t("取消")}</ControlButton><ControlButton type="submit" form="create-user-form" variant="primary" size="sm">{t("创建用户")}</ControlButton></div>}
+        footer={<div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setCreateOpen(false)}>{t("取消")}</ControlButton><ControlButton type="submit" form="create-user-form" variant="primary" size="sm">{t("创建用户")}</ControlButton></div>}
       >
         {createOpen ? (
           <CreateUserContent
@@ -330,7 +340,7 @@ export function UsersPage() {
         loading={deleteMutation.isPending}
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
       />
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 
@@ -341,7 +351,7 @@ function UserBalanceCell({ userId }: { userId: string }) {
     enabled: Boolean(userId),
     staleTime: 30_000,
   });
-  if (!balanceQuery.isSuccess || !balanceQuery.data) return <span className="cp-muted">—</span>;
+  if (!balanceQuery.isSuccess || !balanceQuery.data) return <span className="workspace-muted">—</span>;
   return <span className="readout">{formatMicro(balanceQuery.data.balance_micro)}<small>USDT</small></span>;
 }
 
@@ -387,20 +397,26 @@ function CreateUserContent({ plans, onSuccess }: { plans: AdminPlan[]; onSuccess
     });
   };
   return (
-    <form id="create-user-form" className="cp-form-stack" onSubmit={handleSubmit}>
-      {errorMsg ? <p className="cp-form-error">{errorMsg}</p> : null}
+    <form id="create-user-form" className="workspace-form-stack" onSubmit={handleSubmit}>
+      {errorMsg ? <p className="workspace-form-error">{errorMsg}</p> : null}
       <ControlInput id={usernameId} label={t("用户名")} value={username} onChange={(event) => setUsername(event.target.value)} placeholder={t("输入用户名")} />
       <ControlInput id={passwordId} label={t("初始密码")} hint={t("留空则由系统随机生成或无需初始密码")} type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-      <ControlSelect id={roleId} label={t("用户角色")} value={role} onChange={(event) => setRole(event.target.value)}>
-        <option value="user">{t("普通用户")}</option>
-        <option value="admin">{t("管理员")}</option>
-      </ControlSelect>
-      <ControlSelect id={planId} label={t("绑定套餐 (可选)")} value={selectedPlanId} onChange={(event) => setSelectedPlanId(event.target.value)}>
-        <option value="">{t("暂不绑定套餐")}</option>
-        {plans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} ({plan.period})</option>)}
-      </ControlSelect>
+      <ControlSelect
+        id={roleId}
+        label={t("用户角色")}
+        items={[{ id: "user", label: t("普通用户") }, { id: "admin", label: t("管理员") }]}
+        selectedKey={role}
+        onSelectionChange={(key) => { if (key !== null) setRole(key); }}
+      />
+      <ControlSelect
+        id={planId}
+        label={t("绑定套餐 (可选)")}
+        items={[{ id: "", label: t("暂不绑定套餐") }, ...plans.map((plan) => ({ id: plan.id, label: `${plan.name} (${plan.period})` }))]}
+        selectedKey={selectedPlanId}
+        onSelectionChange={(key) => setSelectedPlanId(key ?? "")}
+      />
       {selectedPlanId ? <ControlInput id={durationId} label={t("有效天数")} type="number" min="1" value={durationDays} onChange={(event) => setDurationDays(event.target.value)} /> : null}
-      {createMutation.isPending ? <p className="cp-muted">{t("正在创建用户")}</p> : null}
+      {createMutation.isPending ? <p className="workspace-muted">{t("正在创建用户")}</p> : null}
     </form>
   );
 }

@@ -68,7 +68,7 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-const SURFACES = ["canvas", "sunk", "raised", "inset", "rail", "elevated"];
+const SURFACES = ["canvas", "sunk", "raised", "inset", "elevated"];
 const TEXT = ["ink", "ink-soft", "ink-faint"];
 const STATES = ["signal", "live", "warn", "alert", "accent"];
 const SERIES = ["series-1", "series-2", "series-3", "series-4", "series-5", "series-6"];
@@ -127,6 +127,19 @@ for (const theme of themes) {
     check(`focus ${name} on canvas`, contrast(token(name), token("canvas")), 3);
   }
 
+
+  // The rail is its own ground — dark ink in both themes — so its labels are
+  // measured against the rail, not the canvas. Faint text only ever sits on the
+  // plain rail (section captions, the wordmark's second line); the other three
+  // also sit on the hover and active blocks, so they carry all three grounds.
+  for (const name of ["on-rail-strong", "on-rail", "on-rail-soft"]) {
+    for (const ground of ["rail", "rail-active", "rail-hover"]) {
+      check(`${name} on ${ground}`, contrast(token(name), token(ground)), 4.5);
+    }
+  }
+  check("on-rail-faint on rail", contrast(token("on-rail-faint"), token("rail")), 4.5);
+  // The active-row marker is a 2px graphical object, not text.
+  check("rail marker on rail-active", contrast(token("rail-marker"), token("rail-active")), 3);
 
   // Chart series are graphical objects: WCAG 1.4.11 asks for 3:1 against the ground.
   for (const name of SERIES) {

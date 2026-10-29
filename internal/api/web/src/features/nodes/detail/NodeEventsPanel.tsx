@@ -1,6 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { Button } from "../../../components/ui/Button";
-import { Panel, PanelBody, PanelHeader } from "../../../components/ui/Panel";
+import { ControlButton, WorkspaceCard } from "../../../components/control-plane";
 import { useI18n } from "../../../i18n";
 import { cn } from "../../../lib/cn";
 import { formatDateTime } from "../../../lib/time";
@@ -27,10 +26,10 @@ type NodeEvent = {
 
 const DOT_CLASS: Record<NodeEventLevel, string> = {
   neutral: "",
-  signal: "state-dot--signal",
-  live: "state-dot--live",
-  warn: "state-dot--warn",
-  alert: "state-dot--alert",
+  signal: "workspace-status-dot--signal",
+  live: "workspace-status-dot--live",
+  warn: "workspace-status-dot--warn",
+  alert: "workspace-status-dot--alert",
 };
 
 /** The check outcome's event level mirrors the badge tone the console already uses. */
@@ -140,27 +139,25 @@ export function NodeEventsPanel({
   const events = buildNodeEvents(node, intel, t);
 
   return (
-    <Panel>
-      <PanelHeader
-        title={t("最近事件")}
-        actions={
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t("刷新")}
-            title={t("刷新")}
-            disabled={isFetchingIntel}
-            onClick={onRetryIntel}
-          >
-            <RefreshCw size={15} aria-hidden className={isFetchingIntel ? "animate-spin" : undefined} />
-          </Button>
-        }
-      />
-      <PanelBody className="space-y-2">
+    <WorkspaceCard
+      title={t("最近事件")}
+      actions={
+        <ControlButton
+          variant="ghost"
+          size="icon"
+          aria-label={t("刷新")}
+          isDisabled={isFetchingIntel}
+          onPress={onRetryIntel}
+        >
+          <RefreshCw size={15} aria-hidden className={isFetchingIntel ? "animate-spin" : undefined} />
+        </ControlButton>
+      }
+    >
+      <div className="space-y-2">
         <ul className="divide-y divide-rule-faint">
           {events.map((event, index) => (
             <li key={`${event.atMs}:${index}`} className="flex items-start gap-2.5 py-2.5">
-              <span aria-hidden className={cn("state-dot mt-1.5", DOT_CLASS[event.level])} />
+              <span aria-hidden className={cn("workspace-status-dot mt-1.5", DOT_CLASS[event.level])} />
               <p className="min-w-0 flex-1 text-sm text-ink">{event.text}</p>
               <time className="numeral shrink-0 pt-0.5 text-2xs text-ink-faint">
                 {formatDateTime(new Date(event.atMs).toISOString())}
@@ -176,7 +173,7 @@ export function NodeEventsPanel({
             {t("检测记录暂不可用，已仅显示节点自身记录。")}
           </p>
         )}
-      </PanelBody>
-    </Panel>
+      </div>
+    </WorkspaceCard>
   );
 }

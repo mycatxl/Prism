@@ -696,13 +696,27 @@ type ApiNodeExitSummary = {
 };
 
 /**
- * Every node's exit facts, in one request.
+ * How many node exit facts one read asks for.
  *
- * The exit map aggregates the whole inventory by region, so paging would only
- * add round trips: the node list caps `limit` at 100000, which is far above any
- * realistic pool. Only the fields the map needs are read, and the healthy rule
- * mirrors the backend aggregate (`service.NodeSummary.IsHealthyAndEnabled`:
- * enabled, outbound-ready, not circuit-open) so the map and the snapshot agree.
+ * The workbench reads a *sample* of the pool, not the inventory: it needs a handful
+ * of named nodes and a per-region spread to show evidence, and every global figure
+ * on the screen (healthy egress IPs, routable nodes, pool size) comes from the
+ * server's snapshot aggregates, which are computed over all nodes. Reading the whole
+ * pool here bought nothing the snapshot does not already report, so one bounded page
+ * is what this function asks for, and the card says so.
+ */
+export const NODE_EXIT_FACT_SAMPLE_LIMIT = 200;
+
+/**
+ * One page of node exit facts, for the sampled rows the workbench renders.
+ *
+ * The list is a sample of at most `NODE_EXIT_FACT_SAMPLE_LIMIT` nodes in the node
+ * list's own order. It is evidence, not coverage: an empty or short result cannot
+ * prove the pool has no circuit-open node, no unassessed egress IP and no uncovered
+ * region, and nothing on the screen may read it that way. The healthy rule mirrors
+ * the backend aggregate (`service.NodeSummary.IsHealthyAndEnabled`: enabled,
+ * outbound-ready, not circuit-open) so a sampled row and the snapshot agree on what
+ * healthy means, even though only the snapshot counts the whole pool.
  *
  * `reference_latency_ms` is the node's own measured latency, which is what the
  * region rows average. A node that has not been measured maps to `null` rather
@@ -710,9 +724,12 @@ type ApiNodeExitSummary = {
  * were instant.
  */
 export async function listNodeExitFacts(signal?: AbortSignal): Promise<NodeExitFact[]> {
-  const data = await apiRequest<{ items?: ApiNodeExitSummary[] | null }>("/api/v1/nodes?limit=100000", {
-    signal,
-  });
+  const data = await apiRequest<{ items?: ApiNodeExitSummary[] | null }>(
+    `/api/v1/nodes?limit=${NODE_EXIT_FACT_SAMPLE_LIMIT}`,
+    {
+      signal,
+    },
+  );
   const items = Array.isArray(data.items) ? data.items : [];
   return items.map((node) => ({
     region: toString(node.region).trim().toUpperCase(),

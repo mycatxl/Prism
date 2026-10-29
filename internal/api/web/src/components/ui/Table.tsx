@@ -1,84 +1,81 @@
-import type { HTMLAttributes, ThHTMLAttributes, TdHTMLAttributes } from "react";
+import { Surface as HeroSurface, Table as HeroTable } from "@heroui/react";
+import type { ComponentProps, HTMLAttributes, ReactNode } from "react";
 import { cn } from "../../lib/cn";
-
-/**
- * Table primitives: a sticky head row, hairline row rules (`--color-row-rule`),
- * hover wash, and no zebra striping.
- */
 
 export type Density = "compact" | "comfortable";
 
-export function TableWrap({ className, ...rest }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("table-wrap w-full min-w-0 overflow-x-auto overscroll-x-contain", className)} {...rest} />;
+type TableRootProps = Omit<ComponentProps<typeof HeroTable>, "children" | "className"> & {
+  className?: string;
+  density?: Density;
+  children?: ReactNode;
+};
+type TableHeaderProps = Omit<ComponentProps<typeof HeroTable.Header>, "children" | "className"> & { className?: string; children?: ReactNode };
+type ColumnProps = Omit<ComponentProps<typeof HeroTable.Column>, "children" | "className"> & { className?: string; children?: ReactNode };
+type BodyProps = Omit<ComponentProps<typeof HeroTable.Body>, "children" | "className"> & { className?: string; children?: ReactNode };
+type RowProps = Omit<ComponentProps<typeof HeroTable.Row>, "children" | "className"> & { className?: string; children?: ReactNode; selected?: boolean };
+type CellProps = Omit<ComponentProps<typeof HeroTable.Cell>, "children" | "className"> & { className?: string; children?: ReactNode; title?: string };
+
+export function TableWrap({ className, children, ...rest }: HTMLAttributes<HTMLDivElement>) {
+  return (
+    <HeroSurface
+      {...rest}
+      variant="secondary"
+      className={cn("workspace-table-region workspace-table__scroll", className)}
+    >
+      {children}
+    </HeroSurface>
+  );
 }
 
-export function Table({
-  className,
-  density = "compact",
-  ...rest
-}: HTMLAttributes<HTMLTableElement> & { density?: Density }) {
+export function Table({ className, density = "compact", children, ...rest }: TableRootProps) {
   return (
-    <table
-      data-density={density}
+    <HeroTable
+      {...rest}
+      variant="primary"
       className={cn(
-        "data-grid",
-        density === "compact" && "data-grid--compact",
-        density === "comfortable" && "data-grid--comfortable",
+        "workspace-table",
+        density === "compact" && "workspace-table--compact",
+        density === "comfortable" && "workspace-table--comfortable",
         className,
       )}
-      {...rest}
-    />
+    >
+      <HeroTable.Content>{children}</HeroTable.Content>
+    </HeroTable>
   );
 }
 
-export function THead({ className, ...rest }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={className} {...rest} />;
+export function THead({ className, children, ...rest }: TableHeaderProps) {
+  return <HeroTable.Header {...rest} className={className}>{children}</HeroTable.Header>;
 }
 
-/**
- * Sticky column head in micro-caps; opaque, because a head that shows rows through
- * itself is a head nobody can read.
- *
- * `scope="col"` is the default: every head in this console heads a column, and a
- * cell a screen reader cannot tie to a column is a cell read as a naked value. A
- * caller that really heads a row passes its own `scope` and wins.
- */
-export function TH({ className, scope = "col", ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
-  return <th scope={scope} className={className} {...rest} />;
+export function TH({ className, children, ...rest }: ColumnProps) {
+  return <HeroTable.Column {...rest} className={cn("workspace-table__column", className)}>{children}</HeroTable.Column>;
 }
 
-export function TBody({ className, ...rest }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <tbody className={className} {...rest} />;
+export function TBody({ className, children, ...rest }: BodyProps) {
+  return <HeroTable.Body {...rest} className={className}>{children}</HeroTable.Body>;
 }
 
-export function TR({
-  className,
-  selected,
-  ...rest
-}: HTMLAttributes<HTMLTableRowElement> & { selected?: boolean }) {
-  return (
-    <tr data-selected={selected ? "true" : undefined} className={className} {...rest} />
-  );
+export function TR({ className, selected, children, ...rest }: RowProps) {
+  return <HeroTable.Row {...rest} data-selected={selected ? "true" : undefined} className={cn("workspace-table__row", className)}>{children}</HeroTable.Row>;
 }
 
-export function TD({ className, ...rest }: TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={className} {...rest} />;
+export function TD({ className, title, children, ...rest }: CellProps) {
+  return <HeroTable.Cell {...rest} className={cn("workspace-table__cell", className)}>{title ? <span title={title}>{children}</span> : children}</HeroTable.Cell>;
 }
 
-/** A cell whose content is a value to be compared: mono, tabular, right-aligned. */
-export function TDNum({ className, ...rest }: TdHTMLAttributes<HTMLTableCellElement>) {
-  return <TD className={cn("cell-num", className)} {...rest} />;
+export function TDNum({ className, children, ...rest }: CellProps) {
+  return <TD {...rest} className={cn("workspace-table__cell workspace-table__cell--end", className)}>{children}</TD>;
 }
 
-/**
- * A one-line cell that truncates cleanly without wrapping row height.
- */
-export function TDClip({ className, title, ...rest }: TdHTMLAttributes<HTMLTableCellElement>) {
+export function TDClip({ className, title, children, ...rest }: CellProps) {
   return (
     <TD
-      className={cn("max-w-0 truncate", className)}
-      title={title ?? (typeof rest.children === "string" ? rest.children : undefined)}
       {...rest}
-    />
+      className={cn("workspace-table__cell max-w-0 truncate", className)}
+      title={title ?? (typeof children === "string" ? children : undefined)}
+    >
+      {children}
+    </TD>
   );
 }

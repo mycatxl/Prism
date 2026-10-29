@@ -171,7 +171,6 @@ const REMOVED_CLASS_TOKENS = [
   "live-chart",
   "resource-total",
   "detail-header",
-  "card",
   "toast-container",
   "nav-item",
   "workspace-bar",
@@ -211,6 +210,7 @@ const NODES = ui(recordPath(opsPaths, "nodes"));
 const SUBSCRIPTIONS = ui(recordPath(opsPaths, "subscriptions"));
 const USAGE = ui(recordPath(opsPaths, "usage"));
 const AUDIT = ui(recordPath(opsPaths, "audit"));
+const REQUEST_LOGS = ui(recordPath(opsPaths, "requestLogs"));
 
 /*
  * The heading `src/components/ErrorBoundary.tsx` renders when a route throws.
@@ -539,6 +539,523 @@ check("legacy node envelopes do not crash the node pool", async ({ origin, page,
   }
 });
 
+// Shared HeroUI primitives must work against their actual rendered DOM, not only
+// satisfy TypeScript. This reaches an anonymous tooltip plus the signed-in node
+// filters and inspector, including the single global toast queue.
+check("shared HeroUI overlays open, close and restore focus", async ({ origin, page, context, errors, browser }) => {
+  const anonymous = await browser.newContext({
+    locale: LOCALE,
+    viewport: { width: 1440, height: 900 },
+    reducedMotion: "reduce",
+  });
+  await anonymous.addInitScript((locale) => localStorage.setItem("prism.locale", locale), LOCALE);
+  const loginPage = await anonymous.newPage();
+  const loginErrors = watchPage(loginPage);
+  try {
+    loginErrors.reset("login tooltip");
+    await loginPage.goto(origin + "/ui/login");
+    const passwordToggle = loginPage.getByRole("button", { name: "显示密码" });
+    await passwordToggle.waitFor({ state: "visible", timeout: 15000 });
+    const tooltipTrigger = passwordToggle.locator('xpath=ancestor::*[@data-slot="tooltip-trigger"]');
+    assert.equal(await tooltipTrigger.count(), 1, "the password toggle must have one HeroUI tooltip trigger");
+    const triggerBox = await tooltipTrigger.boundingBox();
+    assert(triggerBox && triggerBox.width >= 32 && triggerBox.height >= 32, "the tooltip trigger must own a real hit target");
+
+    let tooltipText = [];
+    for (let attempt = 0; attempt < 3 && !tooltipText.length; attempt += 1) {
+      await loginPage.mouse.move(8 + attempt, 8 + attempt);
+      await loginPage.waitForTimeout(80);
+      await tooltipTrigger.hover({ position: { x: 16, y: 16 } });
+      await loginPage.waitForTimeout(700);
+      tooltipText = await loginPage.locator('[role="tooltip"]:visible').allTextContents();
+    }
+    assert(tooltipText.some((text) => text.includes("显示密码")), "hovering the password toggle must render its tooltip");
+    await quiet(loginPage);
+    assert.deepEqual(loginErrors.drain(), [], "the login tooltip must not emit a browser error");
+  } finally {
+    await anonymous.close();
+  }
+
+  const nodeListRoute = /\/api\/v1\/nodes(?:\?|$)/;
+  const nodeDetailRoute = /\/api\/v1\/nodes\/[^/?]+(?:\?|$)/;
+  await page.route(nodeListRoute, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const items = (body.items ?? []).map((item) => ({
+      ...item,
+      egress_ip: item.egress_ip || "198.51.100.20",
+      has_outbound: true,
+    }));
+    await route.fulfill({ response, body: JSON.stringify({ ...body, items }) });
+  });
+  await page.route(nodeDetailRoute, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    await route.fulfill({
+      response,
+      body: JSON.stringify({ ...body, egress_ip: body.egress_ip || "198.51.100.20", has_outbound: true }),
+    });
+  });
+  try {
+    errors.reset(`${NODES} shared overlays`);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
+    await page.goto(origin + NODES);
+    await rendered(page);
+
+    const healthSelect = page
+      .locator(".workspace-select")
+      .filter({ hasText: "健康状态" })
+      .locator('[data-slot="select-trigger"]')
+      .first();
+    await healthSelect.waitFor({ state: "visible", timeout: 10000 });
+    await healthSelect.click();
+    const listbox = page.locator('[role="listbox"]:visible').last();
+    await listbox.waitFor({ state: "visible", timeout: 5000 });
+    const options = await listbox.getByRole("option").allTextContents();
+    assert(options.some((text) => text.trim() === "健康"), "the health Select must render its options");
+    await page.keyboard.press("Escape");
+    assert.equal(await healthSelect.getAttribute("aria-expanded"), "false", "Escape must close the Select");
+    await listbox.waitFor({ state: "hidden", timeout: 3000 });
+
+    const nodeRow = page.locator('.workspace-object-row[role="button"]').first();
+    await nodeRow.waitFor({ state: "visible", timeout: 15000 });
+    await nodeRow.focus();
+    await nodeRow.click();
+    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    await drawer.waitFor({ state: "visible", timeout: 15000 });
+    assert.equal(await page.locator('[data-slot="drawer-backdrop"]:visible').count(), 1, "the inspector must render one backdrop");
+
+    await drawer.getByRole("button", { name: "复制出口 IP" }).click();
+    const toast = page.locator('[data-slot="toast"]:visible').first();
+    await toast.waitFor({ state: "visible", timeout: 5000 });
+    assert.match(await toast.innerText(), /已复制/, "copying the exit IP must use the global ToastProvider");
+    assert.equal(await toast.locator('xpath=ancestor::*[@data-slot="toast-region"]').count(), 1, "the toast must live in the global region");
+
+    await drawer.getByRole("button", { name: "关闭" }).click();
+    await drawer.waitFor({ state: "hidden", timeout: 3000 });
+    const focusTarget = await nodeRow.elementHandle();
+    assert(focusTarget, "the drawer opener must remain mounted");
+    try {
+      await page.waitForFunction((target) => document.activeElement === target, focusTarget, { timeout: 3000 });
+    } catch (error) {
+      const focusState = await nodeRow.evaluate((element) => ({ connected: element.isConnected, active: document.activeElement?.outerHTML }));
+      throw new Error(`drawer focus did not settle on its opener: ${JSON.stringify(focusState)}; ${error.message}`);
+    } finally {
+      await focusTarget.dispose();
+    }
+    assert.equal(await nodeRow.evaluate((element) => document.activeElement === element), true, "closing the drawer must restore row focus");
+    await quiet(page);
+    assert.deepEqual(errors.drain(), [], "shared overlays must not emit a browser error");
+  } finally {
+    await page.unroute(nodeListRoute);
+    await page.unroute(nodeDetailRoute);
+  }
+});
+
+// The isolated backend has no retained request traffic, so replay one complete
+// row to exercise the HeroUI Table collection and its row action.
+function requestLogFixture(overrides = {}) {
+  return {
+    id: "log_ui_check",
+    ts: "2026-10-27T00:00:00Z",
+    proxy_type: 1,
+    client_ip: "192.0.2.10",
+    platform_id: "platform_ui_check",
+    platform_name: "UI Check Platform",
+    account: "ui-check-account",
+    target_host: "api.example.test",
+    target_url: "https://api.example.test/orders",
+    node_hash: "node_ui_check",
+    node_tag: "UI check node",
+    egress_ip: "198.51.100.10",
+    duration_ms: 42,
+    first_byte_duration_ms: 12,
+    net_ok: true,
+    http_method: "GET",
+    http_status: 200,
+    prism_error: "",
+    upstream_stage: "",
+    upstream_err_kind: "",
+    upstream_errno: "",
+    upstream_err_msg: "",
+    ingress_bytes: 123,
+    egress_bytes: 456,
+    payload_present: false,
+    req_headers_len: 0,
+    req_body_len: 0,
+    resp_headers_len: 0,
+    resp_body_len: 0,
+    req_headers_truncated: false,
+    req_body_truncated: false,
+    resp_headers_truncated: false,
+    resp_body_truncated: false,
+    ...overrides,
+  };
+}
+
+check("the request log table exposes row headers and opens its inspector", async ({ origin, page, errors }) => {
+  const log = requestLogFixture();
+  const listRoute = /\/api\/v1\/request-logs(?:\?|$)/;
+  const detailRoute = /\/api\/v1\/request-logs\/log_ui_check(?:\?|$)/;
+  await page.route(listRoute, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [log], limit: 100, has_more: false }),
+    });
+  });
+  await page.route(detailRoute, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(log) });
+  });
+  try {
+    errors.reset(`${REQUEST_LOGS} table interaction`);
+    await page.goto(origin + REQUEST_LOGS);
+    await rendered(page);
+    const table = page.locator('[data-slot="table-content"]');
+    await table.waitFor({ state: "visible", timeout: 15000 });
+    assert.equal(await table.getAttribute("role"), "grid", "ControlTable must expose grid semantics");
+    assert((await table.getByRole("columnheader").count()) >= 10, "the request table must expose its columns");
+    assert((await table.getByRole("rowheader").count()) >= 1, "the request table must expose a row header");
+
+    const row = table.locator('[data-slot="table-row"]').filter({ hasText: "api.example.test" }).first();
+    await row.waitFor({ state: "visible", timeout: 5000 });
+    await row.click();
+    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    await drawer.waitFor({ state: "visible", timeout: 10000 });
+    assert.match(await drawer.innerText(), /api\.example\.test/, "the table row action must open the matching inspector");
+    await drawer.getByRole("button", { name: "关闭" }).click();
+    await drawer.waitFor({ state: "hidden", timeout: 3000 });
+    await quiet(page);
+    assert.deepEqual(errors.drain(), [], "the request table interaction must not emit a browser error");
+  } finally {
+    await page.unroute(listRoute);
+    await page.unroute(detailRoute);
+  }
+});
+
+check("log pages retain the settled page during delayed failure and recover on retry", async ({ origin, page, errors }) => {
+  const cases = [
+    {
+      path: REQUEST_LOGS,
+      route: /\/api\/v1\/request-logs(?:\?|$)/,
+      first: "first-request.example.test",
+      second: "second-request.example.test",
+      isNext: (url) => Boolean(url.searchParams.get("cursor")),
+      response: (next) => ({
+        items: [requestLogFixture({
+          id: next ? "log_page_2" : "log_page_1",
+          target_host: next ? "second-request.example.test" : "first-request.example.test",
+        })],
+        limit: 100,
+        has_more: !next,
+        next_cursor: next ? undefined : "ui-page-2",
+      }),
+    },
+    {
+      path: AUDIT,
+      route: /\/api\/v1\/audit-logs(?:\?|$)/,
+      first: "first-audit-target",
+      second: "second-audit-target",
+      isNext: (url) => Number(url.searchParams.get("before_id")) > 0,
+      response: (next) => ({
+        items: Array.from({ length: next ? 1 : 51 }, (_, index) => ({
+          id: next ? 1 : 100 - index,
+          at_ns: 1767225600000000000,
+          actor: "ui-check-actor",
+          remote_addr: "192.0.2.10",
+          action: "PATCH /api/v1/platforms/{id}",
+          target: next ? "second-audit-target" : index === 0 ? "first-audit-target" : `audit-target-${index}`,
+          detail: JSON.stringify({ keys: ["name"] }),
+        })),
+        limit: 51,
+      }),
+    },
+  ];
+  for (const scenario of cases) {
+    // A full navigation resets component/query state, so both replays start clean.
+    for (let replay = 0; replay < 2; replay += 1) {
+      let releaseFailure;
+      const failureGate = new Promise((resolve) => { releaseFailure = resolve; });
+      let failNext = true;
+      let failedRequests = 0;
+      await page.route(scenario.route, async (route) => {
+        const next = scenario.isNext(new URL(route.request().url()));
+        if (next && failNext) {
+          failedRequests += 1;
+          await failureGate;
+          await route.fulfill({
+            status: 503,
+            contentType: "application/json",
+            body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "ui-stale-fixture" } }),
+          });
+          return;
+        }
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(scenario.response(next)) });
+      });
+      try {
+        errors.reset(`${scenario.path} settled-page replay ${replay}`);
+        await page.goto(origin + scenario.path);
+        await rendered(page);
+        await page.getByText(scenario.first, { exact: false }).first().waitFor({ timeout: 10000 });
+        await page.getByRole("button", { name: "下一页", exact: true }).click();
+        await page.getByText("更新中...", { exact: true }).first().waitFor({ timeout: 5000 });
+        assert(await page.getByText(scenario.first, { exact: false }).first().isVisible(), "delayed pagination must keep the old list");
+        assert.match(await page.locator(".workspace-pagination").innerText(), /第 1 页/, "pending pagination must label the actual visible page");
+        releaseFailure();
+        await page.getByText("数据可能已过期", { exact: false }).first().waitFor({ timeout: 15000 });
+        assert(failedRequests >= 2, "the configured single retry must finish before stale is shown");
+        assert(await page.getByText(scenario.first, { exact: false }).first().isVisible(), "a failed page request must not erase the settled list");
+        assert.match(await page.locator(".workspace-pagination").innerText(), /第 1 页/, "a failed page must keep the settled page number");
+        const expectedErrors = errors.drain();
+        assert(expectedErrors.every((entry) => /^console.error: Failed to load resource:.*503/.test(entry.text)), `only the deliberate 503 resource errors are allowed: ${JSON.stringify(expectedErrors)}`);
+        failNext = false;
+        errors.reset(`${scenario.path} recovery replay ${replay}`);
+        await page.getByRole("button", { name: "重试", exact: true }).first().click();
+        await page.getByText(scenario.second, { exact: false }).first().waitFor({ timeout: 10000 });
+        assert.match(await page.locator(".workspace-pagination").innerText(), /第 2 页/, "successful retry must advance the displayed page");
+        assert.deepEqual(errors.drain(), [], "recovery must not produce a browser error");
+      } finally {
+        releaseFailure();
+        await page.unroute(scenario.route, { behavior: "wait" });
+      }
+    }
+  }
+});
+
+check("platform destructive actions cancel, surface failure and retry", async ({ origin, page, errors }) => {
+  const platformId = "ui-confirm-platform";
+  const platformPath = `${ui(recordPath(opsPaths, "platforms"))}/${platformId}?tab=ops`;
+  const platform = {
+    id: platformId,
+    name: "UI Confirm Platform",
+    sticky_ttl: "168h",
+    regex_filters: [],
+    region_filters: [],
+    ip_types: [],
+    purity_bands: [],
+    subscription_filters: [],
+    protocols: ["http"],
+    routable_node_count: 3,
+    reverse_proxy_miss_action: "TREAT_AS_EMPTY",
+    reverse_proxy_empty_account_behavior: "RANDOM",
+    reverse_proxy_fixed_account_header: "",
+    allocation_policy: "BALANCED",
+    passive_circuit_breaker_disabled: false,
+    updated_at: "2026-10-27T00:00:00Z",
+  };
+  const platformRoute = /\/api\/v1\/platforms\/ui-confirm-platform$/;
+  const leasesRoute = /\/api\/v1\/platforms\/ui-confirm-platform\/leases(?:\?.*)?$/;
+  let clearRequests = 0;
+  await page.route(platformRoute, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(platform) });
+  });
+  await page.route(leasesRoute, async (route) => {
+    if (route.request().method() === "GET") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0, limit: 10, offset: 0 }),
+      });
+      return;
+    }
+    if (route.request().method() === "DELETE") {
+      clearRequests += 1;
+      if (clearRequests === 1) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "INTERNAL", message: "clear leases failed" } }),
+        });
+      } else {
+        await route.fulfill({ status: 204 });
+      }
+      return;
+    }
+    await route.continue();
+  });
+  try {
+    errors.reset("platform destructive action states");
+    await page.goto(origin + platformPath);
+    await rendered(page);
+    await page.getByRole("heading", { name: "危险操作" }).waitFor({ timeout: 10000 });
+    const clearButton = page.getByRole("button", { name: "清除全部", exact: true });
+    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+
+    await clearButton.click();
+    await drawer.waitFor({ state: "visible", timeout: 5000 });
+    await drawer.getByRole("button", { name: "取消", exact: true }).click();
+    await page.locator('[data-slot="drawer-backdrop"]').last().waitFor({ state: "detached", timeout: 5000 });
+    assert.equal(clearRequests, 0, "cancelling a destructive action must send no request");
+
+    await clearButton.click();
+    await drawer.waitFor({ state: "visible", timeout: 5000 });
+    const confirmButton = drawer.getByRole("button", { name: "确认清除", exact: true });
+    await confirmButton.click();
+    await drawer.getByText(/INTERNAL: 服务器内部错误/).waitFor({ timeout: 10000 });
+    assert(await drawer.isVisible(), "a failed destructive action must keep the confirmation drawer open");
+    assert(await confirmButton.isEnabled(), "a failed destructive action must be retryable");
+
+    await confirmButton.click();
+    await drawer.waitFor({ state: "hidden", timeout: 10000 });
+    assert.equal(clearRequests, 2, "retrying after a failed destructive action must send one new request");
+    const expectedErrors = errors.drain();
+    assert(
+      expectedErrors.every((entry) => /^console.error: Failed to load resource:.*503/.test(entry.text)),
+      `only the deliberate destructive-action 503 may reach the browser console: ${JSON.stringify(expectedErrors)}`,
+    );
+  } finally {
+    await page.unroute(platformRoute);
+    await page.unroute(leasesRoute, { behavior: "wait" });
+  }
+});
+
+check("server-paged invite filtering remains current-page scoped and paginates", async ({ origin, page, errors }) => {
+  const invitesRoute = /\/api\/v1\/admin\/invites(?:\?.*)?$/;
+  const plansRoute = /\/api\/v1\/admin\/plans(?:\?.*)?$/;
+  const requests = [];
+  const baseInvite = {
+    plan_id: "",
+    plan_name: "UI Invite Plan",
+    max_uses: 1,
+    used_count: 0,
+    status: "active",
+    expires_at_ns: 0,
+    note: "",
+    created_at_ns: 1761523200000000000,
+  };
+  const firstPage = { ...baseInvite, id: "invite_page_1", code: "PAGE_ONE_NON_MATCH" };
+  const secondPage = { ...baseInvite, id: "invite_page_2", code: "PAGE_TWO_MATCH" };
+  await page.route(invitesRoute, async (route) => {
+    const url = new URL(route.request().url());
+    const offset = Number(url.searchParams.get("offset") ?? 0);
+    requests.push({ offset, limit: Number(url.searchParams.get("limit") ?? 0) });
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ items: [offset === 0 ? firstPage : secondPage], total: 40, limit: 20, offset }),
+    });
+  });
+  await page.route(plansRoute, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [] }) });
+  });
+  try {
+    errors.reset("current-page invite filtering");
+    await page.goto(origin + ui(recordPath(opsPaths, "invites")));
+    await rendered(page);
+    const input = page.getByRole("textbox", { name: "搜索邀请码", exact: true });
+    await input.waitFor({ timeout: 10000 });
+    await input.fill("PAGE_TWO_MATCH");
+    await page.getByText("当前页没有匹配的邀请码", { exact: true }).waitFor({ timeout: 5000 });
+
+    const pagination = page.locator(".workspace-pagination");
+    await pagination.getByRole("button", { name: "下一页", exact: true }).click();
+    await page.getByText("PAGE_TWO_MATCH", { exact: true }).waitFor({ timeout: 10000 });
+    assert(requests.some((request) => request.offset === 0 && request.limit === 20), "filtering must first load page one");
+    assert(requests.some((request) => request.offset === 20 && request.limit === 20), "pagination must request page two while the filter stays active");
+    assert.match(await pagination.innerText(), /第 2 \/ 2 页/, "the page summary must follow the server page, not the filtered row count");
+    assert.deepEqual(errors.drain(), [], "current-page filtering and pagination must not emit a browser error");
+  } finally {
+    await page.unroute(invitesRoute, { behavior: "wait" });
+    await page.unroute(plansRoute);
+  }
+});
+
+check("unknown balance blocks purchase without inventing zero or a negative remainder", async ({ origin, page, errors }) => {
+  const plansRoute = /\/api\/v1\/me\/plans(?:\?|$)/;
+  const balanceRoute = /\/api\/v1\/me\/balance(?:\?|$)/;
+  const purchaseRoute = /\/api\/v1\/me\/purchases(?:\?|$)/;
+  const plan = { id: "plan_balance_check", name: "UI balance check plan", platforms: [], ip_tiers: [], traffic_bytes: 0, period: "30d", duration_days: 30, price_micro: 2000000 };
+  let releaseBalance;
+  const balanceGate = new Promise((resolve) => { releaseBalance = resolve; });
+  let purchaseRequests = 0;
+  await page.route(plansRoute, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [plan] }) });
+  });
+  await page.route(balanceRoute, async (route) => {
+    await balanceGate;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ balance_micro: 3500000, ledger: [] }) });
+  });
+  await page.route(purchaseRoute, async (route) => {
+    purchaseRequests += 1;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "unexpected purchase" } }) });
+  });
+  try {
+    errors.reset("unknown-balance purchase boundary");
+    await page.goto(origin + ui(recordPath(mePaths, "plans")));
+    await rendered(page);
+    await page.getByText(plan.name, { exact: true }).first().waitFor({ timeout: 10000 });
+    await page.getByText(plan.name, { exact: true }).first().click();
+    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    await drawer.waitFor({ state: "visible", timeout: 10000 });
+    await drawer.getByText("余额未知，无法确认购买", { exact: true }).waitFor();
+    const confirm = drawer.getByRole("button", { name: "确认购买", exact: true });
+    assert(await confirm.isDisabled(), "unknown balance must block purchase");
+    assert.doesNotMatch(await drawer.locator("dl").innerText(), /余额不足|-2\.000000/, "unknown balance is neither zero nor a negative projected balance");
+    assert.equal(purchaseRequests, 0, "an unknown balance must send no purchase");
+    releaseBalance();
+    await page.waitForFunction(() => {
+      const dialog = document.querySelector('[data-slot="drawer-dialog"]');
+      return dialog && !dialog.textContent.includes("余额未知，无法确认购买") && dialog.textContent.includes("1.500000");
+    });
+    assert(await confirm.isEnabled(), "a funded balance must re-enable confirmation in the same drawer");
+    assert.equal(purchaseRequests, 0, "loading the balance must not automatically purchase");
+    await drawer.getByRole("button", { name: "取消", exact: true }).click();
+    await drawer.waitFor({ state: "hidden", timeout: 5000 });
+    assert.deepEqual(errors.drain(), [], "balance boundary must not emit a browser error");
+  } finally {
+    releaseBalance();
+    await page.unroute(plansRoute);
+    await page.unroute(balanceRoute, { behavior: "wait" });
+    await page.unroute(purchaseRoute);
+  }
+});
+
+check("deposit amount validation exposes format and range errors before sending micro-USDT", async ({ origin, page, errors }) => {
+  const infoRoute = /\/api\/v1\/me\/deposit(?:\?|$)/;
+  const intentsRoute = /\/api\/v1\/me\/deposits(?:\?|$)/;
+  const info = { enabled: true, address: "TUiDepositReceiver", contract: "TUiDepositContract", min_micro: 1000000, max_micro: 10000000, window_secs: 3600 };
+  const intent = { id: "deposit_ui_check", amount_micro: 2500000, status: "pending", address: info.address, tx_id: "", created_at_ns: Date.now() * 1000000, expires_at_ns: (Date.now() + 3600000) * 1000000, hold_until_ns: (Date.now() + 7200000) * 1000000, paid_at_ns: 0 };
+  const submitted = [];
+  await page.route(infoRoute, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(info) });
+  });
+  await page.route(intentsRoute, async (route) => {
+    if (route.request().method() === "POST") {
+      submitted.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(intent) });
+    } else {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: submitted.length ? [intent] : [] }) });
+    }
+  });
+  try {
+    errors.reset("deposit amount validation");
+    await page.goto(origin + ui(recordPath(mePaths, "deposit")));
+    await rendered(page);
+    const input = page.getByRole("textbox", { name: "充值金额 (USDT)", exact: true });
+    await input.waitFor({ timeout: 10000 });
+    const create = page.getByRole("button", { name: "生成充值单", exact: true });
+    assert(await create.isDisabled(), "empty amount must not submit");
+    for (const [value, message] of [["abc", "请输入有效金额，最多六位小数。"], ["1.0000001", "请输入有效金额，最多六位小数。"], ["0.999999", "低于最小充值额"], ["10.000001", "超过最大充值额"]]) {
+      await input.fill(value);
+      await page.getByRole("alert").filter({ hasText: message }).first().waitFor({ timeout: 5000 });
+      assert(await create.isDisabled(), `${value}: invalid amount must block submission`);
+      assert.equal(await input.getAttribute("aria-invalid"), "true", `${value}: input must expose the validation error`);
+      assert.equal(submitted.length, 0, `${value}: invalid input must send no request`);
+    }
+    await input.fill("2.500000");
+    assert(await create.isEnabled(), "a valid in-range amount must enable creation");
+    await create.click();
+    await page.getByText("deposit_ui_check", { exact: true }).first().waitFor({ timeout: 10000 });
+    assert.equal(submitted.length, 1, "one click must create exactly one intent");
+    assert.equal(submitted[0].amount_micro, 2500000, "the request must use exact micro-USDT");
+    assert.equal(await input.inputValue(), "", "a successful creation must clear the amount field");
+    assert.deepEqual(errors.drain(), [], "deposit validation must not emit a browser error");
+  } finally {
+    await page.unroute(infoRoute);
+    await page.unroute(intentsRoute);
+  }
+});
+
 // The usage alert queue is the one console surface a deployment cannot produce
 // for a test run: an alert only exists once the detector has seen a real usage
 // bucket cross a plan quota. Routing the two endpoint calls gives the panel a
@@ -612,14 +1129,20 @@ check("the design tokens are the ones actually applied", async ({ origin, page }
   // A numeric readout in the current control-plane data grid uses the mono token.
   // Keep this tied to the rendered control-plane surface rather than a retired table.
   const cell = await page.evaluate(() => {
-    for (const element of document.querySelectorAll(".cp-data-grid__value")) {
+    const mono = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim();
+    for (const element of document.querySelectorAll(".workspace-data-grid__value")) {
       const text = (element.textContent || "").trim();
-      if (/\d/.test(text)) return { text, family: getComputedStyle(element).fontFamily };
+      if (/\d/.test(text)) return { text, family: getComputedStyle(element).fontFamily, mono };
     }
     return null;
   });
   assert(cell, "a numeric control-plane readout must exist to read the mono token from");
-  assert.match(cell.family, /IBM Plex Mono/, `the numeric readout "${cell.text}" must read in the mono token`);
+  const normalizeFamily = (value) => value.replaceAll('"', "").replaceAll("'", "").replace(/\s+/g, " ").trim();
+  assert.equal(
+    normalizeFamily(cell.family),
+    normalizeFamily(cell.mono),
+    `the numeric readout "${cell.text}" must read in the mono token`,
+  );
 });
 
 check("the rail reaches every destination and marks the current one", async ({ origin, page }) => {
@@ -664,34 +1187,41 @@ check("the command palette opens from the keyboard, filters and routes", async (
   await page.goto(origin + DASHBOARD);
   await rendered(page);
 
-  const palette = page.locator("[cmdk-dialog]");
-  assert.equal(await palette.count(), 0, "the palette must not be mounted before it is asked for");
+  /*
+   * The palette is HeroUI's modal, search field and listbox now, so the markers
+   * are the vendor's: a dialog, a searchbox and listbox options. What is proven is
+   * unchanged — the lazy chunk arrives, the index is the rail plus the five shell
+   * actions, typing narrows it, and both ways out work.
+   */
+  const palette = page.getByRole("dialog");
+  const options = page.getByRole("option");
+  assert.equal(await page.getByRole("listbox").count(), 0, "the palette must not be mounted before it is asked for");
 
   await page.keyboard.press("Control+k");
-  await palette.waitFor({ state: "visible", timeout: 15000 });
+  await palette.first().waitFor({ state: "visible", timeout: 15000 });
   // One destination for every rail link, plus 刷新数据 / 切换主题 / 切换语言 /
   // 账户安全 / 退出登录. An exact count, so adding one without the other fails here.
   assert.equal(
-    await palette.locator("[cmdk-item]").count(),
+    await options.count(),
     RAIL_PATHS.length + 5,
     "the palette indexes the rail plus the shell's own actions, and nothing else",
   );
   assert.equal(
-    await page.evaluate(() => document.activeElement?.hasAttribute("cmdk-input") ?? false),
+    await page.evaluate(() => document.activeElement?.tagName === "INPUT"),
     true,
     "the palette takes the keyboard when it opens",
   );
 
-  await page.locator("[cmdk-input]").fill("审计日志");
-  await page.waitForFunction(() => document.querySelectorAll("[cmdk-item]").length === 1, null, { timeout: 5000 });
+  await page.getByRole("searchbox").fill("审计日志");
+  await page.waitForFunction(() => document.querySelectorAll('[role="option"]').length === 1, null, { timeout: 5000 });
   await page.keyboard.press("Enter");
   await page.waitForURL((url) => url.pathname === AUDIT);
-  await palette.waitFor({ state: "hidden", timeout: 15000 });
+  await palette.first().waitFor({ state: "hidden", timeout: 15000 });
 
   await page.keyboard.press("Control+k");
-  await palette.waitFor({ state: "visible", timeout: 15000 });
+  await palette.first().waitFor({ state: "visible", timeout: 15000 });
   await page.keyboard.press("Escape");
-  await palette.waitFor({ state: "hidden", timeout: 15000 });
+  await palette.first().waitFor({ state: "hidden", timeout: 15000 });
 });
 
 /**
@@ -802,16 +1332,16 @@ check("a tenant session reaches the self-service panel and nothing else", async 
 
     /* The tenant uses the shared control-plane shell with its own role surface and rail. */
     const selfSurface = await tenantPage.evaluate(() => {
-      const shell = document.querySelector(".cp-shell");
+      const shell = document.querySelector(".workspace-shell");
       const box = (selector) => {
         const el = document.querySelector(selector);
         if (!el) return null;
         const r = el.getBoundingClientRect();
         return { w: Math.round(r.width), h: Math.round(r.height) };
       };
-      return { cls: shell?.className ?? "", rail: box(".cp-rail"), link: box(".cp-rail__link") };
+      return { cls: shell?.className ?? "", rail: box(".workspace-nav"), link: box(".workspace-nav__link") };
     });
-    assert.match(selfSurface.cls, /cp-shell--me/, "a tenant session must mount the self-service surface");
+    assert.match(selfSurface.cls, /workspace-shell--me/, "a tenant session must mount the self-service workspace");
     assert(
       selfSurface.rail !== null && selfSurface.rail.w > 0,
       "the self-service rail must be mounted and visible",
@@ -906,6 +1436,96 @@ check("the page never overflows horizontally", async ({ origin, page }) => {
   assert.deepEqual(failures, [], "horizontal overflow:\n  " + failures.join("\n  "));
 });
 
+check("the workbench bounds its exit sample at 200 and platform pulses at 8 visible rows", async ({ origin, page, errors }) => {
+  const platformRoute = /\/api\/v1\/platforms(?:\?.*)?$/;
+  const nodesRoute = /\/api\/v1\/nodes(?:\?.*)?$/;
+  const pulseRoute = /\/api\/v1\/metrics\/(?:snapshots\/platform-node-pool|realtime\/leases)(?:\?.*)?$/;
+  const platformRequests = [];
+  const nodeRequests = [];
+  const poolPulseIds = new Set();
+  const leasePulseIds = new Set();
+  let nodeItemCount = 0;
+  const platforms = Array.from({ length: 100 }, (_, index) => ({
+    id: `workbench-platform-${index + 1}`,
+    name: `Workbench Platform ${index + 1}`,
+    sticky_ttl: "168h",
+    regex_filters: [],
+    region_filters: [],
+    ip_types: [],
+    purity_bands: [],
+    subscription_filters: [],
+    protocols: ["http"],
+    routable_node_count: 1,
+    reverse_proxy_miss_action: "TREAT_AS_EMPTY",
+    reverse_proxy_empty_account_behavior: "RANDOM",
+    reverse_proxy_fixed_account_header: "",
+    allocation_policy: "BALANCED",
+    passive_circuit_breaker_disabled: false,
+    updated_at: "2026-10-27T00:00:00Z",
+  }));
+  const nodes = Array.from({ length: 200 }, (_, index) => ({
+    region: "US",
+    egress_ip: `198.51.${Math.floor(index / 250)}.${(index % 250) + 1}`,
+    enabled: true,
+    has_outbound: true,
+    circuit_open_since: "",
+    intel: { ip_type: "residential", purity_band: "clean" },
+    reference_latency_ms: 10,
+  }));
+  await page.route(platformRoute, async (route) => {
+    const url = new URL(route.request().url());
+    platformRequests.push(url);
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: platforms, total: 200, limit: 100, offset: 0 }) });
+  });
+  await page.route(nodesRoute, async (route) => {
+    const url = new URL(route.request().url());
+    nodeRequests.push(url);
+    nodeItemCount = nodes.length;
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: nodes }) });
+  });
+  await page.route(pulseRoute, async (route) => {
+    const url = new URL(route.request().url());
+    const platformId = url.searchParams.get("platform_id") ?? "";
+    if (url.pathname.endsWith("/snapshots/platform-node-pool")) {
+      poolPulseIds.add(platformId);
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ generated_at: "2026-10-27T00:00:00Z", platform_id: platformId, routable_node_count: 1, egress_ip_count: 1 }),
+      });
+      return;
+    }
+    leasePulseIds.add(platformId);
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ platform_id: platformId, step_seconds: 60, items: [{ ts: "2026-10-27T00:00:00Z", active_leases: 2 }] }),
+    });
+  });
+  try {
+    errors.reset("workbench bounded samples");
+    await page.goto(origin + `${DASHBOARD}?workbench-capacity-check=1`);
+    await page.reload();
+    await rendered(page);
+    await page.getByRole("heading", { name: "平台配线" }).waitFor({ timeout: 20000 });
+    const platformSurface = page.locator(".workspace-card").filter({ has: page.getByRole("heading", { name: "平台配线" }) });
+    assert.equal(await platformSurface.locator(".workspace-object-row").count(), 8, "the workbench must render at most eight platform rows");
+    for (let attempt = 0; attempt < 100 && (nodeItemCount !== 200 || poolPulseIds.size < 8 || leasePulseIds.size < 8); attempt += 1) {
+      await page.waitForTimeout(50);
+    }
+    assert(nodeRequests.some((url) => Number(url.searchParams.get("limit")) === 200), "the exit fact request must use a 200-row sample");
+    assert.equal(nodeItemCount, 200, "the bounded exit sample fixture must reach the workbench");
+    assert(platformRequests.some((url) => Number(url.searchParams.get("limit")) === 100), "the platform register must retain its bounded server page");
+    assert.equal(poolPulseIds.size, 8, "platform pool pulses must be limited to the eight visible rows");
+    assert.equal(leasePulseIds.size, 8, "platform lease pulses must be limited to the eight visible rows");
+    assert.deepEqual(errors.drain(), [], "bounded workbench sampling must not emit a browser error");
+  } finally {
+    await page.unroute(platformRoute, { behavior: "wait" });
+    await page.unroute(nodesRoute, { behavior: "wait" });
+    await page.unroute(pulseRoute, { behavior: "wait" });
+  }
+});
+
 check("the dashboard states its condition and works from real registers", async ({ origin, page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(origin + DASHBOARD);
@@ -913,22 +1533,22 @@ check("the dashboard states its condition and works from real registers", async 
 
   /* The current workbench is organized around state, action queues, objects and evidence. */
   await page.getByRole("heading", { name: "控制平面" }).waitFor({ state: "visible", timeout: 20000 });
-  await page.locator("main .cp-data-grid").waitFor({ state: "visible", timeout: 20000 });
-  const statusCells = page.locator("main .cp-data-grid__cell");
+  await page.locator("main .workspace-data-grid").waitFor({ state: "visible", timeout: 20000 });
+  const statusCells = page.locator("main .workspace-data-grid__cell");
   assert.equal(await statusCells.count(), 4, "the workbench must state four global facts");
   const statusText = await statusCells.allInnerTexts();
   assert(statusText.some((text) => /\d/.test(text)), "at least one global fact must carry a number");
-  await page.getByRole("heading", { name: "需要处理" }).waitFor({ state: "visible", timeout: 20000 });
+  await page.getByRole("heading", { name: "需要处理", exact: true }).waitFor({ state: "visible", timeout: 20000 });
   await page.getByRole("heading", { name: "平台配线" }).waitFor({ state: "visible", timeout: 20000 });
   await page.getByRole("heading", { name: "最近变更" }).waitFor({ state: "visible", timeout: 20000 });
-  const platformSurface = page.locator("section.cp-surface").filter({ has: page.getByRole("heading", { name: "平台配线" }) });
+  const platformSurface = page.locator(".workspace-card").filter({ has: page.getByRole("heading", { name: "平台配线" }) });
   assert(
-    (await platformSurface.locator(".cp-object-row").count()) > 0 || (await platformSurface.locator(".cp-empty").count()) > 0,
+    (await platformSurface.locator(".workspace-object-row").count()) > 0 || (await platformSurface.locator(".workspace-empty").count()) > 0,
     "the platform register must expose real objects or an explicit empty state",
   );
-  const evidenceSurface = page.locator("section.cp-surface").filter({ has: page.getByRole("heading", { name: "最近变更" }) });
+  const evidenceSurface = page.locator(".workspace-card").filter({ has: page.getByRole("heading", { name: "最近变更" }) });
   assert(
-    (await evidenceSurface.locator(".cp-evidence-row").count()) > 0 || (await evidenceSurface.locator(".cp-empty").count()) > 0,
+    (await evidenceSurface.locator(".workspace-evidence-row").count()) > 0 || (await evidenceSurface.locator(".workspace-empty").count()) > 0,
     "the evidence register must expose real entries or an explicit empty state",
   );
 });

@@ -58,6 +58,14 @@ export type PageResponse<T> = {
   offset: number;
   unique_egress_ips: number | null;
   unique_healthy_egress_ips: number | null;
+  scanned?: number;
+  has_more?: boolean;
+  has_next?: boolean;
+  has_previous?: boolean;
+  next_cursor?: string;
+  previous_cursor?: string;
+  unique_egress_ips_lower_bound?: boolean;
+  unique_healthy_egress_ips_lower_bound?: boolean;
 };
 
 export type NodeSortBy =
@@ -99,11 +107,13 @@ export type NodeListFilters = {
 };
 
 export type NodeListQuery = NodeListFilters & {
-  sort_by?: NodeSortBy;
-  sort_order?: SortOrder;
   limit?: number;
   offset?: number;
+  cursor?: string;
+  sort_by?: NodeSortBy;
+  sort_order?: SortOrder;
 };
+
 
 export type EgressProbeResult = {
   egress_ip: string;

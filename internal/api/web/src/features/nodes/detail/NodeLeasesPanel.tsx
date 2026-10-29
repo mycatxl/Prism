@@ -1,9 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
-import { Button } from "../../../components/ui/Button";
-import { Panel, PanelBody, PanelHeader } from "../../../components/ui/Panel";
+import { ControlButton, ControlTable, ControlTableBody, ControlTableCell, ControlTableClipCell, ControlTableColumn, ControlTableHead, ControlTableRow, ControlTableWrap, WorkspaceCard } from "../../../components/control-plane";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/QueryState";
-import { Table, TableWrap, TBody, TD, TDClip, TH, THead, TR } from "../../../components/ui/Table";
 import { useI18n } from "../../../i18n";
 import { useNow } from "../../../lib/clock";
 import { cn } from "../../../lib/cn";
@@ -62,7 +60,7 @@ function RemainingCell({ lease }: { lease: NodeLeaseRow }) {
   const now = useNow();
   const expiryMs = Date.parse(lease.expiry || "");
   if (!Number.isFinite(expiryMs)) {
-    return <TD className="text-ink-faint">--</TD>;
+    return <ControlTableCell className="text-ink-faint">--</ControlTableCell>;
   }
   const remainingMs = expiryMs - now;
   const tone = leaseRemainingTone(remainingMs);
@@ -70,7 +68,7 @@ function RemainingCell({ lease }: { lease: NodeLeaseRow }) {
   const expired = remainingMs <= 0;
 
   return (
-    <TD>
+    <ControlTableCell>
       <div className="flex items-center gap-2.5">
         <span className={cn("readout whitespace-nowrap text-xs tabular-nums", expired && "text-alert")}>
           {expired ? t("已过期") : formatRemainingDuration(remainingMs)}
@@ -86,7 +84,7 @@ function RemainingCell({ lease }: { lease: NodeLeaseRow }) {
           </span>
         )}
       </div>
-    </TD>
+    </ControlTableCell>
   );
 }
 
@@ -110,24 +108,22 @@ export function NodeLeasesPanel({
   const leases = collection?.leases ?? [];
 
   return (
-    <Panel>
-      <PanelHeader
-        title={t("节点租约")}
-        meta={collection ? t("共 {{count}} 条", { count: leases.length }) : undefined}
-        actions={
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={t("刷新")}
-            title={t("刷新")}
-            disabled={isFetching}
-            onClick={onRefresh}
-          >
-            <RefreshCw size={15} aria-hidden className={isFetching ? "animate-spin" : undefined} />
-          </Button>
-        }
-      />
-      <PanelBody className="space-y-3">
+    <WorkspaceCard
+      title={t("节点租约")}
+      meta={collection ? t("共 {{count}} 条", { count: leases.length }) : undefined}
+      actions={
+        <ControlButton
+          variant="ghost"
+          size="icon"
+          aria-label={t("刷新")}
+          isDisabled={isFetching}
+          onPress={onRefresh}
+        >
+          <RefreshCw size={15} aria-hidden className={isFetching ? "animate-spin" : undefined} />
+        </ControlButton>
+      }
+    >
+      <div className="space-y-3">
         {error ? (
           <ErrorState message={t("租约信息暂时不可用")} onRetry={onRetry} />
         ) : !platformsReady ? (
@@ -144,42 +140,40 @@ export function NodeLeasesPanel({
                 })}
               </p>
             )}
-            <TableWrap>
-              <Table density="compact">
-                <THead>
-                  <TR>
-                    <TH>{t("租约号")}</TH>
-                    <TH>{t("租户")}</TH>
-                    <TH>{t("平台")}</TH>
-                    <TH>{t("到期时间")}</TH>
-                    <TH>{t("剩余时间")}</TH>
-                  </TR>
-                </THead>
-                <TBody>
+            <ControlTableWrap>
+              <ControlTable density="compact">
+                <ControlTableHead>
+                  <ControlTableColumn isRowHeader>{t("租约号")}</ControlTableColumn>
+                  <ControlTableColumn>{t("租户")}</ControlTableColumn>
+                  <ControlTableColumn>{t("平台")}</ControlTableColumn>
+                  <ControlTableColumn>{t("到期时间")}</ControlTableColumn>
+                  <ControlTableColumn>{t("剩余时间")}</ControlTableColumn>
+                </ControlTableHead>
+                <ControlTableBody>
                   {leases.map((lease) => (
-                    <TR key={`${lease.platform_id}:${lease.account}`}>
-                      <TDClip title={lease.account || undefined}>
+                    <ControlTableRow key={`${lease.platform_id}:${lease.account}`}>
+                      <ControlTableClipCell title={lease.account || undefined}>
                         <code className="readout">{lease.account || "--"}</code>
-                      </TDClip>
-                      <TDClip title={lease.user_id || undefined}>{lease.user_id || "--"}</TDClip>
-                      <TDClip>
+                      </ControlTableClipCell>
+                      <ControlTableClipCell title={lease.user_id || undefined}>{lease.user_id || "--"}</ControlTableClipCell>
+                      <ControlTableClipCell>
                         <Link
                           to={`${opsPaths.platforms}/${encodeURIComponent(lease.platform_id)}`}
                           className="link-quiet"
                         >
                           {lease.platform_name || lease.platform_id}
                         </Link>
-                      </TDClip>
-                      <TD className="whitespace-nowrap">{formatDateTime(lease.expiry)}</TD>
+                      </ControlTableClipCell>
+                      <ControlTableCell className="whitespace-nowrap">{formatDateTime(lease.expiry)}</ControlTableCell>
                       <RemainingCell lease={lease} />
-                    </TR>
+                    </ControlTableRow>
                   ))}
-                </TBody>
-              </Table>
-            </TableWrap>
+                </ControlTableBody>
+              </ControlTable>
+            </ControlTableWrap>
           </>
         )}
-      </PanelBody>
-    </Panel>
+      </div>
+    </WorkspaceCard>
   );
 }

@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, Info } from "lucide-react";
 import { useMemo, useState } from "react";
-import { ControlButton, ControlInput, EmptyWorkState, WorkSurface } from "../../components/control-plane";
-import { Tooltip, TooltipProvider } from "../../components/ui/Tooltip";
+import { ControlButton, ControlInput, EmptyWorkState, WorkspaceCard } from "../../components/control-plane";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { readMigratedValue, removeStoredValues } from "../../lib/storage";
@@ -161,13 +161,13 @@ function CopyField({
   };
 
   return (
-    <div className="cp-copy-field">
-      <div className="cp-copy-field__head">
-        <span className="cp-field__label">{label}</span>
-        {hint ? <span className="cp-field__hint">{hint}</span> : null}
+    <div className="workspace-copy-field">
+      <div className="workspace-copy-field__head">
+        <span className="workspace-field__label">{label}</span>
+        {hint ? <span className="workspace-field__hint">{hint}</span> : null}
       </div>
-      <div className="cp-copy-field__body">
-        <code className="cp-code-block cp-copy-field__value" title={value}>{value || "—"}</code>
+      <div className="workspace-copy-field__body">
+        <code className="workspace-code-block workspace-copy-field__value" title={value}>{value || "—"}</code>
         <ControlButton
           variant="secondary"
           size="sm"
@@ -271,7 +271,7 @@ export function PlatformAccessPanel({
     return <EmptyWorkState title={t("配置读取失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} />;
   }
   if (!env) {
-    return <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载配置")}</div>;
+    return <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载配置")}</div>;
   }
 
   const proxyTokenSet = env.proxy_token_set;
@@ -286,70 +286,68 @@ export function PlatformAccessPanel({
   );
 
   return (
-    <TooltipProvider>
-      <div className="cp-stack">
-        <WorkSurface eyebrow="Delivery / access" title={t("接入方式")} description={t("填写账号与代理 token，一键复制正向/反向代理地址。")}>
-          <div className="cp-form-grid">
-            <ControlInput
-              label={t("代理服务地址")}
-              hint={endpointInvalid ? t("请输入不含凭证和路径的 HTTP(S) 地址") : undefined}
-              className="font-mono"
-              aria-invalid={endpointInvalid || undefined}
-              placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
-              value={endpointOverride}
-              onChange={(event) => setEndpointOverride(event.target.value)}
-            />
-            <ControlInput
-              label={t("业务账号（可选）")}
-              className="font-mono"
-              placeholder={t("例如 user_tom，留空则只按平台路由")}
-              value={account}
-              onChange={(event) => setAccount(event.target.value)}
-            />
+    <div className="workspace-stack">
+      <WorkspaceCard eyebrow="Delivery / access" title={t("接入方式")} description={t("填写账号与代理 token，一键复制正向/反向代理地址。")}>
+        <div className="workspace-form-grid">
+          <ControlInput
+            label={t("代理服务地址")}
+            hint={endpointInvalid ? t("请输入不含凭证和路径的 HTTP(S) 地址") : undefined}
+            className="font-mono"
+            aria-invalid={endpointInvalid || undefined}
+            placeholder={`${inferredEndpoint.scheme}://${inferredEndpoint.host}`}
+            value={endpointOverride}
+            onChange={(event) => setEndpointOverride(event.target.value)}
+          />
+          <ControlInput
+            label={t("业务账号（可选）")}
+            className="font-mono"
+            placeholder={t("例如 user_tom，留空则只按平台路由")}
+            value={account}
+            onChange={(event) => setAccount(event.target.value)}
+          />
+        </div>
+        <div className="workspace-token-field">
+          <div className="workspace-token-field__label">
+            <span className="workspace-field__label">{t("代理 token")}</span>
+            <Tooltip content={tokenHint}>
+              <ControlButton variant="ghost" size="sm" isIconOnly aria-label={tokenHint}>
+                <Info size={14} aria-hidden />
+              </ControlButton>
+            </Tooltip>
           </div>
-          <div className="cp-token-field">
-            <div className="cp-token-field__label">
-              <span className="cp-field__label">{t("代理 token")}</span>
-              <Tooltip content={tokenHint}>
-                <ControlButton variant="ghost" size="sm" isIconOnly aria-label={tokenHint}>
-                  <Info size={13} aria-hidden />
-                </ControlButton>
-              </Tooltip>
-            </div>
-            <ControlInput
-              aria-label={t("代理 token")}
-              className="font-mono"
-              type="password"
-              placeholder={proxyTokenSet ? t("填写 PRISM_PROXY_TOKEN") : t("当前代理免认证，无需填写")}
-              value={tokenInputValue}
-              onChange={(event) => { if (proxyTokenSet) handleTokenChange(event.target.value); }}
-              disabled={!proxyTokenSet}
-              autoComplete="off"
-            />
-            {tokenMissing ? <p className="cp-muted">{t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}</p> : null}
-          </div>
-        </WorkSurface>
+          <ControlInput
+            aria-label={t("代理 token")}
+            className="font-mono"
+            type="password"
+            placeholder={proxyTokenSet ? t("填写 PRISM_PROXY_TOKEN") : t("当前代理免认证，无需填写")}
+            value={tokenInputValue}
+            onChange={(event) => { if (proxyTokenSet) handleTokenChange(event.target.value); }}
+            disabled={!proxyTokenSet}
+            autoComplete="off"
+          />
+          {tokenMissing ? <p className="workspace-muted">{t("尚未填写 token，地址中将以 <token> 占位，请替换为实际值。")}</p> : null}
+        </div>
+      </WorkspaceCard>
 
-        <WorkSurface eyebrow="Delivery / forward proxy" title={t("正向代理")}>
-          <div className="cp-form-stack">
-            <CopyField label={t("HTTP 正向代理")} value={urls.httpForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
-            <CopyField label={t("SOCKS5 正向代理")} value={urls.socksForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
-            <CopyField label={t("curl 示例")} value={urls.curlForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
-          </div>
-        </WorkSurface>
+      <WorkspaceCard eyebrow="Delivery / forward proxy" title={t("正向代理")}>
+        <div className="workspace-form-stack">
+          <CopyField label={t("HTTP 正向代理")} value={urls.httpForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+          <CopyField label={t("SOCKS5 正向代理")} value={urls.socksForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+          <CopyField label={t("curl 示例")} value={urls.curlForward} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+        </div>
+      </WorkspaceCard>
 
-        <WorkSurface eyebrow="Delivery / reverse proxy" title={t("反向代理")}>
-          <div className="cp-form-stack">
-            <ControlInput label={t("目标网址")} className="font-mono" placeholder={t("例如 https://api.ipify.org")} value={target} onChange={(event) => setTarget(event.target.value)} />
-            {urls.reverseUrl ? (
-              <>
-                <CopyField label={t("反向代理地址")} value={urls.reverseUrl} copyLabel={copyLabel} copiedLabel={copiedLabel} />
-                <CopyField label={t("curl 示例")} value={urls.curlReverse} copyLabel={copyLabel} copiedLabel={copiedLabel} />
-              </>
-            ) : <p className="cp-muted">{t("请输入合法的 http/https 目标网址以生成反向代理地址。")}</p>}
-          </div>
-        </WorkSurface>
-      </div>
-    </TooltipProvider>
+      <WorkspaceCard eyebrow="Delivery / reverse proxy" title={t("反向代理")}>
+        <div className="workspace-form-stack">
+          <ControlInput label={t("目标网址")} className="font-mono" placeholder={t("例如 https://api.ipify.org")} value={target} onChange={(event) => setTarget(event.target.value)} />
+          {urls.reverseUrl ? (
+            <>
+              <CopyField label={t("反向代理地址")} value={urls.reverseUrl} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+              <CopyField label={t("curl 示例")} value={urls.curlReverse} copyLabel={copyLabel} copiedLabel={copiedLabel} />
+            </>
+          ) : <p className="workspace-muted">{t("请输入合法的 http/https 目标网址以生成反向代理地址。")}</p>}
+        </div>
+      </WorkspaceCard>
+    </div>
   );
 }

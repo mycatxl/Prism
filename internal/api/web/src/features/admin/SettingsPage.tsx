@@ -11,11 +11,11 @@ import {
   ControlSwitch,
   DetailFact,
   EmptyWorkState,
-  PageFrame,
+  WorkspacePage,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -80,6 +80,14 @@ export function SettingsPage() {
   const defaultConfig: SettingsPolicyView = defaultQuery.data ?? config;
   const envRegistration = typeof envQuery.data?.registration === "string" ? envQuery.data.registration : "";
   const liveKey = `${JSON.stringify(config)}|${envRegistration}`;
+  const waitingForFirstData =
+    (configQuery.isLoading && configQuery.data === undefined) ||
+    (defaultQuery.isLoading && defaultQuery.data === undefined) ||
+    (envQuery.isLoading && envQuery.data === undefined);
+  const hasStaleData =
+    (configQuery.isError && configQuery.data !== undefined) ||
+    (defaultQuery.isError && defaultQuery.data !== undefined) ||
+    (envQuery.isError && envQuery.data !== undefined);
   const handleDirtyChange = useCallback((dirty: boolean) => {
     setPinnedKey((previous) => (dirty ? previous ?? liveKeyRef.current : null));
   }, []);
@@ -88,32 +96,40 @@ export function SettingsPage() {
     liveKeyRef.current = liveKey;
   }, [liveKey]);
 
-  if (configQuery.isLoading || defaultQuery.isLoading || envQuery.isLoading) {
+  if (waitingForFirstData) {
     return (
-      <PageFrame eyebrow="Governance / policy" title={t("策略与准入")} description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。")}>
+      <WorkspacePage conciseCards eyebrow="Governance / policy" title={t("策略与准入")} description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。") }>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-        <WorkSurface title={t("系统设置")}><div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载系统设置...")}</div></WorkSurface>
-      </PageFrame>
+        <WorkspaceCard title={t("系统设置")}><div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载系统设置...")}</div></WorkspaceCard>
+      </WorkspacePage>
     );
   }
 
-  if (configQuery.isError) {
+  if (configQuery.isError && configQuery.data === undefined) {
     return (
-      <PageFrame eyebrow="Governance / policy" title={t("策略与准入")} description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。")}>
+      <WorkspacePage conciseCards eyebrow="Governance / policy" title={t("策略与准入")} description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。") }>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-        <WorkSurface title={t("系统设置")}><EmptyWorkState title={t("系统设置读取失败")} detail={formatApiErrorMessage(configQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkSurface>
-      </PageFrame>
+        <WorkspaceCard title={t("系统设置")}><EmptyWorkState title={t("系统设置读取失败")} detail={formatApiErrorMessage(configQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard>
+      </WorkspacePage>
     );
   }
 
   return (
-    <PageFrame
+    <WorkspacePage conciseCards
       eyebrow="Governance / policy"
       title={t("策略与准入")}
       description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。")}
-      meta={<StatusMark tone={configQuery.isError ? "warn" : "live"} label={configQuery.isError ? t("数据可能已过期") : t("策略已同步")} />}
+      meta={<StatusMark tone={hasStaleData ? "warn" : "live"} label={hasStaleData ? t("数据可能已过期") : t("策略已同步")} />}
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+      {hasStaleData ? (
+        <div className="workspace-notice workspace-notice--warn">
+          <span>{t("数据可能已过期")}</span>
+          <ControlButton variant="ghost" size="sm" onPress={() => { void configQuery.refetch(); void defaultQuery.refetch(); void envQuery.refetch(); }}>
+            {t("重试")}
+          </ControlButton>
+        </div>
+      ) : null}
       <SettingsFormContent
         key={pinnedKey ?? liveKey}
         config={config}
@@ -124,7 +140,7 @@ export function SettingsPage() {
         showToast={showToast}
         onRefetch={() => { void configQuery.refetch(); void defaultQuery.refetch(); void envQuery.refetch(); }}
       />
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 
@@ -222,42 +238,56 @@ function SettingsFormContent({
   };
 
   return (
-    <div className="cp-stack">
+    <div className="workspace-stack">
       <CommandSurface actions={<><ControlButton variant="secondary" size="sm" onPress={onRefetch} isDisabled={updateMutation.isPending}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton><ControlButton variant="secondary" size="sm" onPress={() => setResetOpen(true)} isDisabled={updateMutation.isPending}><RotateCcw size={14} aria-hidden />{t("恢复默认")}</ControlButton><ControlButton variant="primary" size="sm" onPress={() => updateMutation.mutate(patch)} isDisabled={!isDirty || Boolean(auditError || usageError || purityError) || updateMutation.isPending} loading={updateMutation.isPending}><Save size={14} aria-hidden />{t("保存更改")}</ControlButton></>}>
         <StatusMark tone={isDirty ? "warn" : "neutral"} label={isDirty ? t("有未保存的更改") : t("当前无未保存改动")} />
       </CommandSurface>
 
-      {errorMsg ? <p className="cp-notice cp-notice--alert" role="alert">{errorMsg}</p> : null}
-      {isDirty ? <div className="cp-notice cp-notice--warn"><span><strong>{t("有未保存的更改")}</strong>{changedSectionsText ? ` · ${changedSectionsText}` : ""}</span><ControlButton variant="ghost" size="sm" onPress={revertChanges} isDisabled={updateMutation.isPending}><Undo2 size={13} aria-hidden />{t("放弃更改")}</ControlButton></div> : null}
+      {errorMsg ? <p className="workspace-notice workspace-notice--alert" role="alert">{errorMsg}</p> : null}
+      {isDirty ? <div className="workspace-notice workspace-notice--warn"><span><strong>{t("有未保存的更改")}</strong>{changedSectionsText ? ` · ${changedSectionsText}` : ""}</span><ControlButton variant="ghost" size="sm" onPress={revertChanges} isDisabled={updateMutation.isPending}><Undo2 size={14} aria-hidden />{t("放弃更改")}</ControlButton></div> : null}
 
-      <WorkSurface eyebrow="Governance / registration" title={t("账户注册")} description={t("决定访客能否自行创建账号。保存后立即生效，无需重启服务。")} meta={envKnown ? <StatusMark tone={modeTone(effectiveMode)} label={modeLabel(effectiveMode, t)} /> : <StatusMark tone="warn" label={t("部署环境未知")} />}>
-        {envKnown ? <div className="cp-stack">
-          <dl className="cp-detail-facts"><DetailFact label={t("当前生效策略")} value={<StatusMark tone={modeTone(effectiveMode)} label={modeLabel(effectiveMode, t)} />} /><DetailFact label={t("策略来源")} value={savedOverride ? t("面板设置") : envMode ? t("部署环境") : t("未配置")} /></dl>
-          <ControlSelect label={t("注册准入")} hint={t("这是对外的注册入口，与管理员在控制台里创建账号无关。")} value={followEnv ? envMode ?? "off" : mode} disabled={followEnv} onChange={(event) => { if (isRegistrationMode(event.target.value)) { setMode(event.target.value); setFollowEnv(false); } }}>
-            <option value="off">{t("关闭注册")}</option><option value="invite">{t("仅邀请码")}</option><option value="open">{t("开放注册")}</option>
-          </ControlSelect>
+      <WorkspaceCard eyebrow="Governance / registration" title={t("账户注册")} description={t("决定访客能否自行创建账号。保存后立即生效，无需重启服务。")} meta={envKnown ? <StatusMark tone={modeTone(effectiveMode)} label={modeLabel(effectiveMode, t)} /> : <StatusMark tone="warn" label={t("部署环境未知")} />}>
+        {envKnown ? <div className="workspace-stack">
+          <dl className="workspace-detail-facts"><DetailFact label={t("当前生效策略")} value={<StatusMark tone={modeTone(effectiveMode)} label={modeLabel(effectiveMode, t)} />} /><DetailFact label={t("策略来源")} value={savedOverride ? t("面板设置") : envMode ? t("部署环境") : t("未配置")} /></dl>
+          <ControlSelect
+            label={t("注册准入")}
+            hint={t("这是对外的注册入口，与管理员在控制台里创建账号无关。")}
+            items={[
+              { id: "off", label: t("关闭注册") },
+              { id: "invite", label: t("仅邀请码") },
+              { id: "open", label: t("开放注册") },
+            ]}
+            selectedKey={followEnv ? envMode ?? "off" : mode}
+            disabled={followEnv}
+            onSelectionChange={(key) => {
+              if (isRegistrationMode(key)) {
+                setMode(key);
+                setFollowEnv(false);
+              }
+            }}
+          />
           {savedOverride !== null ? <ControlSwitch label={t("跟随部署环境") } hint={t("移除面板覆盖后，注册策略回到 PRISM_REGISTRATION。") } isSelected={followEnv} onChange={(value) => { setFollowEnv(value); if (value) setMode(envMode ?? "off"); }} /> : null}
-          {mode === "invite" && !followEnv ? <div className="cp-inset-stack"><span>{t("邀请码在邀请管理里创建，可以预先绑定套餐。")}</span><Link to={opsPaths.invites} className="link-quiet"><ArrowUpRight size={13} aria-hidden />{t("管理邀请码")}</Link></div> : null}
-          {mode === "open" && !followEnv ? <p className="cp-notice cp-notice--warn"><TriangleAlert size={14} aria-hidden />{t("开放注册没有任何准入校验，建议同时在反向代理上限制注册请求频率。")}</p> : null}
+          {mode === "invite" && !followEnv ? <div className="workspace-inset-stack"><span>{t("邀请码在邀请管理里创建，可以预先绑定套餐。")}</span><Link to={opsPaths.invites} className="link-quiet"><ArrowUpRight size={14} aria-hidden />{t("管理邀请码")}</Link></div> : null}
+          {mode === "open" && !followEnv ? <p className="workspace-notice workspace-notice--warn"><TriangleAlert size={14} aria-hidden />{t("开放注册没有任何准入校验，建议同时在反向代理上限制注册请求频率。")}</p> : null}
         </div> : <EmptyWorkState title={t("无法读取部署环境配置")} detail={t("暂时无法显示注册准入的当前状态。") } action={<ControlButton variant="secondary" size="sm" onPress={onRefetch}>{t("重试")}</ControlButton>} />}
-      </WorkSurface>
+      </WorkspaceCard>
 
-      <WorkSurface eyebrow="Governance / retention" title={t("数据保留周期")} description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口。")}>
-        <div className="cp-form-grid">
+      <WorkspaceCard eyebrow="Governance / retention" title={t("数据保留周期")} description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口。")}>
+        <div className="workspace-form-grid">
           <ControlInput label={t("审计日志保留天数")} hint={auditError || (defaultConfig.audit_retention_days != null ? t("默认值: {{val}} 天", { val: defaultConfig.audit_retention_days }) : t("未设置"))} type="number" min="0" max={MAX_RETENTION_DAYS} step="1" value={auditRetention} onChange={(event) => setAuditRetention(event.target.value)} />
           <ControlInput label={t("用量记录保留天数")} hint={usageError || (defaultConfig.usage_retention_days != null ? t("默认值: {{val}} 天", { val: defaultConfig.usage_retention_days }) : t("未设置"))} type="number" min="0" max={MAX_RETENTION_DAYS} step="1" value={usageRetention} onChange={(event) => setUsageRetention(event.target.value)} />
         </div>
-      </WorkSurface>
+      </WorkspaceCard>
 
-      <WorkSurface eyebrow="Governance / purity policy" title={t("IP 纯净度等级分段")} description={t("配置网络节点 IP 纯净度评估的四个等级阈值（1 - 100 分）。")}>
-        <div className="cp-form-grid">
+      <WorkspaceCard eyebrow="Governance / purity policy" title={t("IP 纯净度等级分段")} description={t("配置网络节点 IP 纯净度评估的四个等级阈值（1 - 100 分）。")}>
+        <div className="workspace-form-grid">
           <ControlInput label={t("极优阈值 (Excellent)")} hint={config.purity_bands?.excellent == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityExcellent} onChange={(event) => setPurityExcellent(event.target.value)} />
           <ControlInput label={t("优良阈值 (Clean)")} hint={config.purity_bands?.clean == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityClean} onChange={(event) => setPurityClean(event.target.value)} />
           <ControlInput label={t("一般阈值 (Fair)")} hint={config.purity_bands?.fair == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityFair} onChange={(event) => setPurityFair(event.target.value)} />
           <ControlInput label={t("混合阈值 (Mixed)")} hint={config.purity_bands?.mixed == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityMixed} onChange={(event) => setPurityMixed(event.target.value)} />
         </div>
-        {purityError ? <p className="cp-form-error" role="alert">{purityError}</p> : null}
-      </WorkSurface>
+        {purityError ? <p className="workspace-form-error" role="alert">{purityError}</p> : null}
+      </WorkspaceCard>
 
       <ConfirmDrawer open={resetOpen} onOpenChange={setResetOpen} title={t("确认恢复默认设置")} eyebrow="Governance / reset" message={t("确定要将数据保留周期和纯净度等级阈值恢复为系统默认配置吗？未保存的手动更改将丢失。")} cancelLabel={t("取消")} confirmLabel={t("确认恢复")} loading={updateMutation.isPending} onConfirm={handleResetToDefault} />
     </div>

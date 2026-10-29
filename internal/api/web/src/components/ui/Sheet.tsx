@@ -1,13 +1,10 @@
-import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Drawer as HeroDrawer, useOverlayState } from "@heroui/react";
 import { X } from "lucide-react";
-import { useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
 
-/**
- * A side sheet for detail views. Radix supplies focus trapping, escape handling and
- * the scroll lock; the surface is an overlay sheet at the panel radius.
- */
 export function Sheet({
   open,
   onOpenChange,
@@ -25,63 +22,55 @@ export function Sheet({
   footer?: ReactNode;
   width?: "sm" | "md" | "lg";
 }) {
-  const widthClass = { sm: "sm:max-w-md", md: "sm:max-w-2xl", lg: "sm:max-w-4xl" }[width];
   const { t } = useI18n();
+  const state = useOverlayState({ isOpen: open, onOpenChange });
   const restoreFocusRef = useRef<HTMLElement | null>(null);
+  const widthClass = {
+    sm: "sm:max-w-md",
+    md: "sm:max-w-2xl",
+    lg: "sm:max-w-4xl",
+  }[width];
 
-  const handleOpenAutoFocus = () => {
+  const handleOpenAutoFocus = useCallback(() => {
     const active = document.activeElement;
     if (active instanceof HTMLElement && active !== document.body) {
       restoreFocusRef.current = active;
     }
-  };
+  }, []);
 
-  const handleCloseAutoFocus = (event: Event) => {
+  const handleCloseAutoFocus = useCallback(() => {
     const target = restoreFocusRef.current;
     restoreFocusRef.current = null;
     if (!target?.isConnected || target.hasAttribute("disabled")) return;
-    event.preventDefault();
     target.focus({ preventScroll: true });
-  };
+  }, []);
+
+  useEffect(() => {
+    if (open) handleOpenAutoFocus();
+    else handleCloseAutoFocus();
+  }, [handleCloseAutoFocus, handleOpenAutoFocus, open]);
 
   return (
-    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
-      <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/35" />
-        <DialogPrimitive.Content
-          className={cn(
-            "sheet-shell overlay-surface fixed right-0 z-50 flex w-full flex-col focus:outline-none",
-            widthClass,
-          )}
-          onOpenAutoFocus={handleOpenAutoFocus}
-          onCloseAutoFocus={handleCloseAutoFocus}
-        >
-          <header className="sheet-header flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <DialogPrimitive.Title className="break-words text-base font-semibold text-ink">
-                {title}
-              </DialogPrimitive.Title>
-              {description && (
-                <DialogPrimitive.Description className="mt-0.5 text-xs text-ink-soft">
-                  {description}
-                </DialogPrimitive.Description>
-              )}
-            </div>
-            <DialogPrimitive.Close
-              aria-label={t("关闭")}
-              className="action -mr-1 rounded-control p-1.5 text-ink-soft hover:bg-hover hover:text-ink"
-            >
-              <X size={16} />
-            </DialogPrimitive.Close>
-          </header>
-
-          <div className="sheet-body min-h-0 flex-1 overflow-y-auto">{children}</div>
-
-          {footer && (
-            <footer className="sheet-footer">{footer}</footer>
-          )}
-        </DialogPrimitive.Content>
-      </DialogPrimitive.Portal>
-    </DialogPrimitive.Root>
+    <HeroDrawer state={state}>
+      <HeroDrawer.Backdrop variant="blur">
+        <HeroDrawer.Content placement="right" className={cn("workspace-sheet overlay-surface", widthClass)}>
+          <HeroDrawer.Dialog>
+            <HeroDrawer.Header className="workspace-sheet__header">
+              <div className="min-w-0">
+                <HeroDrawer.Heading className="break-words text-base font-semibold text-ink">
+                  {title}
+                </HeroDrawer.Heading>
+                {description ? <p className="mt-1 text-xs text-ink-soft">{description}</p> : null}
+              </div>
+              <HeroDrawer.CloseTrigger className="workspace-icon-button" aria-label={t("关闭")}>
+                <X size={16} aria-hidden />
+              </HeroDrawer.CloseTrigger>
+            </HeroDrawer.Header>
+            <HeroDrawer.Body className="workspace-sheet__body">{children}</HeroDrawer.Body>
+            {footer ? <HeroDrawer.Footer className="workspace-sheet__footer">{footer}</HeroDrawer.Footer> : null}
+          </HeroDrawer.Dialog>
+        </HeroDrawer.Content>
+      </HeroDrawer.Backdrop>
+    </HeroDrawer>
   );
 }

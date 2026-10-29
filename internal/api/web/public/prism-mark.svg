@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Prism">
+  <rect width="128" height="128" rx="30" fill="#087f78"/>
+  <path d="M60 22 94 96H26Z" fill="none" stroke="#ffffff" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="M3 60h37" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  <g stroke-width="6" stroke-linecap="round" fill="none">
+    <path d="M79 60h43" stroke="#ffffff" transform="rotate(-13.6 79 60)"/>
+    <path d="M79 60h43" stroke="#a9ece0"/>
+    <path d="M79 60h43" stroke="#5ec9b6" transform="rotate(13.6 79 60)"/>
+  </g>
+</svg>

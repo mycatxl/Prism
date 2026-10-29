@@ -1,12 +1,14 @@
-import { zodResolver } from "@hookform/resolvers/zod";
+import { Card as HeroCard } from "@heroui/react";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate } from "react-router-dom";
 import { z } from "zod";
-import { Button } from "../../components/ui/Button";
-import { Fieldset, Input } from "../../components/ui/Input";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { ControlButton, ControlInput } from "../../components/control-plane";
+import { PrismMark } from "../../components/PrismMark";
 import { ErrorState } from "../../components/ui/QueryState";
+import { Tooltip } from "../../components/ui/Tooltip";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
 import { ApiError, fetchSession, register } from "../../lib/api-client";
 import { homePathFor } from "../../lib/roles";
@@ -100,126 +102,123 @@ export function RegisterPage() {
   });
 
   return (
-    <main className="login-shell ground">
-      <section aria-label="Prism" className="login-intro flex flex-1 flex-col justify-between gap-10 px-6 py-10 lg:px-12 lg:py-14">
-        <div className="flex items-center gap-2.5">
-          <img src={`${import.meta.env.BASE_URL}prism-mark.png`} alt="" width="40" height="40" className="size-10" />
-          <span className="text-lg font-semibold tracking-tight">Prism</span>
-        </div>
-        <div className="max-w-[46ch]">
-          <h1 className="text-2xl">{t("创建账号，开始使用代理。")}</h1>
-          <ul className="mt-5 space-y-2">
-            {["订阅与配额", "访问密钥", "接入指南"].map((label) => (
-              <li key={label} className="flex items-center gap-2 text-sm text-ink-soft">
-                <Check size={14} className="shrink-0 text-signal" aria-hidden />
-                {t(label)}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <p className="text-xs text-ink-faint">{t("账号创建后即可登录控制台。")}</p>
-      </section>
-
-      <section className="login-card-shell">
-        <div className="login-card panel">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <h2 className="text-lg">{t("注册账号")}</h2>
-              <p className="mt-1 text-sm leading-relaxed text-ink-soft">
-                {open ? t("填写下面的信息创建你的账号。") : t("本部署未开放自助注册，请联系运营方开通账号。")}
-              </p>
+    <main className="access-shell">
+      <div className="access-layout access-layout--register">
+        <section aria-label="Prism" className="access-brief">
+          <div className="access-brand">
+            <PrismMark size={40} className="access-brand__mark" />
+            <div className="access-brand__copy">
+              <strong>Prism</strong>
+              <span>{t("租户自助工作台")}</span>
             </div>
-            <LanguageSwitcher />
           </div>
+          <div className="access-brief__content">
+            <span className="access-brief__eyebrow">{t("自助接入")}</span>
+            <h1>{t("创建账号，开始使用代理。")}</h1>
+            <ul className="access-brief__list">
+              {["订阅与配额", "访问密钥", "接入指南"].map((label) => (
+                <li key={label}>
+                  <Check size={15} aria-hidden />
+                  <span>{t(label)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="access-brief__footnote">{t("账号创建后即可登录控制台。")}</p>
+        </section>
 
-          {open ? (
-            <form className="mt-6 space-y-4" onSubmit={onSubmit} noValidate>
-              {needsInvite ? (
-                <Fieldset label={t("邀请码")} htmlFor="invite_code">
-                  <Input
+        <HeroCard className="access-card" variant="default">
+          <HeroCard.Header className="access-card__header">
+            <div className="access-card__utility">
+              <span className="access-card__utility-label">{t("账户入口")}</span>
+              <LanguageSwitcher />
+            </div>
+            <HeroCard.Title>{t("注册账号")}</HeroCard.Title>
+            <HeroCard.Description>
+              {open ? t("填写下面的信息创建你的账号。") : t("本部署未开放自助注册，请联系运营方开通账号。")}
+            </HeroCard.Description>
+          </HeroCard.Header>
+
+          <HeroCard.Content>
+            {open ? (
+              <form className="access-form" onSubmit={onSubmit} noValidate>
+                {needsInvite ? (
+                  <ControlInput
+                    label={t("邀请码")}
                     id="invite_code"
                     autoComplete="off"
                     autoCapitalize="none"
                     value={inviteCode}
                     onChange={(event) => setInviteCode(event.target.value)}
                   />
-                </Fieldset>
-              ) : null}
+                ) : null}
 
-              <Fieldset label={t("用户名")} htmlFor="username">
-                <Input
+                <ControlInput
+                  label={t("用户名")}
                   id="username"
                   autoComplete="username"
                   autoCapitalize="none"
                   invalid={Boolean(errors.username)}
+                  hint={errors.username?.message ? t(errors.username.message) : undefined}
                   {...field("username")}
                 />
-                {errors.username?.message ? (
-                  <p role="alert" className="text-xs text-alert">
-                    {t(errors.username.message)}
-                  </p>
-                ) : null}
-              </Fieldset>
 
-              <Fieldset label={t("密码")} htmlFor="password">
-                <div className="flex items-start gap-1.5">
-                  <Input
+                <div className="access-password-field">
+                  <ControlInput
+                    label={t("密码")}
                     id="password"
-                    className="min-w-0 flex-1"
                     type={isPasswordVisible ? "text" : "password"}
                     autoComplete="new-password"
                     invalid={Boolean(errors.password)}
+                    hint={errors.password?.message ? t(errors.password.message) : undefined}
                     {...field("password")}
                   />
-                  <Button
-                    type="button"
-                    variant="quiet"
-                    size="icon"
-                    className="shrink-0 text-ink-faint hover:text-ink"
-                    aria-label={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
-                    title={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
-                    onClick={() => setIsPasswordVisible((visible) => !visible)}
-                  >
-                    {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
-                  </Button>
+                  <Tooltip triggerClassName="access-password-toggle-trigger" content={isPasswordVisible ? t("隐藏密码") : t("显示密码")}>
+                    <ControlButton
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="access-password-toggle"
+                      aria-label={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
+                      onPress={() => setIsPasswordVisible((visible) => !visible)}
+                    >
+                      {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
+                    </ControlButton>
+                  </Tooltip>
                 </div>
-                {errors.password?.message ? (
-                  <p role="alert" className="text-xs text-alert">
-                    {t(errors.password.message)}
-                  </p>
-                ) : null}
-              </Fieldset>
 
-              <Fieldset label={t("确认密码")} htmlFor="confirm">
-                <Input
+                <ControlInput
+                  label={t("确认密码")}
                   id="confirm"
                   type={isPasswordVisible ? "text" : "password"}
                   autoComplete="new-password"
                   invalid={Boolean(errors.confirm)}
+                  hint={errors.confirm?.message ? t(errors.confirm.message) : undefined}
                   {...field("confirm")}
                 />
-                {errors.confirm?.message ? (
-                  <p role="alert" className="text-xs text-alert">
-                    {t(errors.confirm.message)}
-                  </p>
-                ) : null}
-              </Fieldset>
 
-              {submitError ? <ErrorState message={submitError} /> : null}
-              <Button type="submit" variant="primary" className="w-full" disabled={isSubmitting} loading={isSubmitting}>
-                {t("注册")}
-              </Button>
-            </form>
-          ) : null}
+                {submitError ? <ErrorState message={submitError} /> : null}
+                <ControlButton type="submit" variant="primary" className="access-submit" isDisabled={isSubmitting} loading={isSubmitting}>
+                  {t("注册")}
+                </ControlButton>
+              </form>
+            ) : (
+              <div className="access-blocked">
+                <span className="access-blocked__mark" aria-hidden />
+                <strong>{t("暂未开放注册")}</strong>
+                <p>{t("本部署未开放自助注册，请联系运营方开通账号。")}</p>
+              </div>
+            )}
+          </HeroCard.Content>
 
-          <p className="mt-5 border-t border-rule pt-3 text-xs leading-relaxed text-ink-faint">
-            {t("已有账号？")}
-            <Link className="ml-1 text-accent underline-offset-2 hover:underline" to="/login">
-              {t("去登录")}
-            </Link>
-          </p>
-        </div>
-      </section>
+          <HeroCard.Footer className="access-card__footer">
+            <p>
+              {t("已有账号？")}
+              <Link to="/login">{t("去登录")}</Link>
+            </p>
+          </HeroCard.Footer>
+        </HeroCard>
+      </div>
     </main>
   );
 }

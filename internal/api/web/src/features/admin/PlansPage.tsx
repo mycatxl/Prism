@@ -13,12 +13,12 @@ import {
   InspectorDrawer,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatBytes } from "../../lib/bytes";
@@ -112,7 +112,7 @@ export function PlansPage() {
   const statusTone = plansQuery.isError && !plansQuery.data ? "warn" : plansQuery.data ? "live" : "neutral";
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Customers / plan catalogue"
       title={t("套餐")}
       description={t("管理订阅套餐规则、流量配额与并发限制。套餐所有权属于管理员，租户只能购买可售目录中的套餐。")}
@@ -126,33 +126,40 @@ export function PlansPage() {
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <section className="cp-command">
-        <div className="cp-command__body">
+      <section className="workspace-command">
+        <div className="workspace-command__body">
           <ControlInput label={t("搜索套餐")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("按名称、平台或网络层级搜索")} />
-          <ControlSelect label={t("状态")} value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
-            <option value="all">{t("全部状态")}</option>
-            <option value="active">{t("上架")}</option>
-            <option value="disabled">{t("下架")}</option>
-          </ControlSelect>
+          <ControlSelect
+            label={t("状态")}
+            items={[
+              { id: "all", label: t("全部状态") },
+              { id: "active", label: t("上架") },
+              { id: "disabled", label: t("下架") },
+            ]}
+            selectedKey={statusFilter}
+            onSelectionChange={(key) => {
+              if (key === "all" || key === "active" || key === "disabled") setStatusFilter(key);
+            }}
+          />
         </div>
-        <div className="cp-command__actions">
+        <div className="workspace-command__actions">
           <Search size={14} aria-hidden />
           {filtersActive ? <ControlButton variant="ghost" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : null}
         </div>
       </section>
-      {filtersActive ? <div className="cp-active-filters" aria-label={t("当前筛选")}>
+      {filtersActive ? <div className="workspace-active-filters" aria-label={t("当前筛选")}>
         {search.trim() ? <FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={() => setSearch("")} /> : null}
         {statusFilter !== "all" ? <FilterChip label={`${t("状态")}: ${statusFilter === "active" ? t("上架") : t("下架")}`} onRemove={() => setStatusFilter("all")} /> : null}
       </div> : null}
 
-      <WorkSurface
+      <WorkspaceCard headerless
         eyebrow="Customer objects"
         title={t("套餐目录")}
         meta={plansQuery.data ? t("显示 {{shown}} / {{total}} 个套餐", { shown: filtered.length, total: plans.length }) : t("未加载")}
         description={t("价格、配额、周期、平台关系和活跃订阅数来自管理员套餐 API；选择一行查看编辑与上架动作。")}
       >
         {plansQuery.isError && !plansQuery.data ? <EmptyWorkState title={t("套餐目录读取失败")} detail={formatApiErrorMessage(plansQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void plansQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-        {plansQuery.isLoading && !plansQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载套餐列表")}</div> : null}
+        {plansQuery.isLoading && !plansQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载套餐列表")}</div> : null}
         {!plansQuery.isLoading && !plansQuery.isError && filtered.length === 0 ? <EmptyWorkState title={t(filtersActive ? "没有匹配的套餐" : "暂无套餐")} detail={t(filtersActive ? "调整搜索或状态筛选后重试。" : "创建第一个订阅套餐后，可在用户和邀请码流程中使用。")} action={filtersActive ? <ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : <ControlButton variant="primary" size="sm" onPress={openCreate}><Plus size={14} aria-hidden />{t("新建套餐")}</ControlButton>} /> : null}
         {filtered.length > 0 ? <ObjectList>
           {filtered.map((plan) => {
@@ -162,7 +169,7 @@ export function PlansPage() {
               key={plan.id}
               active={selected?.id === plan.id}
               onClick={() => setSelected(plan)}
-              leading={<span className="cp-platform-row__mark" aria-hidden>{plan.name.slice(0, 1).toUpperCase()}</span>}
+              leading={<span className="workspace-platform-row__mark" aria-hidden>{plan.name.slice(0, 1).toUpperCase()}</span>}
               title={plan.name}
               subtitle={`${active ? t("上架") : t("下架")} · ${t("{{count}} 个活跃用户", { count: plan.active_user_count })}`}
               facts={<><span>{t("价格")} {plan.price_micro > 0 ? <span className="readout">{formatMicro(plan.price_micro)}<small>USDT</small></span> : t("非卖品")}</span><span>{t("流量")} {plan.traffic_bytes > 0 ? <span className="readout">{trafficReadout(plan.traffic_bytes)}</span> : t("不限")}</span><span>{t("周期")} {periodLabel(plan.period || "month", t)}</span><span>{t("平台")} {platformText}</span></>}
@@ -171,7 +178,7 @@ export function PlansPage() {
             />;
           })}
         </ObjectList> : null}
-      </WorkSurface>
+      </WorkspaceCard>
 
       <InspectorDrawer
         open={Boolean(selected) && !formOpen}
@@ -193,9 +200,9 @@ export function PlansPage() {
           <ControlButton variant="danger" size="sm" onPress={() => setDeleteTarget(selected)}><Trash2 size={14} aria-hidden />{t("删除")}</ControlButton>
         </> : undefined}
       >
-        {selected ? <div className="cp-stack">
-          <div className="cp-platform-inspector__identity"><span className="cp-platform-row__mark" aria-hidden>{selected.name.slice(0, 1).toUpperCase()}</span><div><strong>{selected.name}</strong><code>{selected.id}</code></div><StatusMark tone={selected.status === "active" ? "signal" : "alert"} label={selected.status === "active" ? t("上架") : t("下架")} /></div>
-          <dl className="cp-detail-facts">
+        {selected ? <div className="workspace-stack">
+          <div className="workspace-platform-inspector__identity"><span className="workspace-platform-row__mark" aria-hidden>{selected.name.slice(0, 1).toUpperCase()}</span><div><strong>{selected.name}</strong><code>{selected.id}</code></div><StatusMark tone={selected.status === "active" ? "signal" : "alert"} label={selected.status === "active" ? t("上架") : t("下架")} /></div>
+          <dl className="workspace-detail-facts">
             <DetailFact label={t("价格")} value={selected.price_micro > 0 ? <span className="readout">{formatMicro(selected.price_micro)}<small>USDT</small></span> : t("非卖品")} mono />
             <DetailFact label={t("流量配额")} value={selected.traffic_bytes > 0 ? <span className="readout">{trafficReadout(selected.traffic_bytes)}</span> : t("不限")} mono />
             <DetailFact label={t("重置周期")} value={periodLabel(selected.period || "month", t)} />
@@ -205,9 +212,9 @@ export function PlansPage() {
             <DetailFact label={t("最大 RPS")} value={selected.max_rps || t("不限")} mono />
             <DetailFact label={t("最大密钥数")} value={selected.max_keys || t("不限")} mono />
           </dl>
-          <WorkSurface eyebrow="Routing" title={t("适用范围")}>
-            <dl className="cp-detail-facts"><DetailFact label={t("平台")} value={selected.platforms?.length ? selected.platforms.join(", ") : t("全部平台")} /><DetailFact label={t("IP 类型与纯净度")} value={selected.ip_tiers?.length ? selected.ip_tiers.join(", ") : t("不限制")} /></dl>
-          </WorkSurface>
+          <WorkspaceCard eyebrow="Routing" title={t("适用范围")}>
+            <dl className="workspace-detail-facts"><DetailFact label={t("平台")} value={selected.platforms?.length ? selected.platforms.join(", ") : t("全部平台")} /><DetailFact label={t("IP 类型与纯净度")} value={selected.ip_tiers?.length ? selected.ip_tiers.join(", ") : t("不限制")} /></dl>
+          </WorkspaceCard>
           <QueryBadge label={t("创建于 {{time}}", { time: new Date(Math.round(selected.created_at_ns / 1_000_000)).toLocaleString() })} />
         </div> : null}
       </InspectorDrawer>
@@ -217,7 +224,7 @@ export function PlansPage() {
         onOpenChange={(open) => { if (!open && !formPending) { setFormOpen(false); setEditingPlan(null); } }}
         title={editingPlan ? t("编辑套餐") : t("新建套餐")}
         eyebrow={t("Administrator action")}
-        footer={<div className="cp-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => { setFormOpen(false); setEditingPlan(null); }} isDisabled={formPending}>{t("取消")}</ControlButton><ControlButton type="submit" form="plan-form" variant="primary" size="sm" isDisabled={formPending} loading={formPending}>{editingPlan ? t("保存修改") : t("立即创建")}</ControlButton></div>}
+        footer={<div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => { setFormOpen(false); setEditingPlan(null); }} isDisabled={formPending}>{t("取消")}</ControlButton><ControlButton type="submit" form="plan-form" variant="primary" size="sm" isDisabled={formPending} loading={formPending}>{editingPlan ? t("保存修改") : t("立即创建")}</ControlButton></div>}
       >
         {formOpen ? <PlanFormContent initialPlan={editingPlan} onPendingChange={setFormPending} onSuccess={() => { showToast("success", editingPlan ? t("套餐已更新") : t("套餐创建成功")); setFormOpen(false); setEditingPlan(null); void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey }); }} /> : null}
       </InspectorDrawer>
@@ -244,7 +251,7 @@ export function PlansPage() {
         loading={deleteMutation.isPending}
         onConfirm={() => { if (deleteTarget) deleteMutation.mutate(deleteTarget.id); }}
       />
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 
@@ -306,17 +313,27 @@ function PlanFormContent({ initialPlan, onPendingChange, onSuccess }: { initialP
 
   return (
     <>
-      <form id="plan-form" className="cp-form-stack" onSubmit={(event) => { event.preventDefault(); saveMutation.mutate(); }}>
-        <div className="cp-form-grid">
+      <form id="plan-form" className="workspace-form-stack" onSubmit={(event) => { event.preventDefault(); saveMutation.mutate(); }}>
+        <div className="workspace-form-grid">
           <ControlInput label={t("套餐名称")} value={name} onChange={(event) => setName(event.target.value)} placeholder={t("输入套餐名称，如 标准订阅")} />
-          <ControlSelect label={t("状态")} value={status} onChange={(event) => setStatus(event.target.value as PlanStatus)}><option value="active">{t("正常启用")}</option><option value="disabled">{t("已停用")}</option></ControlSelect>
-          <ControlSelect label={t("重置周期")} value={period} onChange={(event) => setPeriod(event.target.value)}>{periodOptions.map((option) => <option key={option} value={option}>{periodLabel(option, t)}</option>)}</ControlSelect>
+          <ControlSelect
+            label={t("状态")}
+            items={[{ id: "active", label: t("正常启用") }, { id: "disabled", label: t("已停用") }]}
+            selectedKey={status}
+            onSelectionChange={(key) => { if (key === "active" || key === "disabled") setStatus(key); }}
+          />
+          <ControlSelect
+            label={t("重置周期")}
+            items={periodOptions.map((option) => ({ id: option, label: periodLabel(option, t) }))}
+            selectedKey={period}
+            onSelectionChange={(key) => { if (key !== null) setPeriod(key); }}
+          />
         </div>
-        <section className="cp-form-section"><span className="cp-eyebrow">{t("平台与网络")}</span><ControlInput label={t("适用平台 (可选，多个逗号分隔)")} hint={t("留空允许所有平台") } value={platformsRaw} onChange={(event) => setPlatformsRaw(event.target.value)} placeholder={t("例如 openai, anthropic")} /><ControlInput label={t("IP 类型与纯净度 (可选，多个逗号分隔)")} hint={t("格式为 类型:纯净度") } value={ipTiersRaw} onChange={(event) => setIpTiersRaw(event.target.value)} placeholder={t("例如 residential:clean")} /></section>
-        <section className="cp-form-section"><span className="cp-eyebrow">{t("配额与限制")}</span><div className="cp-form-grid"><ControlInput label={t("周期流量配额 (GB)")} hint={t("填 0 为不限制流量")} type="number" min="0" value={trafficGB} onChange={(event) => { setTrafficGB(event.target.value); setTrafficBytesExact(null); }} /><ControlInput label={t("默认有效天数")} hint={t("填 0 为永久有效")} type="number" min="0" value={durationDays} onChange={(event) => setDurationDays(event.target.value)} /><ControlInput label={t("最大并发数")} hint={t("0 为不限制")} type="number" min="0" value={maxConcurrent} onChange={(event) => setMaxConcurrent(event.target.value)} /><ControlInput label={t("最大 RPS")} hint={t("0 为不限制")} type="number" min="0" value={maxRps} onChange={(event) => setMaxRps(event.target.value)} /><ControlInput label={t("最大密钥数")} hint={t("0 为不限制")} type="number" min="0" value={maxKeys} onChange={(event) => setMaxKeys(event.target.value)} /><ControlInput label={t("最大带宽 (Mbps)")} hint={t("填 0 为不限制带宽")} type="number" min="0" value={maxBandwidthMbps} onChange={(event) => { setMaxBandwidthMbps(event.target.value); setBandwidthBpsExact(null); }} /></div></section>
-        <section className="cp-form-section"><span className="cp-eyebrow">{t("定价")}</span><ControlInput label={t("价格 (USDT)")} hint={t("留空表示非卖品，由运营方手动分配") } inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.000000" className="font-mono" /></section>
+        <section className="workspace-form-section"><span className="workspace-eyebrow">{t("平台与网络")}</span><ControlInput label={t("适用平台 (可选，多个逗号分隔)")} hint={t("留空允许所有平台") } value={platformsRaw} onChange={(event) => setPlatformsRaw(event.target.value)} placeholder={t("例如 openai, anthropic")} /><ControlInput label={t("IP 类型与纯净度 (可选，多个逗号分隔)")} hint={t("格式为 类型:纯净度") } value={ipTiersRaw} onChange={(event) => setIpTiersRaw(event.target.value)} placeholder={t("例如 residential:clean")} /></section>
+        <section className="workspace-form-section"><span className="workspace-eyebrow">{t("配额与限制")}</span><div className="workspace-form-grid"><ControlInput label={t("周期流量配额 (GB)")} hint={t("填 0 为不限制流量")} type="number" min="0" value={trafficGB} onChange={(event) => { setTrafficGB(event.target.value); setTrafficBytesExact(null); }} /><ControlInput label={t("默认有效天数")} hint={t("填 0 为永久有效")} type="number" min="0" value={durationDays} onChange={(event) => setDurationDays(event.target.value)} /><ControlInput label={t("最大并发数")} hint={t("0 为不限制")} type="number" min="0" value={maxConcurrent} onChange={(event) => setMaxConcurrent(event.target.value)} /><ControlInput label={t("最大 RPS")} hint={t("0 为不限制")} type="number" min="0" value={maxRps} onChange={(event) => setMaxRps(event.target.value)} /><ControlInput label={t("最大密钥数")} hint={t("0 为不限制")} type="number" min="0" value={maxKeys} onChange={(event) => setMaxKeys(event.target.value)} /><ControlInput label={t("最大带宽 (Mbps)")} hint={t("填 0 为不限制带宽")} type="number" min="0" value={maxBandwidthMbps} onChange={(event) => { setMaxBandwidthMbps(event.target.value); setBandwidthBpsExact(null); }} /></div></section>
+        <section className="workspace-form-section"><span className="workspace-eyebrow">{t("定价")}</span><ControlInput label={t("价格 (USDT)")} hint={t("留空表示非卖品，由运营方手动分配") } inputMode="decimal" value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.000000" className="font-mono" /></section>
         {initialPlan ? <ControlSwitch isSelected={applyToExisting} onChange={setApplyToExisting} label={t("同步应用到存量订阅")} hint={t("开启后，该套餐已有的用户订阅将立即同步应用最新配置")} /> : null}
-        {saveMutation.isError ? <p className="cp-form-error">{formatApiErrorMessage(saveMutation.error, t)}</p> : null}
+        {saveMutation.isError ? <p className="workspace-form-error">{formatApiErrorMessage(saveMutation.error, t)}</p> : null}
       </form>
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
     </>

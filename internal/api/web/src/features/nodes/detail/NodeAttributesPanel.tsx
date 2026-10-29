@@ -1,9 +1,7 @@
 import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
+import { ControlButton, ControlTable, ControlTableBody, ControlTableCell, ControlTableColumn, ControlTableHead, ControlTableRow, ControlTableWrap, WorkspaceCard } from "../../../components/control-plane";
 import { Badge } from "../../../components/ui/Badge";
-import { Button } from "../../../components/ui/Button";
-import { Panel, PanelBody, PanelHeader } from "../../../components/ui/Panel";
-import { Table, TableWrap, TBody, TD, TH, TR } from "../../../components/ui/Table";
 import { useI18n } from "../../../i18n";
 import { formatDateTime } from "../../../lib/time";
 import { confidenceLabels, flagLabels, stateLabels } from "../quality/presentation";
@@ -41,16 +39,15 @@ export function NodeAttributesPanel({
   const ipv4 = intelDetail?.egress.ipv4 || node.egress_ip || "";
 
   const copyButton = (value: string, label: string) => (
-    <Button
+    <ControlButton
       variant="ghost"
       size="icon"
       className="size-5"
       aria-label={t("复制{{label}}", { label })}
-      title={t("复制{{label}}", { label })}
-      onClick={() => onCopy(value)}
+      onPress={() => onCopy(value)}
     >
-      <Copy size={12} aria-hidden />
-    </Button>
+      <Copy size={14} aria-hidden />
+    </ControlButton>
   );
 
   const rows: AttributeRow[] = [
@@ -144,26 +141,27 @@ export function NodeAttributesPanel({
   ];
 
   return (
-    <Panel>
-      <PanelHeader title={t("节点属性")} />
-      <PanelBody>
-        <TableWrap>
-          <Table density="compact">
-            <TBody>
-              {rows.map((row) => (
-                <TR key={row.label}>
-                  <TH scope="row" className="w-32 whitespace-nowrap text-left align-top">
-                    <span className="label">{row.label}</span>
-                  </TH>
-                  <TD className="align-top">
-                    <span className="block min-w-0 break-all text-sm text-ink">{row.value}</span>
-                  </TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        </TableWrap>
-      </PanelBody>
-    </Panel>
+    <WorkspaceCard title={t("节点属性")}>
+      <ControlTableWrap>
+        <ControlTable density="compact">
+          <ControlTableHead>
+            <ControlTableColumn isRowHeader className="sr-only">{t("字段")}</ControlTableColumn>
+            <ControlTableColumn className="sr-only">{t("详情")}</ControlTableColumn>
+          </ControlTableHead>
+          <ControlTableBody>
+            {rows.map((row) => (
+              <ControlTableRow key={row.label}>
+                <ControlTableCell className="w-32 whitespace-nowrap text-left align-top">
+                  <span className="label">{row.label}</span>
+                </ControlTableCell>
+                <ControlTableCell className="align-top">
+                  <span className="block min-w-0 break-all text-sm text-ink">{row.value}</span>
+                </ControlTableCell>
+              </ControlTableRow>
+            ))}
+          </ControlTableBody>
+        </ControlTable>
+      </ControlTableWrap>
+    </WorkspaceCard>
   );
 }

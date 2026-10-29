@@ -36,12 +36,11 @@ function tsxSources() {
 
 test("Button renders exactly one child on the asChild path", () => {
   /*
-   * Radix's `Slot` merges props onto a single child element and throws
-   * "Slot failed to slot onto its children" when handed more than one — and it
-   * counts `null` as a child. A spinner rendered as a sibling of `children`
-   * therefore crashed every `asChild` button in the panel at runtime while
-   * passing `check:types` and `eslint`. The rule: the loading decoration must be
-   * composed *into* the content, never placed beside it.
+   * The `asChild` path merges the button's props onto a single child element and
+   * throws when handed more than one — and it counts `null` as a child. A spinner
+   * rendered as a sibling of `children` therefore crashed every `asChild` button
+   * in the panel at runtime while passing `check:types` and `eslint`. The rule:
+   * the loading decoration must be composed *into* the content, never beside it.
    */
   const source = read("../src/components/ui/Button.tsx");
   assert.match(source, /const content = /, "the content must be a single value");
@@ -59,11 +58,15 @@ test("Button renders exactly one child on the asChild path", () => {
 
 test("the kit declares the control height it uses", () => {
   /*
- * `--control-h` is the single decision for chrome height.
-   * A kit component that hard-codes a step instead is the per-page decision the
-   * rule exists to prevent, and it is invisible to every other gate.
+   * `--control-h` is the single decision for chrome height. A kit component that
+   * hard-codes a step instead is the per-page decision the rule exists to
+   * prevent, and it is invisible to every other gate.
+   *
+   * `Select` used to be listed here. It is HeroUI's field now, sized from the
+   * same token in `design.css` (`.workspace-select__trigger`), so the source
+   * that used to carry the declaration no longer exists to assert against.
    */
-  for (const file of ["Button", "Input", "Select"]) {
+  for (const file of ["Button", "Input"]) {
     const source = read(`../src/components/ui/${file}.tsx`);
     assert.match(source, /var\(--control-h/, `${file} must take its height from the token`);
     assert.doesNotMatch(source, /\bh-(?:6\.5|7|8|9|10)\b/, `${file} must not hard-code a height`);
@@ -112,28 +115,51 @@ test("no control is rendered without a way to operate it", () => {
 
 test("the pill shape is reserved for Badge", () => {
   /*
- * Root the design system: the fully round shape carries "this is a state", so a
+   * Root the design system: the fully round shape carries "this is a state", so a
    * second one spends that signal. Checked here as well as in `check-kit.mjs`
    * because this one fails with a message that says *why*, and it runs in the same
    * suite as the rest of the kit's invariants.
+   *
+   * Stated over every component rather than over the one switch this used to
+   * guard: the switch is HeroUI's now, so the rule has to hold where the shapes
+   * are actually written.
    */
-  const source = read("../src/components/ui/Switch.tsx");
-  assert.doesNotMatch(source, /rounded-full/, "Switch must be rectangular, not a pill");
-  assert.match(source, /rounded-control/, "Switch must use the control radius");
+  const offenders = tsxSources()
+    .filter((path) => !path.endsWith("/ui/Badge.tsx"))
+    .filter((path) => readFileSync(path, "utf8").includes("rounded-full"));
+
+  assert.deepEqual(offenders, [], `only Badge may round fully, found: ${offenders.join(", ")}`);
 });
 
-test("Sheet restores the opener and becomes a full-screen mobile work surface", () => {
+test("HeroUI drawer content is owned by its backdrop overlay", () => {
+  for (const relative of [
+    "../src/components/control-plane/Primitives.tsx",
+    "../src/components/ui/Sheet.tsx",
+  ]) {
+    const source = read(relative);
+    assert.doesNotMatch(source, /<HeroDrawer\.Backdrop[^>]*\/>/, `${relative}: an empty backdrop creates a second overlay that can outlive the drawer`);
+    assert.match(
+      source,
+      /<HeroDrawer\.Backdrop[^>]*>[\s\S]*?<HeroDrawer\.Content[\s\S]*?<\/HeroDrawer\.Content>[\s\S]*?<\/HeroDrawer\.Backdrop>/,
+      `${relative}: Drawer.Content must be nested inside Drawer.Backdrop`,
+    );
+  }
+});
+
+test("Sheet restores the opener through HeroUI overlay state and becomes a full-screen mobile work surface", () => {
   const source = read("../src/components/ui/Sheet.tsx");
   const styles = read("../src/styles/design.css");
 
   assert.match(source, /useRef<HTMLElement \| null>\(null\)/, "Sheet must retain the opener element");
-  assert.match(source, /onOpenAutoFocus=\{handleOpenAutoFocus\}/, "Sheet must capture focus before Radix moves it");
-  assert.match(source, /onCloseAutoFocus=\{handleCloseAutoFocus\}/, "Sheet must own focus restoration");
+  assert.match(source, /const handleOpenAutoFocus = useCallback/, "Sheet must capture focus before opening");
+  assert.match(source, /const handleCloseAutoFocus = useCallback/, "Sheet must own focus restoration");
+  assert.match(source, /useEffect\(\(\) => \{[\s\S]*?handleOpenAutoFocus\(\);[\s\S]*?handleCloseAutoFocus\(\);/, "Sheet must restore focus when its open state changes");
   assert.match(source, /target\.focus\(\{ preventScroll: true \}\)/, "focus restoration must not jump the page");
+  assert.match(source, /<HeroDrawer state=\{state\}>/, "Sheet must use HeroUI drawer state");
   assert.doesNotMatch(source, /truncate text-base font-semibold/, "sheet titles must be allowed to wrap");
   assert.match(
     styles,
-    /@media \(max-width: 639\.98px\)[\s\S]*?\.sheet-shell \{[\s\S]*?width: 100%;[\s\S]*?border-radius: 0;/,
+    /@media \(max-width: 639\.98px\)[\s\S]*?\.workspace-sheet \{[\s\S]*?width: 100%;[\s\S]*?border-radius: 0;/,
     "small screens must use a full-screen sheet",
   );
 });

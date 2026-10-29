@@ -1,5 +1,7 @@
-import { Command } from "cmdk";
+import { Kbd, ListBox, Modal as HeroModal, SearchField, useOverlayState } from "@heroui/react";
 import { CornerDownLeft } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import type { NavigationItem } from "../lib/navigation";
@@ -19,13 +21,12 @@ import { useI18n } from "../i18n";
  * to hold would answer a question nobody asked with data that is already stale.
  * A palette that invents results is worse than no palette.
  *
- * The item is a `cmdk` option, not a control: it is a row in a listbox, moved
- * through with the arrow keys and announced through `aria-selected`. That is why
- * it does not come from the component kit — the kit's job is buttons, inputs and
- * menus, and this is none of the three.
- *
- * This module is loaded on first open, not with the shell: `cmdk` is a 60 kB
- * dependency that most sessions never use, and the shell is on every page.
+ * The rows are HeroUI listbox options and the field is HeroUI's search field, so
+ * the surface is the same overlay, input and list primitive as the rest of the
+ * panel. Focus stays in the field while the arrow keys move the highlighted row,
+ * which is why the row highlight is driven by `selectedKeys` rather than by the
+ * listbox's own focus: a palette is one keystroke away from every page, so typing
+ * must never fight the list for the caret.
  */
 export function CommandPalette({
   open,
@@ -42,73 +43,157 @@ export function CommandPalette({
   const { toggle: toggleTheme } = useTheme();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [query, setQuery] = useState("");
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+
+  /*
+   * Reset by hand rather than in an effect: the palette is a transient surface, so
+   * clearing the last query belongs in the dismissal that ends it — whether that
+   * dismissal is a run row, Escape, or a backdrop click.
+   */
+  const close = () => {
+    setQuery("");
+    setActiveKey(null);
+    onOpenChange(false);
+  };
+
+  const overlay = useOverlayState({
+    isOpen: open,
+    onOpenChange: (next: boolean) => {
+      if (!next) {
+        setQuery("");
+        setActiveKey(null);
+      }
+      onOpenChange(next);
+    },
+  });
+
+  /*
+   * HeroUI's modal parks focus on the dialog element itself and leaves it there,
+   * so a palette opened this way would swallow the first keystroke — the one
+   * thing the surface exists for. The field is focused once the overlay exists.
+   */
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => searchRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+  const entries = useMemo(() => {
+    const go = items.map((item) => ({
+      key: `go:${item.path}`,
+      label: t(item.label),
+      hint: item.section ? t(item.section) : undefined,
+      search: `${item.section ?? ""} ${t(item.label)}`.toLowerCase(),
+      run: () => navigate(item.path),
+    }));
+    const act = [
+      { key: "do:refresh", label: t("刷新数据"), run: () => void queryClient.invalidateQueries() },
+      { key: "do:theme", label: t("切换主题"), run: toggleTheme },
+      {
+        key: "do:locale",
+        label: t("切换语言"),
+        run: () => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN"),
+      },
+      { key: "do:account", label: t("账户安全"), run: () => navigate(ACCOUNT) },
+      { key: "do:signout", label: t("退出登录"), run: onSignOut },
+    ].map((entry) => ({ ...entry, hint: undefined as string | undefined, search: entry.label.toLowerCase() }));
+    return [...go, ...act];
+  }, [items, locale, navigate, onSignOut, queryClient, setLocale, t, toggleTheme]);
+
+  const matches = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return entries;
+    return entries.filter((entry) => entry.search.includes(needle));
+  }, [entries, query]);
 
   const run = (action: () => void) => {
-    onOpenChange(false);
+    close();
     action();
+  };
+
+  const activeIndex = matches.findIndex((entry) => entry.key === activeKey);
+  const highlighted = activeIndex >= 0 ? activeKey : (matches[0]?.key ?? null);
+
+  const move = (delta: number) => {
+    if (matches.length === 0) return;
+    const from = activeIndex < 0 ? (delta > 0 ? -1 : 0) : activeIndex;
+    const next = (from + delta + matches.length) % matches.length;
+    setActiveKey(matches[next].key);
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      move(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      move(-1);
+      return;
+    }
+    if (event.key === "Enter") {
+      const entry = matches.find((candidate) => candidate.key === highlighted);
+      if (!entry) return;
+      event.preventDefault();
+      run(entry.run);
+    }
   };
 
   const row =
     "flex cursor-pointer items-center gap-2 rounded-control px-2.5 py-2 text-sm text-ink-soft data-[selected=true]:bg-accent-wash data-[selected=true]:text-accent";
 
   return (
-    <Command.Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      label={t("命令面板")}
-      overlayClassName="fixed inset-0 z-40 bg-ink/45"
-      contentClassName="overlay-surface fixed top-[12vh] left-1/2 z-50 w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden"
-    >
-      <Command.Input
-        placeholder={t("搜索页面或操作")}
-        className="h-[var(--control-h-xl)] w-full border-0 border-b border-rule bg-transparent px-3.5 text-sm text-ink outline-none placeholder:text-ink-faint"
-      />
-      <Command.List className="max-h-[min(62vh,26rem)] overflow-y-auto overflow-x-hidden p-1.5">
-        <Command.Empty className="px-3 py-6 text-center text-xs text-ink-faint">
-          {t("没有匹配的目的地或操作")}
-        </Command.Empty>
+    <HeroModal state={overlay}>
+      <HeroModal.Backdrop>
+        <HeroModal.Container>
+          <HeroModal.Dialog className="w-full max-w-[34rem] overflow-hidden">
+            <div onKeyDown={handleKeyDown}>
+              <SearchField
+                aria-label={t("搜索页面或操作")}
+                value={query}
+                onChange={setQuery}
+                className="border-b border-rule"
+              >
+                <SearchField.Group>
+                  <SearchField.SearchIcon />
+                  <SearchField.Input ref={searchRef} autoFocus placeholder={t("搜索页面或操作")} />
+                  <SearchField.ClearButton />
+                </SearchField.Group>
+              </SearchField>
 
-        <Command.Group heading={<span className="micro block px-2 pb-1 pt-2">{t("前往")}</span>}>
-          {items.map((item) => (
-            <Command.Item
-              key={item.path}
-              value={`${item.section} ${t(item.label)}`}
-              onSelect={() => run(() => navigate(item.path))}
-              className={row}
-            >
-              <span className="min-w-0 flex-1 truncate">{t(item.label)}</span>
-              {item.section && <span className="micro shrink-0">{t(item.section)}</span>}
-            </Command.Item>
-          ))}
-        </Command.Group>
+              {matches.length === 0 ? (
+                <p className="px-3 py-6 text-center text-xs text-ink-faint">{t("没有匹配的目的地或操作")}</p>
+              ) : (
+                <ListBox
+                  aria-label={t("命令面板")}
+                  selectionMode="single"
+                  selectedKeys={highlighted ? [highlighted] : []}
+                  onAction={(key) => {
+                    const entry = matches.find((candidate) => candidate.key === String(key));
+                    if (entry) run(entry.run);
+                  }}
+                  className="max-h-[min(56vh,24rem)] overflow-y-auto p-1.5"
+                >
+                  {matches.map((entry) => (
+                    <ListBox.Item key={entry.key} id={entry.key} textValue={entry.label} className={row}>
+                      <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+                      {entry.hint && <span className="micro shrink-0">{entry.hint}</span>}
+                    </ListBox.Item>
+                  ))}
+                </ListBox>
+              )}
 
-        <Command.Group heading={<span className="micro block px-2 pb-1 pt-2">{t("操作")}</span>}>
-          <Command.Item value={t("刷新数据")} onSelect={() => run(() => void queryClient.invalidateQueries())} className={row}>
-            <span className="min-w-0 flex-1 truncate">{t("刷新数据")}</span>
-          </Command.Item>
-          <Command.Item value={t("切换主题")} onSelect={() => run(toggleTheme)} className={row}>
-            <span className="min-w-0 flex-1 truncate">{t("切换主题")}</span>
-          </Command.Item>
-          <Command.Item
-            value={t("切换语言")}
-            onSelect={() => run(() => setLocale(locale === "zh-CN" ? "en-US" : "zh-CN"))}
-            className={row}
-          >
-            <span className="min-w-0 flex-1 truncate">{t("切换语言")}</span>
-          </Command.Item>
-          <Command.Item value={t("账户安全")} onSelect={() => run(() => navigate(ACCOUNT))} className={row}>
-            <span className="min-w-0 flex-1 truncate">{t("账户安全")}</span>
-          </Command.Item>
-          <Command.Item value={t("退出登录")} onSelect={() => run(onSignOut)} className={row}>
-            <span className="min-w-0 flex-1 truncate">{t("退出登录")}</span>
-          </Command.Item>
-        </Command.Group>
-      </Command.List>
-
-      <div className="flex items-center gap-1.5 border-t border-rule px-3.5 py-2 text-2xs text-ink-faint">
-        <CornerDownLeft size={12} aria-hidden />
-        <span>{t("用方向键移动，回车打开")}</span>
-      </div>
-    </Command.Dialog>
+              <div className="flex items-center gap-1.5 border-t border-rule px-3.5 py-2 text-2xs text-ink-faint">
+                <Kbd>↵</Kbd>
+                <CornerDownLeft size={14} aria-hidden />
+                <span>{t("用方向键移动，回车打开")}</span>
+              </div>
+            </div>
+          </HeroModal.Dialog>
+        </HeroModal.Container>
+      </HeroModal.Backdrop>
+    </HeroModal>
   );
 }

@@ -5,6 +5,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useForm, useFormState, useWatch } from "react-hook-form";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  ConfirmDrawer,
   ControlButton,
   ControlInput,
   ControlSelect,
@@ -14,12 +15,12 @@ import {
   EmptyWorkState,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
@@ -63,6 +64,12 @@ const LEASE_SEARCH_DEBOUNCE_MS = 300;
 const LEASE_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 type PlatformDetailTab = "monitor" | "access" | "config" | "ops";
 
+type PlatformPendingAction =
+  | { kind: "delete" }
+  | { kind: "reset" }
+  | { kind: "clear-leases" }
+  | { kind: "release-lease"; lease: PlatformLease };
+
 const detailTabs: Array<{ id: PlatformDetailTab; label: string; count?: string }> = [
   { id: "monitor", label: "监控" },
   { id: "access", label: "接入" },
@@ -90,7 +97,7 @@ function PlatformLeaseNavigator({
   const { t } = useI18n();
   const current = Math.min(Math.max(0, page), Math.max(0, totalPages - 1));
   return (
-    <div className="cp-pagination">
+    <div className="workspace-pagination">
       <span>
         {t("第 {{page}} / {{pages}} 页 · {{start}}-{{end}} / {{total}}", {
           page: current + 1,
@@ -103,12 +110,13 @@ function PlatformLeaseNavigator({
       <div>
         <ControlSelect
           aria-label={t("每页")}
-          value={pageSize}
+          selectedKey={String(pageSize)}
           disabled={disabled}
-          onChange={(event) => onPageSizeChange(Number(event.target.value))}
-        >
-          {LEASE_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} / {t("页")}</option>)}
-        </ControlSelect>
+          items={LEASE_PAGE_SIZE_OPTIONS.map((size) => ({ id: String(size), label: `${size} / ${t("页")}` }))}
+          onSelectionChange={(key) => {
+            if (key !== null) onPageSizeChange(Number(key));
+          }}
+        />
         <ControlButton variant="ghost" size="sm" isIconOnly aria-label={t("上一页")} isDisabled={disabled || current === 0} onPress={() => onPageChange(current - 1)}>
           <span aria-hidden>←</span>
         </ControlButton>
@@ -124,10 +132,10 @@ function PlatformIdentity({ platform }: { platform: Platform }) {
   const { t } = useI18n();
   const state = platformStatus(platform);
   return (
-    <div className="cp-platform-identity">
-      <span className="cp-platform-row__mark" aria-hidden>{platform.name.slice(0, 1).toUpperCase()}</span>
-      <div className="cp-platform-identity__copy">
-        <div className="cp-platform-identity__title"><strong>{platform.name}</strong><StatusMark tone={state.tone === "alert" ? "alert" : "signal"} label={t(state.label)} /></div>
+    <div className="workspace-platform-identity">
+      <span className="workspace-platform-row__mark" aria-hidden>{platform.name.slice(0, 1).toUpperCase()}</span>
+      <div className="workspace-platform-identity__copy">
+        <div className="workspace-platform-identity__title"><strong>{platform.name}</strong><StatusMark tone={state.tone === "alert" ? "alert" : "signal"} label={t(state.label)} /></div>
         <code>{platform.id}</code>
       </div>
       <QueryBadge tone={platform.id === ZERO_UUID ? "neutral" : "signal"} label={platform.id === ZERO_UUID ? t("内置平台") : t("管理员平台")} />
@@ -160,7 +168,9 @@ export function PlatformDetailPage() {
   const [leasePageSize, setLeasePageSize] = useState<number>(LEASE_PAGE_SIZE_OPTIONS[0]);
   const [leaseSearch, setLeaseSearch] = useState("");
   const [debouncedLeaseSearch, setDebouncedLeaseSearch] = useState("");
-  const [confirmingAction, setConfirmingAction] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PlatformPendingAction | null>(null);
+  const [pendingActionError, setPendingActionError] = useState<string | null>(null);
+  const confirmRunRef = useRef(false);
 
   const platformQuery = useQuery({
     queryKey: ["platform", platformId],
@@ -195,6 +205,8 @@ export function PlatformDetailPage() {
   const editForm = useForm<PlatformFormValues>({ resolver: zodResolver(platformFormSchema), defaultValues: defaultPlatformFormValues });
   const detailEmptyAccountBehavior = useWatch({ control: editForm.control, name: "reverse_proxy_empty_account_behavior" });
   const detailPassiveCircuitBreakerDisabled = useWatch({ control: editForm.control, name: "passive_circuit_breaker_disabled" });
+  const detailMissAction = useWatch({ control: editForm.control, name: "reverse_proxy_miss_action" });
+  const detailAllocationPolicy = useWatch({ control: editForm.control, name: "allocation_policy" });
   const { dirtyFields } = useFormState({ control: editForm.control });
   const hasUnsavedChanges = Object.keys(dirtyFields).length > 0;
   const lastEditedId = useRef("");
@@ -209,6 +221,8 @@ export function PlatformDetailPage() {
     setLeasePage(0);
     setLeaseSearch("");
     setDebouncedLeaseSearch("");
+    setPendingAction(null);
+    setPendingActionError(null);
   }, [platformId]);
 
   useEffect(() => {
@@ -249,6 +263,8 @@ export function PlatformDetailPage() {
     },
     onError: (error) => showToast("error", mutationError(error)),
   });
+  // Guarded actions keep failures in the open confirmation drawer so the same
+  // action can be retried; a second toast can cover the drawer footer.
   const resetMutation = useMutation({
     mutationFn: async () => {
       if (!platform) throw new Error("平台不存在或已被删除");
@@ -259,7 +275,6 @@ export function PlatformDetailPage() {
       editForm.reset(platformToFormValues(updated));
       showToast("success", t("平台 {{name}} 已重置为默认配置", { name: updated.name }));
     },
-    onError: (error) => showToast("error", mutationError(error)),
   });
   const clearLeasesMutation = useMutation({
     mutationFn: async () => {
@@ -274,7 +289,6 @@ export function PlatformDetailPage() {
       ]);
       showToast("success", t("平台 {{name}} 的所有租约已清除", { name: updated.name }));
     },
-    onError: (error) => showToast("error", mutationError(error)),
   });
   const releaseLeaseMutation = useMutation({
     mutationFn: async (lease: PlatformLease) => {
@@ -291,7 +305,6 @@ export function PlatformDetailPage() {
       }
       showToast("success", t("账号 {{account}} 的租约已释放", { account: lease.account }));
     },
-    onError: (error) => showToast("error", mutationError(error)),
   });
   const deleteMutation = useMutation({
     mutationFn: async () => {
@@ -304,44 +317,76 @@ export function PlatformDetailPage() {
       showToast("success", t("平台 {{name}} 已删除", { name: deleted.name }));
       navigate(opsPaths.platforms, { replace: true });
     },
-    onError: (error) => showToast("error", mutationError(error)),
   });
 
-  const confirmAndRun = async (key: string, action: () => Promise<void>) => {
-    if (confirmingAction) return;
-    setConfirmingAction(key);
-    try {
-      await action();
-    } finally {
-      setConfirmingAction(null);
+  const destructivePending = deleteMutation.isPending || resetMutation.isPending || clearLeasesMutation.isPending || releaseLeaseMutation.isPending;
+  const pendingActionLoading = (action: PlatformPendingAction | null): boolean => {
+    if (!action) return false;
+    switch (action.kind) {
+      case "delete": return deleteMutation.isPending;
+      case "reset": return resetMutation.isPending;
+      case "clear-leases": return clearLeasesMutation.isPending;
+      case "release-lease": return releaseLeaseMutation.isPending;
     }
   };
+  const openConfirmation = (action: PlatformPendingAction) => {
+    if (pendingAction !== null || destructivePending) return;
+    setPendingActionError(null);
+    setPendingAction(action);
+  };
+  const closeConfirmation = () => {
+    if (pendingActionLoading(pendingAction)) return;
+    setPendingAction(null);
+    setPendingActionError(null);
+  };
+  const runPendingAction = async () => {
+    if (pendingAction === null || confirmRunRef.current) return;
+    confirmRunRef.current = true;
+    setPendingActionError(null);
+    try {
+      switch (pendingAction.kind) {
+        case "delete":
+          await deleteMutation.mutateAsync();
+          break;
+        case "reset":
+          await resetMutation.mutateAsync();
+          break;
+        case "clear-leases":
+          await clearLeasesMutation.mutateAsync();
+          break;
+        case "release-lease":
+          await releaseLeaseMutation.mutateAsync(pendingAction.lease);
+          break;
+      }
+      setPendingAction(null);
+    } catch (error) {
+      setPendingActionError(mutationError(error));
+    } finally {
+      confirmRunRef.current = false;
+    }
+  };
+  const platformName = platform?.name ?? "";
+  const confirmationCopy = (action: PlatformPendingAction) => {
+    switch (action.kind) {
+      case "delete":
+        return { title: t("删除平台"), message: t("确认删除平台 {{name}}？该操作不可撤销。", { name: platformName }), confirmLabel: t("确认删除") };
+      case "reset":
+        return { title: t("重置为默认配置"), message: t("确认将平台 {{name}} 重置为默认配置？当前可编辑配置会被覆盖。", { name: platformName }), confirmLabel: t("确认重置") };
+      case "clear-leases":
+        return { title: t("清除所有租约"), message: t("确认清除平台 {{name}} 的所有租约？", { name: platformName }), confirmLabel: t("确认清除") };
+      case "release-lease":
+        return { title: t("释放租约"), message: t("确认释放账号 {{account}} 的租约？", { account: action.lease.account }), confirmLabel: t("确认释放") };
+    }
+  };
+  const confirmation = pendingAction === null ? null : confirmationCopy(pendingAction);
+  const confirmationLoading = pendingActionLoading(pendingAction);
   const handleDelete = () => {
     if (!platform || platform.id === ZERO_UUID) return;
-    void confirmAndRun("delete", async () => {
-      if (!window.confirm(t("确认删除平台 {{name}}？该操作不可撤销。", { name: platform.name }))) return;
-      await deleteMutation.mutateAsync();
-    });
+    openConfirmation({ kind: "delete" });
   };
-  const handleClearAllLeases = () => {
-    if (!platform) return;
-    void confirmAndRun("clear-leases", async () => {
-      if (!window.confirm(t("确认清除平台 {{name}} 的所有租约？", { name: platform.name }))) return;
-      await clearLeasesMutation.mutateAsync();
-    });
-  };
-  const handleReleaseLease = (lease: PlatformLease) => {
-    void confirmAndRun(`release-${lease.account}`, async () => {
-      if (!window.confirm(t("确认释放账号 {{account}} 的租约？", { account: lease.account }))) return;
-      await releaseLeaseMutation.mutateAsync(lease);
-    });
-  };
-  const handleReset = () => {
-    void confirmAndRun("reset", async () => {
-      if (!window.confirm(t("确认将平台 {{name}} 重置为默认配置？", { name: platform?.name ?? "" }))) return;
-      await resetMutation.mutateAsync();
-    });
-  };
+  const handleClearAllLeases = () => { openConfirmation({ kind: "clear-leases" }); };
+  const handleReleaseLease = (lease: PlatformLease) => { openConfirmation({ kind: "release-lease", lease }); };
+  const handleReset = () => { openConfirmation({ kind: "reset" }); };
   const changeLeasePageSize = (next: number) => {
     setLeasePageSize(next);
     setLeasePage(0);
@@ -349,11 +394,11 @@ export function PlatformDetailPage() {
   const onEditSubmit = editForm.handleSubmit((values) => updateMutation.mutate(values));
   const status = platform ? platformStatus(platform) : null;
   const pageTone = platformQuery.isError ? "warn" : platform ? (status?.tone === "alert" ? "alert" : "live") : "neutral";
-  const deleteDisabled = !platform || platform.id === ZERO_UUID || deleteMutation.isPending || Boolean(confirmingAction);
+  const deleteDisabled = !platform || platform.id === ZERO_UUID || pendingAction !== null || destructivePending;
   const fixedAccountHeaderInvalid = Boolean(editForm.formState.errors.reverse_proxy_fixed_account_header);
 
   return (
-    <PageFrame
+    <WorkspacePage conciseCards
       eyebrow="Delivery / platform object"
       title={platform?.name ?? t("平台详情")}
       description={t("查看平台到节点池、接入地址和租约状态的关系；配置与危险操作保持在独立工作面。")}
@@ -367,23 +412,23 @@ export function PlatformDetailPage() {
 
       {!platformId ? <EmptyWorkState title={t("平台 ID 缺失")} detail={t("无法加载平台详情。")} /> : null}
       {platformQuery.isError && !platform ? <EmptyWorkState title={t("平台详情读取失败")} detail={formatApiErrorMessage(platformQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void platformQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-      {platformQuery.isLoading && !platform ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在读取平台详情")}</div> : null}
+      {platformQuery.isLoading && !platform ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在读取平台详情")}</div> : null}
 
       {platform ? (
-        <div className="cp-platform-detail">
-          <WorkSurface eyebrow="Platform identity" title={<PlatformIdentity platform={platform} />} description={t("对象身份、路由状态和最近同步时间来自平台 API；未返回的关系保持未知。")}>
-            <div className="cp-data-grid">
-              <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("可路由节点")}</span><strong className="cp-data-grid__value">{platform.routable_node_count.toLocaleString()}</strong><span className="cp-data-grid__hint">{t("当前节点池视图")}</span></div>
-              <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("租约保持")}</span><strong className="cp-data-grid__value">{formatGoDuration(platform.sticky_ttl, t("默认"))}</strong><span className="cp-data-grid__hint">{t("平台策略")}</span></div>
-              <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("分配策略")}</span><strong className="cp-data-grid__value cp-data-grid__value--text">{t(allocationPolicyLabel[platform.allocation_policy])}</strong><span className="cp-data-grid__hint">{t("新租约选择")}</span></div>
-              <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("最近更新")}</span><strong className="cp-data-grid__value cp-data-grid__value--text">{formatRelativeTime(platform.updated_at)}</strong><span className="cp-data-grid__hint">{formatDateTime(platform.updated_at)}</span></div>
+        <div className="workspace-platform-detail">
+          <WorkspaceCard eyebrow="Platform identity" title={<PlatformIdentity platform={platform} />} description={t("对象身份、路由状态和最近同步时间来自平台 API；未返回的关系保持未知。")}>
+            <div className="workspace-data-grid">
+              <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("可路由节点")}</span><strong className="workspace-data-grid__value">{platform.routable_node_count.toLocaleString()}</strong><span className="workspace-data-grid__hint">{t("当前节点池视图")}</span></div>
+              <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("租约保持")}</span><strong className="workspace-data-grid__value">{formatGoDuration(platform.sticky_ttl, t("默认"))}</strong><span className="workspace-data-grid__hint">{t("平台策略")}</span></div>
+              <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("分配策略")}</span><strong className="workspace-data-grid__value workspace-data-grid__value--text">{t(allocationPolicyLabel[platform.allocation_policy])}</strong><span className="workspace-data-grid__hint">{t("新租约选择")}</span></div>
+              <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("最近更新")}</span><strong className="workspace-data-grid__value workspace-data-grid__value--text">{formatRelativeTime(platform.updated_at)}</strong><span className="workspace-data-grid__hint">{formatDateTime(platform.updated_at)}</span></div>
             </div>
-          </WorkSurface>
+          </WorkspaceCard>
 
           <ControlTabs label={t("平台详情板块")} selectedKey={activeTab} onSelectionChange={(key) => setActiveTab(key as PlatformDetailTab)} items={detailTabs} />
 
           {activeTab === "monitor" ? (
-            <Suspense fallback={<div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载监控")}</div>}>
+            <Suspense fallback={<div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载监控")}</div>}>
               <PlatformMonitorPanel platform={platform} />
             </Suspense>
           ) : null}
@@ -391,79 +436,108 @@ export function PlatformDetailPage() {
           {activeTab === "access" ? <PlatformAccessPanel platformName={platform.name} /> : null}
 
           {activeTab === "config" ? (
-            <WorkSurface
+            <WorkspaceCard
               eyebrow="Policy / node admission"
               title={t("平台配置")}
               meta={hasUnsavedChanges ? <QueryBadge tone="warn" label={t("有未保存修改")} /> : <QueryBadge label={t("配置已同步")} />}
               description={t("条件同时生效，scope preview 使用与保存请求相同的字段；历史节点名规则不会被新请求写入。")}
               actions={<ControlButton variant="primary" size="sm" type="submit" form="platform-edit-form" isDisabled={updateMutation.isPending || !hasUnsavedChanges} loading={updateMutation.isPending}>{t("保存配置")}</ControlButton>}
             >
-              <form id="platform-edit-form" className="cp-form-stack" onSubmit={onEditSubmit}>
-                <div className="cp-form-grid">
+              <form id="platform-edit-form" className="workspace-form-stack" onSubmit={onEditSubmit}>
+                <div className="workspace-form-grid">
                   <ControlInput label={t("名称")} hint={t(platformNameRuleHint)} aria-invalid={Boolean(editForm.formState.errors.name) || undefined} {...editForm.register("name")} />
                   <ControlInput label={t("租约保持时长")} placeholder={t("例如 168h")} aria-invalid={Boolean(editForm.formState.errors.sticky_ttl) || undefined} {...editForm.register("sticky_ttl")} />
-                  <ControlSelect label={t("反向代理账号解析出错策略")} {...editForm.register("reverse_proxy_miss_action")}>
-                    {missActions.map((item) => <option key={item} value={item}>{t(missActionLabel[item])}</option>)}
-                  </ControlSelect>
-                  <ControlSelect label={t("节点分配策略")} {...editForm.register("allocation_policy")}>
-                    {allocationPolicies.map((item) => <option key={item} value={item}>{t(allocationPolicyLabel[item])}</option>)}
-                  </ControlSelect>
+                  <ControlSelect
+                    label={t("反向代理账号解析出错策略")}
+                    selectedKey={detailMissAction}
+                    items={missActions.map((item) => ({ id: item, label: t(missActionLabel[item]) }))}
+                    onSelectionChange={(key) => {
+                      const next = missActions.find((action) => action === key);
+                      if (next) editForm.setValue("reverse_proxy_miss_action", next, { shouldDirty: true });
+                    }}
+                  />
+                  <ControlSelect
+                    label={t("节点分配策略")}
+                    selectedKey={detailAllocationPolicy}
+                    items={allocationPolicies.map((item) => ({ id: item, label: t(allocationPolicyLabel[item]) }))}
+                    onSelectionChange={(key) => {
+                      const next = allocationPolicies.find((policy) => policy === key);
+                      if (next) editForm.setValue("allocation_policy", next, { shouldDirty: true });
+                    }}
+                  />
                   <ControlSwitch isSelected={Boolean(detailPassiveCircuitBreakerDisabled)} onChange={(value) => editForm.setValue("passive_circuit_breaker_disabled", value, { shouldDirty: true })} label={t("禁用请求失败熔断")} hint={t("开启后，代理请求失败不会增加节点熔断计数；主动探测不受影响。")} />
-                  <ControlSelect label={t("反向代理账号为空行为")} {...editForm.register("reverse_proxy_empty_account_behavior")}>
-                    {emptyAccountBehaviors.map((item) => <option key={item} value={item}>{t(emptyAccountBehaviorLabel[item])}</option>)}
-                  </ControlSelect>
+                  <ControlSelect
+                    label={t("反向代理账号为空行为")}
+                    selectedKey={detailEmptyAccountBehavior}
+                    items={emptyAccountBehaviors.map((item) => ({ id: item, label: t(emptyAccountBehaviorLabel[item]) }))}
+                    onSelectionChange={(key) => {
+                      const next = emptyAccountBehaviors.find((behavior) => behavior === key);
+                      if (next) editForm.setValue("reverse_proxy_empty_account_behavior", next, { shouldDirty: true });
+                    }}
+                  />
                 </div>
-                {editForm.formState.errors.name?.message ? <p className="cp-form-error">{t(editForm.formState.errors.name.message)}</p> : null}
+                {editForm.formState.errors.name?.message ? <p className="workspace-form-error">{t(editForm.formState.errors.name.message)}</p> : null}
                 {detailEmptyAccountBehavior === "FIXED_HEADER" ? <ControlTextarea label={t("用于提取 Account 的 Headers（每行一个）")} rows={4} placeholder={t("每行一个，例如 Authorization 或 X-Account-Id")} aria-invalid={fixedAccountHeaderInvalid || undefined} {...editForm.register("reverse_proxy_fixed_account_header")} /> : null}
-                {editForm.formState.errors.reverse_proxy_fixed_account_header?.message ? <p className="cp-form-error">{t(editForm.formState.errors.reverse_proxy_fixed_account_header.message)}</p> : null}
+                {editForm.formState.errors.reverse_proxy_fixed_account_header?.message ? <p className="workspace-form-error">{t(editForm.formState.errors.reverse_proxy_fixed_account_header.message)}</p> : null}
                 <NodeCriteriaFields form={editForm} idPrefix="detail-edit" />
-                {platform.regex_filters.length > 0 ? <p className="cp-legacy-note">{t("当前对象包含历史节点名规则。它仍由后端兼容读取，但本次保存不会创建、编辑或清除该规则。")}</p> : null}
+                {platform.regex_filters.length > 0 ? <p className="workspace-legacy-note">{t("当前对象包含历史节点名规则。它仍由后端兼容读取，但本次保存不会创建、编辑或清除该规则。")}</p> : null}
               </form>
-            </WorkSurface>
+            </WorkspaceCard>
           ) : null}
 
           {activeTab === "ops" ? (
-            <div className="cp-stack">
-              <WorkSurface eyebrow="Operations / guarded" title={t("危险操作")} description={t("这些动作会直接改变平台路由或租约状态，均需要二次确认并显示操作结果。")}>
-                <div className="cp-danger-list">
-                  <div className="cp-danger-row"><div><strong>{t("重置为默认配置")}</strong><p>{t("恢复环境默认策略并覆盖当前可编辑配置。")}</p></div><ControlButton variant="secondary" size="sm" onPress={handleReset} isDisabled={Boolean(confirmingAction) || resetMutation.isPending} loading={resetMutation.isPending}>{t("重置")}</ControlButton></div>
-                  <div className="cp-danger-row cp-danger-row--warn"><div><strong>{t("清除所有租约")}</strong><p>{t("清除当前平台全部租约，下次请求将重新分配出口。")}</p></div><ControlButton variant="danger" size="sm" onPress={handleClearAllLeases} isDisabled={Boolean(confirmingAction) || clearLeasesMutation.isPending} loading={clearLeasesMutation.isPending}><ShieldAlert size={14} aria-hidden />{t("清除全部")}</ControlButton></div>
-                  <div className="cp-danger-row cp-danger-row--alert"><div><strong>{t("删除平台")}</strong><p>{platform.id === ZERO_UUID ? t("内置平台不可删除。") : t("永久删除当前平台及其配置，操作不可撤销。")}</p></div><ControlButton variant="danger" size="sm" onPress={handleDelete} isDisabled={deleteDisabled} loading={deleteMutation.isPending}><Trash2 size={14} aria-hidden />{t("删除平台")}</ControlButton></div>
+            <div className="workspace-stack">
+              <WorkspaceCard className="workspace-card--explainer" eyebrow="Operations / guarded" title={t("危险操作")} description={t("这些动作会直接改变平台路由或租约状态，均需要二次确认并显示操作结果。")}>
+                <div className="workspace-danger-list">
+                  <div className="workspace-danger-row"><div><strong>{t("重置为默认配置")}</strong><p>{t("恢复环境默认策略并覆盖当前可编辑配置。")}</p></div><ControlButton variant="secondary" size="sm" onPress={handleReset} isDisabled={pendingAction !== null || destructivePending} loading={resetMutation.isPending}>{t("重置")}</ControlButton></div>
+                  <div className="workspace-danger-row workspace-danger-row--warn"><div><strong>{t("清除所有租约")}</strong><p>{t("清除当前平台全部租约，下次请求将重新分配出口。")}</p></div><ControlButton variant="danger" size="sm" onPress={handleClearAllLeases} isDisabled={pendingAction !== null || destructivePending} loading={clearLeasesMutation.isPending}><ShieldAlert size={14} aria-hidden />{t("清除全部")}</ControlButton></div>
+                  <div className="workspace-danger-row workspace-danger-row--alert"><div><strong>{t("删除平台")}</strong><p>{platform.id === ZERO_UUID ? t("内置平台不可删除。") : t("永久删除当前平台及其配置，操作不可撤销。")}</p></div><ControlButton variant="danger" size="sm" onPress={handleDelete} isDisabled={deleteDisabled} loading={deleteMutation.isPending}><Trash2 size={14} aria-hidden />{t("删除平台")}</ControlButton></div>
                 </div>
-              </WorkSurface>
+              </WorkspaceCard>
 
-              <WorkSurface eyebrow="Evidence / leases" title={t("租约管理")} description={t("按账号查看当前平台绑定的节点和出口，并释放单个租约。") }>
-                <div id={LEASE_MANAGEMENT_ANCHOR} className="cp-command cp-lease-command">
-                  <div className="cp-command__body"><ControlInput label={t("搜索账号")} value={leaseSearch} onChange={(event) => setLeaseSearch(event.target.value)} placeholder={t("按账号精确或模糊查找")} /></div>
-                  <div className="cp-command__actions"><ControlButton variant="secondary" size="sm" onPress={() => void leaseQuery.refetch()} loading={leaseQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton></div>
+              <WorkspaceCard eyebrow="Evidence / leases" title={t("租约管理")} description={t("按账号查看当前平台绑定的节点和出口，并释放单个租约。") }>
+                <div id={LEASE_MANAGEMENT_ANCHOR} className="workspace-command workspace-lease-command">
+                  <div className="workspace-command__body"><ControlInput label={t("搜索账号")} value={leaseSearch} onChange={(event) => setLeaseSearch(event.target.value)} placeholder={t("按账号精确或模糊查找")} /></div>
+                  <div className="workspace-command__actions"><ControlButton variant="secondary" size="sm" onPress={() => void leaseQuery.refetch()} loading={leaseQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton></div>
                 </div>
-                {leaseQuery.isLoading || isLeasePageTransitioning ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载租约")}</div> : null}
+                {leaseQuery.isLoading || isLeasePageTransitioning ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载租约")}</div> : null}
                 {leaseQuery.isError ? <EmptyWorkState title={t("租约读取失败")} detail={formatApiErrorMessage(leaseQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leaseQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
                 {!leaseQuery.isLoading && !leaseQuery.isError && leases.length === 0 ? <EmptyWorkState title={debouncedLeaseSearch ? t("没有匹配的租约") : t("当前平台暂无租约")} detail={debouncedLeaseSearch ? t("尝试清除账号筛选。") : t("租约会在租户请求平台后出现。")} /> : null}
                 {leases.length > 0 ? (
-                  <ObjectList className="cp-lease-list">
+                  <ObjectList className="workspace-lease-list">
                     {leases.map((lease) => {
                       const releasing = releaseLeaseMutation.isPending && releaseLeaseMutation.variables?.account === lease.account;
-                      const rowBusy = releasing || clearLeasesMutation.isPending || confirmingAction === `release-${lease.account}`;
+                      const rowBusy = releasing || clearLeasesMutation.isPending || pendingAction !== null;
                       return (
                         <ObjectRow
                           key={lease.account}
-                          leading={<span className="cp-lease-row__mark" aria-hidden>↗</span>}
+                          leading={<span className="workspace-lease-row__mark" aria-hidden>↗</span>}
                           title={lease.account || t("未命名账号")}
                           subtitle={`${lease.node_tag || t("节点标识未知")} · ${lease.node_hash || t("节点哈希未知")}`}
                           facts={<><span>{t("出口")} {lease.egress_ip || "—"}</span><span>{t("过期")} {formatDateTime(lease.expiry)}</span><span>{t("最后访问")} {formatDateTime(lease.last_accessed)}</span></>}
-                          action={<ControlButton variant="ghost" size="sm" isIconOnly aria-label={t("释放账号 {{account}} 的租约", { account: lease.account })} onPress={() => handleReleaseLease(lease)} isDisabled={rowBusy}><Trash2 size={14} aria-hidden /></ControlButton>}
+                          action={<ControlButton variant="ghost" size="sm" isIconOnly aria-label={t("释放账号 {{account}} 的租约", { account: lease.account })} onPress={() => handleReleaseLease(lease)} isDisabled={rowBusy} loading={releasing}><Trash2 size={14} aria-hidden /></ControlButton>}
                         />
                       );
                     })}
                   </ObjectList>
                 ) : null}
                 <PlatformLeaseNavigator page={leasePage} totalPages={leaseTotalPages} totalItems={leasesPage.total} pageSize={leasePageSize} disabled={isLeasePageTransitioning} onPageChange={setLeasePage} onPageSizeChange={changeLeasePageSize} />
-              </WorkSurface>
+              </WorkspaceCard>
             </div>
           ) : null}
         </div>
       ) : null}
-    </PageFrame>
+      <ConfirmDrawer
+        open={pendingAction !== null}
+        onOpenChange={(open) => { if (!open) closeConfirmation(); }}
+        title={confirmation ? confirmation.title : ""}
+        eyebrow={t("Destructive action")}
+        message={<>{confirmation ? confirmation.message : ""}{pendingActionError ? <span className="workspace-form-error">{pendingActionError}</span> : null}</>}
+        cancelLabel={t("取消")}
+        confirmLabel={confirmation ? confirmation.confirmLabel : t("确认")}
+        loading={confirmationLoading}
+        onConfirm={() => { void runPendingAction(); }}
+      />
+    </WorkspacePage>
   );
 }

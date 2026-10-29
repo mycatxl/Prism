@@ -12,13 +12,13 @@ import {
   EmptyWorkState,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
 import { Tooltip } from "../../components/ui/Tooltip";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
@@ -250,7 +250,7 @@ function staticRows(categoryId: string, env: EnvConfig, t: Translator): Array<{ 
 }
 
 function StaticGroup({ title, rows }: { title: string; rows: StaticRow[] }) {
-  return <div className="cp-form-section"><span className="cp-eyebrow">{title}</span><ObjectList>{rows.map((row) => <ObjectRow key={row.label} leading={<span className="cp-platform-row__mark" aria-hidden>ENV</span>} title={row.label} facts={row.value ? <code>{row.value}</code> : undefined} status={row.status ? <StatusMark tone={row.status.tone} label={row.status.text} /> : undefined} />)}</ObjectList></div>;
+  return <div className="workspace-form-section"><span className="workspace-eyebrow">{title}</span><ObjectList>{rows.map((row) => <ObjectRow key={row.label} leading={<span className="workspace-platform-row__mark" aria-hidden>ENV</span>} title={row.label} facts={row.value ? <code>{row.value}</code> : undefined} status={row.status ? <StatusMark tone={row.status.tone} label={row.status.text} /> : undefined} />)}</ObjectList></div>;
 }
 
 function RestoreButton({ label, value, disabled, onPress }: { label: string; value: string; disabled?: boolean; onPress: () => void }) {
@@ -263,13 +263,13 @@ function RuntimeFieldEditor({ field, form, defaultForm, pending, setField, resto
   const defaultValue = defaultForm ? String(field === "latency_authorities_raw" ? defaultForm.latency_authorities_raw : defaultForm[field]) : "";
   const restoreButton = <RestoreButton label={t("恢复为默认值")} value={defaultValue} disabled={pending || !defaultForm} onPress={() => restore(field)} />;
   if (field === "request_log_enabled" || field === "reverse_proxy_log_detail_enabled") {
-    return <div className="cp-inset-stack"><ControlSwitch label={label} hint={field === "request_log_enabled" ? t("记录代理请求的结构化日志。"): t("记录更详细的反向代理诊断字段。")} isSelected={Boolean(form[field])} isDisabled={pending} onChange={(value) => setField(field, value)} /><span className="cp-drawer-actions">{restoreButton}</span></div>;
+    return <div className="workspace-inset-stack"><ControlSwitch label={label} hint={field === "request_log_enabled" ? t("记录代理请求的结构化日志。"): t("记录更详细的反向代理诊断字段。")} isSelected={Boolean(form[field])} isDisabled={pending} onChange={(value) => setField(field, value)} /><span className="workspace-drawer-actions">{restoreButton}</span></div>;
   }
   if (field === "latency_authorities_raw") {
-    return <div className="cp-field-with-action"><ControlTextarea label={label} hint={t("每行一个域名，也支持逗号分隔。")} rows={5} value={form[field]} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
+    return <div className="workspace-field-with-action"><ControlTextarea label={label} hint={t("每行一个域名，也支持逗号分隔。")} rows={5} value={form[field]} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
   }
   const numeric = field.includes("bytes") || field === "max_consecutive_failures" || field === "cache_flush_dirty_threshold";
-  return <div className="cp-field-with-action"><ControlInput label={label} type={numeric ? "number" : "text"} min={numeric ? "0" : undefined} value={form[field]} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
+  return <div className="workspace-field-with-action"><ControlInput label={label} type={numeric ? "number" : "text"} min={numeric ? "0" : undefined} value={form[field]} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
 }
 
 export function SystemConfigPage() {
@@ -403,7 +403,7 @@ export function SystemConfigPage() {
   };
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Governance / runtime configuration"
       title={t("系统配置")}
       description={t("编辑运行时配置，查看部署级只读信息；环境值不会被提交到 runtime config。")}
@@ -413,40 +413,40 @@ export function SystemConfigPage() {
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <CommandSurface>
         <ControlInput label={t("搜索配置分类")} hint={t("按领域、说明或参数名称筛选")} value={categorySearch} onChange={(event) => setCategorySearch(event.target.value)} placeholder={t("搜索配置分类或参数")} />
-        <span className="cp-command__actions"><Search size={14} aria-hidden /><QueryBadge label={t("{{count}} 个分类", { count: visibleCategories.length })} /></span>
+        <span className="workspace-command__actions"><Search size={14} aria-hidden /><QueryBadge label={t("{{count}} 个分类", { count: visibleCategories.length })} /></span>
       </CommandSurface>
 
-      {!form ? <WorkSurface title={t("配置状态")}><EmptyWorkState title={configQuery.isError ? t("配置读取失败") : t("正在加载配置") } detail={configQuery.isError ? formatApiErrorMessage(configQuery.error, t) : t("运行时配置和部署值正在读取。")} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkSurface> : null}
+      {!form ? <WorkspaceCard title={t("配置状态")}><EmptyWorkState title={configQuery.isError ? t("配置读取失败") : t("正在加载配置") } detail={configQuery.isError ? formatApiErrorMessage(configQuery.error, t) : t("运行时配置和部署值正在读取。")} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard> : null}
 
-      {form && !category ? <WorkSurface eyebrow="Governance / directory" title={t("配置目录")} description={t("按领域管理可编辑配置，或查看部署级只读信息。")}>
+      {form && !category ? <WorkspaceCard headerless eyebrow="Governance / directory" title={t("配置目录")} description={t("按领域管理可编辑配置，或查看部署级只读信息。")}>
         {visibleCategories.length ? <ObjectList>{visibleCategories.map((item) => {
           const dirty = changedKeys.filter((field) => (item.fields as readonly string[]).includes(field)).length;
-          return <ObjectRow key={item.id} onClick={() => selectCategory(item.id)} leading={<span className="cp-platform-row__mark" aria-hidden>{item.id.slice(0, 3).toUpperCase()}</span>} title={t(item.title)} subtitle={t(item.description)} facts={<span>{t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}</span>} status={dirty ? <StatusMark tone="warn" label={t("{{count}} 项待保存", { count: dirty })} /> : <QueryBadge label={t("未修改")} />} action={<ArrowRight size={14} aria-hidden />} />;
+          return <ObjectRow key={item.id} onClick={() => selectCategory(item.id)} leading={<span className="workspace-platform-row__mark" aria-hidden>{item.id.slice(0, 3).toUpperCase()}</span>} title={t(item.title)} subtitle={t(item.description)} facts={<span>{t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}</span>} status={dirty ? <StatusMark tone="warn" label={t("{{count}} 项待保存", { count: dirty })} /> : <QueryBadge label={t("未修改")} />} action={<ArrowRight size={14} aria-hidden />} />;
         })}</ObjectList> : <EmptyWorkState title={t("没有匹配的配置分类")} detail={t("搜索配置分类或参数")} />}
-      </WorkSurface> : null}
+      </WorkspaceCard> : null}
 
       {form && category ? <>
-        <WorkSurface eyebrow={`Governance / ${category.id}`} title={t(category.title)} description={t(category.description)} meta={t("{{count}} 个配置项", { count: category.fields.length + category.staticCount })} actions={<ControlButton variant="secondary" size="sm" onPress={() => void reloadFromServer()} isDisabled={reloadPending || saveMutation.isPending} loading={reloadPending}><RefreshCw size={14} aria-hidden />{t("重新加载")}</ControlButton>}>
-          {category.fields.length ? <div className="cp-form-section"><div className="cp-section-heading"><span><PencilLine size={14} aria-hidden />{t("可编辑配置")}</span><QueryBadge label={t("运行时变更，保存后生效")} /></div><div className="cp-form-grid">{category.fields.map((field) => <RuntimeFieldEditor key={field} field={field} form={form} defaultForm={defaultBaseline ? configToForm(defaultBaseline) : null} pending={saveMutation.isPending} setField={setFormField} restore={restoreField} />)}</div></div> : null}
-          {category.staticCount > 0 ? envBaseline ? <div className="cp-form-section"><div className="cp-section-heading"><span><LockKeyhole size={14} aria-hidden />{t("部署只读信息")}</span><QueryBadge label={t("来自部署环境，修改需重启")} /></div>{staticRows(category.id, envBaseline, t).map((group) => <StaticGroup key={group.title} title={group.title} rows={group.rows} />)}</div> : <EmptyWorkState title={t("静态配置加载失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-        </WorkSurface>
+        <WorkspaceCard eyebrow={`Governance / ${category.id}`} title={t(category.title)} description={t(category.description)} meta={t("{{count}} 个配置项", { count: category.fields.length + category.staticCount })} actions={<ControlButton variant="secondary" size="sm" onPress={() => void reloadFromServer()} isDisabled={reloadPending || saveMutation.isPending} loading={reloadPending}><RefreshCw size={14} aria-hidden />{t("重新加载")}</ControlButton>}>
+          {category.fields.length ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><PencilLine size={14} aria-hidden />{t("可编辑配置")}</span><QueryBadge label={t("运行时变更，保存后生效")} /></div><div className="workspace-form-grid">{category.fields.map((field) => <RuntimeFieldEditor key={field} field={field} form={form} defaultForm={defaultBaseline ? configToForm(defaultBaseline) : null} pending={saveMutation.isPending} setField={setFormField} restore={restoreField} />)}</div></div> : null}
+          {category.staticCount > 0 ? envBaseline ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><LockKeyhole size={14} aria-hidden />{t("部署只读信息")}</span><QueryBadge label={t("来自部署环境，修改需重启")} /></div>{staticRows(category.id, envBaseline, t).map((group) => <StaticGroup key={group.title} title={group.title} rows={group.rows} />)}</div> : <EmptyWorkState title={t("静态配置加载失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+        </WorkspaceCard>
 
-        <WorkSurface eyebrow="Governance / draft" title={t("配置草稿")} meta={changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")} description={t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。") }>
-          {staleDraft ? <p className="cp-notice cp-notice--warn">{t("运行配置已在后台更新，草稿基于旧数据；直接保存会用旧值覆盖新值，建议先重新加载。")} <ControlButton variant="secondary" size="sm" onPress={() => void reloadFromServer()}>{t("重新加载")}</ControlButton></p> : null}
-          {parsedResult.error ? <p className="cp-form-error" role="alert">{parsedResult.error}</p> : null}
-          <div className="cp-form-stack">
+        <WorkspaceCard eyebrow="Governance / draft" title={t("配置草稿")} meta={changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")} description={t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。") }>
+          {staleDraft ? <p className="workspace-notice workspace-notice--warn">{t("运行配置已在后台更新，草稿基于旧数据；直接保存会用旧值覆盖新值，建议先重新加载。")} <ControlButton variant="secondary" size="sm" onPress={() => void reloadFromServer()}>{t("重新加载")}</ControlButton></p> : null}
+          {parsedResult.error ? <p className="workspace-form-error" role="alert">{parsedResult.error}</p> : null}
+          <div className="workspace-form-stack">
             <ControlTextarea label={t("高级：JSON 变更")} hint={t("JSON 先应用到草稿，再统一保存；分类切换会保留未保存更改。")} aria-label={t("JSON 变更内容")} value={displayedPatchText} onChange={(event) => setCustomPatchText(event.target.value)} rows={8} spellCheck={false} disabled={saveMutation.isPending} />
-            <div className="cp-drawer-actions"><ControlButton variant="secondary" size="sm" onPress={applyCustomPatch} isDisabled={customPatchText === null || saveMutation.isPending}>{t("应用 JSON 到草稿")}</ControlButton><ControlButton variant="ghost" size="sm" onPress={() => setCustomPatchText(null)} isDisabled={customPatchText === null || saveMutation.isPending}>{t("取消 JSON 编辑")}</ControlButton></div>
+            <div className="workspace-drawer-actions"><ControlButton variant="secondary" size="sm" onPress={applyCustomPatch} isDisabled={customPatchText === null || saveMutation.isPending}>{t("应用 JSON 到草稿")}</ControlButton><ControlButton variant="ghost" size="sm" onPress={() => setCustomPatchText(null)} isDisabled={customPatchText === null || saveMutation.isPending}>{t("取消 JSON 编辑")}</ControlButton></div>
           </div>
-        </WorkSurface>
+        </WorkspaceCard>
 
         <CommandSurface actions={<><ControlButton variant="ghost" size="sm" onPress={resetDraft} isDisabled={!hasUnsavedChanges || saveMutation.isPending}><RotateCcw size={14} aria-hidden />{t("重置草稿")}</ControlButton><ControlButton variant="primary" size="sm" onPress={() => saveMutation.mutate()} isDisabled={isSaveDisabled} loading={saveMutation.isPending}><Save size={14} aria-hidden />{t("保存全部更改")}</ControlButton></>}>
-          <div><strong>{changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")}</strong><span className="cp-muted">{customPatchText !== null ? t("请先将 JSON 应用到草稿") : t("保存会提交所有分类的草稿更改。")}</span></div>
+          <div><strong>{changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")}</strong><span className="workspace-muted">{customPatchText !== null ? t("请先将 JSON 应用到草稿") : t("保存会提交所有分类的草稿更改。")}</span></div>
         </CommandSurface>
       </> : null}
 
       <ConfirmDrawer open={reloadOpen} onOpenChange={setReloadOpen} title={t("丢弃草稿并重新加载？")} eyebrow="Governance / reload" message={t("当前有未保存变更，重新加载会丢弃草稿并读取服务端运行时配置。") } cancelLabel={t("取消")} confirmLabel={t("丢弃并重新加载")} loading={reloadPending} onConfirm={() => { setReloadOpen(false); void reloadFromServer(true); }} />
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 

@@ -27,7 +27,7 @@ export function platformStatus(platform: Platform): { label: string; tone: Platf
   return { label: "正常", tone: "signal" };
 }
 
-/** The `.state-dot` variant for a platform tone; neutral keeps the bare dot. */
+/** The `.workspace-status-dot` variant for a platform tone; neutral keeps the bare dot. */
 export function platformDotClass(tone: PlatformTone): string {
-  return tone === "neutral" ? "state-dot" : `state-dot state-dot--${tone}`;
+  return tone === "neutral" ? "workspace-status-dot" : `workspace-status-dot workspace-status-dot--${tone}`;
 }

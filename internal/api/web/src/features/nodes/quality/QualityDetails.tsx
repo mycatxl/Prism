@@ -1,9 +1,8 @@
 import { AlertCircle, ArrowUpRight, Building2, Check, Clock3, Home, LoaderCircle, Server, ShieldCheck, Smartphone, Wifi } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { ControlButton, SectionHeading, WorkspaceCard } from "../../../components/control-plane";
 import { Badge, type BadgeProps } from "../../../components/ui/Badge";
-import { Button } from "../../../components/ui/Button";
-import { Panel, PanelBody, PanelHeader, SectionTitle } from "../../../components/ui/Panel";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
 import { useI18n } from "../../../i18n";
 import { opsPaths } from "../../../lib/paths";
@@ -122,7 +121,7 @@ export function IPTypeBadge({ summary }: { summary?: QualitySummary | null }) {
     tone={type === "conflicting" ? "warn" : type === "unknown" ? "neutral" : "outline"}
     title={type === "wireless" ? t("无线接入，包括蜂窝和卫星；不等同于移动蜂窝") : undefined}
   >
-    <Icon size={13} aria-hidden />
+    <Icon size={14} aria-hidden />
     {t(typeLabels[type] || "类型未知")}
   </Badge>;
 }
@@ -131,7 +130,7 @@ function EvidenceTime({ evidence }: { evidence: QualityEvidence }) {
   const { t } = useI18n();
   return <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-ink-faint">
     <span className="flex items-center gap-1.5">
-      <Clock3 size={12} aria-hidden />
+      <Clock3 size={14} aria-hidden />
       {t("检测于")}
       <span className="readout">{formatRelativeTime(evidence.observed_at)}</span>
     </span>
@@ -156,20 +155,20 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
   return <div className="space-y-3">
     {/* The two headline measurements of this exit, on one baseline rather than in
         two boxes, plus the verdict the operator reads first. */}
-    <Panel className="min-w-0">
-      <PanelHeader
-        title={
-          <span className="flex min-w-0 items-center gap-1.5">
-            <ShieldCheck size={16} aria-hidden className="shrink-0 text-ink-faint" />
-            <span className="truncate">{t("纯净度与风险")}</span>
-          </span>
-        }
-        actions={onInspect && <Button size="sm" variant="secondary" onClick={onInspect} disabled={pending || disabled}>
-          {pending ? <LoaderCircle size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
-          {t("更新网络特征")}
-        </Button>}
-      />
-      <PanelBody className="space-y-3">
+    <WorkspaceCard
+      className="min-w-0"
+      title={
+        <span className="flex min-w-0 items-center gap-1.5">
+          <ShieldCheck size={16} aria-hidden className="shrink-0 text-ink-faint" />
+          <span className="truncate">{t("纯净度与风险")}</span>
+        </span>
+      }
+      actions={onInspect && <ControlButton size="sm" variant="secondary" onPress={onInspect} isDisabled={pending || disabled} loading={pending}>
+        {pending ? <LoaderCircle size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+        {t("更新网络特征")}
+      </ControlButton>}
+    >
+      <div className="space-y-3">
         <ReadoutStrip>
           <ReadoutCell>
             <Readout
@@ -194,16 +193,15 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           <IPTypeBadge summary={summary} />
         </div>
         <p className="max-w-[68ch] text-2xs leading-relaxed text-ink-faint">{t("数值越低，来源判定风险越低")}</p>
-      </PanelBody>
-    </Panel>
+      </div>
+    </WorkspaceCard>
 
-    <Panel className="min-w-0">
-      <PanelHeader title={t("综合判定")} />
-      <PanelBody className="space-y-1.5">
+    <WorkspaceCard title={t("综合判定")}>
+      <div className="space-y-1.5">
         <VerdictBadge summary={summary} />
         {summary?.assessment?.reasons?.length ? <ul className="max-w-[68ch] space-y-0.5 text-xs leading-relaxed text-ink-soft">{summary.assessment.reasons.map(reason => <li key={reason}>{t(assessmentReasons[reason] || reason)}</li>)}</ul> : null}
-      </PanelBody>
-    </Panel>
+      </div>
+    </WorkspaceCard>
 
     <PurityGuide />
 
@@ -227,7 +225,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </p>}
 
     {evidence && <section className="space-y-3 border-t border-rule pt-3">
-      <SectionTitle>{t("网络证据")}</SectionTitle>
+      <SectionHeading>{t("网络证据")}</SectionHeading>
       <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
         <Fact label="ASN"><span className="readout">{evidence.asn || "—"}</span></Fact>
         <Fact label={t("网络组织")}><span className="block max-w-[46ch] truncate" title={evidence.organization || undefined}>{evidence.organization || "—"}</span></Fact>
@@ -257,7 +255,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           return <div key={key} className="flex min-w-0 items-center justify-between gap-2 border-b border-rule-faint py-1.5">
             <span className="truncate text-xs text-ink-soft">{t(label)}</span>
             <Badge tone={value === true ? "alert" : value === false ? "signal" : "neutral"}>
-              {value === true ? <AlertCircle size={12} aria-hidden /> : value === false ? <Check size={12} aria-hidden /> : null}
+              {value === true ? <AlertCircle size={14} aria-hidden /> : value === false ? <Check size={14} aria-hidden /> : null}
               {t(value === true ? "已标记" : value === false ? "未标记" : "未知")}
             </Badge>
           </div>;
@@ -279,12 +277,12 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </section>}
 
     {tor && <section className="space-y-2 border-t border-rule pt-3">
-      <SectionTitle>
+      <SectionHeading>
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={15} aria-hidden className="text-ink-faint" />
           {t("Tor 角色核验")}
         </span>
-      </SectionTitle>
+      </SectionHeading>
       {tor.evidence ? <>
         <div className="flex flex-wrap items-center gap-1.5">
           {tor.evidence.tor_roles?.length
@@ -298,12 +296,12 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </section>}
 
     {(abuse?.configured || abuse?.evidence) && <section className="space-y-2 border-t border-rule pt-3">
-      <SectionTitle>
+      <SectionHeading>
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={15} aria-hidden className="text-ink-faint" />
           {t("近期滥用记录")}
         </span>
-      </SectionTitle>
+      </SectionHeading>
       {abuse?.evidence ? <>
         <ReadoutStrip>
           <ReadoutCell>
@@ -325,7 +323,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </section>}
 
     {nodeHash ? <IPPureReviewPanel key={nodeHash + ":" + nodeIP} nodeHash={nodeHash} nodeIP={nodeIP} ready={nodeReady} /> : <div className="space-y-1 border-t border-rule pt-3">
-      <Link className="inline-flex items-center gap-1 text-sm" to={`${opsPaths.nodes}?egress_ip=${encodeURIComponent(summary?.ip || "")}`}>{t("查看此出口的节点")}<ArrowUpRight size={12} aria-hidden /></Link>
+      <Link className="inline-flex items-center gap-1 text-sm" to={`${opsPaths.nodes}?egress_ip=${encodeURIComponent(summary?.ip || "")}`}>{t("查看此出口的节点")}<ArrowUpRight size={14} aria-hidden /></Link>
       <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("纯净度评分需要经目标节点查询，可在节点详情中直接复核。")}</p>
     </div>}
   </div>;

@@ -6,7 +6,9 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  // `.local` holds git-ignored acceptance and audit scripts; they are not part
+  // of the bundle and must not decide whether the app lints.
+  globalIgnores(['dist', '.local']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

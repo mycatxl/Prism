@@ -7,11 +7,11 @@ import {
   EmptyWorkState,
   DetailFact,
   StatusMark,
-  WorkSurface,
-  PageFrame,
+  WorkspaceCard,
+  WorkspacePage,
   QueryBadge,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
@@ -62,7 +62,7 @@ export function GeoIPPage() {
   }, [singleResult, t]);
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Governance / resources"
       title={t("资源")}
       description={t("检查 GeoIP 数据库的加载状态，并对单个地址执行区域查询。")}
@@ -71,18 +71,18 @@ export function GeoIPPage() {
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="cp-split">
-        <WorkSurface eyebrow="Governance / database" title={t("GeoIP 数据库状态")} description={t("当前加载时间与下一次计划更新时间来自 GeoIP 状态接口。")}>
+      <div className="workspace-split">
+        <WorkspaceCard eyebrow="Governance / database" title={t("GeoIP 数据库状态")} description={t("当前加载时间与下一次计划更新时间来自 GeoIP 状态接口。")}>
           {statusQuery.isError && !statusQuery.data ? <EmptyWorkState title={t("GeoIP 状态读取失败")} detail={formatApiErrorMessage(statusQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void statusQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-          {statusQuery.isLoading && !statusQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载 GeoIP 状态")}</div> : null}
+          {statusQuery.isLoading && !statusQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载 GeoIP 状态")}</div> : null}
           {status ? (
-            <div className="cp-stack">
-              <dl className="cp-detail-facts">
+            <div className="workspace-stack">
+              <dl className="workspace-detail-facts">
                 <DetailFact label={t("数据库状态")} value={<StatusMark tone={hasDBTime ? "signal" : "warn"} label={hasDBTime ? t("数据库已加载") : t("数据库未加载")} />} />
                 <DetailFact label={t("数据库更新时间")} value={hasDBTime ? formatDateTime(status.db_mtime) : "-"} mono />
                 <DetailFact label={t("下次计划更新")} value={hasNextSchedule ? formatDateTime(status.next_scheduled_update) : "-"} mono />
               </dl>
-              <div className="cp-drawer-actions">
+              <div className="workspace-drawer-actions">
                 <ControlButton variant="secondary" size="sm" onPress={() => void updateMutation.mutateAsync()} loading={updateMutation.isPending}>
                   <ArrowDownToLine size={14} aria-hidden className={cn(updateMutation.isPending && "animate-spin")} />
                   {t("立即更新")}
@@ -91,26 +91,26 @@ export function GeoIPPage() {
               </div>
             </div>
           ) : null}
-        </WorkSurface>
+        </WorkspaceCard>
 
-        <WorkSurface eyebrow="Governance / lookup" title={t("单 IP 查询")} description={t("输入 IP 后查询服务端当前 GeoIP 区域结果。")}>
-          <form className="cp-form-stack" onSubmit={(event) => { event.preventDefault(); void lookupMutation.mutateAsync(); }}>
+        <WorkspaceCard eyebrow="Governance / lookup" title={t("单 IP 查询")} description={t("输入 IP 后查询服务端当前 GeoIP 区域结果。")}>
+          <form className="workspace-form-stack" onSubmit={(event) => { event.preventDefault(); void lookupMutation.mutateAsync(); }}>
             <ControlInput label={t("IP 地址")} hint={t("例如 8.8.8.8")} className="readout" value={singleIP} onChange={(event) => setSingleIP(event.target.value)} />
-            <div className="cp-drawer-actions">
+            <div className="workspace-drawer-actions">
               <ControlButton type="submit" variant="primary" size="sm" loading={lookupMutation.isPending}><Search size={14} aria-hidden />{t("查询")}</ControlButton>
             </div>
           </form>
           {singleResult ? (
-            <dl className="cp-detail-facts" aria-live="polite">
+            <dl className="workspace-detail-facts" aria-live="polite">
               <DetailFact label="IP" value={singleResult.ip || "-"} mono />
               <DetailFact label={t("区域")} value={singleRegion} />
             </dl>
           ) : (
             <EmptyWorkState title={t("输入 IP 执行查询")} detail={t("查询结果会在这里显示，不会生成未返回的区域信息。")} />
           )}
-        </WorkSurface>
+        </WorkspaceCard>
       </div>
-    </PageFrame>
+    </WorkspacePage>
   );
 }
 

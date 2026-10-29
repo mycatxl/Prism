@@ -1,48 +1,55 @@
-import * as TabsPrimitive from "@radix-ui/react-tabs";
+import { Tabs as HeroTabs } from "@heroui/react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
-/**
- * Segmented control inside an inset trough; the active segment is the raised one,
- * with Radix's ARIA and keyboard behaviour untouched. Both shapes are rectangles —
- * the only pill in the system is `Badge`.
- */
-export const Tabs = TabsPrimitive.Root;
+type TabsRootProps = Omit<
+  ComponentProps<typeof HeroTabs>,
+  "children" | "selectedKey" | "defaultSelectedKey" | "onSelectionChange"
+> & {
+  children: ReactNode;
+  value?: string;
+  defaultValue?: string;
+  onValueChange?: (value: string) => void;
+};
 
-export function TabsList({
+export function Tabs({
+  value,
+  defaultValue,
+  onValueChange,
   className,
+  children,
   ...rest
-}: React.ComponentProps<typeof TabsPrimitive.List>) {
+}: TabsRootProps) {
   return (
-    <TabsPrimitive.List
-      className={cn(
-        "inline-flex min-h-[var(--control-h-lg)] flex-wrap items-center gap-1 rounded-control border border-rule bg-paper-inset p-1",
-        className,
-      )}
+    <HeroTabs
       {...rest}
-    />
+      selectedKey={value}
+      defaultSelectedKey={defaultValue}
+      onSelectionChange={(key) => onValueChange?.(String(key))}
+      variant="primary"
+      className={cn("workspace-tabs", className)}
+    >
+      {children}
+    </HeroTabs>
   );
 }
 
-export function TabsTrigger({
-  className,
-  ...rest
-}: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+export function TabsList({ className, ...rest }: ComponentProps<typeof HeroTabs.List>) {
+  return <HeroTabs.List {...rest} className={cn("workspace-tabs__list", className)} />;
+}
+
+export function TabsTrigger({ value, className, children, ...rest }: ComponentProps<typeof HeroTabs.Tab> & { value: string }) {
   return (
-    <TabsPrimitive.Trigger
-      className={cn(
-        "action inline-flex h-[var(--control-h-sm)] items-center justify-center rounded-[calc(var(--radius-control)-3px)] px-3 text-xs font-medium text-ink-soft select-none",
-        "hover:text-ink",
-        "data-[state=active]:border data-[state=active]:border-rule data-[state=active]:bg-paper-raised data-[state=active]:font-semibold data-[state=active]:text-ink data-[state=active]:shadow-xs",
-        className,
-      )}
-      {...rest}
-    />
+    <HeroTabs.Tab {...rest} id={value} className={cn("workspace-tabs__tab", className)}>
+      {children}
+    </HeroTabs.Tab>
   );
 }
 
-export function TabsContent({
-  className,
-  ...rest
-}: React.ComponentProps<typeof TabsPrimitive.Content>) {
-  return <TabsPrimitive.Content className={cn("outline-none", className)} {...rest} />;
+export function TabsContent({ value, className, children, ...rest }: ComponentProps<typeof HeroTabs.Panel> & { value: string }) {
+  return (
+    <HeroTabs.Panel {...rest} id={value} className={cn("outline-none", className)}>
+      {children}
+    </HeroTabs.Panel>
+  );
 }

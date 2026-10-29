@@ -2,15 +2,26 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Globe2, LoaderCircle, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Button } from "../../../components/ui/Button";
-import { Input } from "../../../components/ui/Input";
-import { PageMeta } from "../../../components/ui/PageHeader";
-import { Panel, PanelBody, PanelFooter, PanelHeader, PanelToolbar } from "../../../components/ui/Panel";
+import {
+  CommandSurface,
+  ControlButton,
+  ControlInput,
+  ControlTable,
+  ControlTableBody,
+  ControlTableCell,
+  ControlTableClipCell,
+  ControlTableColumn,
+  ControlTableHead,
+  ControlTableNumericCell,
+  ControlTableRow,
+  ControlTableWrap,
+  ControlToastContainer,
+  InspectorDrawer,
+  QueryBadge,
+  WorkspaceCard,
+} from "../../../components/control-plane";
 import { EmptyState, ErrorState, LoadingState } from "../../../components/ui/QueryState";
 import { Readout, ReadoutCell, ReadoutStrip } from "../../../components/ui/Readout";
-import { Sheet } from "../../../components/ui/Sheet";
-import { TBody, TD, TDClip, TDNum, TH, THead, TR, Table, TableWrap } from "../../../components/ui/Table";
-import { ToastContainer } from "../../../components/ui/Toast";
 import { useDebouncedValue } from "../../../hooks/useDebouncedValue";
 import { useToast } from "../../../hooks/useToast";
 import { useI18n } from "../../../i18n";
@@ -71,7 +82,7 @@ export function ExitRecordsPanel() {
       update("quality_page", String(Math.max(0, Math.min(totalPages - 1, value - 1))));
   };
   return <section className="space-y-3">
-    <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+    <ControlToastContainer toasts={toasts} onDismiss={dismissToast} />
 
     <ReadoutStrip>
       {[
@@ -86,20 +97,19 @@ export function ExitRecordsPanel() {
       ))}
     </ReadoutStrip>
 
-    <Panel className="flex min-w-0 flex-col">
-      <PanelHeader
-        title={t("IP 检测记录")}
-        description={t("相同出口共享结果，节点连通状态独立记录。")}
-        actions={
-          <Button variant="ghost" size="sm" onClick={() => void records.refetch()} disabled={records.isFetching}>
-            <RefreshCw size={14} className={records.isFetching ? "animate-spin" : undefined} />
-            {t("刷新")}
-          </Button>
-        }
-      />
-
+    <WorkspaceCard
+      className="min-w-0"
+      title={t("IP 检测记录")}
+      description={t("相同出口共享结果，节点连通状态独立记录。")}
+      actions={
+        <ControlButton variant="ghost" size="sm" onPress={() => void records.refetch()} isDisabled={records.isFetching}>
+          <RefreshCw size={14} className={records.isFetching ? "animate-spin" : undefined} />
+          {t("刷新")}
+        </ControlButton>
+      }
+    >
       {status.isError || status.data?.enabled === false || status.data?.storage_error ? (
-        <PanelBody className="space-y-2 py-2">
+        <div className="mb-3 space-y-2">
           {status.isError && <ErrorState message={t("数据暂时不可用")} onRetry={() => void status.refetch()} />}
           {status.data?.enabled === false && (
             <p className="border border-warn/35 bg-warn-wash px-3 py-2 text-sm text-warn" role="status">
@@ -107,106 +117,94 @@ export function ExitRecordsPanel() {
             </p>
           )}
           {status.data?.storage_error && <ErrorState message={t(inspectionErrorLabel(status.data.storage_error))} />}
-        </PanelBody>
+        </div>
       ) : null}
 
-      <PanelToolbar>
+      <CommandSurface className="mb-3">
         <form
           className="flex min-w-0 flex-wrap items-center gap-2"
           onSubmit={event => { event.preventDefault(); inspect.mutate(ipInput.trim()); }}
         >
           <Globe2 size={16} aria-hidden className="shrink-0 text-ink-faint" />
-          <Input
-            className="readout h-[var(--control-h)] w-full text-xs sm:w-56"
+          <ControlInput
+            className="w-full sm:w-56"
             value={ipInput}
             maxLength={80}
             onChange={event => setIPInput(event.target.value)}
             placeholder={t("输入公网 IPv4 或 IPv6")}
             aria-label={t("检测 IP 地址")}
           />
-          <Button size="sm" type="submit" disabled={!ipInput.trim() || inspect.isPending || status.data?.enabled === false}>
+          <ControlButton size="sm" type="submit" isDisabled={!ipInput.trim() || inspect.isPending || status.data?.enabled === false}>
             {inspect.isPending ? <LoaderCircle size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
             {t("查询网络特征")}
-          </Button>
+          </ControlButton>
         </form>
 
         <div className="relative ml-auto w-full sm:w-64">
-          <Search size={14} aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-faint" />
-          <Input
-            className="h-[var(--control-h)] pl-8 text-xs"
+          <Search size={14} aria-hidden className="pointer-events-none absolute top-1/2 left-2.5 z-10 -translate-y-1/2 text-ink-faint" />
+          <ControlInput
+            className="w-full"
             value={keyword}
             onChange={event => update("quality_q", event.target.value)}
             aria-label={t("搜索质量记录")}
             placeholder={t("搜索 IP、ASN 或网络组织")}
           />
         </div>
-      </PanelToolbar>
+      </CommandSurface>
 
-      {records.isLoading && (
-        <PanelBody>
-          <LoadingState />
-        </PanelBody>
-      )}
-      {records.isError && (
-        <PanelBody>
-          <ErrorState message={t("数据暂时不可用")} onRetry={() => void records.refetch()} />
-        </PanelBody>
-      )}
+      {records.isLoading && <LoadingState />}
+      {records.isError && <ErrorState message={t("数据暂时不可用")} onRetry={() => void records.refetch()} />}
 
       {!records.isLoading && !records.isError && !records.data?.items.length && (
-        <PanelBody>
-          <EmptyState
-            title={t("为出口建立第一份质量记录")}
-            hint={t("在这里输入 IP，或到节点池选择“检测质量”。新发现的出口也会自动排队。")}
-          />
-        </PanelBody>
+        <EmptyState
+          title={t("为出口建立第一份质量记录")}
+          hint={t("在这里输入 IP，或到节点池选择“检测质量”。新发现的出口也会自动排队。")}
+        />
       )}
 
       {Boolean(records.data?.items.length) && (
-        <TableWrap aria-busy={records.isFetching}>
-          <Table className="min-w-[900px]">
-            <THead>
-              <TR>
-                <TH>{t("出口 IP")}</TH>
-                <TH>{t("网络组织")}</TH>
-                <TH>{t("IP 类型")}</TH>
-                <TH>{t("纯净度参考")}</TH>
-                <TH>{t("综合判定")}</TH>
-                <TH className="text-right">{t("复核时间")}</TH>
-              </TR>
-            </THead>
-            <TBody>
+        <ControlTableWrap aria-busy={records.isFetching}>
+          <ControlTable className="min-w-[900px]">
+            <ControlTableHead>
+              <ControlTableColumn isRowHeader>{t("出口 IP")}</ControlTableColumn>
+              <ControlTableColumn>{t("网络组织")}</ControlTableColumn>
+              <ControlTableColumn>{t("IP 类型")}</ControlTableColumn>
+              <ControlTableColumn>{t("纯净度参考")}</ControlTableColumn>
+              <ControlTableColumn>{t("综合判定")}</ControlTableColumn>
+              <ControlTableColumn className="text-right">{t("复核时间")}</ControlTableColumn>
+            </ControlTableHead>
+            <ControlTableBody>
               {records.data?.items.map(item => (
-                <TR key={item.ip} selected={selected === item.ip}>
-                  <TDClip title={item.ip}>
-                    <Button
+                <ControlTableRow key={item.ip} selected={selected === item.ip}>
+                  <ControlTableClipCell title={item.ip}>
+                    <ControlButton
                       type="button"
-                      variant="quiet"
+                      variant="ghost"
                       className="h-auto w-full min-w-0 justify-start gap-2 p-0 text-left"
-                      onClick={() => update("quality_ip", item.ip || "")}
+                      onPress={() => update("quality_ip", item.ip || "")}
                     >
                       <Globe2 size={15} aria-hidden className="shrink-0 text-ink-faint" />
                       <span className="readout truncate font-medium text-ink">{item.ip}</span>
-                    </Button>
-                  </TDClip>
-                  <TDClip className="text-xs text-ink-faint" title={item.evidence?.organization || undefined}>
+                    </ControlButton>
+                  </ControlTableClipCell>
+                  <ControlTableClipCell className="text-xs text-ink-faint" title={item.evidence?.organization || undefined}>
                     {item.evidence?.organization || t("等待来源数据")}
-                  </TDClip>
-                  <TD className="whitespace-nowrap"><IPTypeBadge summary={item} /></TD>
-                  <TD className="whitespace-nowrap"><QualityBadge summary={item} /></TD>
-                  <TD className="whitespace-nowrap"><VerdictBadge summary={item} /></TD>
-                  <TDNum className="text-ink-faint">
+                  </ControlTableClipCell>
+                  <ControlTableCell className="whitespace-nowrap"><IPTypeBadge summary={item} /></ControlTableCell>
+                  <ControlTableCell className="whitespace-nowrap"><QualityBadge summary={item} /></ControlTableCell>
+                  <ControlTableCell className="whitespace-nowrap"><VerdictBadge summary={item} /></ControlTableCell>
+                  <ControlTableNumericCell className="text-ink-faint">
                     {formatRelativeTime(evidenceFor(item, "ippure")?.observed_at)}
-                  </TDNum>
-                </TR>
+                  </ControlTableNumericCell>
+                </ControlTableRow>
               ))}
-            </TBody>
-          </Table>
-        </TableWrap>
+            </ControlTableBody>
+          </ControlTable>
+        </ControlTableWrap>
       )}
 
       {records.data && (
-        <PanelFooter className="justify-between">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-rule-faint pt-3">
           <p className="readout text-xs text-ink-soft">
             {t("第 {{page}} / {{pages}} 页 · 显示 {{start}}-{{end}} / {{total}}", {
               page: currentPage + 1,
@@ -217,16 +215,12 @@ export function ExitRecordsPanel() {
             })}
           </p>
           <div className="flex flex-wrap items-center gap-2">
-            {/* The page size is fixed at 25 and the API takes no size parameter,
-                so this is a reading, not a selector. It used to be a `<Select>`
-                with an empty `onChange`, which is a control that cannot be
-                operated — the one shape worse than a missing control. */}
-            <PageMeta label={t("每页")} value={pageSize} />
+            <QueryBadge label={`${t("每页")} ${pageSize}`} />
             <label className="flex items-center gap-1.5 text-xs text-ink-soft">
               <span>{t("跳至")}</span>
-              <Input
+              <ControlInput
                 key={currentPage}
-                className="readout h-[var(--control-h)] w-16 text-center text-xs"
+                className="w-16"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -240,40 +234,37 @@ export function ExitRecordsPanel() {
                 onBlur={(event) => jumpToPage(event.currentTarget.value)}
               />
             </label>
-            <Button
+            <ControlButton
               variant="ghost"
               size="icon"
               aria-label={t("上一页")}
-              title={t("上一页")}
-              disabled={records.isFetching || currentPage === 0}
-              onClick={() => update("quality_page", String(currentPage - 1))}
+              isDisabled={records.isFetching || currentPage === 0}
+              onPress={() => update("quality_page", String(currentPage - 1))}
             >
               <ChevronLeft />
-            </Button>
-            <Button
+            </ControlButton>
+            <ControlButton
               variant="ghost"
               size="icon"
               aria-label={t("下一页")}
-              title={t("下一页")}
-              disabled={records.isFetching || currentPage >= totalPages - 1}
-              onClick={() => update("quality_page", String(currentPage + 1))}
+              isDisabled={records.isFetching || currentPage >= totalPages - 1}
+              onPress={() => update("quality_page", String(currentPage + 1))}
             >
               <ChevronRight />
-            </Button>
+            </ControlButton>
           </div>
-        </PanelFooter>
+        </div>
       )}
-    </Panel>
+    </WorkspaceCard>
 
     {selected && (
-      <Sheet
+      <InspectorDrawer
         open
         onOpenChange={(open) => {
           if (!open) update("quality_ip", "");
         }}
+        eyebrow={<span className="readout">{selected}</span>}
         title={t("IP 质量详情")}
-        description={<span className="readout">{selected}</span>}
-        width="lg"
       >
         <div className="space-y-4">
           <p className="max-w-[68ch] text-xs text-ink-faint">{t("独立出口的质量证据")}</p>
@@ -291,7 +282,7 @@ export function ExitRecordsPanel() {
             disabled={status.data?.enabled === false}
           />
         </div>
-      </Sheet>
+      </InspectorDrawer>
     )}
   </section>;
 }

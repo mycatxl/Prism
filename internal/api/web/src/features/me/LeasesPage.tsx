@@ -9,12 +9,12 @@ import {
   InspectorDrawer,
   ObjectList,
   ObjectRow,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
-import { ToastContainer } from "../../components/ui/Toast";
+import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -97,7 +97,7 @@ export function LeasesPage() {
   const refresh = () => void leasesQuery.refetch();
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Self Service / leases"
       title={t("我的租约")}
       description={t("查看当前粘定的出口，并在到期前主动释放。")}
@@ -105,7 +105,7 @@ export function LeasesPage() {
       actions={<ControlButton variant="secondary" size="sm" onPress={refresh} loading={leasesQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>}
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-      <WorkSurface
+      <WorkspaceCard headerless
         eyebrow="Lease registry"
         title={t("当前租约")}
         description={t("同一账号在租约有效期内保持同一个出口 IP。选择一行查看完整绑定关系。")}
@@ -114,7 +114,7 @@ export function LeasesPage() {
         {leasesQuery.isError && !leasesQuery.data ? (
           <EmptyWorkState title={t("租约读取失败")} detail={formatApiErrorMessage(leasesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leasesQuery.refetch()}>{t("重试")}</ControlButton>} />
         ) : null}
-        {leasesQuery.isLoading && !leasesQuery.data ? <div className="cp-register-state"><span className="cp-spinner" aria-hidden />{t("正在加载租约...")}</div> : null}
+        {leasesQuery.isLoading && !leasesQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载租约...")}</div> : null}
         {!leasesQuery.isLoading && !leasesQuery.isError && leases.length === 0 ? <EmptyWorkState title={t("暂无租约")} detail={t("建立代理连接后，粘定的出口会显示在这里。")} /> : null}
         {leases.length > 0 ? (
           <ObjectList>
@@ -133,15 +133,15 @@ export function LeasesPage() {
             ))}
           </ObjectList>
         ) : null}
-      </WorkSurface>
-      <WorkSurface eyebrow="Lease policy" title={t("租约保持")} description={t("释放后下一次连接会重新选择出口。释放动作按平台和账号地址提交，不改变其他租户或平台的租约。")}>
-        <div className="cp-data-grid">
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("当前租约")}</span><strong className="cp-data-grid__value">{leases.length}</strong></div>
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("自动刷新")}</span><strong className="cp-data-grid__value">60s</strong></div>
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("即将到期")}</span><strong className="cp-data-grid__value">{leases.filter((lease) => { const ms = Date.parse(lease.expiry) - now; return Number.isFinite(ms) && ms > 0 && ms <= LEASE_WARN_MS; }).length}</strong></div>
-          <div className="cp-data-grid__cell"><span className="cp-data-grid__label">{t("释放方式")}</span><strong className="cp-data-grid__value">{t("逐条")}</strong></div>
+      </WorkspaceCard>
+      <WorkspaceCard eyebrow="Lease policy" title={t("租约保持")} description={t("释放后下一次连接会重新选择出口。释放动作按平台和账号地址提交，不改变其他租户或平台的租约。")}>
+        <div className="workspace-data-grid">
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("当前租约")}</span><strong className="workspace-data-grid__value">{leases.length}</strong></div>
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("自动刷新")}</span><strong className="workspace-data-grid__value">60s</strong></div>
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("即将到期")}</span><strong className="workspace-data-grid__value">{leases.filter((lease) => { const ms = Date.parse(lease.expiry) - now; return Number.isFinite(ms) && ms > 0 && ms <= LEASE_WARN_MS; }).length}</strong></div>
+          <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("释放方式")}</span><strong className="workspace-data-grid__value">{t("逐条")}</strong></div>
         </div>
-      </WorkSurface>
+      </WorkspaceCard>
       <InspectorDrawer
         open={Boolean(selected) && !releaseTarget}
         onOpenChange={(open) => { if (!open) setSelected(null); }}
@@ -150,9 +150,9 @@ export function LeasesPage() {
         footer={selected ? <><ControlButton variant="ghost" size="sm" onPress={() => setSelected(null)}>{t("关闭")}</ControlButton><ControlButton variant="danger" size="sm" onPress={() => setReleaseTarget(selected)}><Unlink size={14} aria-hidden />{t("释放")}</ControlButton></> : undefined}
       >
         {selected ? (
-          <div className="cp-stack">
+          <div className="workspace-stack">
             <RemainingState lease={selected} />
-            <dl className="cp-detail-facts">
+            <dl className="workspace-detail-facts">
               <DetailFact label={t("平台") } value={selected.platform_name || selected.platform_id} />
               <DetailFact label={t("平台 ID")} value={selected.platform_id} mono />
               <DetailFact label={t("账号")} value={selected.account} mono />
@@ -176,6 +176,6 @@ export function LeasesPage() {
         loading={releaseMutation.isPending}
         onConfirm={() => { if (releaseTarget) releaseMutation.mutate(releaseTarget); }}
       />
-    </PageFrame>
+    </WorkspacePage>
   );
 }

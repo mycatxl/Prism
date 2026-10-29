@@ -19,21 +19,13 @@ export type StatusMarkProps = HTMLAttributes<HTMLDivElement> & {
   value?: ReactNode;
 };
 
-/** A compact runtime state marker without the pill semantics of Badge. */
-export function StatusMark({
-  className,
-  tone = "neutral",
-  label,
-  age,
-  value,
-  ...rest
-}: StatusMarkProps) {
+export function StatusMark({ className, tone = "neutral", label, age, value, ...rest }: StatusMarkProps) {
   return (
-    <div className={cn("flex min-w-0 items-center gap-2", className)} {...rest}>
-      <span aria-hidden className={cn("size-2 shrink-0 bg-current", toneClass[tone])} />
-      <span className="min-w-0 truncate text-sm text-ink">{label}</span>
-      {age !== undefined && <span className="shrink-0 text-xs text-ink-faint">{age}</span>}
-      {value !== undefined && <span className="readout ml-auto shrink-0">{value}</span>}
+    <div className={cn("workspace-status-line", className)} {...rest}>
+      <span aria-hidden className={cn("workspace-status-line__mark", toneClass[tone])} />
+      <span className="workspace-status-line__label">{label}</span>
+      {age !== undefined ? <span className="workspace-status-line__age">{age}</span> : null}
+      {value !== undefined ? <span className="readout workspace-status-line__value">{value}</span> : null}
     </div>
   );
 }

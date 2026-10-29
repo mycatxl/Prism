@@ -5,10 +5,10 @@ import {
   ControlButton,
   ControlInput,
   ControlTextarea,
-  PageFrame,
+  WorkspacePage,
   QueryBadge,
   StatusMark,
-  WorkSurface,
+  WorkspaceCard,
 } from "../../components/control-plane";
 import { useI18n } from "../../i18n";
 import { apiRequest, ApiError, fetchSession } from "../../lib/api-client";
@@ -173,47 +173,47 @@ export function AccountSecurityPage() {
   if (!user) return null;
 
   return (
-    <PageFrame
+    <WorkspacePage
       eyebrow="Account / security"
       title={t("账户安全")}
       description={t("管理密码与双因素认证，保护控制台访问。")}
       meta={<QueryBadge label={user.username} tone="neutral" />}
     >
       <div className="workbench-layout">
-        <WorkSurface
+        <WorkspaceCard
           eyebrow="Credential policy"
           title={t("修改密码")}
           description={t("修改后，账户的所有现有会话都会立即失效。")}
           actions={<StatusMark tone="warn" label={t("修改后需要重新登录")} />}
         >
-          <form className="cp-form-stack" onSubmit={(event) => { event.preventDefault(); void changePassword(); }}>
+          <form className="workspace-form-stack" onSubmit={(event) => { event.preventDefault(); void changePassword(); }}>
             <ControlInput label={t("当前密码")} type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
             <ControlInput label={t("新密码")} hint={t("至少 12 个字符。")} type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
             <ControlInput label={t("确认新密码")} type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
-            {passwordError ? <p role="alert" className="cp-form-error">{passwordError}</p> : null}
-            {passwordMessage ? <p role="status" className="cp-form-success">{passwordMessage}</p> : null}
-            <div className="cp-drawer-actions">
+            {passwordError ? <p role="alert" className="workspace-form-error">{passwordError}</p> : null}
+            {passwordMessage ? <p role="status" className="workspace-form-success">{passwordMessage}</p> : null}
+            <div className="workspace-drawer-actions">
               <ControlButton type="submit" variant="primary" size="sm" isDisabled={busy || !currentPassword || !newPassword || !confirmPassword} loading={busy}>
                 <KeyRound size={14} aria-hidden />
                 {t("更新密码")}
               </ControlButton>
             </div>
           </form>
-        </WorkSurface>
+        </WorkspaceCard>
 
-        <WorkSurface
+        <WorkspaceCard
           eyebrow="Authenticator"
           title={t("双因素认证")}
           description={t("使用身份验证器为登录增加一次性验证码。")}
           actions={<StatusMark tone={hasTotp ? "signal" : "warn"} label={hasTotp ? t("已启用") : t("未启用")} />}
         >
           {hasTotp ? (
-            <div className="cp-stack">
-              <div className="cp-notice cp-notice--signal">
+            <div className="workspace-stack">
+              <div className="workspace-notice workspace-notice--signal">
                 <ShieldCheck size={18} aria-hidden />
                 <div><strong>{t("双因素认证已启用")}</strong><p>{t("每次登录都需要身份验证器生成的 6 位验证码。")}</p></div>
               </div>
-              {totpError ? <p role="alert" className="cp-form-error">{totpError}</p> : null}
+              {totpError ? <p role="alert" className="workspace-form-error">{totpError}</p> : null}
               <ControlInput label={t("当前密码")} hint={t("关闭双因素认证需要确认当前密码。") } type="password" autoComplete="current-password" value={disablePassword} onChange={(event) => setDisablePassword(event.target.value)} />
               <ControlButton variant="secondary" size="sm" onPress={() => void disableTotp()} isDisabled={busy || !disablePassword} loading={busy}>
                 <ShieldOff size={14} aria-hidden />
@@ -221,23 +221,23 @@ export function AccountSecurityPage() {
               </ControlButton>
             </div>
           ) : (
-            <div className="cp-stack">
-              <p className="cp-muted">{t("尚未启用双因素认证。管理员可以在这里生成身份验证器配置并确认。")}</p>
+            <div className="workspace-stack">
+              <p className="workspace-muted">{t("尚未启用双因素认证。管理员可以在这里生成身份验证器配置并确认。")}</p>
               {enrolment ? (
-                <div className="cp-inset-stack">
+                <div className="workspace-inset-stack">
                   <ControlTextarea label={t("身份验证器配置 URI")} readOnly value={enrolment.uri} rows={3} className="font-mono" />
                   <ControlInput label={t("手动设置密钥")} readOnly value={enrolment.secret} className="font-mono" />
                   <ControlInput label={t("确认验证码")} hint={t("在身份验证器中添加账户后，输入当前显示的 6 位验证码。") } inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={totpCode} onChange={(event) => setTotpCode(event.target.value)} className="font-mono" />
-                  {totpError ? <p role="alert" className="cp-form-error">{totpError}</p> : null}
-                  <div className="cp-drawer-actions">
+                  {totpError ? <p role="alert" className="workspace-form-error">{totpError}</p> : null}
+                  <div className="workspace-drawer-actions">
                     <ControlButton variant="primary" size="sm" onPress={() => void confirmEnrolment()} isDisabled={busy || !totpCode} loading={busy}>{t("确认并启用")}</ControlButton>
                     <ControlButton variant="ghost" size="sm" onPress={cancelEnrolment} isDisabled={busy}>{t("取消")}</ControlButton>
                   </div>
                 </div>
               ) : (
                 <>
-                  {totpError ? <p role="alert" className="cp-form-error">{totpError}</p> : null}
-                  {totpMessage ? <p role="status" className="cp-form-success">{totpMessage}</p> : null}
+                  {totpError ? <p role="alert" className="workspace-form-error">{totpError}</p> : null}
+                  {totpMessage ? <p role="status" className="workspace-form-success">{totpMessage}</p> : null}
                   <ControlButton variant="primary" size="sm" onPress={() => void startEnrolment()} isDisabled={busy} loading={busy}>
                     <ShieldCheck size={14} aria-hidden />
                     {t("开始设置双因素认证")}
@@ -246,8 +246,8 @@ export function AccountSecurityPage() {
               )}
             </div>
           )}
-        </WorkSurface>
+        </WorkspaceCard>
       </div>
-    </PageFrame>
+    </WorkspacePage>
   );
 }

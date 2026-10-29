@@ -1,24 +1,21 @@
-import type { InputHTMLAttributes } from "react";
-import { forwardRef } from "react";
+import { Checkbox as HeroCheckbox } from "@heroui/react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
-/**
- * Checkbox: a native control struck square, in the accent token. The browser
- * keeps its own keyboard and touch behaviour; only the paint is ours.
- */
-export const Checkbox = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
-  function Checkbox({ className, ...rest }, ref) {
-    return (
-      <input
-        ref={ref}
-        type="checkbox"
-        className={cn(
-          "size-4 shrink-0 cursor-pointer rounded-[2px] border border-rule-strong bg-paper-raised accent-[var(--color-accent)]",
-          "hover:border-ink-faint active:brightness-95 disabled:cursor-not-allowed disabled:opacity-50",
-          className,
-        )}
-        {...rest}
-      />
-    );
-  },
-);
+export type CheckboxProps = Omit<ComponentProps<typeof HeroCheckbox>, "children" | "className"> & {
+  className?: string;
+  label?: ReactNode;
+};
+
+export function Checkbox({ className, label, ...props }: CheckboxProps) {
+  return (
+    <HeroCheckbox {...props} className={cn("workspace-checkbox", className)}>
+      <HeroCheckbox.Content>
+        <HeroCheckbox.Control>
+          <HeroCheckbox.Indicator />
+        </HeroCheckbox.Control>
+        {label ? <span className="workspace-checkbox__label">{label}</span> : null}
+      </HeroCheckbox.Content>
+    </HeroCheckbox>
+  );
+}
