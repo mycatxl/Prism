@@ -23,6 +23,8 @@ const UNSUPPORTED_FILTER_KEYS = [
   "risk_grade",
   "purity_min",
   "purity_max",
+  "purity_state",
+  "purity_reason",
   "confidence_min",
   "native",
   "asn",
@@ -61,9 +63,9 @@ export function buildBulkIntelScope(params: URLSearchParams): IntelJobScope {
 
 /**
  * hasUnsupportedFilters reports whether the URL narrows the list in a way a
- * bulk intel job cannot reproduce; the button then warns that the job covers
- * more nodes than the list shows.
+ * bulk intel job cannot reproduce; the UI disables the action for that scope.
  */
 export function hasUnsupportedFilters(params: URLSearchParams): boolean {
-  return UNSUPPORTED_FILTER_KEYS.some((key) => param(params, key) !== "");
+  return Boolean(param(params, "platform_id") && param(params, "subscription_id"))
+    || UNSUPPORTED_FILTER_KEYS.some((key) => param(params, key) !== "");
 }

@@ -72,17 +72,16 @@ type qualityFacts struct {
 
 // AdmitQuality applies the rule list and reports the first failure.
 //
-// An empty policy always passes, which reproduces the upstream Resin behaviour
-// (deviation X5). A non-empty policy is fail-closed: a node whose quality cannot
-// be established is rejected unless UnknownAction says otherwise.
+// Measurement is a mandatory floor. Policy may restrict measured categories;
+// an empty policy does not exclude low purity or high risk measurements.
 func AdmitQuality(
 	policy model.QualityPolicy,
 	entry *node.NodeEntry,
 	snap QualitySnapshotReader,
 	now time.Time,
 ) (bool, string) {
-	if policy.IsEmpty() || entry == nil {
-		return true, ""
+	if entry == nil {
+		return false, ReasonQualityUnknown
 	}
 	return admit(policy, factsFromEntry(entry, snap, now), now)
 }
@@ -95,9 +94,6 @@ func EvaluateQuality(
 	egressObservedAt time.Time,
 	now time.Time,
 ) bool {
-	if policy.IsEmpty() {
-		return true
-	}
 	return admitFactsOnly(policy, factsFromSummary(summary, egressObservedAt), now)
 }
 
@@ -109,8 +105,8 @@ func ExplainQuality(
 	snap QualitySnapshotReader,
 	now time.Time,
 ) []QualityDecision {
-	if policy.IsEmpty() {
-		return []QualityDecision{{Rule: "quality", Passed: true, Detail: "no quality policy configured"}}
+	if entry == nil {
+		return []QualityDecision{{Rule: "quality.measured", Passed: false, Detail: "node missing"}}
 	}
 	facts := factsFromEntry(entry, snap, now)
 	rules := qualityRules(policy, facts, now)
@@ -167,21 +163,11 @@ func qualityRules(policy model.QualityPolicy, facts qualityFacts, now time.Time)
 		return rules
 	}
 
-	// 2. Assessment availability (unknown_action).
-	unknown := facts.State != "valid" && facts.State != "conflicting"
-	if unknown {
-		allowed := policy.UnknownAction == "allow"
-		rules = append(rules, rule{
-			name:   "quality.unknown",
-			reason: ReasonQualityUnknown,
-			passed: allowed,
-			detail: "state=" + facts.State,
-		})
-		if !allowed {
-			return rules
-		}
-		// The caller explicitly accepted unassessed nodes: no other rule can be
-		// evaluated, so admission ends here.
+	// UnknownAction cannot waive measurement. This imposes no purity threshold.
+	measured := facts.State == "valid" && facts.Score != nil && *facts.Score >= 0 && *facts.Score <= 100
+	rules = append(rules, rule{name: "quality.measured", reason: ReasonQualityUnknown,
+		passed: measured, detail: "state=" + facts.State})
+	if !measured || policy.IsEmpty() {
 		return rules
 	}
 
@@ -348,10 +334,16 @@ func factsFromEntry(entry *node.NodeEntry, snap QualitySnapshotReader, now time.
 		return facts
 	}
 	lite, ok := snap.Assessment(facts.IP)
+	if scoped, supports := snap.(interface {
+		NodeAssessment(string, netip.Addr) (intel.AssessmentLite, bool)
+	}); supports {
+		lite, ok = scoped.NodeAssessment(facts.NodeHash, facts.IP)
+	}
 	if !ok {
 		facts.State = "unobserved"
 		return facts
 	}
+	lite = lite.Current(now)
 	facts.CheckLookup = func(checkID string) (intel.OutcomeLite, bool) {
 		lite, found := snap.CheckOutcome(facts.NodeHash, checkID)
 		return lite, found
@@ -366,18 +358,12 @@ func factsFromEntry(entry *node.NodeEntry, snap QualitySnapshotReader, now time.
 	if lite.ComputedAt > 0 {
 		facts.ComputedAt = time.Unix(0, lite.ComputedAt).UTC()
 	}
-	// 's projection has no state column: a pending verdict is exactly the
-	// "no usable verdict yet" case (state pending/unsupported in rule 2), and
-	// an expired valid_until is the "stale" case.
+	// Read the persisted measurement state, never infer it from a risk label.
 	switch {
 	case !lite.Valid(now.UnixNano()):
 		facts.State = "stale"
-	case facts.Verdict == "pending":
-		facts.State = "pending"
-	case facts.IPType == "conflicting" || facts.Verdict == "conflicting":
-		facts.State = "conflicting"
 	default:
-		facts.State = "valid"
+		facts.State = lite.StateName()
 	}
 	return facts
 }
@@ -411,7 +397,9 @@ func factsFromSummary(summary quality.Summary, egressObservedAt time.Time) quali
 	facts.Native = assessment.Native
 	facts.Tor = len(assessment.TorRoles) > 0
 	facts.HighRisk = assessment.Verdict == "high_risk"
-	if assessment.State != "" && assessment.State != "valid" {
+	if summary.State != "" && summary.State != "valid" && summary.State != "conflicting" {
+		facts.State = summary.State
+	} else if assessment.State != "" && assessment.State != "valid" {
 		facts.State = assessment.State
 	} else {
 		facts.State = "valid"

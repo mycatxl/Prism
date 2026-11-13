@@ -1,11 +1,13 @@
 package service
 
 import (
+	"slices"
 	"sort"
 	"strings"
 
 	"prism/internal/auth"
 	"prism/internal/model"
+	"prism/internal/node"
 )
 
 // The user's own view of their account.
@@ -17,8 +19,9 @@ import (
 
 // SelfPlatform is one platform a user may reach, named for display.
 type SelfPlatform struct {
-	PlatformID   string `json:"platform_id"`
-	PlatformName string `json:"platform_name"`
+	PlatformID        string   `json:"platform_id"`
+	PlatformName      string   `json:"platform_name"`
+	MeasuredCountries []string `json:"measured_countries"`
 }
 
 // SelfOverview is the user's landing page: what they bought, what is left of it,
@@ -39,6 +42,9 @@ type SelfOverview struct {
 	LiveConcurrent int            `json:"live_concurrent"`
 	UsageDaily     []UsageDay     `json:"usage_daily"`
 	Platforms      []SelfPlatform `json:"platforms"`
+	// KeyPlatforms is the subscription entitlement for creating a new key,
+	// independent of which platforms existing keys can already reach.
+	KeyPlatforms []SelfPlatform `json:"key_platforms"`
 }
 
 // SessionView is one of the user's console sessions.
@@ -71,7 +77,7 @@ func (s *ControlPlaneService) SelfOverview(userID string, nowNs int64) (SelfOver
 		return SelfOverview{}, err
 	}
 
-	overview := SelfOverview{UsageDaily: []UsageDay{}, Platforms: []SelfPlatform{}}
+	overview := SelfOverview{UsageDaily: []UsageDay{}, Platforms: []SelfPlatform{}, KeyPlatforms: []SelfPlatform{}}
 
 	var plan model.Plan
 	if sub != nil {
@@ -113,11 +119,18 @@ func (s *ControlPlaneService) SelfOverview(userID string, nowNs int64) (SelfOver
 	}
 	overview.UsageDaily = usage
 
-	platforms, err := s.reachablePlatforms(keys, plan)
-	if err != nil {
-		return SelfOverview{}, err
+	if sub != nil && (sub.ExpiresAtNs == 0 || sub.ExpiresAtNs > nowNs) &&
+		(plan.Status == "" || plan.Status == model.SubscriptionStatusActive) {
+		overview.KeyPlatforms, err = s.planPlatforms(plan)
+		if err != nil {
+			return SelfOverview{}, err
+		}
+		platforms, err := s.reachablePlatforms(keys, plan, nowNs)
+		if err != nil {
+			return SelfOverview{}, err
+		}
+		overview.Platforms = platforms
 	}
-	overview.Platforms = platforms
 	return overview, nil
 }
 
@@ -216,42 +229,42 @@ func (s *ControlPlaneService) ListUserAccessKeys(userID string) ([]AccessKeyView
 // reachablePlatforms resolves the platforms a user may connect through.
 //
 // The answer is the union over the user's active keys of what each key allows,
-// which is what the access guide on the other side of this call is for. A key
-// allows its own platform list when it has one, otherwise the plan's list, and
-// an empty effective list allows every platform the deployment knows - the same
-// rule the data plane applies in keys.KeyState.AllowsPlatform. Taking the
-// intersection instead would report nothing for a user holding two keys that
-// cover different platforms, and skipping a key with no platform list would
-// hide every platform from a user whose plan has none either.
-func (s *ControlPlaneService) reachablePlatforms(keys []model.AccessKey, plan model.Plan) ([]SelfPlatform, error) {
+// which is what the access guide shows. Each key can only narrow its plan's
+// entitlement, including after a plan downgrade. The caller requires a live
+// subscription; absent subscriptions must never become unrestricted plans.
+func (s *ControlPlaneService) reachablePlatforms(keys []model.AccessKey, plan model.Plan, nowNs int64) ([]SelfPlatform, error) {
+	options, err := s.planPlatforms(plan)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]SelfPlatform, 0, len(options))
+	for _, option := range options {
+		for _, key := range keys {
+			if key.Status != model.KeyStatusActive || key.Scope == model.KeyScopeAdmin ||
+				key.ExpiresAtNs < 0 || key.ExpiresAtNs > 0 && key.ExpiresAtNs <= nowNs {
+				continue
+			}
+			if len(key.Platforms) == 0 || slices.Contains(key.Platforms, option.PlatformID) {
+				option.MeasuredCountries = s.measuredPlatformCountries(option.PlatformID, plan.IPTiers)
+				result = append(result, option)
+				break
+			}
+		}
+	}
+	return result, nil
+}
+
+func (s *ControlPlaneService) planPlatforms(plan model.Plan) ([]SelfPlatform, error) {
 	names, err := s.platformNames()
 	if err != nil {
 		return nil, err
 	}
 
-	allowed := make(map[string]bool)
-	for _, key := range keys {
-		if key.Status != model.KeyStatusActive {
-			continue
+	result := make([]SelfPlatform, 0, len(names))
+	for id, name := range names {
+		if len(plan.Platforms) == 0 || slices.Contains(plan.Platforms, id) {
+			result = append(result, SelfPlatform{PlatformID: id, PlatformName: name, MeasuredCountries: []string{}})
 		}
-		effective := key.Platforms
-		if len(effective) == 0 {
-			effective = plan.Platforms
-		}
-		if len(effective) == 0 {
-			for id := range names {
-				allowed[id] = true
-			}
-			continue
-		}
-		for _, id := range effective {
-			allowed[id] = true
-		}
-	}
-
-	result := make([]SelfPlatform, 0, len(allowed))
-	for id := range allowed {
-		result = append(result, SelfPlatform{PlatformID: id, PlatformName: names[id]})
 	}
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].PlatformName != result[j].PlatformName {
@@ -260,4 +273,34 @@ func (s *ControlPlaneService) reachablePlatforms(keys []model.AccessKey, plan mo
 		return result[i].PlatformID < result[j].PlatformID
 	})
 	return result, nil
+}
+
+// Only current, admitted exits with an explicit trace country supply geography.
+// Platform labels and configured filters are not measurements.
+func (s *ControlPlaneService) measuredPlatformCountries(id string, tiers []string) []string {
+	countries := []string{}
+	if s.Pool == nil {
+		return countries
+	}
+	p, ok := s.Pool.GetPlatform(id)
+	if !ok {
+		return countries
+	}
+	seen := map[string]bool{}
+	p.View().Range(func(hash node.Hash) bool {
+		entry, ok := s.Pool.GetEntry(hash)
+		if !ok || !p.AllowsCurrentQuality(entry) || !p.AllowsIPTiers(entry, tiers) {
+			return true
+		}
+		region := strings.ToUpper(entry.GetEgressRegion())
+		if len(region) == 2 && region[0] >= 'A' && region[0] <= 'Z' && region[1] >= 'A' && region[1] <= 'Z' {
+			seen[region] = true
+		}
+		return true
+	})
+	for country := range seen {
+		countries = append(countries, country)
+	}
+	sort.Strings(countries)
+	return countries
 }

@@ -2,13 +2,14 @@ package proxy
 
 import (
 	"context"
-	"crypto/subtle"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptrace"
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -28,10 +29,11 @@ type PlatformLookup interface {
 
 // ReverseProxyConfig holds dependencies for the reverse proxy.
 type ReverseProxyConfig struct {
+	// ProxyToken is retained for configuration compatibility. It is never
+	// accepted as a reverse-proxy credential.
 	ProxyToken string
 	// AccessKeys resolves an access key presented as the first path segment.
-	// It may be nil or unconfigured: the segment then falls back to the global
-	// proxy token, which is the transitional behaviour.
+	// A missing or unconfigured verifier rejects every path segment.
 	AccessKeys        AccessKeyVerifier
 	Router            *routing.Router
 	Pool              outbound.PoolAccessor
@@ -120,19 +122,21 @@ func NewReverseProxy(cfg ReverseProxyConfig) *ReverseProxy {
 		transportPool = NewOutboundTransportPool(transportCfg)
 	}
 	return &ReverseProxy{
-		token:             cfg.ProxyToken,
-		accessKeys:        cfg.AccessKeys,
-		router:            cfg.Router,
-		pool:              cfg.Pool,
-		platLook:          cfg.PlatformLookup,
-		health:            cfg.Health,
-		matcher:           cfg.Matcher,
-		events:            ev,
-		metricsSink:       cfg.MetricsSink,
-		transportConfig:   transportCfg,
-		transportPool:     transportPool,
-		bypass:            NewTargetBypassMatcher(cfg.ProxyBypassRules),
-		directGuard:       NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
+		token:           cfg.ProxyToken,
+		accessKeys:      cfg.AccessKeys,
+		router:          cfg.Router,
+		pool:            cfg.Pool,
+		platLook:        cfg.PlatformLookup,
+		health:          cfg.Health,
+		matcher:         cfg.Matcher,
+		events:          ev,
+		metricsSink:     cfg.MetricsSink,
+		transportConfig: transportCfg,
+		transportPool:   transportPool,
+		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
+		directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate).
+			WithBlockedDestinationPorts(cfg.BlockedDestinationPorts).
+			withLookupTimeout(transportCfg.DialTimeout),
 		authGuard:         cfg.AuthGuard,
 		metering:          cfg.Metering,
 		quota:             cfg.Quota,
@@ -167,8 +171,7 @@ type parsedPath struct {
 	// Path preserves the original escaped remaining path after host (may be
 	// empty), e.g. "v1/users/team%2Fa/profile".
 	Path string
-	// Key is the access key the first path segment resolved to, or nil when the
-	// request authenticated with the transitional global proxy token.
+	// Key is the AccessKey the first path segment resolved to.
 	Key *keys.KeyState
 }
 
@@ -230,19 +233,19 @@ func (p *ReverseProxy) parsePathV1(rawPath string, addr netip.Addr) (*parsedPath
 	if perr != nil {
 		return nil, perr
 	}
-	// The first segment carries either an access key or the transitional global
-	// proxy token. A key-shaped segment never falls back to the token
-	// comparison: a revoked key must be refused outright rather than retried as
-	// a token.
-	var keyState *keys.KeyState
-	if keys.IsCredentialShape(token) {
-		if p.accessKeys != nil {
-			keyState = p.accessKeys.VerifyCredential(token, addr)
-		}
-		if keyState == nil {
-			return nil, ErrAuthFailed
-		}
-	} else if p.token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(p.token)) != 1 {
+	// The first segment must be a valid AccessKey. There is no global token
+	// fallback, including when the verifier is unavailable.
+	if !keys.IsCredentialShape(token) || p.accessKeys == nil {
+		return nil, ErrAuthFailed
+	}
+	// Validate the route grammar before doing the expensive credential lookup.
+	// A structurally ambiguous path must not be able to reach a verifier or a
+	// router under a different interpretation of its segments.
+	if !validReversePathLayout(segments) {
+		return nil, ErrURLParseError
+	}
+	keyState := p.accessKeys.VerifyCredential(token, addr)
+	if keyState == nil {
 		return nil, ErrAuthFailed
 	}
 	if len(segments) < 4 {
@@ -295,18 +298,69 @@ func (p *ReverseProxy) parsePathV1(rawPath string, addr netip.Addr) (*parsedPath
 }
 
 func buildReverseTargetURL(parsed *parsedPath, rawQuery string) (*url.URL, *ProxyError) {
+	if parsed == nil || !validReverseRemainderPath(parsed.Path) || strings.ContainsAny(rawQuery, "#\x00\r\n") {
+		return nil, ErrURLParseError
+	}
 	targetURL := parsed.Protocol + "://" + parsed.Host
 	if parsed.Path != "" {
 		targetURL += "/" + parsed.Path
-	}
-	if rawQuery != "" {
-		targetURL += "?" + rawQuery
 	}
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, ErrInvalidHost
 	}
+	// Keep the query as query data. Concatenating it into targetURL lets a raw
+	// '#' turn the suffix into a fragment and makes the upstream request differ
+	// from the authenticated route the caller selected.
+	target.RawQuery = rawQuery
+	target.Fragment = ""
 	return target, nil
+}
+
+// validReversePathLayout rejects ambiguous route syntax before credential
+// verification and routing. The first four segments are the identity, protocol and
+// target authority, so empty, dot, slash and control values there must never be
+// interpreted differently by the mux, this parser and net/url. The remaining
+// path keeps escaped slashes (for example "%2Fa") but cannot contain dot
+// segments or control separators that an upstream may normalize.
+func validReversePathLayout(segments []string) bool {
+	if len(segments) < 4 {
+		return true
+	}
+	for i := 1; i < 4; i++ {
+		decoded, err := url.PathUnescape(segments[i])
+		if err != nil || decoded == "" || decoded == "." || decoded == ".." {
+			return false
+		}
+		if strings.ContainsAny(decoded, "/\\\x00\r\n\t") {
+			return false
+		}
+	}
+	if len(segments) == 5 {
+		return validReverseRemainderPath(segments[4])
+	}
+	return true
+}
+
+func validReverseRemainderPath(rawPath string) bool {
+	if rawPath == "" {
+		return true
+	}
+	if strings.Contains(rawPath, "//") {
+		return false
+	}
+	for _, rawSegment := range strings.Split(rawPath, "/") {
+		decoded, err := url.PathUnescape(rawSegment)
+		if err != nil || strings.ContainsAny(decoded, "\\\x00\r\n\t") {
+			return false
+		}
+		for _, component := range strings.Split(decoded, "/") {
+			if component == "." || component == ".." {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -340,6 +394,8 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// flight.
 	streamCtx, cancelStream := context.WithCancel(r.Context())
 	defer cancelStream()
+	w, finishDownstream := watchDownstream(streamCtx, w)
+	defer finishDownstream()
 	r = r.WithContext(streamCtx)
 
 	// The allowance is checked before anything is dialled, and the check
@@ -424,6 +480,12 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var nodeHashRaw = route.NodeHash
 	domain := netutil.ExtractDomain(parsed.Host)
 	if p.bypass != nil && p.bypass.ShouldBypass(parsed.Host) {
+		if platformErr := authorizeBypassPlatform(p.router, parsed.PlatformName, parsed.Key); platformErr != nil {
+			lifecycle.setProxyError(platformErr)
+			lifecycle.setHTTPStatus(platformErr.HTTPCode)
+			writeProxyError(w, platformErr)
+			return
+		}
 		// Bypass targets are dialled locally by operator-configured rules and
 		// never create a routing lease (upstream Resin behaviour).
 		// PRISM_DIRECT_DENY_PRIVATE optionally refuses loopback, private,
@@ -469,6 +531,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if quota != nil {
 		ingressReport, egressReport := lifecycle.liveReporter()
 		quota.withLiveReports(ingressReport, egressReport)
+		quota.platformID = lifecycle.platformForMetering()
 	}
 	// The tail of a partial report step is flushed on every exit path, including
 	// the one that unwinds through httputil's ErrAbortHandler panic.
@@ -499,8 +562,10 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// a request that was answered with a refusal did not complete successfully,
 	// unlike a stream that was cut after it had already started delivering.
 	quotaRefusedBeforeResponse := false
+	ingressWriter := &quotaResponseWriter{ResponseWriter: w}
 
 	proxy := &httputil.ReverseProxy{
+		ErrorLog: log.New(upstreamErrorLogWriter{}, "", 0),
 		// Rewrite, not the deprecated Director: it runs after the hop-by-hop
 		// headers and the client-supplied forwarding headers are gone, and it
 		// never re-adds X-Forwarded-For, so the stripping below is the only
@@ -526,7 +591,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			pr.Out = pr.Out.WithContext(reqCtx)
 		},
-		Transport: transport,
+		Transport: quotaTransport{base: transport, quota: quota, committed: upstreamTrace.shouldCommitEgress},
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, err error) {
 			// The allowance can end the round trip in two shapes, and they are
 			// the same event. If the cancel lands before the transport looks at
@@ -567,7 +632,17 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			lifecycle.setHTTPStatus(resp.StatusCode)
-			lifecycle.addIngressBytes(headerWireLen(resp.Header))
+			headerBytes := headerWireLen(resp.Header)
+			finishHeader, allowed := quota.reserveHeader(headerBytes, true)
+			if !allowed {
+				return errStreamQuotaExceeded
+			}
+			finishHeader(headerBytes)
+			if quota.atomicAccounting() {
+				lifecycle.addIngressBytesLive(headerBytes)
+			} else {
+				lifecycle.addIngressBytes(headerBytes)
+			}
 			if resp.StatusCode == http.StatusSwitchingProtocols {
 				// 101 upgrade responses require a writable backend body
 				// (io.ReadWriteCloser). Do not wrap resp.Body here; wrapping with a
@@ -584,12 +659,8 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// wrapper would break websocket/h2c upgrade tunnelling.
 				if rwc, ok := resp.Body.(io.ReadWriteCloser); ok {
 					upgradedStreamCounter = newCountingReadWriteCloser(rwc)
-					if quota != nil {
-						upgradedStreamQuota = newQuotaReadWriteCloser(upgradedStreamCounter, quota)
-						resp.Body = upgradedStreamQuota
-					} else {
-						resp.Body = upgradedStreamCounter
-					}
+					upgradedStreamQuota = newQuotaReadWriteCloser(newUpgradeStreamConn(upgradedStreamCounter, nil, bandwidth), quota)
+					resp.Body = upgradedStreamQuota
 				}
 				if detailCfg.Enabled {
 					respHeaders, respHeadersLen, respHeadersTruncated := captureHeadersWithLimit(resp.Header, detailCfg.RespHeadersMaxBytes, accountHeaders...)
@@ -611,14 +682,8 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					lifecycle.setRespBodyCapture(respBodyCapture)
 				}
 				ingressBodyCounter = newCountingReadCloser(body)
-				if quota != nil {
-					// The body read by httputil's copy loop is the only place
-					// this handler sees the response bytes, so it is where the
-					// ingress half is counted and checked.
-					resp.Body = newQuotaReadCloserDir(ingressBodyCounter, quota, true)
-				} else {
-					resp.Body = ingressBodyCounter
-				}
+				resp.Body = ingressBodyCounter
+				ingressWriter.quota = quota
 				// The response body is the ingress copy this proxy makes, so it
 				// is where the key's bandwidth limit applies to it. A 101 body
 				// is not wrapped: see the branch above.
@@ -647,7 +712,11 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// neither lost nor billed twice.
 	defer func() {
 		if upstreamTrace.shouldCommitEgress() {
-			lifecycle.addEgressBytes(pendingEgressHeaderBytes)
+			if quota.atomicAccounting() {
+				lifecycle.addEgressBytesLive(pendingEgressHeaderBytes)
+			} else {
+				lifecycle.addEgressBytes(pendingEgressHeaderBytes)
+			}
 			if egressBodyCounter != nil {
 				if quota != nil {
 					// The stream already reported these bytes to the sink.
@@ -659,9 +728,9 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if ingressBodyCounter != nil {
 			if quota != nil {
-				lifecycle.addIngressBytesLive(ingressBodyCounter.Total())
+				lifecycle.addIngressBytesLive(ingressWriter.total)
 			} else {
-				lifecycle.addIngressBytes(ingressBodyCounter.Total())
+				lifecycle.addIngressBytes(ingressWriter.total)
 			}
 		}
 		// Upgrade-session traffic. The counters are atomic, so reading them here
@@ -675,11 +744,11 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// totals; committing them the ordinary way as well would bill the same
 		// byte twice.
 		if upgradedStreamCounter != nil {
-			if upgradedStreamQuota != nil {
-				lifecycle.addIngressBytesLive(upgradedStreamCounter.TotalRead())
+			if quota != nil {
+				lifecycle.addIngressBytesLive(upgradedStreamQuota.ingressBytes.Load())
 				lifecycle.addEgressBytesLive(upgradedStreamCounter.TotalWrite())
 			} else {
-				lifecycle.addIngressBytes(upgradedStreamCounter.TotalRead())
+				lifecycle.addIngressBytes(upgradedStreamQuota.ingressBytes.Load())
 				lifecycle.addEgressBytes(upgradedStreamCounter.TotalWrite())
 			}
 		}
@@ -697,7 +766,7 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	proxy.ServeHTTP(w, r)
+	proxy.ServeHTTP(ingressWriter, r)
 }
 
 // resolveDefaultPlatform looks up the default platform for reverse-proxy
@@ -867,5 +936,38 @@ func isValidHost(host string) bool {
 	if u.User != nil || u.Host == "" || u.Host != host {
 		return false
 	}
-	return u.Hostname() != ""
+	hostname := u.Hostname()
+	if hostname == "" || hostname == "." || hostname == ".." {
+		return false
+	}
+	// url.Parse accepts an explicit empty or out-of-range port as syntax. The
+	// dialers and the route implementations do not share that tolerance, so
+	// validate it here before the value can be routed or cast to uint16.
+	hasPort := false
+	if strings.HasPrefix(host, "[") {
+		closeBracket := strings.LastIndexByte(host, ']')
+		hasPort = closeBracket >= 0 && len(host) > closeBracket+1
+	} else if strings.Count(host, ":") == 1 {
+		hasPort = true
+	}
+	if hasPort {
+		portText := u.Port()
+		if portText == "" {
+			return false
+		}
+		port, err := strconv.Atoi(portText)
+		if err != nil || port < 0 || port > 65535 {
+			return false
+		}
+	}
+	return true
+}
+
+// The standard reverse proxy can quote attacker-controlled status/header/body
+// bytes in its errors. Keep its diagnostics structural like our request log.
+type upstreamErrorLogWriter struct{}
+
+func (upstreamErrorLogWriter) Write(p []byte) (int, error) {
+	log.Print("proxy: upstream protocol or stream error")
+	return len(p), nil
 }

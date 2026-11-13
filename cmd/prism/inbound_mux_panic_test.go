@@ -54,10 +54,10 @@ func TestInboundMuxRecoversAReverseProxyPanic(t *testing.T) {
 		panic("boom")
 	}))
 
-	// The first segment has to be the configured token (or key-shaped) or the
-	// mux refuses the request before the reverse handler ever sees it.
+	// The first segment has to be key-shaped or the mux refuses the request
+	// before the reverse handler ever sees it.
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/tok/plat:acct/https/example.test/thing", nil))
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+testMuxAccessKey+"/plat:acct/https/example.test/thing", nil))
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
@@ -82,6 +82,28 @@ func TestInboundMuxLetsAnAbortedProxyResponseAbort(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://example.test/thing", nil))
 	t.Fatalf("the handler returned instead of aborting, and answered %d", rec.Code)
+}
+
+func TestRecoverProxyPanicDoesNotAppendAfterCommittedResponse(t *testing.T) {
+	handler := recoverProxyPanic("committed", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+		panic("after headers")
+	}))
+
+	rec := httptest.NewRecorder()
+	defer func() {
+		if recovered := recover(); recovered != http.ErrAbortHandler {
+			t.Fatalf("committed panic recovered as %v, want http.ErrAbortHandler", recovered)
+		}
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status after committed panic = %d, want 204", rec.Code)
+		}
+		if strings.Contains(rec.Body.String(), "Proxy request failed") {
+			t.Fatal("the recovery layer appended a second proxy failure response")
+		}
+	}()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://example.test/thing", nil))
+	t.Fatal("committed panic returned instead of aborting")
 }
 
 // A handler that does not panic passes through untouched.

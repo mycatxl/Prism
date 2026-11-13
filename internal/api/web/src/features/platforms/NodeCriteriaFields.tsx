@@ -9,7 +9,10 @@ import {
   QueryBadge,
 } from "../../components/control-plane";
 import { useI18n } from "../../i18n";
-import { INTEL_CHECK_OUTCOMES, listIntelChecks } from "../intel/checks";
+import { purityBandLabel } from "../nodes/quality/presentation";
+import { nodeName } from "../nodes/detail/nodeMeta";
+import { listIntelChecks } from "../intel/checks";
+import { checkOutcomeOptions, GEMINI_EVIDENCE_NOTE } from "../intel/checkPresentation";
 import { listPlatformNodeFacets, previewPlatformScope } from "./api";
 import {
   defaultPlatformFormValues,
@@ -58,16 +61,6 @@ const ipTypeLabels: Record<string, string> = {
   non_residential: "非住宅",
   unknown: "未知",
   conflicting: "冲突",
-};
-
-const purityBandLabels: Record<string, string> = {
-  excellent: "极佳",
-  clean: "干净",
-  fair: "一般",
-  mixed: "混合",
-  poor: "较差",
-  unknown: "未评估",
-  review: "人工复核",
 };
 
 const exclusionLabels: Record<string, string> = {
@@ -214,7 +207,7 @@ function ScopePreview({ criteriaKey, criteria }: { criteriaKey: string; criteria
           {result.sample.map((node) => (
             <QueryBadge
               key={node.node_hash}
-              label={`${node.display_tag || node.node_hash.slice(0, 12)}${node.region ? ` · ${node.region.toUpperCase()}` : ""}${node.protocol ? ` · ${protocolLabels[node.protocol] ?? node.protocol}` : ""}`}
+              label={`${nodeName(node)}${node.region ? ` · ${node.region.toUpperCase()}` : ""}${node.protocol ? ` · ${protocolLabels[node.protocol] ?? node.protocol}` : ""}`}
             />
           ))}
           {result.matched > result.sample.length ? (
@@ -343,7 +336,7 @@ export function NodeCriteriaFields({
             name="purity_band"
             options={purityBandOptions.map((value) => ({
               value,
-              label: `${t(purityBandLabels[value] ?? value)} (${value})`,
+              label: `${t(purityBandLabel(value))} (${value})`,
             }))}
             selected={values.purity_bands}
             onChange={(next) => form.setValue("purity_bands", next, { shouldDirty: true })}
@@ -463,7 +456,7 @@ function UnlockRequirementsField({ form }: { form: UseFormReturn<PlatformFormVal
                   selectedKey={entry.outcome}
                   items={[
                     { id: "", label: t("任意结果") },
-                    ...INTEL_CHECK_OUTCOMES.map((outcome) => ({ id: outcome, label: outcome })),
+                    ...checkOutcomeOptions(entry.checkID).map(({ id, label }) => ({ id, label: t(label) })),
                   ]}
                   onSelectionChange={(key) =>
                     write(
@@ -473,6 +466,7 @@ function UnlockRequirementsField({ form }: { form: UseFormReturn<PlatformFormVal
                     )
                   }
                 />
+                {entry.checkID === "gemini" ? <p className="workspace-muted">{t(GEMINI_EVIDENCE_NOTE)}</p> : null}
                 <ControlButton
                   type="button"
                   variant="ghost"

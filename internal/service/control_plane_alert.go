@@ -124,7 +124,7 @@ func (s *ControlPlaneService) ScanUsageAlerts(nowNs int64) (int, error) {
 	}
 	usedByUser := make(map[string]int64, len(rows))
 	for _, row := range rows {
-		usedByUser[row.UserID] += row.IngressBytes + row.EgressBytes
+		usedByUser[row.UserID] = model.SaturatingUsageAdd(usedByUser[row.UserID], model.SaturatingUsageAdd(row.IngressBytes, row.EgressBytes))
 	}
 
 	openAlerts, err := s.Engine.ListAlerts(0, windowStart, true)

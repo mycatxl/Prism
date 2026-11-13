@@ -2,6 +2,7 @@
 package subscription
 
 import (
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,7 +54,7 @@ func (mn *ManagedNodes) Size() int {
 	if mn == nil || mn.m == nil {
 		return 0
 	}
-	return mn.m.Size()
+	return max(0, mn.m.Size())
 }
 
 // LoadNode loads the full managed-node state for a hash.
@@ -116,10 +117,11 @@ type Subscription struct {
 	opMu sync.Mutex
 
 	// Mutable fields guarded by mu.
-	mu         sync.RWMutex
-	url        string
-	sourceType string
-	content    string
+	mu            sync.RWMutex
+	url           string
+	sourceType    string
+	content       string
+	privacyFilter func(node.Hash, json.RawMessage) bool
 	// updateIntervalNs is the configured subscription refresh interval.
 	updateIntervalNs      int64
 	name                  string
@@ -260,6 +262,14 @@ func (s *Subscription) ConfigVersion() int64 {
 	return s.configVersion.Load()
 }
 
+// RefreshInputs snapshots the fetch inputs with the version that describes
+// them. Separate getters could label an old URL with a newly published version.
+func (s *Subscription) RefreshInputs() (url, sourceType, content string, version int64) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.url, normalizeSourceType(s.sourceType), s.content, s.configVersion.Load()
+}
+
 // UpdateIntervalNs returns the configured update interval in nanoseconds (thread-safe).
 func (s *Subscription) UpdateIntervalNs() int64 {
 	s.mu.RLock()
@@ -293,6 +303,11 @@ func (s *Subscription) SetSourceType(sourceType string) {
 // SetContent updates local subscription content (thread-safe).
 func (s *Subscription) SetContent(content string) {
 	s.mu.Lock()
+	if s.privacyFilter != nil {
+		if clean, err := ScrubContent(content, s.privacyFilter); err == nil {
+			content = clean
+		}
+	}
 	if s.content != content {
 		s.content = content
 		s.configVersion.Add(1)
@@ -391,6 +406,16 @@ func (s *Subscription) ManagedNodes() *ManagedNodes {
 
 // SwapManagedNodes atomically replaces the managed nodes view.
 func (s *Subscription) SwapManagedNodes(m *ManagedNodes) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.privacyFilter != nil {
+		m.RangeNodes(func(h node.Hash, _ ManagedNode) bool {
+			if s.privacyFilter(h, nil) {
+				m.Delete(h)
+			}
+			return true
+		})
+	}
 	s.managedNodes.Store(m)
 }
 

@@ -10,11 +10,14 @@ import (
 	"prism/internal/requestlog"
 )
 
+const requestLogMaxPageLimit = 1000
+
 // HandleListRequestLogs handles GET /api/v1/request-logs.
 // Query params: from, to (RFC3339Nano), limit, cursor,
 // platform_id, platform_name, account, target_host, egress_ip, proxy_type, net_ok, http_status, fuzzy.
 func HandleListRequestLogs(repo *requestlog.Repo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if r.URL.Query().Get("offset") != "" {
 			writeInvalidArgument(w, "offset: not supported for request-logs; use cursor")
 			return
@@ -90,7 +93,7 @@ func HandleListRequestLogs(repo *requestlog.Repo) http.Handler {
 
 		rows, hasMore, nextCursor, err := repo.List(f)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 
@@ -122,8 +125,8 @@ func parseRequestLogLimitQuery(w http.ResponseWriter, r *http.Request) (int, boo
 		writeInvalidArgument(w, "limit: must be a non-negative integer")
 		return 0, false
 	}
-	if n > maxPageLimit {
-		writeInvalidArgument(w, "limit: must be <= "+strconv.Itoa(maxPageLimit))
+	if n > requestLogMaxPageLimit {
+		writeInvalidArgument(w, "limit: must be <= "+strconv.Itoa(requestLogMaxPageLimit))
 		return 0, false
 	}
 	if n > 0 {
@@ -173,6 +176,7 @@ type requestLogPageResponse struct {
 // HandleGetRequestLog handles GET /api/v1/request-logs/{log_id}.
 func HandleGetRequestLog(repo *requestlog.Repo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		logID := r.PathValue("log_id")
 		if logID == "" {
 			writeInvalidArgument(w, "log_id: is required")
@@ -181,7 +185,7 @@ func HandleGetRequestLog(repo *requestlog.Repo) http.Handler {
 
 		row, err := repo.GetByID(logID)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		if row == nil {
@@ -197,6 +201,7 @@ func HandleGetRequestLog(repo *requestlog.Repo) http.Handler {
 // Returns base64-encoded payloads with truncation metadata.
 func HandleGetRequestLogPayloads(repo *requestlog.Repo) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		logID := r.PathValue("log_id")
 		if logID == "" {
 			writeInvalidArgument(w, "log_id: is required")
@@ -205,7 +210,7 @@ func HandleGetRequestLogPayloads(repo *requestlog.Repo) http.Handler {
 
 		logRow, err := repo.GetByID(logID)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		if logRow == nil {
@@ -215,7 +220,7 @@ func HandleGetRequestLogPayloads(repo *requestlog.Repo) http.Handler {
 
 		payload, err := repo.GetPayloads(logID)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 

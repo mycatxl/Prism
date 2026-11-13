@@ -231,7 +231,7 @@ func TestRepo_InsertListGetPayloads(t *testing.T) {
 	if payload == nil {
 		t.Fatal("expected payload row for log-a")
 	}
-	if string(payload.ReqHeaders) != "req-h-a" || string(payload.RespBody) != "resp-b-a" {
+	if string(payload.ReqHeaders) != "req-h-a" || string(payload.RespBody) != "[redacted]" {
 		t.Fatalf("payload mismatch: %+v", payload)
 	}
 
@@ -241,6 +241,33 @@ func TestRepo_InsertListGetPayloads(t *testing.T) {
 	}
 	if none != nil {
 		t.Fatalf("expected nil payload for log-b, got %+v", none)
+	}
+}
+
+func TestRepo_RedactsSecretsAtPersistenceBoundary(t *testing.T) {
+	repo := NewRepo(t.TempDir(), 1<<20, 5)
+	if err := repo.Open(); err != nil {
+		t.Fatalf("repo.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = repo.Close() })
+	accessKey := "pk_" + strings.Repeat("a", 32) + "_" + strings.Repeat("b", 64)
+	entry := proxy.RequestLogEntry{
+		ID: "redacted", StartedAtNs: time.Now().UnixNano(), ProxyType: proxy.ProxyTypeReverse,
+		ReqHeaders: []byte("Authorization: Bearer bearer-secret\r\nCookie: session=secret\r\n"),
+		ReqBody:    []byte(`{"password":"plain-password","key":"` + accessKey + `"}`),
+	}
+	if _, err := repo.InsertBatch([]proxy.RequestLogEntry{entry}); err != nil {
+		t.Fatalf("InsertBatch: %v", err)
+	}
+	payload, err := repo.GetPayloads(entry.ID)
+	if err != nil || payload == nil {
+		t.Fatalf("GetPayloads: payload=%v err=%v", payload, err)
+	}
+	rendered := string(payload.ReqHeaders) + string(payload.ReqBody)
+	for _, secret := range []string{"bearer-secret", "session=secret", "plain-password", accessKey} {
+		if strings.Contains(rendered, secret) {
+			t.Fatalf("persisted request log contains %q: %s", secret, rendered)
+		}
 	}
 }
 

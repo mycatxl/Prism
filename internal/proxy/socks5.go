@@ -3,11 +3,11 @@ package proxy
 import (
 	"bufio"
 	"context"
-	"crypto/subtle"
 	"encoding/binary"
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -40,10 +40,11 @@ var socks5HandshakeTimeout = 15 * time.Second
 
 // Socks5InboundConfig holds dependencies for the SOCKS5 inbound handler.
 type Socks5InboundConfig struct {
+	// ProxyToken is retained for configuration compatibility. It is never
+	// accepted as a SOCKS5 credential.
 	ProxyToken string
 	// AccessKeys resolves an access key sent in the RFC 1929 password field.
-	// It may be nil or unconfigured: the password then falls back to the
-	// global proxy token, which is the transitional behaviour.
+	// A missing or unconfigured verifier rejects every password.
 	AccessKeys       AccessKeyVerifier
 	Router           *routing.Router
 	Pool             outbound.PoolAccessor
@@ -119,7 +120,9 @@ func NewSocks5Inbound(cfg Socks5InboundConfig) *Socks5Inbound {
 			metricsSink: cfg.MetricsSink,
 			metering:    cfg.Metering,
 			bypass:      NewTargetBypassMatcher(cfg.ProxyBypassRules),
-			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
+			directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate).
+				WithBlockedDestinationPorts(cfg.BlockedDestinationPorts).
+				withLookupTimeout(cfg.DialTimeout),
 			dialTimeout: cfg.DialTimeout,
 		},
 		events:            ev,
@@ -151,7 +154,7 @@ func (s *Socks5Inbound) ServeConnContext(baseCtx context.Context, conn net.Conn)
 	handshakePhase := startSocks5HandshakePhase(handshakeCtx, conn)
 	defer handshakePhase.Stop()
 
-	requireAuthInfo := InboundPolicyFromContext(baseCtx).RequireProxyAuthInfo && s.token == ""
+	requireAuthInfo := InboundPolicyFromContext(baseCtx).RequireProxyAuthInfo
 	handshake := s.performHandshake(conn, reader, requireAuthInfo)
 	if !handshake.ok {
 		return
@@ -338,7 +341,7 @@ func (p *socks5HandshakePhase) Stop() {
 	})
 }
 
-func (s *Socks5Inbound) negotiateMethod(conn net.Conn, reader *bufio.Reader, requireAuthInfo bool) (byte, bool) {
+func (s *Socks5Inbound) negotiateMethod(conn net.Conn, reader *bufio.Reader, _ bool) (byte, bool) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(reader, header); err != nil {
 		return 0, false
@@ -351,18 +354,11 @@ func (s *Socks5Inbound) negotiateMethod(conn net.Conn, reader *bufio.Reader, req
 		return 0, false
 	}
 
+	// Every SOCKS5 session must prove a tenant AccessKey. NOAUTH would create
+	// an unkeyed identity that can bypass metering and quota enforcement.
 	selected := byte(socks5MethodNoAcceptable)
-	if s.token != "" || requireAuthInfo {
-		if containsSocks5Method(methods, socks5MethodUserPass) {
-			selected = socks5MethodUserPass
-		}
-	} else {
-		switch {
-		case containsSocks5Method(methods, socks5MethodUserPass):
-			selected = socks5MethodUserPass
-		case containsSocks5Method(methods, socks5MethodNoAuth):
-			selected = socks5MethodNoAuth
-		}
+	if containsSocks5Method(methods, socks5MethodUserPass) {
+		selected = socks5MethodUserPass
 	}
 
 	if _, err := conn.Write([]byte{socks5Version, selected}); err != nil {
@@ -376,11 +372,9 @@ func (s *Socks5Inbound) negotiateMethod(conn net.Conn, reader *bufio.Reader, req
 
 // authenticateUserPass performs the RFC 1929 sub-negotiation.
 //
-// The password field carries either an access key or the transitional global
-// proxy token; the username field carries the identity, exactly as it does on
-// the token path. A key-shaped password is resolved against the key store and
-// never falls back to the token comparison, so a revoked key cannot
-// authenticate by accident.
+// The password field carries the AccessKey; the username field carries the
+// identity, exactly as it does on the token path. Non-key passwords are always
+// refused.
 func (s *Socks5Inbound) authenticateUserPass(conn net.Conn, reader *bufio.Reader, requireAuthInfo bool) (string, string, *keys.KeyState, bool) {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(reader, header); err != nil {
@@ -408,17 +402,15 @@ func (s *Socks5Inbound) authenticateUserPass(conn net.Conn, reader *bufio.Reader
 	// The key, when present, lives in the password field; the identity stays in
 	// the username field, so the client configuration shape is unchanged.
 	//
-	// A key-shaped password is resolved against the key store and never falls
-	// back to the token comparison: a revoked key must be refused outright
-	// rather than retried as a token.
+	// A key-shaped password is resolved against the key store. A revoked or
+	// otherwise invalid key must be refused outright.
 	var keyState *keys.KeyState
-	if keys.IsCredentialShape(string(password)) {
-		keyState = s.verifyAccessKeyPassword(conn, string(password))
-		if keyState == nil {
-			_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
-			return "", "", nil, false
-		}
-	} else if s.token != "" && subtle.ConstantTimeCompare(password, []byte(s.token)) != 1 {
+	if !keys.IsCredentialShape(string(password)) {
+		_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
+		return "", "", nil, false
+	}
+	keyState = s.verifyAccessKeyPassword(conn, string(password))
+	if keyState == nil {
 		_, _ = conn.Write([]byte{socks5UserPassVersion, socks5UserPassStatusFailure})
 		return "", "", nil, false
 	}
@@ -468,6 +460,12 @@ func readSocks5ConnectRequest(reader *bufio.Reader) (string, byte, bool) {
 	if header[1] != socks5CommandConnect {
 		return "", socks5ReplyCommandUnsupported, false
 	}
+	// RFC 1928 reserves this byte and requires it to be zero. Accepting a
+	// non-zero value makes malformed frames look like valid requests and lets
+	// different protocol parsers disagree about where the address starts.
+	if header[2] != 0 {
+		return "", socks5ReplyGeneralFailure, false
+	}
 
 	host, ok := readSocks5Address(reader, header[3])
 	if !ok {
@@ -504,8 +502,21 @@ func readSocks5Address(reader *bufio.Reader, atyp byte) (string, bool) {
 		if _, err := io.ReadFull(reader, size); err != nil {
 			return "", false
 		}
+		// RFC 1928 encodes a domain as a non-empty, one-byte-length name.
+		// A zero-length name would become an ambiguous ":port" target.
+		if size[0] == 0 {
+			return "", false
+		}
 		domain := make([]byte, int(size[0]))
 		if _, err := io.ReadFull(reader, domain); err != nil {
+			return "", false
+		}
+		// Reject control bytes and URL/authority delimiters before the value
+		// reaches net.JoinHostPort or a downstream dialer. UTF-8 hostnames remain
+		// possible because bytes above 0x7f are not rejected here.
+		if strings.IndexFunc(string(domain), func(r rune) bool {
+			return r < 0x21 || r == 0x7f
+		}) >= 0 || strings.ContainsAny(string(domain), `/\\:?#@[]`) {
 			return "", false
 		}
 		return string(domain), true

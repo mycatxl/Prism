@@ -4,8 +4,11 @@ import (
 	"testing"
 	"time"
 
+	"net/netip"
 	"prism/internal/node"
 	"prism/internal/platform"
+
+	"prism/internal/testutil/measurement"
 )
 
 // The explicit node-selection criteria are ANDed with each other and the values
@@ -19,6 +22,15 @@ import (
 // on the runtime health gates.
 func makeFixtureNodesRoutable(t *testing.T, cp *ControlPlaneService) {
 	t.Helper()
+	ips := []netip.Addr{}
+	cp.Pool.Range(func(_ node.Hash, e *node.NodeEntry) bool { ips = append(ips, e.GetEgressIP()); return true })
+	cp.Intel = newIntelProjectionForTest(t)
+	snap := measurement.Snapshot(ips...)
+	for _, ip := range ips {
+		a, _ := snap.Assessment(ip)
+		cp.Intel.Snapshot().SetAssessment(ip, a)
+	}
+	cp.Pool.SetQualitySnapshot(cp.Intel.Snapshot())
 	now := time.Now()
 	cp.Pool.Range(func(h node.Hash, entry *node.NodeEntry) bool {
 		entry.CircuitOpenSince.Store(0)

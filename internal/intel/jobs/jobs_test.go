@@ -543,7 +543,7 @@ func TestManager_RetriesFailuresWithBackoffAndSettlesPartial(t *testing.T) {
 			t.Fatalf("claim %d = %v (err %v)", i, ok, err)
 		}
 		m.runItem(ctx, item)
-		clock.advance(6*time.Hour + time.Minute)
+		clock.advance(10 * time.Minute)
 	}
 
 	stored, _, _ := st.GetJobItem(ctx, job.ID, "node-1")
@@ -892,7 +892,7 @@ func TestProviderPool_ResolvesFailuresAndBacksOff(t *testing.T) {
 
 	// The daily limit of two is now exhausted: the gate stays closed and the
 	// worker is told to sleep the maximum interval.
-	clock.advance(6*time.Hour + time.Minute)
+	clock.advance(10 * time.Minute)
 	if wait := m.provider.runOnce("proxycheck", specs[0]); wait != providerSleepMax {
 		t.Fatalf("wait after budget exhaustion = %s, want %s", wait, providerSleepMax)
 	}
@@ -1028,7 +1028,7 @@ func TestProviderPool_BackoffIsExponentialUpToFiveAttempts(t *testing.T) {
 		if item.NextRunAtNs != expected {
 			t.Fatalf("attempt %d next_run_at = %d, want %d", attempt, item.NextRunAtNs, expected)
 		}
-		clock.advance(6*time.Hour + time.Minute)
+		clock.advance(10 * time.Minute)
 	}
 }
 

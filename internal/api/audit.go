@@ -9,13 +9,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"prism/internal/config"
+	"prism/internal/keys"
 	"prism/internal/model"
 	"prism/internal/safego"
 )
@@ -34,8 +38,13 @@ const (
 	auditMaxLimit        = 200
 	auditDetailBodyBytes = 64 << 10
 	auditPruneInterval   = 24 * time.Hour
-	// auditActorHashBytes is the sha256 prefix that renders as 8 hex characters.
-	auditActorHashBytes = 4
+	// A 128-bit prefix keeps actor fingerprints compact without making
+	// collisions plausible in a large audit trail.
+	auditActorHashBytes      = 16
+	auditTargetMaxBytes      = 1024
+	auditTargetValueMaxBytes = 256
+	auditDetailMaxKeys       = 64
+	auditDetailKeyMaxBytes   = 128
 )
 
 // AuditLogStore is the persistence surface required by audit logging.
@@ -89,41 +98,57 @@ func AuditMiddleware(store AuditLogStore, maxBodyBytes int64, next http.Handler)
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r == nil || !auditWriteMethods[r.Method] {
+		if r == nil || (!auditWriteMethods[r.Method] && r.Method != http.MethodGet) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		detail := auditDetail(r, maxBodyBytes)
+		detail := ""
+		if auditWriteMethods[r.Method] {
+			detail = auditDetail(r, maxBodyBytes)
+		}
 		scope := &auditScope{}
 		if actor, ok := ActorFromContext(r.Context()); ok && actor.UserID != "" {
 			scope.actor = actor.UserID
+			if actor.KeyID != "" {
+				scope.actor = "key:" + actor.KeyID
+			}
 			scope.userID = actor.UserID
 		}
 		r = r.WithContext(context.WithValue(r.Context(), auditScopeKey{}, scope))
 
-		recorder := &auditStatusRecorder{ResponseWriter: w, status: http.StatusOK}
+		recorder := &auditStatusRecorder{ResponseWriter: w}
 		next.ServeHTTP(recorder, r)
-		if recorder.status < 200 || recorder.status >= 300 {
+		if !recorder.wroteHeader || recorder.status < 200 || recorder.status >= 300 {
 			return
 		}
 		action := auditAction(r)
 		if action == "" {
 			return
 		}
+		if !auditWriteMethods[r.Method] && !auditSensitiveRead(r) {
+			return
+		}
 		entry := model.AuditEntry{
 			AtNs:       time.Now().UnixNano(),
 			Actor:      scope.actor,
 			UserID:     scope.userID,
-			RemoteAddr: r.RemoteAddr,
+			RemoteAddr: auditRemoteAddr(r.RemoteAddr),
 			Action:     action,
 			Target:     auditTarget(r),
 			Detail:     detail,
 		}
 		if err := store.AppendAudit(entry); err != nil {
-			log.Printf("audit: append failed for %s: %v", action, err)
+			log.Printf("audit: append failed for %s", action)
 		}
 	})
+}
+
+func auditRemoteAddr(remoteAddr string) string {
+	if host, _, err := net.SplitHostPort(strings.TrimSpace(remoteAddr)); err == nil {
+		return host
+	}
+	return strings.Trim(strings.TrimSpace(remoteAddr), "[]")
 }
 
 // CredentialActor returns a short non-reversible fingerprint for a credential.
@@ -165,6 +190,34 @@ var auditCredentialParams = map[string]bool{
 	"api_key":  true,
 }
 
+// auditSensitiveRead identifies the GET endpoints that return credentials or
+// captured request bodies. Ordinary reads remain outside the write audit log;
+// these downloads are recorded because disclosure is the sensitive action.
+func auditSensitiveRead(r *http.Request) bool {
+	if r == nil || r.Method != http.MethodGet {
+		return false
+	}
+	switch r.Pattern {
+	case "GET /api/v1/nodes/export", "GET /api/v1/request-logs/{log_id}/payloads":
+		return true
+	default:
+		return false
+	}
+}
+
+func auditParamIsCredential(name, value string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(name, "-", "_"))
+	if auditCredentialParams[normalized] || keys.IsCredentialShape(value) {
+		return true
+	}
+	for _, fragment := range []string{"credential", "access_key", "token", "secret", "password", "session", "code"} {
+		if strings.Contains(normalized, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
 // auditTarget records the request's non-credential path parameter values.
 func auditTarget(r *http.Request) string {
 	if r == nil || r.Pattern == "" {
@@ -172,11 +225,23 @@ func auditTarget(r *http.Request) string {
 	}
 	parts := make([]string, 0, 4)
 	for _, name := range auditPatternParamNames(r.Pattern) {
-		if auditCredentialParams[strings.ToLower(name)] {
-			continue
-		}
 		if value := r.PathValue(name); value != "" {
-			parts = append(parts, name+"="+value)
+			if auditParamIsCredential(name, value) {
+				continue
+			}
+			if len(value) > auditTargetValueMaxBytes {
+				value = value[:auditTargetValueMaxBytes]
+				for !utf8.ValidString(value) {
+					value = value[:len(value)-1]
+				}
+				value += "[truncated]"
+			}
+			safe := url.QueryEscape(value)
+			part := url.QueryEscape(name) + "=" + safe
+			if used := len(strings.Join(parts, ",")); used+len(part)+1 > auditTargetMaxBytes {
+				break
+			}
+			parts = append(parts, part)
 		}
 	}
 	return strings.Join(parts, ",")
@@ -243,6 +308,7 @@ func auditRequestBodyKeys(r *http.Request, maxBodyBytes int64) []string {
 // truncated payloads and returns everything parsed so far.
 func topLevelJSONKeys(raw []byte) []string {
 	keys := []string{}
+	seen := make(map[string]struct{})
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	token, err := decoder.Token()
 	if err != nil {
@@ -252,6 +318,9 @@ func topLevelJSONKeys(raw []byte) []string {
 		return keys
 	}
 	for decoder.More() {
+		if len(keys) >= auditDetailMaxKeys {
+			break
+		}
 		keyToken, err := decoder.Token()
 		if err != nil {
 			break
@@ -260,7 +329,17 @@ func topLevelJSONKeys(raw []byte) []string {
 		if !ok {
 			break
 		}
-		keys = append(keys, key)
+		if len(key) > auditDetailKeyMaxBytes {
+			key = key[:auditDetailKeyMaxBytes]
+			for !utf8.ValidString(key) {
+				key = key[:len(key)-1]
+			}
+			key += "[truncated]"
+		}
+		if _, exists := seen[key]; !exists {
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
 		var skip json.RawMessage
 		if err := decoder.Decode(&skip); err != nil {
 			break
@@ -294,10 +373,15 @@ func (rec *auditStatusRecorder) Write(payload []byte) (int, error) {
 
 // Flush keeps streaming responses working through the recorder.
 func (rec *auditStatusRecorder) Flush() {
+	if !rec.wroteHeader {
+		rec.WriteHeader(http.StatusOK)
+	}
 	if flusher, ok := rec.ResponseWriter.(http.Flusher); ok {
 		flusher.Flush()
 	}
 }
+
+func (rec *auditStatusRecorder) Unwrap() http.ResponseWriter { return rec.ResponseWriter }
 
 // auditLogPageResponse is the GET /api/v1/audit-logs envelope.
 type auditLogPageResponse struct {
@@ -309,6 +393,7 @@ type auditLogPageResponse struct {
 // It returns audit entries in descending ID order; limit is capped at 200.
 func HandleListAuditLogs(store AuditLogStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if store == nil {
 			WriteError(w, http.StatusInternalServerError, "INTERNAL", "audit log storage is unavailable")
 			return
@@ -406,24 +491,31 @@ func StartAuditPrunerWithRetention(store AuditLogStore, interval time.Duration, 
 	}
 	done := make(chan struct{})
 	var once sync.Once
+	var wg sync.WaitGroup
+	runPrune := func() {
+		// A panic inside one pass must not end the loop: the next tick retries,
+		// exactly as it does after a failed pass.
+		safego.Run("an audit retention prune", func() {
+			removed, err := PruneAuditLogsWithRetention(store, readRetention())
+			if err != nil {
+				log.Printf("audit: retention prune failed")
+				return
+			}
+			if removed > 0 {
+				log.Printf("audit: retention prune removed %d entries", removed)
+			}
+		})
+	}
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		runPrune()
 		for {
 			select {
 			case <-ticker.C:
-				// A panic inside one pass must not end the loop: the next
-				// tick retries, exactly as it does after a failed pass.
-				safego.Run("an audit retention prune", func() {
-					removed, err := PruneAuditLogsWithRetention(store, readRetention())
-					if err != nil {
-						log.Printf("audit: retention prune failed: %v", err)
-						return
-					}
-					if removed > 0 {
-						log.Printf("audit: retention prune removed %d entries", removed)
-					}
-				})
+				runPrune()
 			case <-done:
 				return
 			}
@@ -431,6 +523,7 @@ func StartAuditPrunerWithRetention(store AuditLogStore, interval time.Duration, 
 	}()
 	return func() {
 		once.Do(func() { close(done) })
+		wg.Wait()
 	}
 }
 

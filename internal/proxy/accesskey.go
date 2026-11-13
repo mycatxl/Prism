@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/sha256"
 	"net"
 	"net/http"
 	"net/netip"
@@ -12,6 +13,12 @@ import (
 	"prism/internal/model"
 )
 
+// unknownAccessKeyHash is compared for every key-shaped credential whose ID is
+// absent. It gives a miss the same HMAC and constant-time comparison work as a
+// wrong secret for a stored key, so the public ID cannot be enumerated by
+// timing. No real HMAC is expected to equal an all-zero digest.
+var unknownAccessKeyHash = make([]byte, sha256.Size)
+
 // AccessKeyVerifier resolves a presented credential to the access key it names.
 //
 // It answers nil for every kind of failure - unknown key, wrong secret, wrong
@@ -20,10 +27,8 @@ import (
 // the response to learn whether a key id exists.
 //
 // A credential that is not shaped like an access key also answers nil, and it
-// does so without touching the pepper. That is what lets a deployment still
-// running on the transitional global proxy token keep working: the entry points
-// try the key path first, and an ordinary token simply falls through to the
-// token comparison.
+// does so without touching the pepper. Callers use the shape result to reject
+// non-key credentials before any proxy work starts.
 type AccessKeyVerifier interface {
 	// VerifyCredential returns the key the credential names, or nil.
 	//
@@ -37,6 +42,11 @@ type AccessKeyVerifier interface {
 type keyVerifier struct {
 	store  *keys.Store
 	pepper *auth.Pepper
+	// scope is the only credential class this verifier resolves. The data
+	// plane and the management API share the same key store, but they must not
+	// share a verifier that accepts both scopes: doing so would let an
+	// admin-scope key authenticate a proxy connection (or vice versa).
+	scope string
 	// now is the clock the expiry checks read, in Unix nanoseconds. It is a
 	// field so tests can pin it.
 	now func() int64
@@ -45,13 +55,22 @@ type keyVerifier struct {
 // NewAccessKeyVerifier returns a verifier over store and pepper.
 //
 // It never returns nil, not even when a dependency is missing. An unconfigured
-// deployment then fails every key check and falls back to the global proxy
-// token, which is exactly the transitional behaviour; that is worth more than
-// saving a nil check at each of the entry points.
+// deployment then fails every key check, so proxy authentication remains closed
+// until the key store and pepper are available.
 func NewAccessKeyVerifier(store *keys.Store, pepper *auth.Pepper) AccessKeyVerifier {
+	return NewAccessKeyVerifierForScope(store, pepper, model.KeyScopeProxy)
+}
+
+// NewAccessKeyVerifierForScope returns a verifier restricted to one key scope.
+//
+// The default constructor is intentionally proxy-only because its callers are
+// data-plane entrypoints. Management authentication uses the same verifier
+// implementation with the admin scope explicitly selected.
+func NewAccessKeyVerifierForScope(store *keys.Store, pepper *auth.Pepper, scope string) AccessKeyVerifier {
 	return &keyVerifier{
 		store:  store,
 		pepper: pepper,
+		scope:  scope,
 		now:    func() int64 { return time.Now().UnixNano() },
 	}
 }
@@ -70,15 +89,19 @@ func (v *keyVerifier) VerifyCredential(credential string, clientAddr netip.Addr)
 		return nil
 	}
 	state, ok := v.store.Get(keyID)
-	if !ok {
+	storedHash := unknownAccessKeyHash
+	if ok && state != nil {
+		storedHash = state.SecretHash
+	}
+	secretOK := v.pepper.VerifySecret(storedHash, secret)
+	if !ok || state == nil {
 		return nil
 	}
 	// An admin key must not be usable as a data-plane credential, and a
-	// proxy key must not be usable at the console.
-	if state.Scope != model.KeyScopeProxy {
-		return nil
-	}
-	if !v.pepper.VerifySecret(state.SecretHash, secret) {
+	// proxy key must not be usable at the console. The scope is selected by the
+	// caller when the verifier is constructed, so both entrypoints fail closed
+	// while still being able to resolve their own credential class.
+	if v.scope == "" || state.Scope != v.scope || !secretOK {
 		return nil
 	}
 	if !state.Usable(v.now()) {
@@ -103,32 +126,29 @@ func (v *keyVerifier) VerifyCredential(credential string, clientAddr netip.Addr)
 //   - "pk_<id>_<secret>" — the whole credential is the key, which is what a
 //     client sends when it has no identity to declare
 //
-// isKey separates "no key here, carry on with the global token" from "a key was
-// named and did not verify", which the caller must refuse. Collapsing the two
-// would let a revoked key be retried as a token.
+// isKey separates "no key here" from "a key was named and did not verify",
+// which the caller must refuse. Collapsing the two would let a revoked key be
+// retried as another credential.
 func splitAccessKeyCredential(verifier AccessKeyVerifier, credential string, clientAddr netip.Addr) (identity string, state *keys.KeyState, isKey bool) {
-	if verifier == nil {
-		return credential, nil, false
-	}
+	identity = ""
+	candidate := credential
 	if idx := strings.LastIndexByte(credential, ':'); idx >= 0 {
-		token := credential[idx+1:]
-		if !keys.IsCredentialShape(token) {
-			return credential, nil, false
-		}
-		return credential[:idx], verifier.VerifyCredential(token, clientAddr), true
+		candidate = credential[idx+1:]
+		identity = credential[:idx]
 	}
-	if !keys.IsCredentialShape(credential) {
+	if !keys.IsCredentialShape(candidate) {
 		return credential, nil, false
 	}
-	return "", verifier.VerifyCredential(credential, clientAddr), true
+	if verifier == nil {
+		return identity, nil, true
+	}
+	return identity, verifier.VerifyCredential(candidate, clientAddr), true
 }
 
 // proxyIdentity is what an inbound request authenticated as.
 //
-// Key is nil when the request authenticated with the transitional global proxy
-// token, or when authentication is disabled. A nil Key means no per-key
-// restriction applies, which is what keeps the global-token path behaving
-// exactly as it did before access keys existed.
+// Key is populated for every authenticated proxy request. Unauthenticated
+// requests never reach routing, metering, or quota enforcement.
 type proxyIdentity struct {
 	PlatformName string
 	Account      string

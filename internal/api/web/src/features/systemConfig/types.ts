@@ -1,4 +1,25 @@
+export type NodePrivacyConfig = {
+  own_cidrs?: string[]; detected_ips?: string[]; active_ips?: string[]; manual_quarantine?: string[];
+  self_probe_url?: string; echo_url?: string; echo_enabled?: boolean; probe_status?: string; probed_at?: string;
+};
+
 export type RuntimeConfig = {
+
+  ldc_enabled: boolean;
+  ldc_gateway_url: string;
+  ldc_pid: string;
+  ldc_key: string;
+  ldc_rate: number;
+  ldc_notify_url: string;
+  ldc_return_url: string;
+  tron_deposit_enabled: boolean;
+  tron_address: string;
+  tron_api_key: string;
+  tron_usdt_contract: string;
+  tron_trx_enabled: boolean;
+  tron_trx_ratio: number;
+  tron_window_minutes: number;
+
   request_log_enabled: boolean;
   reverse_proxy_log_detail_enabled: boolean;
   reverse_proxy_log_req_headers_max_bytes: number;
@@ -87,6 +108,9 @@ export type RegistrationMode = "off" | "invite" | "open";
  * type - and therefore one fetch and one cache entry.
  */
 export type SystemConfigView = RuntimeConfig & {
+  node_privacy?: NodePrivacyConfig;
+ ldc_key_set?: boolean;
+ tron_api_key_set?: boolean;
   audit_retention_days?: number;
   usage_retention_days?: number;
   purity_bands?: PurityBands;

@@ -12,7 +12,7 @@ make build
 ./bin/prism
 ```
 
-`prism init` creates the first administrator, password pepper and proxy token. The generated password is printed once. The management panel is served at `/ui/` on the configured listener.
+`prism init` creates the first administrator, key pepper and legacy configuration token. The generated password is printed once. The management panel is served at `/ui/` on the configured listener. HTTP, SOCKS5 and reverse-proxy traffic require a subscribed user's proxy-scope AccessKey; the legacy token is not a data-plane credential.
 
 ### Docker
 
@@ -62,8 +62,10 @@ The web console lives in `internal/api/web` and is embedded into the Go binary d
 
 ## Documentation
 
+- [`docs/RECOVERY.md`](docs/RECOVERY.md): protected offline recovery, clock correction, backups, usage reconciliation and certificate renewal.
 - [`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md): roles, registration, plans, keys, usage, billing and operations.
-- [`docs/specs/`](docs/specs/): architecture and implementation decisions.
+- [`docs/LIVE_ACCEPTANCE.md`](docs/LIVE_ACCEPTANCE.md): explicit three-protocol acceptance, protected credential inputs and evidence receipts; defaults to NOT_RUN.
+- Production prerequisites and the distinction between offline regression and live acceptance are described in the operator guide's acceptance boundaries section.
 
 ## Repository hygiene
 

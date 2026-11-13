@@ -26,14 +26,15 @@ export type NavigationItem = {
 /** The self-service destinations: the only ones a tenant session is shown. */
 export const tenantItems: NavigationItem[] = [
   { label: "概览", path: mePaths.overview, section: "使用", tenantOnly: true },
-  { label: "我的密钥", path: mePaths.keys, section: "使用", tenantOnly: true },
+  { label: "访问密钥", path: mePaths.keys, section: "使用", tenantOnly: true },
+  { label: "用量分析", path: mePaths.usage, section: "使用", tenantOnly: true },
+  { label: "我的租约", path: mePaths.leases, section: "使用", tenantOnly: true },
   { label: "接入指南", path: mePaths.guide, section: "使用", tenantOnly: true },
-  { label: "购买套餐", path: mePaths.plans, section: "费用", tenantOnly: true },
-  { label: "我的租约", path: mePaths.leases, section: "费用", tenantOnly: true },
-  { label: "链上充值", path: mePaths.deposit, section: "费用", tenantOnly: true },
+  { label: "套餐与账单", path: mePaths.plans, section: "费用", tenantOnly: true },
+  { label: "充值", path: mePaths.deposit, section: "费用", tenantOnly: true },
   // The account page sits outside both namespaces, so it is the one entry an
   // operator and a tenant both see.
-  { label: "账户安全", path: ACCOUNT, section: "账号" },
+  { label: "账户与安全", path: ACCOUNT, section: "账号" },
 ];
 
 /**

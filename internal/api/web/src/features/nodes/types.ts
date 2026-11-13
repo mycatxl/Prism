@@ -9,7 +9,19 @@ export type NodeTag = {
 // NodeIntel is the purity assessment of a node's egress IP (API field
 // `intel`). Every field of an unassessed node is empty and state is
 // "unassessed": a missing assessment is never reported as a score of 0.
+export type EvidenceFact = {
+  state: string; source_class: string; cause?: string; action?: string; sources?: string[];
+  provider?: string; explanation?: string; error_code?: string; observed_at?: string; valid_until?: string; fraud_score?: number;
+  observations?: Array<{provider: string; value: string | boolean | number; observed_at: string; valid_until: string}>;
+};
+
 export type NodeIntel = {
+  facts?: Record<string, EvidenceFact>;
+  reasons?: string[];
+  signals?: Record<"proxy" | "vpn" | "tor" | "hosting" | "compromised" | "scraper" | "anonymous", boolean | null>;
+  measurement_state?: string;
+  measurement_error?: string;
+  measurement_attempts?: number;
   state: "unassessed" | "pending" | "valid" | "unsupported" | "stale" | string;
   egress_ipv4: string;
   egress_ipv6: string;
@@ -30,6 +42,7 @@ export type NodeIntel = {
 };
 
 export type NodeSummary = {
+  privacy?: { status: string; reasons: string[]; warnings: string[]; identity_check: string; config_check?: EvidenceFact; findings?: Record<string, EvidenceFact>; identity_evidence?: EvidenceFact & { checked_at?: string; valid_until?: string; address_family?: string; attempts?: number } };
   quality?: QualitySummary;
   intel?: NodeIntel | null;
   node_hash: string;
@@ -80,6 +93,8 @@ export type NodeSortBy =
 export type SortOrder = "asc" | "desc";
 
 export type NodeListFilters = {
+  purity_state?: string;
+  purity_reason?: string;
   ip_type?: string;
   quality_state?: string;
   risk_grade?: string;

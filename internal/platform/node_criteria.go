@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"net/netip"
 	"strings"
 	"time"
 
@@ -119,6 +120,9 @@ func MatchNodeCriteria(
 	if entry.IsDisabledBySubscriptions(subLookup) {
 		return false, ReasonNodeDisabled
 	}
+	if !entry.PrivacyAllowed() {
+		return false, "node_privacy_quarantined"
+	}
 	// Healthy for routing (outbound ready + circuit not open).
 	if !entry.IsHealthy() {
 		return false, ReasonNodeUnhealthy
@@ -130,6 +134,20 @@ func MatchNodeCriteria(
 	}
 	if ok, reason := matchSelection(c, entry, subLookup, geoLookup, qualityLookup, snap, now); !ok {
 		return false, reason
+	}
+	// Mandatory measurement floor, independently of operator selection criteria.
+	if c.QualityPolicy.IsEmpty() {
+		if snap != nil {
+			if ok, reason := AdmitQuality(c.QualityPolicy, entry, snap, now); !ok {
+				return false, reason
+			}
+		} else if qualityLookup != nil {
+			if !EvaluateQuality(c.QualityPolicy, qualityLookup(egressIP), entry.GetLastEgressUpdate(), now) {
+				return false, ReasonQualityUnknown
+			}
+		} else {
+			return false, ReasonQualityUnknown
+		}
 	}
 	// At least one latency record.
 	if !entry.HasLatency() {
@@ -213,7 +231,7 @@ func matchSelection(
 			return false, ReasonPurityBandFilter
 		}
 	}
-	// Quality policy (when configured).
+	// Explicit policy also applies to criterion-only previews.
 	if !c.QualityPolicy.IsEmpty() {
 		switch {
 		case snap != nil:
@@ -261,7 +279,33 @@ func assessmentOf(entry *node.NodeEntry, snap QualitySnapshotReader) (intel.Asse
 	if !ip.IsValid() {
 		return intel.AssessmentLite{}, false
 	}
-	return snap.Assessment(ip)
+	lite, ok := snap.Assessment(ip)
+	if scoped, supports := snap.(interface {
+		NodeAssessment(string, netip.Addr) (intel.AssessmentLite, bool)
+	}); supports {
+		lite, ok = scoped.NodeAssessment(entry.Hash.Hex(), ip)
+	}
+	return lite.Current(time.Now().UTC()), ok
+}
+
+// AllowsIPTiers checks complete type:band pairs from a tenant's plan. Splitting
+// the pairs into two independent lists would admit their cross product.
+func (p *Platform) AllowsIPTiers(entry *node.NodeEntry, tiers []string) bool {
+	if len(tiers) == 0 {
+		return true
+	}
+	lite, ok := assessmentOf(entry, p.qualityReader())
+	if !ok {
+		return false
+	}
+	for _, tier := range tiers {
+		ipType, band, ok := strings.Cut(tier, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(ipType), intel.IPTypeName(lite.IPType)) &&
+			purityBandAllowed([]string{band}, lite) {
+			return true
+		}
+	}
+	return false
 }
 
 // purityBandAllowed applies one purity band list. "review" is the legacy band

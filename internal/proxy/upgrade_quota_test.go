@@ -102,6 +102,49 @@ func newUpgradeQuotaReverseProxy(
 	})
 }
 
+func openForwardUpgrade(t *testing.T, fp *ForwardProxy) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	server := httptest.NewServer(fp)
+	t.Cleanup(server.Close)
+
+	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatalf("dial forward proxy: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	if err := conn.SetDeadline(time.Now().Add(20 * time.Second)); err != nil {
+		t.Fatalf("SetDeadline: %v", err)
+	}
+
+	request := "GET http://example.com/ws HTTP/1.1\r\n" +
+		"Host: example.com\r\n" +
+		"Connection: Upgrade\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Proxy-Authorization: " + basicAuth("plat", testCredential) + "\r\n\r\n"
+	if _, err := conn.Write([]byte(request)); err != nil {
+		t.Fatalf("write forward upgrade request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read upgrade status: %v", err)
+	}
+	if !strings.Contains(statusLine, "101") {
+		t.Fatalf("the forward upgrade was not established: %q", statusLine)
+	}
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read upgrade headers: %v", err)
+		}
+		if line == "\r\n" {
+			break
+		}
+	}
+	return conn, reader
+}
+
 // An upgraded (101) stream is subject to the same rule as any other stream: its
 // bytes are handed to the key's sink while the stream runs, and a key that runs
 // out of allowance has the stream cut while it is still open.
@@ -201,4 +244,70 @@ func TestReverseProxy_UpgradeStreamIsCutAndReportedMidStream(t *testing.T) {
 		t.Fatalf("the key is charged %d bytes after the cut, want at least its %d-byte allowance", reported, midStreamAllowance)
 	}
 	waitForSessionCount(t, registry, "k-meter", 0)
+}
+
+func TestForwardProxy_UpgradeStreamIsCutAndReportedMidStream(t *testing.T) {
+	upstream := startUpgradeEchoUpstream(t)
+	env := newProxyE2EEnv(t)
+	setProxyE2EOutboundDialFunc(t, env, func(context.Context, string, M.Socksaddr) (net.Conn, error) {
+		return net.Dial("tcp", upstream.Addr().String())
+	})
+
+	key := workingKeyState()
+	key.Plan.TrafficBytes = midStreamAllowance
+	fp, _, counters, registry := newQuotaForwardProxy(t, env, &mutableKeyStore{state: key})
+	conn, reader := openForwardUpgrade(t, fp)
+
+	chunk := bytes.Repeat([]byte("f"), midStreamChunk)
+	echo := make([]byte, len(chunk))
+	var written, echoed int64
+	var reportedWhileOpen int64
+	for written < midStreamBodyLen {
+		if _, err := conn.Write(chunk); err != nil {
+			break
+		}
+		written += int64(len(chunk))
+		n, err := io.ReadFull(reader, echo)
+		echoed += int64(n)
+		if reported := counters.UserBytes("u-meter"); reported > reportedWhileOpen {
+			reportedWhileOpen = reported
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if echoed == 0 {
+		t.Fatal("nothing flowed through the forward upgrade before it ended")
+	}
+	if echoed >= midStreamBodyLen {
+		t.Fatalf("the forward upgrade carried the whole %d-byte stream", midStreamBodyLen)
+	}
+	if reportedWhileOpen < midStreamAllowance {
+		t.Fatalf("the key was charged %d bytes while the forward upgrade was open, want at least %d", reportedWhileOpen, midStreamAllowance)
+	}
+	waitForSessionCount(t, registry, "k-meter", 0)
+}
+
+func TestForwardProxy_UpgradeSessionClosesOnKeyRevocation(t *testing.T) {
+	upstream := startUpgradeEchoUpstream(t)
+	env := newProxyE2EEnv(t)
+	setProxyE2EOutboundDialFunc(t, env, func(context.Context, string, M.Socksaddr) (net.Conn, error) {
+		return net.Dial("tcp", upstream.Addr().String())
+	})
+
+	fp, emitter, _, registry := newQuotaForwardProxy(t, env, &mutableKeyStore{state: workingKeyState()})
+	conn, _ := openForwardUpgrade(t, fp)
+	waitForSessionCount(t, registry, "k-meter", 1)
+
+	if closed := registry.CloseKey("k-meter"); closed != 1 {
+		t.Fatalf("CloseKey closed %d sessions, want 1", closed)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	if _, err := conn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("the upgraded client connection remained open after key revocation")
+	}
+	_ = waitForRequestLog(t, emitter)
 }

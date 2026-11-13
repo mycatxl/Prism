@@ -3,7 +3,10 @@ export type RiskGrade = "unknown" | "low" | "moderate" | "high" | "severe";
 export type IPType = "unknown" | "residential" | "non_residential" | "datacenter" | "mobile" | "business" | "wireless" | "conflicting";
 export type QualitySignals = Record<"proxy" | "vpn" | "tor" | "hosting" | "compromised" | "scraper" | "anonymous", boolean | null>;
 
+import type { EvidenceFact } from "../types";
+
 export type QualityEvidence = {
+  fraud_score?: number;
   id: string;
   ip: string;
   provider: string;
@@ -65,8 +68,10 @@ export type QualitySummary = {
 };
 
 export type QualityAssessment = {
+  facts?: Record<string, EvidenceFact>;
   state: QualityState;
   score_source: "ippure";
+  bands?: { excellent: number; clean: number; fair: number; mixed: number };
   purity_score: number | null;
   purity_band: string;
   network_type: IPType;

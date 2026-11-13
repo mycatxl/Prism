@@ -28,7 +28,7 @@ type AccountService interface {
 	GetAccount(id string) (service.Account, error)
 	StartTOTPEnrolment(id, issuer string) (service.TOTPEnrolment, error)
 	ConfirmTOTPEnrolment(id, secret, code string, nowNs int64) error
-	DisableTOTP(id string, nowNs int64) error
+	DisableTOTPWithPassword(id, password string, nowNs int64) error
 	ChangeAccountPassword(userID, currentPassword, newPassword string, nowNs int64) error
 	// VerifyAccountPassword checks a password against the stored hash without
 	// changing anything. It is the comparison ChangeAccountPassword makes,
@@ -71,6 +71,10 @@ type AuthHandlers struct {
 	// connection's own TLS state is the only evidence, which is the behaviour of
 	// a deployment that trusts no forwarded header.
 	SecureTransport func(*http.Request) bool
+	// AllowPlainHTTP is the configured-listener fallback used by tests and by
+	// handler-only embeddings that do not provide net/http's local-address
+	// context. Served requests prefer the actual accepted listener address.
+	AllowPlainHTTP func(*http.Request) bool
 	// AuditLog records a failed login. It is the one management write the audit
 	// middleware never sees, because that middleware only records the
 	// successful ones and a failure would otherwise leave no trace at all. Nil
@@ -114,6 +118,23 @@ func (h *AuthHandlers) secureTransport(r *http.Request) bool {
 	return h.SecureTransport(r)
 }
 
+func (h *AuthHandlers) cookiePolicy(r *http.Request) (auth.CookiePolicy, error) {
+	if r == nil {
+		return auth.CookiePolicy{}, auth.ErrPlainHTTPNotAllowed
+	}
+	secure := h.secureTransport(r)
+	if secure {
+		return auth.NewCookiePolicyForRemote(true, r.RemoteAddr)
+	}
+	if local, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && local != nil {
+		return auth.NewCookiePolicy(false, local.String())
+	}
+	if h != nil && h.AllowPlainHTTP != nil && h.AllowPlainHTTP(r) {
+		return auth.CookiePolicy{Secure: false, SameSite: "Strict"}, nil
+	}
+	return auth.NewCookiePolicyForRemote(false, r.RemoteAddr)
+}
+
 // auditFailedLogin appends the audit row for a refused login.
 //
 // It records the route and the address it came from, and nothing else: no
@@ -124,13 +145,17 @@ func (h *AuthHandlers) auditFailedLogin(r *http.Request) {
 	if h == nil || h.AuditLog == nil || r == nil {
 		return
 	}
+	remote := h.clientKey(r)
+	if remote == "" {
+		remote = sessionSourceIP(r)
+	}
 	entry := model.AuditEntry{
 		AtNs:       h.nowNs(),
 		Action:     failedLoginAuditAction,
-		RemoteAddr: r.RemoteAddr,
+		RemoteAddr: remote,
 	}
 	if err := h.AuditLog.AppendAudit(entry); err != nil {
-		h.logf("api: could not record a failed login: %v", err)
+		h.logf("api: could not record a failed login: %T", err)
 	}
 }
 
@@ -228,6 +253,7 @@ func hostWithoutPort(host string) string {
 // how an identity is obtained.
 func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if h == nil || h.Sessions == nil {
 			WriteError(w, http.StatusServiceUnavailable, "AUTH_UNAVAILABLE", "authentication is not configured")
 			return
@@ -238,6 +264,16 @@ func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 				"a request from another site may not sign in or sign up")
 			return
 		}
+		// The cookie policy is decided before the credential is checked, so a
+		// deployment serving the console over plain HTTP to a real host refuses
+		// the login instead of handing out a cookie anyone on the path can
+		// read.
+		policy, err := h.cookiePolicy(r)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "HTTPS_REQUIRED",
+				"the console must be reached over HTTPS, or over plain HTTP on loopback")
+			return
+		}
 		var req loginRequest
 		if !decodeJSONBody(w, r, &req) {
 			return
@@ -245,17 +281,6 @@ func (h *AuthHandlers) HandleLogin() http.HandlerFunc {
 		req.Username = strings.TrimSpace(req.Username)
 		if req.Username == "" || req.Password == "" {
 			WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "a username and a password are required")
-			return
-		}
-
-		// The cookie policy is decided before the credential is checked, so a
-		// deployment serving the console over plain HTTP to a real host refuses
-		// the login instead of handing out a cookie anyone on the path can
-		// read.
-		policy, err := auth.NewCookiePolicy(h.secureTransport(r), r.Host)
-		if err != nil {
-			WriteError(w, http.StatusBadRequest, "HTTPS_REQUIRED",
-				"the console must be reached over HTTPS, or over plain HTTP on loopback")
 			return
 		}
 
@@ -308,6 +333,12 @@ func (h *AuthHandlers) writeLoginError(w http.ResponseWriter, r *http.Request, e
 		h.auditFailedLogin(r)
 		WriteError(w, http.StatusUnauthorized, "TOTP_ALREADY_USED",
 			"that second-factor code has already been used; wait for the next one")
+	case errors.Is(err, auth.ErrAccountLocked):
+		// Account-wide blocking must not confirm that the submitted username
+		// exists. The service already performed the same Argon2 work as the
+		// unknown-user path, and this response deliberately matches it too.
+		h.auditFailedLogin(r)
+		WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "invalid credentials")
 	case errors.Is(err, auth.ErrTooManyAttempts):
 		h.auditFailedLogin(r)
 		w.Header().Set("Retry-After", "60")
@@ -320,7 +351,7 @@ func (h *AuthHandlers) writeLoginError(w http.ResponseWriter, r *http.Request, e
 		// server-side problem, and saying so is better than reporting it as a
 		// credential failure the user would retry forever.
 		h.auditFailedLogin(r)
-		h.logf("api: login failed: %v", err)
+		h.logf("api: login failed: %T", err)
 		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete the login")
 	}
 }
@@ -328,10 +359,14 @@ func (h *AuthHandlers) writeLoginError(w http.ResponseWriter, r *http.Request, e
 // HandleLogout ends the session the request carried.
 func (h *AuthHandlers) HandleLogout() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if h != nil && h.Sessions != nil {
 			if cookie, err := r.Cookie(auth.SessionCookieName); err == nil && cookie != nil {
 				if err := h.Sessions.Logout(cookie.Value); err != nil {
-					h.logf("api: logout could not end the session: %v", err)
+					h.logf("api: logout could not end the session: %T", err)
+					clearSessionCookies(w, r, h.secureTransport(r))
+					WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not end the session")
+					return
 				}
 			}
 		}
@@ -343,6 +378,7 @@ func (h *AuthHandlers) HandleLogout() http.HandlerFunc {
 // HandleSession reports who the caller is.
 func (h *AuthHandlers) HandleSession() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
@@ -388,6 +424,7 @@ type changePasswordRequest struct {
 // credential usable by anyone already holding its cookie.
 func (h *AuthHandlers) HandleChangePassword() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
@@ -411,9 +448,13 @@ func (h *AuthHandlers) HandleChangePassword() http.HandlerFunc {
 			return
 		}
 
+		if !h.allowReauthentication(w, actor.UserID) {
+			return
+		}
 		err := h.Accounts.ChangeAccountPassword(actor.UserID, req.CurrentPassword, req.NewPassword, h.nowNs())
 		switch {
 		case errors.Is(err, service.ErrCurrentPasswordWrong):
+			h.recordReauthenticationFailure(actor.UserID)
 			WriteError(w, http.StatusForbidden, "PASSWORD_MISMATCH", "the current password is wrong")
 			return
 		case errors.Is(err, service.ErrPasswordTooShort):
@@ -425,13 +466,17 @@ func (h *AuthHandlers) HandleChangePassword() http.HandlerFunc {
 				"the new password is the same as the current one")
 			return
 		case err != nil:
-			h.logf("api: password change for user %s failed: %v", actor.UserID, err)
+			h.logf("api: password change for user %s failed: %T", actor.UserID, err)
 			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not change the password")
 			return
 		}
 
+		h.clearReauthenticationFailures(actor.UserID)
 		if _, err := h.Sessions.RevokeUserSessions(actor.UserID); err != nil {
-			h.logf("api: could not revoke the sessions of user %s after a password change: %v", actor.UserID, err)
+			h.logf("api: could not revoke the sessions of user %s after a password change: %T", actor.UserID, err)
+			clearSessionCookies(w, r, h.secureTransport(r))
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not end the account sessions")
+			return
 		}
 		clearSessionCookies(w, r, h.secureTransport(r))
 		h.logf("api: user %s changed their password; every session was ended", actor.UserID)
@@ -446,6 +491,7 @@ func (h *AuthHandlers) HandleChangePassword() http.HandlerFunc {
 // the account out of its own console.
 func (h *AuthHandlers) HandleStartTOTPEnrolment(issuer string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
@@ -454,7 +500,7 @@ func (h *AuthHandlers) HandleStartTOTPEnrolment(issuer string) http.HandlerFunc 
 		if !requireSessionActor(w, actor) {
 			return
 		}
-		if h == nil || h.Accounts == nil {
+		if h == nil || h.Accounts == nil || h.Sessions == nil {
 			WriteError(w, http.StatusServiceUnavailable, "ACCOUNTS_UNAVAILABLE", "account management is not configured")
 			return
 		}
@@ -466,7 +512,7 @@ func (h *AuthHandlers) HandleStartTOTPEnrolment(issuer string) http.HandlerFunc 
 				"the account already has a second factor; remove it first to enrol another")
 			return
 		case err != nil:
-			h.logf("api: could not start second-factor enrolment for user %s: %v", actor.UserID, err)
+			h.logf("api: could not start second-factor enrolment for user %s: %T", actor.UserID, err)
 			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not start enrolment")
 			return
 		}
@@ -483,6 +529,7 @@ type confirmTOTPRequest struct {
 // HandleConfirmTOTPEnrolment stores the secret once a code proves it works.
 func (h *AuthHandlers) HandleConfirmTOTPEnrolment() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
@@ -491,7 +538,7 @@ func (h *AuthHandlers) HandleConfirmTOTPEnrolment() http.HandlerFunc {
 		if !requireSessionActor(w, actor) {
 			return
 		}
-		if h == nil || h.Accounts == nil {
+		if h == nil || h.Accounts == nil || h.Sessions == nil {
 			WriteError(w, http.StatusServiceUnavailable, "ACCOUNTS_UNAVAILABLE", "account management is not configured")
 			return
 		}
@@ -519,11 +566,12 @@ func (h *AuthHandlers) HandleConfirmTOTPEnrolment() http.HandlerFunc {
 				"no key pepper is configured, so a second factor cannot be stored")
 			return
 		case err != nil:
-			h.logf("api: could not confirm second-factor enrolment for user %s: %v", actor.UserID, err)
+			h.logf("api: could not confirm second-factor enrolment for user %s: %T", actor.UserID, err)
 			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not complete enrolment")
 			return
 		}
 		h.logf("api: user %s enrolled a second factor", actor.UserID)
+		clearSessionCookies(w, r, h.secureTransport(r))
 		WriteJSON(w, http.StatusOK, map[string]any{"has_totp": true})
 	}
 }
@@ -546,6 +594,7 @@ type disableTOTPRequest struct {
 // touched, so a wrong one changes nothing at all.
 func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := ActorFromContext(r.Context())
 		if !ok {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
@@ -556,7 +605,7 @@ func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 		if !requireSessionActor(w, actor) {
 			return
 		}
-		if h == nil || h.Accounts == nil {
+		if h == nil || h.Accounts == nil || h.Sessions == nil {
 			WriteError(w, http.StatusServiceUnavailable, "ACCOUNTS_UNAVAILABLE", "account management is not configured")
 			return
 		}
@@ -568,32 +617,33 @@ func (h *AuthHandlers) HandleDisableTOTP() http.HandlerFunc {
 		// An absent password is not a special case: it fails the same
 		// comparison an empty header value would, and it is answered the same
 		// way, so nothing here can be probed for "did the field arrive".
-		switch err := h.Accounts.VerifyAccountPassword(actor.UserID, req.CurrentPassword); {
-		case errors.Is(err, service.ErrCurrentPasswordWrong):
-			WriteError(w, http.StatusForbidden, "PASSWORD_MISMATCH", "the current password is wrong")
-			return
-		case err != nil:
-			h.logf("api: could not verify the password of user %s before removing a second factor: %v", actor.UserID, err)
-			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not verify the password")
+		if !h.allowReauthentication(w, actor.UserID) {
 			return
 		}
-
-		err := h.Accounts.DisableTOTP(actor.UserID, h.nowNs())
+		err := h.Accounts.DisableTOTPWithPassword(actor.UserID, req.CurrentPassword, h.nowNs())
 		switch {
+		case errors.Is(err, service.ErrCurrentPasswordWrong):
+			h.recordReauthenticationFailure(actor.UserID)
+			WriteError(w, http.StatusForbidden, "PASSWORD_MISMATCH", "the current password is wrong")
+			return
 		case errors.Is(err, service.ErrTOTPNotEnrolled):
 			WriteError(w, http.StatusConflict, "TOTP_NOT_ENROLLED", "the account has no second factor")
 			return
 		case err != nil:
-			h.logf("api: could not remove the second factor of user %s: %v", actor.UserID, err)
+			h.logf("api: could not remove the second factor of user %s: %T", actor.UserID, err)
 			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not remove the second factor")
 			return
 		}
+		h.clearReauthenticationFailures(actor.UserID)
 		// Removing the second factor is a downgrade of the account's security,
 		// so every other session is ended: whoever else was logged in should have
 		// to authenticate again rather than keep a session that was established
 		// under the stronger policy.
 		if _, err := h.Sessions.RevokeUserSessions(actor.UserID); err != nil {
-			h.logf("api: could not revoke the sessions of user %s after removing a second factor: %v", actor.UserID, err)
+			h.logf("api: could not revoke the sessions of user %s after removing a second factor: %T", actor.UserID, err)
+			clearSessionCookies(w, r, h.secureTransport(r))
+			WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "could not end the account sessions")
+			return
 		}
 		clearSessionCookies(w, r, h.secureTransport(r))
 		h.logf("api: user %s removed their second factor; every session was ended", actor.UserID)
@@ -639,7 +689,7 @@ func writeSessionCookies(w http.ResponseWriter, policy auth.CookiePolicy, sessio
 // handler already made (see secureTransport), passed in rather than re-derived
 // so the clearing cookie carries the same Secure attribute as the one it clears.
 func clearSessionCookies(w http.ResponseWriter, r *http.Request, secure bool) {
-	policy, err := auth.NewCookiePolicy(secure, r.Host)
+	policy, err := auth.NewCookiePolicyForRemote(secure, r.RemoteAddr)
 	if err != nil {
 		// The request could not have carried a usable cookie anyway, but the
 		// clearing still has to happen so a stale cookie is not left behind.
@@ -668,11 +718,25 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, target any) bool {
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writePayloadTooLarge(w, maxErr.Limit)
+			return false
+		}
 		if errors.Is(err, io.EOF) {
 			WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "a request body is required")
 			return false
 		}
 		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "the request body is not valid JSON")
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writePayloadTooLarge(w, maxErr.Limit)
+			return false
+		}
+		WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "the request body must contain one JSON value")
 		return false
 	}
 	return true
@@ -710,4 +774,28 @@ type sessionInfoForWebUI struct {
 	// open). The console needs it before anyone is signed in, to decide whether
 	// the sign-in page offers a way to create an account.
 	RegistrationMode string `json:"registration_mode"`
+}
+
+// Password rechecks share one account budget across sessions and endpoints.
+func (h *AuthHandlers) allowReauthentication(w http.ResponseWriter, userID string) bool {
+	if h.FailureLimiter != nil {
+		if blocked, _ := h.FailureLimiter.Blocked("reauth:" + userID); blocked {
+			w.Header().Set("Retry-After", "60")
+			WriteError(w, http.StatusTooManyRequests, "RATE_LIMITED", "too many failed attempts; retry later")
+			return false
+		}
+	}
+	return true
+}
+
+func (h *AuthHandlers) recordReauthenticationFailure(userID string) {
+	if h.FailureLimiter != nil {
+		h.FailureLimiter.RecordFailure("reauth:" + userID)
+	}
+}
+
+func (h *AuthHandlers) clearReauthenticationFailures(userID string) {
+	if resetter, ok := h.FailureLimiter.(auth.BlocklistResetter); ok {
+		resetter.Reset("reauth:" + userID)
+	}
 }

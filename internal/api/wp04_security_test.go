@@ -23,6 +23,22 @@ func okHandler() http.Handler {
 	})
 }
 
+func TestAuditTargetEscapesControlCharactersAndOmitsCredentials(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/example", nil)
+	req.Pattern = "DELETE /api/v1/example/{id}/{credential}"
+	req.SetPathValue("id", "row=1,forged\nactor=admin")
+	req.SetPathValue("credential", "pk_"+strings.Repeat("a", 32)+"_"+strings.Repeat("b", 64))
+	target := auditTarget(req)
+	if strings.ContainsAny(target, "\r\n") || strings.Contains(target, "credential") || strings.Contains(target, "pk_") {
+		t.Fatalf("unsafe audit target: %q", target)
+	}
+	for _, escaped := range []string{"%3D", "%2C", "%0A"} {
+		if !strings.Contains(target, escaped) {
+			t.Fatalf("audit target %q is missing %s", target, escaped)
+		}
+	}
+}
+
 func doAuthedRequest(handler http.Handler, remoteAddr, xff, token string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/info", nil)
 	req.RemoteAddr = remoteAddr
@@ -248,6 +264,25 @@ type fakeAuditStore struct {
 	}
 }
 
+func TestAuditMiddlewareRecordsSensitiveDownloads(t *testing.T) {
+	store := &fakeAuditStore{}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/nodes/export", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	mux.Handle("GET /api/v1/platforms", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	handler := AuditMiddleware(store, 1<<20, mux)
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/nodes/export?format=singbox", nil))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/platforms", nil))
+	entries := store.snapshot()
+	if len(entries) != 1 || entries[0].Action != "GET /api/v1/nodes/export" {
+		t.Fatalf("sensitive-read audit entries = %+v", entries)
+	}
+}
+
 var _ AuditLogStore = (*fakeAuditStore)(nil)
 
 func (f *fakeAuditStore) AppendAudit(entry model.AuditEntry) error {
@@ -335,8 +370,8 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 		t.Fatalf("audit entries after PATCH: got %d, want 1", len(entries))
 	}
 	entry := entries[0]
-	if entry.Actor != "u-admin" {
-		t.Fatalf("actor: got %q, want %q", entry.Actor, "u-admin")
+	if entry.Actor != "key:test-key" || entry.UserID != "u-admin" {
+		t.Fatalf("actor: got %q / user %q, want key:test-key / u-admin", entry.Actor, entry.UserID)
 	}
 	if entry.Action != "PATCH /api/v1/platforms/{id}" {
 		t.Fatalf("action: got %q", entry.Action)
@@ -344,7 +379,7 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 	if entry.Target != "id=plat-1" {
 		t.Fatalf("target: got %q, want %q", entry.Target, "id=plat-1")
 	}
-	if entry.RemoteAddr != "192.0.2.50:1234" {
+	if entry.RemoteAddr != "192.0.2.50" {
 		t.Fatalf("remote_addr: got %q", entry.RemoteAddr)
 	}
 	if !strings.Contains(entry.Detail, "name") || !strings.Contains(entry.Detail, "sticky_ttl") {
@@ -396,16 +431,13 @@ func TestAuditLog_RecordsWritesOnly(t *testing.T) {
 }
 
 // TestAuditLog_BodyLimitWrapsAuditPeek covers: production wraps the audit
-// middleware inside RequestBodyLimitMiddleware (internal/api/server.go), so the
-// payload peek reads a body that is already bounded by the configured limit and
-// can never observe bytes beyond it. The test uses the same order as production;
-// reversing the two wrappers makes the second key visible in the audit detail
-// and fails here.
+// middleware inside RequestBodyLimitMiddleware (internal/api/server.go). Identity
+// validation buffers a bounded mutation body before authorization is rechecked;
+// an oversized request must reach neither the writer nor the success audit.
 func TestAuditLog_BodyLimitWrapsAuditPeek(t *testing.T) {
 	const (
 		bodyLimit = 13
-		// `{"aaaa":1,"bb` is the first bodyLimit bytes.
-		payload = `{"aaaa":1,"bbbb":2}`
+		payload   = `{"aaaa":1,"bbbb":2}`
 	)
 
 	store := &fakeAuditStore{}
@@ -425,26 +457,24 @@ func TestAuditLog_BodyLimitWrapsAuditPeek(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPatch, "/api/v1/platforms/plat-1", strings.NewReader(payload))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("PATCH: got %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("PATCH: got %d, want 413 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if handlerBody != nil || handlerErr != nil || len(store.snapshot()) != 0 {
+		t.Fatal("oversized mutation reached the writer or success audit")
 	}
 
+	// A request within the limit still reaches the handler intact and is audited.
+	const validPayload = `{"aaaa":1}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/v1/platforms/plat-1", strings.NewReader(validPayload))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || handlerErr != nil || string(handlerBody) != validPayload {
+		t.Fatalf("valid PATCH: status=%d body=%q error=%v", rec.Code, handlerBody, handlerErr)
+	}
 	entries := store.snapshot()
-	if len(entries) != 1 {
-		t.Fatalf("audit entries: got %d, want 1", len(entries))
-	}
-	detail := entries[0].Detail
-	if !strings.Contains(detail, "aaaa") {
-		t.Fatalf("audit detail %q lost the first body key", detail)
-	}
-	if strings.Contains(detail, "bbbb") {
-		t.Fatalf("audit detail %q saw bytes past the request-body limit: the payload peek is outside the limit", detail)
-	}
-	if string(handlerBody) != payload[:bodyLimit] {
-		t.Fatalf("handler body length: got %d, want %d", len(handlerBody), bodyLimit)
-	}
-	if handlerErr == nil {
-		t.Fatal("the handler body reader must report the size limit")
+	if len(entries) != 1 || !strings.Contains(entries[0].Detail, "aaaa") || strings.Contains(entries[0].Detail, "bbbb") {
+		t.Fatalf("audit did not record only the accepted body: %v", entries)
 	}
 }
 
@@ -524,10 +554,13 @@ func TestAuditLog_RetentionPolicy(t *testing.T) {
 	if _, err := PruneAuditLogs(store); err != nil {
 		t.Fatalf("PruneAuditLogs: %v", err)
 	}
-	if store.pruneCall.keepMax != 100000 {
-		t.Fatalf("keepMax: got %d, want 100000", store.pruneCall.keepMax)
+	store.mu.Lock()
+	pruneCall := store.pruneCall
+	store.mu.Unlock()
+	if pruneCall.keepMax != 100000 {
+		t.Fatalf("keepMax: got %d, want 100000", pruneCall.keepMax)
 	}
-	cutoff := time.Unix(0, store.pruneCall.olderThanNs)
+	cutoff := time.Unix(0, pruneCall.olderThanNs)
 	wantDays := 90
 	gotDays := int(time.Since(cutoff).Hours() / 24)
 	if gotDays < wantDays-1 || gotDays > wantDays+1 {

@@ -108,6 +108,8 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 	if s.Pepper == nil {
 		return AccessKeyView{}, "", internal("no pepper is configured, so access keys cannot be minted", ErrNoPepper)
 	}
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
 
 	user, err := s.Engine.GetUser(userID)
 	if err != nil {
@@ -125,6 +127,17 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 	if in.ExpiresInDays < 0 {
 		return AccessKeyView{}, "", invalidArg("expires_in_days: must not be negative")
 	}
+	if in.ExpiresInDays > maxExpiryDays {
+		return AccessKeyView{}, "", invalidArg("expires_in_days: must not exceed 36500 (100 years)")
+	}
+	platforms := normalizeStringList(in.Platforms)
+	planSnapshot, err := s.userPlanSnapshot(userID)
+	if err != nil {
+		return AccessKeyView{}, "", err
+	}
+	if svcErr := validateKeyPlatforms(platforms, planSnapshot); svcErr != nil {
+		return AccessKeyView{}, "", svcErr
+	}
 
 	// The allowance is checked inside insertAccessKeyWithinAllowance, in the
 	// same critical section as the insert itself: reading the count here and
@@ -139,7 +152,7 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 		UserID:      userID,
 		Name:        name,
 		SecretHash:  s.Pepper.HashSecret(secret),
-		Platforms:   normalizeStringList(in.Platforms),
+		Platforms:   platforms,
 		IPAllowlist: allowlist,
 		Scope:       model.KeyScopeProxy,
 		Status:      model.KeyStatusActive,
@@ -154,7 +167,7 @@ func (s *ControlPlaneService) CreateAccessKey(userID string, in AccessKeyInput, 
 	if svcErr := s.insertAccessKeyWithinAllowance(*user, row); svcErr != nil {
 		return AccessKeyView{}, "", svcErr
 	}
-	if err := s.publishKey(row, *user); err != nil {
+	if err := s.publishKeyWithSnapshot(row, *user, planSnapshot); err != nil {
 		return AccessKeyView{}, "", err
 	}
 	return accessKeyView(row), keys.FormatCredential(id, secret), nil
@@ -169,6 +182,8 @@ func (s *ControlPlaneService) UpdateAccessKey(userID, keyID string, patchJSON js
 	if s == nil || s.Engine == nil {
 		return AccessKeyView{}, internal("no state engine", nil)
 	}
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
 	patch, svcErr := parseMergePatch(patchJSON)
 	if svcErr != nil {
 		return AccessKeyView{}, svcErr
@@ -183,6 +198,7 @@ func (s *ControlPlaneService) UpdateAccessKey(userID, keyID string, patchJSON js
 	if err != nil {
 		return AccessKeyView{}, err
 	}
+	previousStatus := row.Status
 	user, err := s.Engine.GetUser(userID)
 	if err != nil {
 		return AccessKeyView{}, mapUserLookupError(err)
@@ -216,13 +232,47 @@ func (s *ControlPlaneService) UpdateAccessKey(userID, keyID string, patchJSON js
 		row.Status = value
 	}
 
+	planSnapshot, err := s.userPlanSnapshot(userID)
+	if err != nil {
+		return AccessKeyView{}, err
+	}
+	if svcErr := validateKeyPlatforms(row.Platforms, planSnapshot); svcErr != nil {
+		return AccessKeyView{}, svcErr
+	}
+	if previousStatus != model.KeyStatusActive && row.Status == model.KeyStatusActive {
+		if svcErr := s.checkKeyAllowance(user, nowNs); svcErr != nil {
+			return AccessKeyView{}, svcErr
+		}
+	}
+
 	if err := s.Engine.UpdateAccessKey(row); err != nil {
 		return AccessKeyView{}, internal("update access key", err)
 	}
-	if err := s.publishKey(row, *user); err != nil {
+	if err := s.publishKeyWithSnapshot(row, *user, planSnapshot); err != nil {
 		return AccessKeyView{}, err
 	}
+	s.revokeProxyKeySessions(keyID)
 	return accessKeyView(row), nil
+}
+
+// validateKeyPlatforms enforces that a key can only narrow a subscription's
+// platform set. The data-plane state intentionally lets a non-empty key list
+// replace the plan list, so accepting an out-of-plan value here would turn a
+// tenant-controlled key field into a quota bypass.
+func validateKeyPlatforms(platforms []string, plan keys.PlanSnapshot) *ServiceError {
+	if len(plan.Platforms) == 0 || len(platforms) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(plan.Platforms))
+	for _, platform := range plan.Platforms {
+		allowed[platform] = struct{}{}
+	}
+	for _, platform := range platforms {
+		if _, ok := allowed[platform]; !ok {
+			return invalidArg("platforms: must be a subset of the active plan")
+		}
+	}
+	return nil
 }
 
 // DeleteAccessKey removes one of a user's keys. The key leaves the live store in
@@ -231,6 +281,8 @@ func (s *ControlPlaneService) DeleteAccessKey(userID, keyID string) error {
 	if s == nil || s.Engine == nil {
 		return internal("no state engine", nil)
 	}
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
 	if _, err := s.lookupUserKey(userID, keyID); err != nil {
 		return err
 	}
@@ -240,6 +292,7 @@ func (s *ControlPlaneService) DeleteAccessKey(userID, keyID string) error {
 	if s.Keys != nil {
 		s.Keys.Delete(keyID)
 	}
+	s.Conns.CloseKey(keyID)
 	return nil
 }
 
@@ -255,6 +308,14 @@ func (s *ControlPlaneService) republishUserKeys(userID string) error {
 	if s == nil || s.Engine == nil {
 		return internal("no state engine", nil)
 	}
+	s.userWriteMu.Lock()
+	defer s.userWriteMu.Unlock()
+	return s.republishUserKeysLocked(userID)
+}
+
+// The account/key mutation and snapshot publication share userWriteMu, so a
+// stale publisher cannot restore credentials after disablement or deletion.
+func (s *ControlPlaneService) republishUserKeysLocked(userID string) error {
 	if s.Keys == nil {
 		// The console runs without a data plane in tests and in a
 		// management-only deployment; the rows are still the record.
@@ -263,26 +324,38 @@ func (s *ControlPlaneService) republishUserKeys(userID string) error {
 
 	user, err := s.Engine.GetUser(userID)
 	if err != nil {
+		s.removePublishedUserKeys(userID)
 		return mapUserLookupError(err)
 	}
 	rows, err := s.Engine.ListAccessKeysByUser(userID)
 	if err != nil {
+		s.removePublishedUserKeys(userID)
 		return internal("list access keys", err)
 	}
 
 	snapshot, err := s.userPlanSnapshot(userID)
 	if err != nil {
+		s.removePublishedUserKeys(userID)
 		return err
 	}
 
 	for _, row := range rows {
 		if row.Status != model.KeyStatusActive {
 			s.Keys.Delete(row.ID)
+			s.Conns.CloseKey(row.ID)
 			continue
 		}
 		s.Keys.Publish(row, *user, snapshot)
+		s.revokeProxyKeySessions(row.ID)
 	}
 	return nil
+}
+
+// Publication precedes closure. A late connection registration must fail the
+// generation check even if it missed CloseKey or the account was re-enabled.
+func (s *ControlPlaneService) revokeProxyKeySessions(keyID string) {
+	s.Keys.RevokeSessions(keyID)
+	s.Conns.CloseKey(keyID)
 }
 
 // userPlanSnapshot returns the live plan snapshot for the subscription that
@@ -309,18 +382,13 @@ func (s *ControlPlaneService) userPlanSnapshot(userID string) (keys.PlanSnapshot
 	return snapshot, nil
 }
 
-// publishKey puts one key into the live store with the user's current plan.
-func (s *ControlPlaneService) publishKey(row model.AccessKey, user model.User) error {
+func (s *ControlPlaneService) publishKeyWithSnapshot(row model.AccessKey, user model.User, snapshot keys.PlanSnapshot) error {
 	if s.Keys == nil {
 		return nil
 	}
 	if row.Status != model.KeyStatusActive {
 		s.Keys.Delete(row.ID)
 		return nil
-	}
-	snapshot, err := s.userPlanSnapshot(row.UserID)
-	if err != nil {
-		return err
 	}
 	s.Keys.Publish(row, user, snapshot)
 	return nil
@@ -359,7 +427,7 @@ func (s *ControlPlaneService) insertAccessKeyWithinAllowance(user model.User, ro
 	s.keyCreateMu.Lock()
 	defer s.keyCreateMu.Unlock()
 
-	if svcErr := s.checkKeyAllowance(&user); svcErr != nil {
+	if svcErr := s.checkKeyAllowance(&user, row.CreatedAtNs); svcErr != nil {
 		return svcErr
 	}
 	if err := s.Engine.InsertAccessKey(row); err != nil {
@@ -373,11 +441,11 @@ func (s *ControlPlaneService) insertAccessKeyWithinAllowance(user model.User, ro
 // It is called from inside the key-creation critical section
 // (insertAccessKeyWithinAllowance), never on its own: the count it reads is only
 // meaningful while the insert that follows is held back.
-func (s *ControlPlaneService) checkKeyAllowance(user *model.User) *ServiceError {
+func (s *ControlPlaneService) checkKeyAllowance(user *model.User, nowNs int64) *ServiceError {
 	if user == nil {
 		return notFound("user not found")
 	}
-	limit, err := s.maxKeysForPlan(user.ID)
+	limit, err := s.maxKeysForPlan(user.ID, nowNs)
 	if err != nil {
 		return err
 	}
@@ -417,7 +485,7 @@ func (s *ControlPlaneService) checkKeyAllowance(user *model.User) *ServiceError 
 // off by this: migration 000021 gives every user who already had a key and no
 // subscription row an active, unlimited "legacy-unlimited" subscription, so they
 // keep the access they had and arrive here with a row to read.
-func (s *ControlPlaneService) maxKeysForPlan(userID string) (int, *ServiceError) {
+func (s *ControlPlaneService) maxKeysForPlan(userID string, nowNs int64) (int, *ServiceError) {
 	sub, svcErr := s.currentSubscription(userID)
 	if svcErr != nil {
 		return 0, svcErr
@@ -425,12 +493,15 @@ func (s *ControlPlaneService) maxKeysForPlan(userID string) (int, *ServiceError)
 	if sub == nil {
 		return 0, conflict("no plan is in force on the account, so a new key cannot be created")
 	}
-	if sub.Status != model.SubscriptionStatusActive {
+	if sub.Status != model.SubscriptionStatusActive || sub.ExpiresAtNs < 0 || sub.ExpiresAtNs > 0 && sub.ExpiresAtNs <= nowNs {
 		return 0, conflict("the account has no subscription in force, so a new key cannot be created")
 	}
 	plan, err := planFromSnapshotJSON(sub.PlanSnapshotJSON)
 	if err != nil {
 		return 0, internal("read plan snapshot", err)
+	}
+	if plan.Status != "" && plan.Status != model.SubscriptionStatusActive {
+		return 0, conflict("the account has no subscription in force, so a new key cannot be created")
 	}
 	return plan.MaxKeys, nil
 }

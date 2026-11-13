@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, RefreshCw, Unlink } from "lucide-react";
+import { ArrowRight, Network, RefreshCw, Unlink } from "lucide-react";
 import { useState } from "react";
 import {
   ConfirmDrawer,
@@ -21,6 +21,7 @@ import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { formatGoDuration } from "../../lib/time";
 import { useNow } from "../../lib/clock";
+import { nodeTagLabel } from "../nodes/detail/nodeMeta";
 import { getLeases, releaseLease } from "./api";
 import type { SelfLease } from "./types";
 
@@ -112,10 +113,10 @@ export function LeasesPage() {
         meta={leasesQuery.data ? t("共 {{count}} 条", { count: leases.length }) : t("未加载")}
       >
         {leasesQuery.isError && !leasesQuery.data ? (
-          <EmptyWorkState title={t("租约读取失败")} detail={formatApiErrorMessage(leasesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leasesQuery.refetch()}>{t("重试")}</ControlButton>} />
+          <EmptyWorkState embedded title={t("租约读取失败")} detail={formatApiErrorMessage(leasesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leasesQuery.refetch()}>{t("重试")}</ControlButton>} />
         ) : null}
         {leasesQuery.isLoading && !leasesQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载租约...")}</div> : null}
-        {!leasesQuery.isLoading && !leasesQuery.isError && leases.length === 0 ? <EmptyWorkState title={t("暂无租约")} detail={t("建立代理连接后，粘定的出口会显示在这里。")} /> : null}
+        {!leasesQuery.isLoading && !leasesQuery.isError && leases.length === 0 ? <EmptyWorkState embedded icon={<Network size={22} />} title={t("暂无租约")} detail={t("建立代理连接后，粘定的出口会显示在这里。")} /> : null}
         {leases.length > 0 ? (
           <ObjectList>
             {leases.map((lease) => (
@@ -123,9 +124,9 @@ export function LeasesPage() {
                 key={`${lease.platform_id}/${lease.account}`}
                 active={selected?.platform_id === lease.platform_id && selected.account === lease.account}
                 onClick={() => setSelected(lease)}
-                leading={<span aria-hidden>↗</span>}
+                leading={<Network size={16} aria-hidden />}
                 title={lease.platform_name || lease.platform_id}
-                subtitle={`${lease.account || t("未命名账号")} · ${lease.node_tag || t("节点标识未知")}`}
+                subtitle={`${lease.account || t("未命名账号")} · ${nodeTagLabel(lease.node_tag) || t("节点标识未知")}`}
                 facts={<><span>{lease.egress_ip || t("出口 IP 未知")}</span><span>{t("到期")} {formatTimestamp(lease.expiry)}</span><span>{t("最后活跃")} {formatTimestamp(lease.last_accessed)}</span></>}
                 status={<RemainingState lease={lease} />}
                 action={<ArrowRight size={14} aria-hidden />}
@@ -156,7 +157,7 @@ export function LeasesPage() {
               <DetailFact label={t("平台") } value={selected.platform_name || selected.platform_id} />
               <DetailFact label={t("平台 ID")} value={selected.platform_id} mono />
               <DetailFact label={t("账号")} value={selected.account} mono />
-              <DetailFact label={t("节点") } value={selected.node_tag || t("节点标识未知")} />
+              <DetailFact label={t("节点") } value={nodeTagLabel(selected.node_tag) || t("节点标识未知")} />
               <DetailFact label={t("出口 IP")} value={selected.egress_ip || t("未知")} mono />
               <DetailFact label={t("到期时间")} value={formatTimestamp(selected.expiry)} mono />
               <DetailFact label={t("最后活跃")} value={formatTimestamp(selected.last_accessed)} mono />

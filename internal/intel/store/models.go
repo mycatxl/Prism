@@ -38,6 +38,10 @@ const (
 // MaxNormalizedJSONBytes caps the normalised quality.Evidence blob (8 KiB).
 const MaxNormalizedJSONBytes = 8 * 1024
 
+// MaxAssessmentJSONBytes bounds provenance with multiple provider observations for
+// each field. It must never be silently replaced by a truncation marker.
+const MaxAssessmentJSONBytes = 64 * 1024
+
 // MaxRawJSONBytes caps a stored provider response (32 KiB).
 const MaxRawJSONBytes = 32 * 1024
 

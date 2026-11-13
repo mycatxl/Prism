@@ -206,6 +206,14 @@ func (p *Platform) qualityReader() QualitySnapshotReader {
 	return nil
 }
 
+// AllowsCurrentQuality rechecks time-sensitive evidence at route selection.
+// Cached membership cannot extend a measurement's lifetime. The empty Default
+// policy still accepts every measured score, including zero.
+func (p *Platform) AllowsCurrentQuality(entry *node.NodeEntry) bool {
+	allowed, _ := AdmitQuality(p.QualityPolicy, entry, p.qualityReader(), time.Now())
+	return allowed
+}
+
 // MatchRegionFilter applies include/exclude region filters.
 // Positive entries (xx) build an include set; negative entries (!xx) build an exclude set.
 // Unknown regions never match when region filters are configured.

@@ -113,7 +113,7 @@ func (r pipelineRunner) RunStep(ctx context.Context, kind jobs.Kind, step jobs.S
 	}
 	result, err := r.prober.Run(ctx, hash)
 	if err != nil {
-		return jobs.StepResult{ErrorCode: "EGRESS_PROBE_FAILED", Summary: map[string]any{"error": err.Error()}}
+		return jobs.StepResult{ErrorCode: "EGRESS_PROBE_FAILED", Summary: map[string]any{"error": node.BoundedProbeErrorDetail(err), "failure_class": node.ClassifyProbeError(err).String(), "attempted_step": "egress"}}
 	}
 	summary := map[string]any{
 		"ipv4":       result.Row.IPv4,
@@ -175,13 +175,14 @@ func (r pipelineRunner) reuseFreshEgress(ctx context.Context, kind jobs.Kind, no
 
 // Options configures the intel service.
 type Options struct {
-	Store          *store.Store
-	Clock          jobs.Clock
-	Config         jobs.ConfigProvider
-	Scope          jobs.ScopeResolver
-	ScopePage      jobs.ScopePageResolver
-	ScopeValidator jobs.ScopeValidator
-	Handlers       StepHandlers
+	Store            *store.Store
+	Clock            jobs.Clock
+	Config           jobs.ConfigProvider
+	Scope            jobs.ScopeResolver
+	ScopePage        jobs.ScopePageResolver
+	ScopeValidator   jobs.ScopeValidator
+	NodeProbeAllowed func(nodeHash string) bool
+	Handlers         StepHandlers
 	// Prober overrides the built-in egress probe of step 1.
 	Prober *egress.Probe
 	// ProviderSpecs and Lookup enable the provider queue workers.
@@ -221,12 +222,14 @@ type Options struct {
 
 // Service is the intel facade used by the control plane and the API layer.
 type Service struct {
-	store    *store.Store
-	manager  *jobs.Manager
-	snapshot *Snapshot
-	assessor *Assessor
-	prober   *egress.Probe
-	observer *egressObserver
+	measurementMu sync.Mutex
+	initialMu     sync.Mutex
+	store         *store.Store
+	manager       *jobs.Manager
+	snapshot      *Snapshot
+	assessor      *Assessor
+	prober        *egress.Probe
+	observer      *egressObserver
 	// providerSettings is the settings surface of the data sources; nil
 	// when the caller did not wire it.
 	providerSettings *providers.SettingsService
@@ -288,6 +291,8 @@ func NewService(opts Options) (*Service, error) {
 		sweepInterval:    opts.AssessmentSweepInterval,
 		sweepStop:        make(chan struct{}),
 	}
+	svc.snapshot.PrivacyIPDeleted = opts.Store.PrivacyIPDeleted
+	svc.snapshot.Bands = opts.Bands
 	svc.assessor = NewAssessor(AssessorOptions{
 		Store:    opts.Store,
 		Snapshot: svc.snapshot,
@@ -298,6 +303,22 @@ func NewService(opts Options) (*Service, error) {
 		Logf:     logf,
 	})
 	svc.onEvidenceWrittenHook = opts.OnEvidenceWritten
+	opts.Store.SetMeasurementChanged(svc.syncMeasurements)
+	// Every committed evidence write (including failures) updates durable and
+	// routing projections before returning, independently of later job steps.
+	opts.Store.SetEvidenceCommitted(func(_ context.Context, raw string) error {
+		ip, err := netip.ParseAddr(raw)
+		if err != nil {
+			return err
+		}
+		refresh, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err = svc.assessor.assessIP(refresh, ip.Unmap())
+		if err != nil {
+			svc.assessor.invalidate(ip, "ASSESSMENT_WRITE_FAILED", clock.Now().UTC())
+		}
+		return err
+	})
 	// the assessment pipeline step is on by default.
 	if svc.handlers.Assess == nil {
 		svc.handlers.Assess = svc.assessStep
@@ -314,6 +335,7 @@ func NewService(opts Options) (*Service, error) {
 		Scope:             opts.Scope,
 		ScopePage:         opts.ScopePage,
 		ScopeValidator:    opts.ScopeValidator,
+		NodeProbeAllowed:  opts.NodeProbeAllowed,
 		Config:            opts.Config,
 		Clock:             clock,
 		Census:            opts.Census,
@@ -336,50 +358,45 @@ func NewService(opts Options) (*Service, error) {
 // missing evidence row is reported as a named reason and nothing is persisted.
 func (s *Service) assessStep(ctx context.Context, jobID, nodeHash string) jobs.StepResult {
 	if s == nil || s.assessor == nil || s.store == nil {
-		return jobs.StepResult{Summary: map[string]any{"skipped": "assessment is unavailable"}}
+		return jobs.StepResult{ErrorCode: "ASSESSMENT_UNAVAILABLE", Summary: map[string]any{"skipped": "assessment is unavailable"}}
 	}
 	egress, ok, err := s.store.GetNodeEgress(ctx, nodeHash)
 	if err != nil {
 		return jobs.StepResult{ErrorCode: "ASSESS_FAILED", Summary: map[string]any{"error": err.Error()}}
 	}
 	if !ok {
-		return jobs.StepResult{Summary: map[string]any{
+		return jobs.StepResult{ErrorCode: "ASSESSMENT_UNAVAILABLE", Summary: map[string]any{
 			"step":    "assess",
 			"skipped": "assessment skipped: no egress observation for this node yet",
 		}}
 	}
 	addresses := egressAddresses(egress)
 	if len(addresses) == 0 {
-		return jobs.StepResult{Summary: map[string]any{
+		return jobs.StepResult{ErrorCode: "ASSESSMENT_UNAVAILABLE", Summary: map[string]any{
 			"step":    "assess",
 			"skipped": "assessment skipped: the node has no usable egress address",
 		}}
 	}
 
-	assessable := make([]netip.Addr, 0, len(addresses))
-	missing := make([]string, 0, len(addresses))
-	for _, ip := range addresses {
-		usable, err := s.hasUsableEvidence(ctx, ip)
-		if err != nil {
-			return jobs.StepResult{ErrorCode: "ASSESS_FAILED", Summary: map[string]any{"error": err.Error()}}
-		}
-		if !usable {
-			missing = append(missing, ip.String())
-			continue
-		}
-		assessable = append(assessable, ip)
-	}
-
+	// Persist an assessment even when every provider failed. Otherwise the
+	// current failure is hidden behind an old snapshot or a generic pending row.
 	summary := map[string]any{"step": "assess"}
-	if len(assessable) > 0 {
-		summary["assessed"] = s.assessor.AssessMany(ctx, assessable)
+	valid := 0
+	reasons := map[string][]string{}
+	for _, ip := range addresses {
+		row, err := s.assessor.AssessIP(ctx, ip)
+		if err != nil {
+			return jobs.StepResult{ErrorCode: "ASSESS_FAILED", Summary: summary}
+		}
+		if row.State == "valid" && row.ScoreOrNil() != nil {
+			valid++
+		}
+		reasons[ip.String()] = AssessmentLiteFromRow(row).ReasonValues()
 	}
-	if len(missing) > 0 {
-		summary["without_evidence"] = missing
-		summary["reason"] = "no stored evidence for these addresses yet"
-	}
-	if len(assessable) == 0 {
-		summary["skipped"] = "assessment skipped: no stored evidence for " + strings.Join(missing, ", ")
+	summary["assessed"] = valid
+	summary["reasons"] = reasons
+	if valid == 0 {
+		return jobs.StepResult{ErrorCode: "ASSESSMENT_UNAVAILABLE", Summary: summary}
 	}
 	return jobs.StepResult{Summary: summary}
 }
@@ -396,21 +413,6 @@ func egressAddresses(row store.NodeEgress) []netip.Addr {
 		out = append(out, addr.Unmap())
 	}
 	return out
-}
-
-// hasUsableEvidence reports whether intel.db holds at least one successful
-// evidence row for an address.
-func (s *Service) hasUsableEvidence(ctx context.Context, ip netip.Addr) (bool, error) {
-	rows, err := s.store.ListEvidenceByIP(ctx, ip.Unmap().String())
-	if err != nil {
-		return false, err
-	}
-	for _, row := range rows {
-		if row.Status == store.StatusOk {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // withCheckProjection wraps the unlock-check step so the in-memory projection
@@ -442,16 +444,9 @@ func (s *Service) syncNodeChecks(ctx context.Context, nodeHash string) {
 	}
 }
 
-// onEvidenceWritten refreshes the assessment of freshly written evidence and
-// then runs the caller's callback.
+// onEvidenceWritten runs the batch callback after the store has published each
+// committed evidence update.
 func (s *Service) onEvidenceWritten(ips []netip.Addr) {
-	if s.assessor != nil && len(ips) > 0 {
-		for _, ip := range ips {
-			if _, err := s.assessor.AssessIP(context.Background(), ip); err != nil {
-				s.assessor.logf("[intel] assess %s: %v", ip, err)
-			}
-		}
-	}
 	if s.onEvidenceWrittenHook != nil {
 		s.onEvidenceWrittenHook(ips)
 	}
@@ -527,6 +522,20 @@ func (s *Service) CheckEngine() *checks.Engine {
 
 // Start loads the projection and launches the executor.
 func (s *Service) Start() error {
+	// Recompute stored evidence locally before publishing old-profile scores.
+	// Exhaust bounded batches; a storage error stops startup rather than keeping
+	// a legacy fabricated favorable result alive. This makes no network calls.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for {
+		n, err := s.assessor.RecomputeForeignProfiles(ctx, maxAssessmentSweep)
+		if err != nil {
+			return err
+		}
+		if n < maxAssessmentSweep {
+			break
+		}
+	}
 	if err := s.ReloadSnapshot(context.Background()); err != nil {
 		return err
 	}

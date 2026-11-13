@@ -54,6 +54,7 @@ type Evidence struct {
 	TorRoles         []string       `json:"tor_roles,omitempty"`
 	// RiskScore is the provider's original value: lower means lower risk.
 	// We deliberately do not invent a calibrated "purity percentage".
+	RecentAbuse       *bool      `json:"recent_abuse,omitempty"`
 	RiskScore         *int       `json:"risk_score"`
 	Grade             string     `json:"grade"`
 	SourceConfidence  *int       `json:"source_confidence"`
@@ -195,16 +196,6 @@ func EffectiveRiskGrade(summary Summary) string {
 	return summary.Evidence.Grade
 }
 
-// PurityScore is an explicitly labelled display inversion, not a calibrated
-// probability or a second provider score. Missing or invalid evidence stays unknown.
-func PurityScore(risk *int) *int {
-	if risk == nil || *risk < 0 || *risk > 100 {
-		return nil
-	}
-	score := 100 - *risk
-	return &score
-}
-
 // Band names, from the best score to the worst. They are the vocabulary the
 // console, the platform criteria and the plan IP tiers all use, so a name is
 // never rendered straight from a number.
@@ -287,6 +278,10 @@ func EffectivePurityBand(summary Summary) string {
 func NetworkType(raw string, signals Signals) string {
 	kind := "unknown"
 	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "conflicting":
+		return "conflicting"
+	case "non_residential":
+		kind = "non_residential"
 	case "residential":
 		kind = "residential"
 	case "hosting", "datacenter", "data center":
@@ -340,4 +335,27 @@ func PublicIP(ip netip.Addr) (netip.Addr, error) {
 		}
 	}
 	return ip, nil
+}
+
+// NormalizeLegacySignals removes two historical semantic aliases. A DNSBL
+// listing is not an anonymity observation; old IPQS anonymous meant recent_abuse.
+func (e *Evidence) NormalizeLegacySignals() {
+	switch e.Provider {
+	case "ipapi_is", "ipapi_is_node":
+		// Earlier decoders invented residential access from company.type=isp.
+		// Remove both the type and boolean before field provenance is projected.
+		if strings.EqualFold(strings.TrimSpace(e.SourceType), "isp") {
+			e.IsResidential = nil
+			if e.IPType == "residential" {
+				e.IPType = "unknown"
+			}
+		}
+	case "dnsbl":
+		e.Signals.Anonymous = nil
+	case "ipqs":
+		if e.RecentAbuse == nil && e.Signals.Anonymous != nil {
+			e.RecentAbuse = e.Signals.Anonymous
+		}
+		e.Signals.Anonymous = nil
+	}
 }

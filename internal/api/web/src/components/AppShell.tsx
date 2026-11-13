@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { lazy, Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { Activity, ArrowUpRight, Boxes, Cable, ChartNoAxesColumn, ChevronDown, ClipboardList, Coins, FileClock, KeyRound, ListChecks, LogOut, Menu as MenuIcon, Network, PackageCheck, PanelLeftClose, PanelLeftOpen, ReceiptText, Search, ServerCog, Settings2, ShieldCheck, Tags, UsersRound, WalletCards, Waypoints, type LucideIcon } from "lucide-react";
-import { Dropdown as HeroDropdown } from "@heroui/react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { ApiError, logout } from "../lib/api-client";
 import { cn } from "../lib/cn";
@@ -111,31 +111,31 @@ function AccountMenu({
   onLogout: () => void;
 }) {
   return (
-    <HeroDropdown>
-      <HeroDropdown.Trigger className="workspace-account-trigger" aria-label={t("账户菜单")}>
-        <span className="workspace-account-trigger__avatar" aria-hidden>{(username[0] || "P").toUpperCase()}</span>
-        <span className="workspace-account-trigger__copy">
-          <strong>{username || t("账户")}</strong>
-          <small>{isAdmin ? t("管理控制台") : t("用户中心")}</small>
-        </span>
-        <ChevronDown size={14} aria-hidden />
-      </HeroDropdown.Trigger>
-      <HeroDropdown.Popover placement="bottom end" className="workspace-account-menu">
-        <HeroDropdown.Menu aria-label={t("账户菜单")} onAction={(key) => {
-          if (String(key) === "account") onAccount();
-          if (String(key) === "logout") onLogout();
-        }}>
-          <HeroDropdown.Item id="account">
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <ControlButton variant="ghost" className="workspace-account-trigger" aria-label={t("账户菜单")}>
+          <span className="workspace-account-trigger__avatar" aria-hidden>{(username[0] || "P").toUpperCase()}</span>
+          <span className="workspace-account-trigger__copy">
+            <strong>{username || t("账户")}</strong>
+            <small>{isAdmin ? t("管理控制台") : t("用户中心")}</small>
+          </span>
+          <ChevronDown size={14} aria-hidden />
+        </ControlButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content sideOffset={8} align="end" className="workspace-account-menu" aria-label={t("账户菜单")}>
+          <DropdownMenu.Item onSelect={onAccount}>
             <ShieldCheck size={15} aria-hidden />
             <span>{t("账户安全")}</span>
-          </HeroDropdown.Item>
-          <HeroDropdown.Item id="logout">
+          </DropdownMenu.Item>
+          <DropdownMenu.Separator className="workspace-account-menu__separator" />
+          <DropdownMenu.Item onSelect={onLogout} className="is-danger">
             <LogOut size={15} aria-hidden />
             <span>{t("退出登录")}</span>
-          </HeroDropdown.Item>
-        </HeroDropdown.Menu>
-      </HeroDropdown.Popover>
-    </HeroDropdown>
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }
 
@@ -311,7 +311,7 @@ export function AppShell() {
         </main>
       </div>
 
-      <InspectorDrawer open={mobileNavOpen} onOpenChange={setMobileNavOpen} title={workspaceLabel} eyebrow="Prism" placement="left">
+      <InspectorDrawer open={mobileNavOpen} onOpenChange={setMobileNavOpen} title={workspaceLabel} eyebrow="Prism">
         <nav className="workspace-mobile-nav" aria-label={t("主导航")}>
           <NavigationLinks items={navItems} pathname={location.pathname} t={t} mobile onNavigate={() => setMobileNavOpen(false)} />
           <div className="workspace-mobile-nav__footer">

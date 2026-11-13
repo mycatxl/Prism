@@ -47,14 +47,16 @@ const (
 	stateVersionDropOrders                       = 26
 	stateVersionDeposits                         = 27
 	stateVersionRenewalSweepIndex                = 28
-	stateLatestVersion                           = stateVersionRenewalSweepIndex
+	stateVersionLDCDeposits                      = 29
+	stateVersionPaymentSettings                  = 30
+	stateLatestVersion                           = 32
 	stateLegacyBaselineVersion                   = stateVersionAddFixedAccountHeader
 
 	// Keep these version markers in sync with SQL files under migrations/cache/.
 	cacheVersionBaseSchema             = 1
 	cacheVersionSubscriptionNodesEvict = 2
 	cacheVersionLeaseOwner             = 3
-	cacheLatestVersion                 = cacheVersionLeaseOwner
+	cacheLatestVersion                 = 4
 
 	stateBaseSchemaMigration = stateMigrationsPath + "/000001_state_base.up.sql"
 )

@@ -353,11 +353,13 @@ type GeoManager struct {
 	mu     sync.Mutex
 	states map[string]*geoDBState
 
-	startOnce sync.Once
-	stopOnce  sync.Once
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	startOnce   sync.Once
+	stopOnce    sync.Once
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+	lifecycleMu sync.Mutex
+	stopped     bool
 }
 
 // NewGeoManager builds the refresher. It performs no network I/O and creates
@@ -434,6 +436,11 @@ func (m *GeoManager) Start() {
 		return
 	}
 	m.startOnce.Do(func() {
+		m.lifecycleMu.Lock()
+		defer m.lifecycleMu.Unlock()
+		if m.stopped {
+			return
+		}
 		m.wg.Add(1)
 		// loop owns its wg.Done; the wrapper only adds the panic boundary.
 		safego.Go("the geoip database download loop", m.loop)
@@ -446,6 +453,9 @@ func (m *GeoManager) Stop() {
 		return
 	}
 	m.stopOnce.Do(func() {
+		m.lifecycleMu.Lock()
+		defer m.lifecycleMu.Unlock()
+		m.stopped = true
 		if m.cancel != nil {
 			m.cancel()
 		}
@@ -531,11 +541,21 @@ func (m *GeoManager) RequestRefresh(ctx context.Context, providerID string) (Geo
 	if len(sources) == 0 {
 		return GeoRefreshResult{}, fmt.Errorf("%w: %s", ErrGeoUnknownProvider, id)
 	}
+	m.lifecycleMu.Lock()
+	if m.stopped {
+		m.lifecycleMu.Unlock()
+		return GeoRefreshResult{}, context.Canceled
+	}
+	m.wg.Add(1)
+	m.lifecycleMu.Unlock()
+	defer m.wg.Done()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, m.manualTimeout)
 	defer cancel()
+	stopCancel := context.AfterFunc(m.ctx, cancel)
+	defer stopCancel()
 
 	started := m.now().UTC()
 	result := GeoRefreshResult{ProviderID: id, Files: make([]GeoRefreshFileResult, 0, len(sources))}

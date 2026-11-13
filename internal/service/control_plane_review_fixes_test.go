@@ -9,6 +9,7 @@ import (
 	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/model"
+	"prism/internal/state"
 )
 
 // Tests for the follow-up review's seven findings, at the service layer: what a
@@ -180,7 +181,7 @@ func TestAssignSubscription_RefusesAnEmptyPlan(t *testing.T) {
 	if err := cp.Engine.UpsertUserSubscription(zero); err != nil {
 		t.Fatalf("UpsertUserSubscription(zero snapshot): %v", err)
 	}
-	limit, planErr := cp.maxKeysForPlan(legacy.ID)
+	limit, planErr := cp.maxKeysForPlan(legacy.ID, nowNs)
 	if planErr != nil {
 		t.Fatalf("maxKeysForPlan on the zero snapshot: %v", planErr)
 	}
@@ -191,7 +192,7 @@ func TestAssignSubscription_RefusesAnEmptyPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetUser: %v", err)
 	}
-	if svcErr := cp.checkKeyAllowance(stored); svcErr != nil {
+	if svcErr := cp.checkKeyAllowance(stored, nowNs); svcErr != nil {
 		t.Fatalf("checkKeyAllowance now refuses the zero snapshot (%v); the read side changed and the fix's reasoning needs a second look", svcErr)
 	}
 }
@@ -205,14 +206,18 @@ func TestAssignSubscription_RefusesAnEmptyPlan(t *testing.T) {
 //
 // The hash hook runs inside setPassword, so the concurrent write lands exactly
 // between this caller's read and its write, which is the window the review
-// described. Both changes have to survive; with a whole-row write the disable
-// was silently reverted.
+// described. The stale password write must conflict and leave the disable in
+// place; with a whole-row write the disable was silently reverted.
 func TestSetAccountPassword_DoesNotRevertAConcurrentStatusChange(t *testing.T) {
 	cp, _, _, nowNs := newTenantTestService(t)
 
 	victim, err := cp.CreateAccount("review-victim", "review-victim-password", model.UserRoleUser, nowNs)
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
+	}
+	before, err := cp.Engine.GetUser(victim.ID)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	cp.HashPassword = func(string) (string, error) {
@@ -221,8 +226,8 @@ func TestSetAccountPassword_DoesNotRevertAConcurrentStatusChange(t *testing.T) {
 		}
 		return "$argon2id$replaced", nil
 	}
-	if err := cp.SetAccountPassword(victim.ID, "review-victim-password-new", nowNs+2); err != nil {
-		t.Fatalf("SetAccountPassword: %v", err)
+	if err := cp.SetAccountPassword(victim.ID, "review-victim-password-new", nowNs+2); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("SetAccountPassword: %v, want conflict after concurrent disablement", err)
 	}
 
 	stored, err := cp.Engine.GetUser(victim.ID)
@@ -233,8 +238,8 @@ func TestSetAccountPassword_DoesNotRevertAConcurrentStatusChange(t *testing.T) {
 		t.Errorf("status after the password reset: got %q, want %q (the reset must not restore what it read)",
 			stored.Status, model.UserStatusDisabled)
 	}
-	if stored.PasswordHash != "$argon2id$replaced" {
-		t.Errorf("password hash after the reset: got %q, want the value written", stored.PasswordHash)
+	if stored.PasswordHash != before.PasswordHash {
+		t.Error("stale password reset changed the password after concurrent disablement")
 	}
 	if stored.Role != model.UserRoleUser || stored.Username != "review-victim" {
 		t.Errorf("columns the reset never touched changed: role %q username %q", stored.Role, stored.Username)

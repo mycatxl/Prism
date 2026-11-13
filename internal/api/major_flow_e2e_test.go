@@ -24,6 +24,7 @@ import (
 	"prism/internal/service"
 	"prism/internal/state"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -43,6 +44,7 @@ type majorFlowHarness struct {
 	cp          *service.ControlPlaneService
 	forwardURL  string
 	reverseURL  string
+	credential  string
 	requestlogs *requestlog.Service
 }
 
@@ -72,6 +74,7 @@ func newMajorFlowHarness(t *testing.T, subscriptionUserAgent string) *majorFlowH
 		MaxConsecutiveFailures: func() int { return 3 },
 		LatencyDecayWindow:     func() time.Duration { return 10 * time.Minute },
 	})
+	pool.SetQualitySnapshot(measurement.Snapshot(netip.MustParseAddr("203.0.113.55")))
 	outboundMgr := outbound.NewOutboundManager(pool, &testutil.StubOutboundBuilder{})
 
 	// Mirror production bootstrap semantics: node enters pool -> outbound prepared ->
@@ -158,9 +161,11 @@ func newMajorFlowHarness(t *testing.T, subscriptionUserAgent string) *majorFlowH
 		},
 		ReverseProxyLogDetailEnabled: func() bool { return false },
 	}
+	accessKeys, credential := tokenActionKeyFixture(t, "major-flow-user", nil)
 
 	forward := proxy.NewForwardProxy(proxy.ForwardProxyConfig{
 		ProxyToken: "tok",
+		AccessKeys: accessKeys,
 		Router:     router,
 		Pool:       pool,
 		Health:     pool,
@@ -168,6 +173,7 @@ func newMajorFlowHarness(t *testing.T, subscriptionUserAgent string) *majorFlowH
 	})
 	reverse := proxy.NewReverseProxy(proxy.ReverseProxyConfig{
 		ProxyToken:     "tok",
+		AccessKeys:     accessKeys,
 		Router:         router,
 		Pool:           pool,
 		PlatformLookup: pool,
@@ -185,6 +191,7 @@ func newMajorFlowHarness(t *testing.T, subscriptionUserAgent string) *majorFlowH
 		cp:          cp,
 		forwardURL:  forwardSrv.URL,
 		reverseURL:  reverseSrv.URL,
+		credential:  credential,
 		requestlogs: reqSvc,
 	}
 }
@@ -296,7 +303,7 @@ func TestMajorFlow_E2E_LocalProxyAndSubscriptionProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse forward proxy url: %v", err)
 	}
-	proxyURL.User = url.UserPassword(platformName+"."+account, "tok")
+	proxyURL.User = url.UserPassword(platformName+"."+account, h.credential)
 	forwardClient := &http.Client{
 		Transport: &http.Transport{
 			Proxy: http.ProxyURL(proxyURL),
@@ -318,7 +325,7 @@ func TestMajorFlow_E2E_LocalProxyAndSubscriptionProvider(t *testing.T) {
 	}
 
 	upstreamHost := strings.TrimPrefix(upstream.URL, "http://")
-	reverseResp, err := http.Get(h.reverseURL + "/tok/" + platformName + "." + account + "/http/" + upstreamHost + "/reverse/ping?k=v")
+	reverseResp, err := http.Get(h.reverseURL + "/" + h.credential + "/" + platformName + "." + account + "/http/" + upstreamHost + "/reverse/ping?k=v")
 	if err != nil {
 		t.Fatalf("reverse request via proxy failed: %v", err)
 	}
@@ -331,7 +338,7 @@ func TestMajorFlow_E2E_LocalProxyAndSubscriptionProvider(t *testing.T) {
 		t.Fatalf("reverse body: got %q, want %q", got, "reverse-major-ok")
 	}
 
-	lease := h.cp.Router.ReadLease(model.LeaseKey{PlatformID: platformID, Account: account})
+	lease := h.cp.Router.ReadLease(model.LeaseKey{PlatformID: platformID, UserID: "major-flow-user", Account: account})
 	if lease == nil {
 		t.Fatal("sticky lease should be created after proxied requests")
 	}

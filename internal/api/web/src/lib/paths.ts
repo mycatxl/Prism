@@ -23,7 +23,7 @@
  * sessions share:
  *
  *   /ops/*     the operator surface: the instance's inventory and its levers
- *   /me/*      the tenant surface: one customer's own subscription, keys, usage
+ *   /overview  the customer home, alongside /keys, /usage, /plans and /deposit
  *   /account   the personal account every session owns, whatever its role
  *
  * The namespaces are not cosmetic. The shell reads them (see AppShell.tsx) to
@@ -34,8 +34,8 @@
 /** The operator namespace: every instance-management page lives under it. */
 export const OPS_ROOT = "/ops";
 
-/** The tenant namespace: one customer's self-service pages. */
-export const ME_ROOT = "/me";
+/** The canonical customer landing page. Kept as ME_ROOT for role helper compatibility. */
+export const ME_ROOT = "/overview";
 
 /**
  * The personal account page. Neither namespace owns it: an operator and a tenant
@@ -78,11 +78,12 @@ export const opsPaths = {
  */
 export const mePaths = {
   overview: ME_ROOT,
-  keys: `${ME_ROOT}/keys`,
-  guide: `${ME_ROOT}/guide`,
-  plans: `${ME_ROOT}/plans`,
-  leases: `${ME_ROOT}/leases`,
-  deposit: `${ME_ROOT}/deposit`,
+  keys: "/keys",
+  usage: "/usage",
+  plans: "/plans",
+  deposit: "/deposit",
+  guide: "/guide",
+  leases: "/leases",
 };
 
 /**
@@ -99,6 +100,14 @@ export const mePaths = {
  * at `/ops/users/usr_1` through `/admin/users`.
  */
 export const legacyRedirects: Record<string, string> = {
+  // The retired tenant namespace.
+  "/me/keys": mePaths.keys,
+  "/me/usage": mePaths.usage,
+  "/me/guide": mePaths.guide,
+  "/me/plans": mePaths.plans,
+  "/me/leases": mePaths.leases,
+  "/me/deposit": mePaths.deposit,
+  "/me": mePaths.overview,
   // The operator pages that used to sit on the root.
   "/dashboard": opsPaths.dashboard,
   "/nodes": opsPaths.nodes,
@@ -110,6 +119,7 @@ export const legacyRedirects: Record<string, string> = {
   "/request-logs": opsPaths.requestLogs,
   "/resources": opsPaths.resources,
   "/system-config": opsPaths.config,
+  "/ops/system-config": opsPaths.config,
   "/audit": opsPaths.audit,
   // The operator pages that used to sit under /admin/*.
   "/admin/plans": opsPaths.plans,

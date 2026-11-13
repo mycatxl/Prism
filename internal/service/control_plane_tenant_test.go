@@ -428,6 +428,23 @@ func TestAccessKey_LifecycleAndPermissions(t *testing.T) {
 		t.Fatal("pepper.VerifySecret unexpectedly succeeded with bogus secret")
 	}
 
+	// A key's platform list is a narrowing filter, not a replacement for the
+	// subscription. Both creation and patching must refuse a platform outside
+	// the active plan, otherwise a tenant could mint a key that reaches an
+	// otherwise unentitled platform.
+	if _, _, err := cp.CreateAccessKey(user.ID, AccessKeyInput{
+		Name: "out-of-plan", Platforms: []string{"plt_outside"},
+	}, nowNs); err == nil {
+		t.Fatal("CreateAccessKey accepted a platform outside the plan")
+	} else if svcErr, ok := err.(*ServiceError); !ok || svcErr.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("CreateAccessKey out-of-plan error = %v, want INVALID_ARGUMENT", err)
+	}
+	if _, err := cp.UpdateAccessKey(user.ID, keyView.ID, []byte(`{"platforms":["plt_outside"]}`), nowNs); err == nil {
+		t.Fatal("UpdateAccessKey accepted a platform outside the plan")
+	} else if svcErr, ok := err.(*ServiceError); !ok || svcErr.Code != "INVALID_ARGUMENT" {
+		t.Fatalf("UpdateAccessKey out-of-plan error = %v, want INVALID_ARGUMENT", err)
+	}
+
 	// Verify struct AccessKeyView has no secret field (only CredentialHint)
 	valType := reflect.TypeOf(keyView)
 	for i := 0; i < valType.NumField(); i++ {

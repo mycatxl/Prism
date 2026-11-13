@@ -3,6 +3,7 @@ package state
 import (
 	"fmt"
 	"log"
+	"sync"
 
 	"prism/internal/model"
 )
@@ -34,6 +35,7 @@ type CacheReaders struct {
 type StateEngine struct {
 	*StateRepo
 	*CacheRepo
+	flushMu sync.Mutex
 
 	dirtyNodesStatic       *DirtySet[string]
 	dirtyNodesDynamic      *DirtySet[string]
@@ -118,6 +120,10 @@ func classifyDirtySet[K comparable, V any](
 // and batch-writes to cache.db in a single transaction.
 // On failure, undrained entries are merged back.
 func (e *StateEngine) FlushDirtySets(readers CacheReaders) error {
+	// Preserve snapshot order through commit or remerge. Serializing only the
+	// SQL transaction allows a delayed older reader to undo a newer deletion.
+	e.flushMu.Lock()
+	defer e.flushMu.Unlock()
 	// Drain all sets atomically (each set is individually atomic).
 	drainedStatic := e.dirtyNodesStatic.Drain()
 	drainedSubNodes := e.dirtySubscriptionNodes.Drain()

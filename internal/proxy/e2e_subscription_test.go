@@ -18,6 +18,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -26,6 +27,7 @@ func newProxyE2EEnvFromSubscriptionURL(t *testing.T, subURL string) *proxyE2EEnv
 
 	subMgr := topology.NewSubscriptionManager()
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		QualitySnapshot:        measurement.Snapshot(netip.MustParseAddr("203.0.113.10")),
 		SubLookup:              subMgr.Lookup,
 		GeoLookup:              func(_ netip.Addr) string { return "us" },
 		MaxLatencyTableEntries: 16,
@@ -138,6 +140,8 @@ func TestForwardProxy_E2ELocalHTTPProxy_FromHTTPSubscription(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     &mockHealthRecorder{},
@@ -150,7 +154,7 @@ func TestForwardProxy_E2ELocalHTTPProxy_FromHTTPSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse proxy url: %v", err)
 	}
-	proxyURL.User = url.UserPassword("plat", "tok")
+	proxyURL.User = url.UserPassword("plat", testCredential)
 
 	client := &http.Client{
 		Transport: &http.Transport{
@@ -215,7 +219,9 @@ func TestReverseProxy_E2EServer_FromHTTPSubscription(t *testing.T) {
 	defer upstream.Close()
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -226,7 +232,7 @@ func TestReverseProxy_E2EServer_FromHTTPSubscription(t *testing.T) {
 	defer reverseSrv.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	reqURL := reverseSrv.URL + "/tok/plat:acct/http/" + host + "/api/v1/items?k=v"
+	reqURL := reverseSrv.URL + "/" + testCredential + "/plat:acct/http/" + host + "/api/v1/items?k=v"
 
 	req, err := http.NewRequest(http.MethodGet, reqURL, nil)
 	if err != nil {

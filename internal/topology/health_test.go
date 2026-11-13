@@ -154,6 +154,7 @@ func TestRecordResult_CircuitBreak_RemovesFromView(t *testing.T) {
 	subMgr.Register(sub)
 
 	pool := NewGlobalNodePool(PoolConfig{
+		QualityLookup:          testutil.MeasuredQuality,
 		SubLookup:              subMgr.Lookup,
 		GeoLookup:              func(addr netip.Addr) string { return "us" },
 		MaxLatencyTableEntries: 16,
@@ -438,6 +439,7 @@ func TestUpdateNodeEgressIP_LocStateMachine(t *testing.T) {
 	subMgr.Register(sub)
 
 	pool := NewGlobalNodePool(PoolConfig{
+		QualityLookup:          testutil.MeasuredQuality,
 		SubLookup:              subMgr.Lookup,
 		GeoLookup:              func(_ netip.Addr) string { return "us" },
 		MaxLatencyTableEntries: 16,

@@ -33,7 +33,10 @@ func writeDecodeBodyError(w http.ResponseWriter, err error) {
 		writePayloadTooLarge(w, tooLarge.Limit)
 		return
 	}
-	writeInvalidArgument(w, err.Error())
+	// Decoder I/O errors can include socket addresses and filesystem-backed
+	// reader details. Validation errors are intentionally collapsed at the HTTP
+	// boundary; the request shape is all a client needs to correct.
+	writeInvalidArgument(w, "invalid request body")
 }
 
 // writeServiceError maps service errors to HTTP response codes.
@@ -47,6 +50,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	if errors.As(err, &svcErr) {
 		var status int
 		switch svcErr.Code {
+		case "EVIDENCE_READ_FAILED", "EGRESS_READ_FAILED":
+			status = http.StatusServiceUnavailable
 		case "INVALID_ARGUMENT":
 			status = http.StatusBadRequest
 		case "NOT_FOUND":
@@ -69,7 +74,10 @@ func writeServiceError(w http.ResponseWriter, err error) {
 			// than treat it as a server fault.
 			status = http.StatusTooManyRequests
 		default:
-			status = http.StatusInternalServerError
+			// Internal service errors often wrap database, schema or filesystem
+			// details. None of those belong in an HTTP response.
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
+			return
 		}
 		WriteError(w, status, svcErr.Code, svcErr.Message)
 		return

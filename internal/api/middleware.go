@@ -1,11 +1,20 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
+	"errors"
+	"io"
 	"log"
+	"net"
 	"net/http"
-	"runtime/debug"
 	"time"
 )
+
+// Shared across listeners and routes: a per-request cap alone permits every
+// accepted socket to retain a full API body at once. Hold admission through
+// the handler so decoded and audit copies have the same concurrency bound.
+var apiBodyReadSlots = make(chan struct{}, 32)
 
 // RequestBodyLimitMiddleware enforces a max request body size for downstream handlers.
 func RequestBodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler {
@@ -13,8 +22,37 @@ func RequestBodyLimitMiddleware(maxBytes int64, next http.Handler) http.Handler 
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r != nil && r.Body != nil {
+		if r != nil && r.Body != nil && r.Body != http.NoBody {
+			if r.ContentLength > maxBytes {
+				w.Header().Set("Connection", "close")
+				writeDecodeBodyError(w, &requestBodyTooLargeError{Limit: maxBytes})
+				return
+			}
+			select {
+			case apiBodyReadSlots <- struct{}{}:
+				defer func() { <-apiBodyReadSlots }()
+			default:
+				w.Header().Set("Connection", "close")
+				w.Header().Set("Retry-After", "1")
+				WriteError(w, http.StatusServiceUnavailable, "CAPACITY_EXCEEDED", "too many request bodies in progress")
+				return
+			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			// Validate the entire bounded body before a handler can mutate
+			// state, including handlers that ignore bodies or only parse forms.
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				w.Header().Set("Connection", "close")
+				var maxErr *http.MaxBytesError
+				if errors.As(err, &maxErr) {
+					writeDecodeBodyError(w, &requestBodyTooLargeError{Limit: maxErr.Limit})
+				} else {
+					WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body")
+				}
+				return
+			}
+			_ = r.Body.Close()
+			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -74,10 +112,9 @@ func hasRequestBody(r *http.Request) bool {
 // goes to the server's error log through the default handler - which is the one
 // path that does not go through the audit recorder.
 //
-// The stack is logged rather than returned: a panic message can carry a
-// credential or a SQL fragment, and the response is the one place a caller can
-// read it. The reply is the generic internal error, byte for byte the same as
-// any other 500, so a caller cannot tell a panic from a database failure.
+// Panic values, raw paths and stacks are omitted from both logs and responses:
+// any of them can carry a credential, SQL fragment or filesystem path. The
+// reply is the same generic internal error as any other 500.
 //
 // It is installed once, in Handler, so every route is covered - including the
 // ones added later.
@@ -86,6 +123,7 @@ func PanicRecoveryMiddleware(next http.Handler) http.Handler {
 		next = http.NotFoundHandler()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked := &panicResponseWriter{ResponseWriter: w}
 		defer func() {
 			recovered := recover()
 			if recovered == nil {
@@ -98,15 +136,24 @@ func PanicRecoveryMiddleware(next http.Handler) http.Handler {
 			if recovered == http.ErrAbortHandler {
 				panic(recovered)
 			}
-			log.Printf("api: recovered a panic serving %s %s: %v\n%s",
-				requestMethod(r), requestPath(r), recovered, debug.Stack())
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal error")
+			// Neither the panic value nor the raw URL is logged. Both are able to
+			// carry credentials supplied by a request; the route pattern is enough
+			// to identify the failing handler.
+			log.Printf("api: recovered a panic serving %s %s", requestMethod(r), requestPattern(r))
+			if tracked.committed {
+				tracked.closeHijacked()
+				panic(http.ErrAbortHandler)
+			}
+			for name := range tracked.Header() {
+				tracked.Header().Del(name)
+			}
+			WriteError(tracked, http.StatusInternalServerError, "INTERNAL", "internal server error")
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(tracked, r)
 	})
 }
 
-// requestMethod and requestPath keep the recovery log readable when the panic
+// requestMethod and requestPattern keep the recovery log readable when the panic
 // happens before the request was validated - r itself may be nil there.
 func requestMethod(r *http.Request) string {
 	if r == nil {
@@ -115,9 +162,63 @@ func requestMethod(r *http.Request) string {
 	return r.Method
 }
 
-func requestPath(r *http.Request) string {
-	if r == nil || r.URL == nil {
+func requestPattern(r *http.Request) string {
+	if r == nil || r.Pattern == "" {
 		return "?"
 	}
-	return r.URL.Path
+	return r.Pattern
+}
+
+// panicResponseWriter records whether a response has begun while preserving
+// the optional interfaces used by streaming and upgraded handlers. Once bytes
+// are committed, recovery must abort the connection rather than append a JSON
+// error to an already successful response.
+type panicResponseWriter struct {
+	http.ResponseWriter
+	committed    bool
+	hijackedConn net.Conn
+}
+
+func (w *panicResponseWriter) WriteHeader(status int) {
+	if w.committed {
+		return
+	}
+	w.committed = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *panicResponseWriter) Write(payload []byte) (int, error) {
+	if !w.committed {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(payload)
+}
+
+func (w *panicResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *panicResponseWriter) Flush() {
+	w.committed = true
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *panicResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	conn, rw, err := hijacker.Hijack()
+	if err == nil {
+		w.committed = true
+		w.hijackedConn = conn
+	}
+	return conn, rw, err
+}
+
+func (w *panicResponseWriter) closeHijacked() {
+	if w.hijackedConn != nil {
+		_ = w.hijackedConn.Close()
+		w.hijackedConn = nil
+	}
 }

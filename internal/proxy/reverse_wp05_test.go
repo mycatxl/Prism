@@ -79,7 +79,7 @@ func TestResolveReverseAccountAcceptsBothAccountHeaders(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "/tok/plat:path-account/http/example.com/", nil)
+			req := httptest.NewRequest(http.MethodGet, "/"+testCredential+"/plat:path-account/http/example.com/", nil)
 			if tc.prismHeader != "" {
 				req.Header.Set("X-Prism-Account", tc.prismHeader)
 			}
@@ -119,10 +119,12 @@ func TestReverseProxyAccountHeaderCompat(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:path-account/http/%s/", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:path-account/http/%s/", host)
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -228,10 +230,12 @@ func TestReverseProxyErrorCarriesResinHeader(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/denied", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/denied", host)
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:        "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:            NoOpEventEmitter{},
 		ProxyBypassRules:  []string{"127.*"},
 		DirectDenyPrivate: true,

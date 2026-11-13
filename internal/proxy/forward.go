@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"net/http/httptrace"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"prism/internal/keys"
@@ -18,14 +18,16 @@ import (
 	"prism/internal/outbound"
 	"prism/internal/routing"
 	"prism/internal/safego"
+	"prism/internal/usage"
 )
 
 // ForwardProxyConfig holds dependencies for the forward proxy.
 type ForwardProxyConfig struct {
+	// ProxyToken is retained for configuration compatibility. It is never
+	// accepted as a proxy credential.
 	ProxyToken string
-	// AccessKeys resolves an access key credential presented in the token
-	// position. It may be nil or unconfigured: the credential then falls back
-	// to the global proxy token, which is the transitional behaviour.
+	// AccessKeys resolves the access key credential presented in the token
+	// position. A missing or unconfigured verifier rejects every request.
 	AccessKeys        AccessKeyVerifier
 	Router            *routing.Router
 	Pool              outbound.PoolAccessor
@@ -108,17 +110,19 @@ func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 		transportPool = NewOutboundTransportPool(transportCfg)
 	}
 	return &ForwardProxy{
-		token:             cfg.ProxyToken,
-		accessKeys:        cfg.AccessKeys,
-		router:            cfg.Router,
-		pool:              cfg.Pool,
-		health:            cfg.Health,
-		events:            ev,
-		metricsSink:       cfg.MetricsSink,
-		transportConfig:   transportCfg,
-		transportPool:     transportPool,
-		bypass:            NewTargetBypassMatcher(cfg.ProxyBypassRules),
-		directGuard:       NewDirectDialGuard(cfg.DirectDenyPrivate).WithBlockedDestinationPorts(cfg.BlockedDestinationPorts),
+		token:           cfg.ProxyToken,
+		accessKeys:      cfg.AccessKeys,
+		router:          cfg.Router,
+		pool:            cfg.Pool,
+		health:          cfg.Health,
+		events:          ev,
+		metricsSink:     cfg.MetricsSink,
+		transportConfig: transportCfg,
+		transportPool:   transportPool,
+		bypass:          NewTargetBypassMatcher(cfg.ProxyBypassRules),
+		directGuard: NewDirectDialGuard(cfg.DirectDenyPrivate).
+			WithBlockedDestinationPorts(cfg.BlockedDestinationPorts).
+			withLookupTimeout(transportCfg.DialTimeout),
 		authGuard:         cfg.AuthGuard,
 		metering:          cfg.Metering,
 		quota:             cfg.Quota,
@@ -157,54 +161,22 @@ func (p *ForwardProxy) authenticate(r *http.Request) (proxyIdentity, *ProxyError
 	return p.authenticateV1(r)
 }
 
-// authenticateV1 accepts either an access key or the transitional global proxy
-// token in the credential's token position.
-//
-// The order matters: the credential is inspected for a key first, and anything
-// that is not a key is compared with the global token. A key-shaped credential
-// never falls back to that comparison, so a revoked key cannot authenticate by
-// accident on a deployment whose token happens to resemble one.
+// authenticateV1 accepts only a credential that resolves to a usable access
+// key. The credential may include the legacy platform/account identity prefix,
+// but the credential after the final colon must be a valid AccessKey.
 func (p *ForwardProxy) authenticateV1(r *http.Request) (proxyIdentity, *ProxyError) {
 	auth := r.Header.Get("Proxy-Authorization")
 	credential, ok := parseProxyAuthorizationCredentialV1(auth)
 	if !ok {
-		if p.token == "" && !requireProxyAuthInfo(r) {
-			return proxyIdentity{}, nil
-		}
-		return proxyIdentity{}, ErrAuthRequired
-	}
-	if p.token == "" && requireProxyAuthInfo(r) && !hasBasicUserInfo(credential) {
 		return proxyIdentity{}, ErrAuthRequired
 	}
 
 	identity, state, isKey := splitAccessKeyCredential(p.accessKeys, credential, clientAddr(r))
-	if isKey {
-		if state == nil {
-			return proxyIdentity{}, ErrAuthFailed
-		}
-		platName, account := parseV1PlatformAccountIdentity(identity)
-		return proxyIdentity{PlatformName: platName, Account: account, Key: state}, nil
-	}
-
-	if p.token == "" {
-		platName, account := parseForwardCredentialV1WhenAuthDisabled(credential)
-		return proxyIdentity{PlatformName: platName, Account: account}, nil
-	}
-
-	token, platName, account := parseForwardCredentialV1(credential)
-	if subtle.ConstantTimeCompare([]byte(token), []byte(p.token)) != 1 {
+	if !isKey || state == nil {
 		return proxyIdentity{}, ErrAuthFailed
 	}
-	return proxyIdentity{PlatformName: platName, Account: account}, nil
-}
-
-func requireProxyAuthInfo(r *http.Request) bool {
-	return r != nil && InboundPolicyFromContext(r.Context()).RequireProxyAuthInfo
-}
-
-func hasBasicUserInfo(credential string) bool {
-	separator := strings.LastIndexByte(credential, ':')
-	return separator > 0
+	platName, account := parseV1PlatformAccountIdentity(identity)
+	return proxyIdentity{PlatformName: platName, Account: account, Key: state}, nil
 }
 
 // parseProxyAuthorizationCredentialV1 decodes Basic credential for V1
@@ -293,6 +265,7 @@ func prepareForwardOutboundRequest(in *http.Request) *http.Request {
 	req.Close = false
 	upgrade := upgradeType(in.Header)
 	stripHopByHopHeaders(req.Header)
+	stripForwardingIdentityHeaders(req.Header)
 	if upgrade != "" {
 		req.Header.Set("Connection", "Upgrade")
 		req.Header.Set("Upgrade", upgrade)
@@ -335,12 +308,22 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	platName, account := identity.PlatformName, identity.Account
+	if r.URL == nil || !isValidHost(r.URL.Host) || !isValidHost(r.Host) || r.URL.User != nil {
+		writeProxyError(w, ErrInvalidHost)
+		return
+	}
+	if r.URL.Scheme != "http" && r.URL.Scheme != "https" {
+		writeProxyError(w, ErrInvalidProtocol)
+		return
+	}
 
 	// One context ends the whole request: a quota cut cancels it, and so does
 	// the session registry when the key is revoked while the request is in
 	// flight.
 	streamCtx, cancelStream := context.WithCancel(r.Context())
 	defer cancelStream()
+	w, finishDownstream := watchDownstream(streamCtx, w)
+	defer finishDownstream()
 
 	// The allowance is checked before the lifecycle exists, so a refused request
 	// never reaches the routing layer and never opens an upstream connection.
@@ -356,7 +339,12 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	// tenants whose credentials are perfectly valid. Only the errors returned by
 	// authenticate are recorded above; a reservation failure is answered with its
 	// own 429 and nothing else.
-	quotaErr, reservation := reserveSession(p.quota, p.sessions, identity.Key, newRequestSession(cancelStream), p.quotaLogf)
+	// Keep the reservation as a pending session so a 101 upgrade can attach the
+	// hijacked client socket to it. A requestSession only cancels the context;
+	// after Hijack there is no net/http request socket left for that cancellation
+	// to close.
+	pending := newPendingSession(cancelStream)
+	quotaErr, reservation := reserveSession(p.quota, p.sessions, identity.Key, pending, p.quotaLogf)
 	if quotaErr != nil {
 		writeProxyError(w, quotaErr)
 		return
@@ -381,9 +369,15 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var hasRoute bool
 	var transport *http.Transport
 	if p.bypass != nil && p.bypass.ShouldBypass(r.Host) {
+		if platformErr := authorizeBypassPlatform(p.router, platName, identity.Key); platformErr != nil {
+			lifecycle.setProxyError(platformErr)
+			lifecycle.setHTTPStatus(platformErr.HTTPCode)
+			writeProxyError(w, platformErr)
+			return
+		}
 		// PRISM_DIRECT_DENY_PRIVATE applies to this local dial path exactly as
 		// it does to the reverse-proxy bypass branch and to CONNECT/SOCKS5.
-		if err := p.directGuard.CheckTarget(r.Context(), r.Host); err != nil {
+		if err := p.directGuard.CheckTarget(streamCtx, r.Host); err != nil {
 			lifecycle.setProxyError(ErrDirectTargetDenied)
 			lifecycle.setHTTPStatus(ErrDirectTargetDenied.HTTPCode)
 			writeProxyError(w, ErrDirectTargetDenied)
@@ -426,6 +420,7 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if quota != nil {
 		ingressReport, egressReport := lifecycle.liveReporter()
 		quota.withLiveReports(ingressReport, egressReport)
+		quota.platformID = lifecycle.platformForMetering()
 	}
 	// The tail of a partial report step is flushed on every exit path.
 	defer quota.flushReports()
@@ -451,13 +446,17 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Forward the request.
-	resp, err := transport.RoundTrip(outReq)
+	resp, err := (quotaTransport{base: transport, quota: quota, committed: upstreamTrace.shouldCommitEgress}).RoundTrip(outReq)
 	// The header bytes count as sent only once the request reached upstream. The
 	// body's bytes are committed either way: they left the client and were
 	// consumed here, and dropping them would make a failed or aborted upload
 	// free.
 	if upstreamTrace.shouldCommitEgress() {
-		lifecycle.addEgressBytes(pendingEgressHeaderBytes)
+		if quota.atomicAccounting() {
+			lifecycle.addEgressBytesLive(pendingEgressHeaderBytes)
+		} else {
+			lifecycle.addEgressBytes(pendingEgressHeaderBytes)
+		}
 	}
 	if egressBodyCounter != nil {
 		if quota != nil {
@@ -512,10 +511,12 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if resp.StatusCode == http.StatusSwitchingProtocols {
 		p.serveForwardUpgrade(w, resp, forwardUpgradeState{
 			lifecycle: lifecycle,
+			quota:     quota,
 			bandwidth: bandwidth,
 			key:       identity.Key,
 			hasRoute:  hasRoute,
 			route:     route,
+			pending:   pending,
 		})
 		return
 	}
@@ -524,7 +525,24 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	lifecycle.setNetOK(true)
 
 	// Copy end-to-end response headers and body.
-	lifecycle.addIngressBytes(copyEndToEndHeaders(w.Header(), resp.Header))
+	responseHeaders := make(http.Header)
+	headerBytes := copyEndToEndHeaders(responseHeaders, resp.Header)
+	finishHeader, allowed := quota.reserveHeader(headerBytes, true)
+	if !allowed {
+		lifecycle.setProxyError(ErrQuotaExceeded)
+		lifecycle.setHTTPStatus(ErrQuotaExceeded.HTTPCode)
+		writeProxyError(w, ErrQuotaExceeded)
+		return
+	}
+	for name, values := range responseHeaders {
+		w.Header()[name] = values
+	}
+	finishHeader(headerBytes)
+	if quota.atomicAccounting() {
+		lifecycle.addIngressBytesLive(headerBytes)
+	} else {
+		lifecycle.addIngressBytes(headerBytes)
+	}
 	w.WriteHeader(resp.StatusCode)
 	var bodyWriter io.Writer = w
 	if quota != nil {
@@ -552,7 +570,7 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 			lifecycle.setProxyError(ErrQuotaExceeded)
 			lifecycle.setUpstreamError("forward_stream_quota", copyErr)
 			lifecycle.setNetOK(true)
-			return
+			panic(http.ErrAbortHandler)
 		}
 		if shouldRecordForwardCopyFailure(r, copyErr) {
 			lifecycle.setProxyError(ErrUpstreamRequestFailed)
@@ -562,7 +580,9 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 				recordPassiveResultAsync(p.health, route, false)
 			}
 		}
-		return
+		// Normal handler completion would append a successful chunk terminator
+		// to an incomplete upstream response. Preserve the transport failure.
+		panic(http.ErrAbortHandler)
 	}
 
 	// Full body transfer succeeded — count as network success even for 5xx HTTP.
@@ -656,7 +676,6 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		lifecycle.setProxyError(ErrUpstreamRequestFailed)
 		lifecycle.setUpstreamError("connect_hijack", errors.New("response writer does not support hijacking"))
 		lifecycle.setHTTPStatus(ErrUpstreamRequestFailed.HTTPCode)
-		prepare.session.recordResult(false)
 		writeProxyError(w, ErrUpstreamRequestFailed)
 		return
 	}
@@ -666,9 +685,12 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		prepare.session.upstreamConn.Close()
 		lifecycle.setProxyError(ErrUpstreamRequestFailed)
 		lifecycle.setUpstreamError("connect_hijack", err)
-		prepare.session.recordResult(false)
 		return
 	}
+	// net/http has handed ownership of both sockets to this handler. Attach the
+	// pair before writing the handshake so a revocation or a panic on the write
+	// path cannot strand the upstream connection.
+	pending.attach(&pairedSessionCloser{client: clientConn, upstream: prepare.session.upstreamConn})
 
 	// Write the raw CONNECT success line with proper reason phrase.
 	if _, err := clientBuf.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
@@ -687,12 +709,9 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 		lifecycle.setNetOK(false)
 		return
 	}
-	// The tunnel is established: the client connection is attached to the
-	// reservation that was registered before the dial, so the key's count never
-	// dipped while the tunnel was being established, and a revoked key still
-	// ends the session by closing the client connection - closing the upstream
-	// one would leave the client waiting on a socket nobody is reading.
-	pending.attach(clientConn)
+	// The tunnel is established: the client connection was attached to the
+	// reservation immediately after Hijack, so the key's count never dipped
+	// while the tunnel was being established and revocation closes both ends.
 	lifecycle.setHTTPStatus(http.StatusOK)
 	relay := pumpPreparedTunnel(clientConn, clientBuf.Reader, prepare.session, tunnelPumpOptions{
 		onFirstIngressByte: lifecycle.markFirstByteReceived,
@@ -732,11 +751,13 @@ func shouldRecordForwardCopyFailure(r *http.Request, copyErr error) bool {
 // relay needs the same lifecycle, key and route the ordinary path already
 // holds.
 type forwardUpgradeState struct {
+	quota     *streamQuota
 	lifecycle *requestLifecycle
 	bandwidth *bandwidthGate
 	key       *keys.KeyState
 	hasRoute  bool
 	route     routing.RouteResult
+	pending   *pendingSession
 }
 
 // serveForwardUpgrade relays a 101 Switching Protocols exchange.
@@ -757,6 +778,16 @@ type forwardUpgradeState struct {
 // behaviour a tunnel gets, instead of one more copy loop to keep in step.
 func (p *ForwardProxy) serveForwardUpgrade(w http.ResponseWriter, resp *http.Response, state forwardUpgradeState) {
 	lifecycle := state.lifecycle
+	headerBytes := headerWireLen(resp.Header)
+	finishHeader, allowed := state.quota.reserveHeader(headerBytes, true)
+	if !allowed {
+		lifecycle.setProxyError(ErrQuotaExceeded)
+		lifecycle.setHTTPStatus(ErrQuotaExceeded.HTTPCode)
+		writeProxyError(w, ErrQuotaExceeded)
+		return
+	}
+	headerOutcome := int64(0) // no write has been attempted yet
+	defer func() { finishHeader(headerOutcome) }()
 	upstream, ok := resp.Body.(io.ReadWriteCloser)
 	if !ok {
 		lifecycle.setProxyError(ErrUpstreamRequestFailed)
@@ -780,6 +811,10 @@ func (p *ForwardProxy) serveForwardUpgrade(w http.ResponseWriter, resp *http.Res
 		lifecycle.setUpstreamError("forward_upgrade_hijack", err)
 		return
 	}
+	// From this point on net/http no longer owns the client socket. Attach both
+	// ends before any response bytes are written so a key revocation racing the
+	// handshake can close the socket pair deterministically.
+	state.pending.attach(&pairedSessionCloser{client: clientConn, upstream: upstream})
 
 	// The response head is written over the hijacked connection rather than
 	// through the ResponseWriter, because the hijack hands the socket over. The
@@ -790,6 +825,9 @@ func (p *ForwardProxy) serveForwardUpgrade(w http.ResponseWriter, resp *http.Res
 	// the hop-by-hop list.
 	body := resp.Body
 	resp.Body = nil
+	// Write/Flush may hand out only part of the response before returning an
+	// error or panicking. Neither operation reports the accepted header count.
+	headerOutcome = usage.UnknownTrafficBytes
 	if err := resp.Write(clientBuf); err != nil {
 		_ = clientConn.Close()
 		_ = body.Close()
@@ -805,6 +843,13 @@ func (p *ForwardProxy) serveForwardUpgrade(w http.ResponseWriter, resp *http.Res
 		return
 	}
 	lifecycle.setHTTPStatus(http.StatusSwitchingProtocols)
+	finishHeader(headerBytes)
+	if state.quota.atomicAccounting() {
+		lifecycle.addIngressBytesLive(headerBytes)
+	} else {
+		lifecycle.addIngressBytes(headerBytes)
+	}
+	liveIngressReport, liveEgressReport := lifecycle.liveReporter()
 
 	relay := pumpPreparedTunnel(
 		clientConn,
@@ -818,18 +863,58 @@ func (p *ForwardProxy) serveForwardUpgrade(w http.ResponseWriter, resp *http.Res
 			// The switched protocol is a stream of the key's bytes and stays
 			// inside the key's allowance: a websocket that was already over the
 			// limit must not run for as long as its peers want.
+			quotaPlatformID:   lifecycle.platformForMetering(),
 			quotaGate:         p.quota,
 			quotaKey:          state.key,
 			quotaGracePercent: p.quotaGracePercent,
+			liveIngressReport: liveIngressReport,
+			liveEgressReport:  liveEgressReport,
 		},
 	)
-	lifecycle.addIngressBytes(relay.ingressBytes)
-	lifecycle.addEgressBytes(relay.egressBytes)
+	if p.quota != nil && state.key != nil {
+		// The upgrade quota reports switched bytes to the key sink while they
+		// flow, so the final lifecycle update must only complete the log totals.
+		lifecycle.addIngressBytesLive(relay.ingressBytes)
+		lifecycle.addEgressBytesLive(relay.egressBytes)
+	} else {
+		lifecycle.addIngressBytes(relay.ingressBytes)
+		lifecycle.addEgressBytes(relay.egressBytes)
+	}
 	if relay.proxyErr != nil {
 		lifecycle.setProxyError(relay.proxyErr)
 		lifecycle.setUpstreamError(relay.upstreamStage, relay.upstreamErr)
 	}
 	lifecycle.setNetOK(relay.netOK)
+}
+
+// pairedSessionCloser is the reservation-owned closer for a hijacked stream. A
+// request context cancellation alone is not enough after Hijack: the relay is
+// no longer managed by net/http, so both sockets must be closed explicitly to
+// wake its two copy goroutines.
+type pairedSessionCloser struct {
+	once     sync.Once
+	client   io.Closer
+	upstream io.Closer
+}
+
+func (c *pairedSessionCloser) Close() error {
+	if c == nil {
+		return nil
+	}
+	var first error
+	c.once.Do(func() {
+		if c.client != nil {
+			if err := c.client.Close(); err != nil {
+				first = err
+			}
+		}
+		if c.upstream != nil {
+			if err := c.upstream.Close(); err != nil && first == nil {
+				first = err
+			}
+		}
+	})
+	return first
 }
 
 // upgradeStreamConn presents an upgraded response body as the net.Conn the
@@ -847,10 +932,16 @@ type upgradeStreamConn struct {
 	local     net.Addr
 	remote    net.Addr
 	bandwidth *bandwidthGate
+	closed    atomic.Bool
 }
 
 func newUpgradeStreamConn(rwc io.ReadWriteCloser, clientConn net.Conn, bandwidth *bandwidthGate) *upgradeStreamConn {
-	conn := &upgradeStreamConn{ReadWriteCloser: rwc, bandwidth: bandwidth}
+	conn := &upgradeStreamConn{ReadWriteCloser: rwc}
+	if bandwidth != nil {
+		gate := *bandwidth
+		gate.stopped = func() bool { return conn.closed.Load() || bandwidth.stopped != nil && bandwidth.stopped() }
+		conn.bandwidth = &gate
+	}
 	if clientConn != nil {
 		// The client's addresses stand in for the upstream ones: they are the
 		// only pair this handler can name, and the relay uses them for nothing
@@ -859,6 +950,13 @@ func newUpgradeStreamConn(rwc io.ReadWriteCloser, clientConn net.Conn, bandwidth
 		conn.remote = clientConn.RemoteAddr()
 	}
 	return conn
+}
+
+func (c *upgradeStreamConn) Close() error {
+	if c.closed.Swap(true) {
+		return nil
+	}
+	return c.ReadWriteCloser.Close()
 }
 
 func (c *upgradeStreamConn) Read(p []byte) (int, error) {

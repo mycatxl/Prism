@@ -268,6 +268,9 @@ type StepResult struct {
 	Skip bool
 	// ErrorCode non-empty marks the step as failed.
 	ErrorCode string
+	// Independent provider failures may still leave useful evidence. After the
+	// finite retry budget, run remaining checks/assessment, then settle failed.
+	ContinueAfterRetries bool
 	// Summary is stored in job_items.result_json (bounded to 4 KiB).
 	Summary map[string]any
 }

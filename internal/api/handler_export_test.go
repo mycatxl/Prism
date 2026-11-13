@@ -210,6 +210,30 @@ func TestExportNodesOverLimitIsBoundedAndReported(t *testing.T) {
 	}
 }
 
+func TestExportAnalysisStripsCredentialDerivedNodeHash(t *testing.T) {
+	_, server := newExportTestServer(t)
+	resp := doExportAuthedRequest(t, http.MethodGet, server.URL+"/api/v1/nodes/export?format=json", nil)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d (%s)", resp.StatusCode, body)
+	}
+	for _, secret := range []string{
+		"ss-secret-credential",
+		"11111111-2222-3333-4444-555555555555",
+	} {
+		if strings.Contains(string(body), secret) {
+			t.Fatalf("analysis export leaked node credential %q", secret)
+		}
+	}
+	if !strings.Contains(string(body), `"node_hash": ""`) {
+		t.Fatalf("analysis export did not strip credential-derived hashes: %s", body)
+	}
+	if resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatal("export response is missing nosniff")
+	}
+}
+
 // TestExportNodesProxyFormatServesDialableAddresses drives the direct
 // proxy-address export end to end: the response is the file the operator
 // pastes into a browser, so a node the format cannot address must show up in

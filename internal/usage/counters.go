@@ -8,9 +8,13 @@
 package usage
 
 import (
+	"math"
+	"math/bits"
+	"sync"
 	"sync/atomic"
 
 	"github.com/puzpuzpuz/xsync/v4"
+	"prism/internal/model"
 )
 
 // Counters is the live view of what has been moved since the process started.
@@ -26,6 +30,31 @@ import (
 // it would mean walking every key of the user on each byte, and a user may hold
 // several keys (max_keys), so the aggregate is maintained as the deltas arrive.
 type Counters struct {
+	// userMu makes the aggregate and its persistence watermark move as one
+	// logical value. Atomics protect individual loads and adds, but a reset or
+	// seed racing an add could otherwise erase bytes that arrived immediately
+	// before the reset, or restore bytes twice while the flusher advances the
+	// watermark.
+	userMu       sync.RWMutex
+	transitionMu sync.Mutex
+	transitions  map[string]*userAccountingLock
+	// persistenceMu closes the gap between a database commit and advancing
+	// its watermark. Seeding, flushing and durable traffic settlement share it;
+	// storage latency can therefore stall traffic across users.
+	persistenceMu sync.Mutex
+	// periods identifies the subscription window each user's next byte belongs
+	// to. The generation is copied into CounterKey so a reset starts new
+	// buckets while the old generation remains available for hourly persistence.
+	periods map[string]counterPeriod
+	// reserved tracks bytes admitted but not yet accepted by a destination.
+	// userMu protects it together with users; no lock spans network I/O.
+	reserved map[string]int64
+	// IDs explicitly included when restoring an older window. A retried
+	// settlement already present in its persisted total must not refund twice.
+	resumedReservations map[string]map[string]bool
+	// seedReady is false only during startup/reseed when persisted subscription
+	// usage is not yet known. A finite quota must fail closed in that window.
+	seedReady atomic.Bool
 	// entries is keyed by CounterKey. The value is a *keyCounter, which is
 	// immutable after creation except for its atomics, so readers never need a
 	// lock.
@@ -54,7 +83,7 @@ type Counters struct {
 	// key's buckets which has not been drained yet. It exists so the fallback
 	// a quota check makes - "this key has moved N bytes" - is a single atomic
 	// load rather than a walk over every bucket in the process.
-	keyBytes *xsync.Map[string, *atomic.Int64]
+	keyBytes *xsync.Map[string, *keyTotal]
 }
 
 // CounterKey identifies one metering bucket: one key on one platform.
@@ -67,6 +96,20 @@ type CounterKey struct {
 	KeyID      string
 	UserID     string
 	PlatformID string
+
+	// The fields below keep traffic from adjacent subscription periods in
+	// separate buckets. They are internal: callers continue to identify a
+	// bucket by key, user and platform.
+	generation     uint64
+	subscriptionID string
+	periodStartNs  int64
+}
+
+type counterPeriod struct {
+	generation      uint64
+	subscriptionID  string
+	periodStartNs   int64
+	planPeriodIndex int
 }
 
 // keyCounter is the per-bucket accumulator.
@@ -83,7 +126,7 @@ type keyCounter struct {
 	// id, so the per-key total is maintained as the bytes arrive instead of
 	// being re-derived on each check. It is nil for traffic with no key id,
 	// which is counted in its bucket and in no aggregate.
-	bytes *atomic.Int64
+	bytes *keyTotal
 }
 
 // Delta is one reported amount of traffic.
@@ -97,29 +140,128 @@ type Delta struct {
 }
 
 // Total returns the bytes counted in both directions.
-func (d Delta) Total() int64 { return d.IngressBytes + d.EgressBytes }
+func (d Delta) Total() int64 {
+	if d.IngressBytes < 0 || d.EgressBytes < 0 {
+		return 0
+	}
+	if d.IngressBytes > math.MaxInt64-d.EgressBytes {
+		return math.MaxInt64
+	}
+	return d.IngressBytes + d.EgressBytes
+}
 
 // NewCounters returns an empty counter set.
 func NewCounters() *Counters {
-	return &Counters{
+	counters := &Counters{
+		periods:   make(map[string]counterPeriod),
+		reserved:  make(map[string]int64),
 		entries:   xsync.NewMap[CounterKey, *keyCounter](),
 		users:     xsync.NewMap[string, *atomic.Int64](),
 		persisted: xsync.NewMap[string, *atomic.Int64](),
-		keyBytes:  xsync.NewMap[string, *atomic.Int64](),
+		keyBytes:  xsync.NewMap[string, *keyTotal](),
 	}
+	counters.seedReady.Store(true)
+	return counters
+}
+
+// RequireSeed marks persisted usage as unavailable. Limiter checks then refuse
+// finite user quotas until MarkSeedReady is called after a successful read.
+func (c *Counters) RequireSeed() {
+	if c != nil {
+		c.seedReady.Store(false)
+	}
+}
+
+// MarkSeedReady allows quota checks after persisted subscription usage has been
+// restored or confirmed.
+func (c *Counters) MarkSeedReady() {
+	if c != nil {
+		c.seedReady.Store(true)
+	}
+}
+
+// SeedReady reports whether persisted usage is known to the process.
+func (c *Counters) SeedReady() bool {
+	return c == nil || c.seedReady.Load()
 }
 
 // keyTotalFor returns the shared byte accumulator of one key id, creating it on
 // first use. An empty key id has none: traffic that belongs to no key is still
 // counted in its bucket, and attributed to no aggregate.
-func (c *Counters) keyTotalFor(keyID string) *atomic.Int64 {
+type keyTotal struct {
+	atomic.Int64
+	buckets int // guarded by keyBytes.Compute, never by the atomic
+	mu      sync.Mutex
+	// Keep the exact sum of retained buckets beyond int64 so removing one
+	// saturated bucket cannot erase another bucket's usage. 128 bits cover
+	// two int64 directions for every bucket addressable by this process.
+	hi, lo uint64
+}
+
+func (t *keyTotal) change(ingress, egress int64, remove bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	amount := uint64(ingress) + uint64(egress)
+	if remove {
+		var borrow uint64
+		t.lo, borrow = bits.Sub64(t.lo, amount, 0)
+		t.hi, _ = bits.Sub64(t.hi, 0, borrow)
+	} else {
+		var carry uint64
+		t.lo, carry = bits.Add64(t.lo, amount, 0)
+		t.hi, _ = bits.Add64(t.hi, 0, carry)
+	}
+	if t.hi != 0 || t.lo > math.MaxInt64 {
+		t.Store(math.MaxInt64)
+	} else {
+		t.Store(int64(t.lo))
+	}
+}
+
+func (c *Counters) keyTotalFor(keyID string) *keyTotal {
 	if c == nil || c.keyBytes == nil || keyID == "" {
 		return nil
 	}
-	total, _ := c.keyBytes.LoadOrCompute(keyID, func() (*atomic.Int64, bool) {
-		return new(atomic.Int64), false
+	total, _ := c.keyBytes.Compute(keyID, func(total *keyTotal, _ bool) (*keyTotal, xsync.ComputeOp) {
+		if total == nil {
+			total = new(keyTotal)
+		}
+		total.buckets++
+		return total, xsync.UpdateOp
 	})
 	return total
+}
+
+// Only operations for this user wait for a database transition. Reference
+// counts include waiters, so idle locks can be removed without splitting a
+// critical section across two mutexes. No userMu holder acquires this lock.
+type userAccountingLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (c *Counters) lockUser(userID string) func() {
+	c.transitionMu.Lock()
+	if c.transitions == nil {
+		c.transitions = make(map[string]*userAccountingLock)
+	}
+	lock := c.transitions[userID]
+	if lock == nil {
+		lock = new(userAccountingLock)
+		c.transitions[userID] = lock
+	}
+	lock.refs++
+	c.transitionMu.Unlock()
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		c.transitionMu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(c.transitions, userID)
+		}
+		c.transitionMu.Unlock()
+	}
 }
 
 // Add records a delta for one key on one platform.
@@ -137,20 +279,33 @@ func (c *Counters) keyTotalFor(keyID string) *atomic.Int64 {
 // The key-wide total is updated in that same section, so it stays the exact sum
 // of the buckets that are still present.
 func (c *Counters) Add(key CounterKey, delta Delta) {
-	if c == nil || c.entries == nil || delta == (Delta{}) {
+	if c == nil || c.entries == nil || delta == (Delta{}) ||
+		delta.IngressBytes < 0 || delta.EgressBytes < 0 || delta.Requests < 0 || delta.Errors < 0 {
 		return
 	}
-	c.addToBuckets(key, delta)
 
-	// The user aggregate counts bytes only: request counts belong to a key, and
-	// adding them here would double-count a user's requests once per key. It is
-	// never drained, so it needs no such protection - only its own atomicity.
+	// Keep the aggregate update and bucket update inside the same per-user
+	// critical section. Limiter.Check reads the aggregate, so updating the
+	// aggregate first makes a concurrent check fail closed if it observes the
+	// write at all; it can never admit traffic that has already been counted.
+	if key.UserID != "" {
+		defer c.lockUser(key.UserID)()
+		c.userMu.Lock()
+		defer c.userMu.Unlock()
+		if c.periods != nil {
+			period := c.periods[key.UserID]
+			key.generation = period.generation
+			key.subscriptionID = period.subscriptionID
+			key.periodStartNs = period.periodStartNs
+		}
+	}
 	if total := delta.Total(); total != 0 && key.UserID != "" {
 		userTotal, _ := c.users.LoadOrCompute(key.UserID, func() (*atomic.Int64, bool) {
 			return new(atomic.Int64), false
 		})
-		userTotal.Add(total)
+		atomicAddSaturating(userTotal, total)
 	}
+	c.addToBuckets(key, delta)
 }
 
 // Requeue puts a drained batch back into its buckets after a failed write,
@@ -185,12 +340,13 @@ func (c *Counters) addToBuckets(key CounterKey, delta Delta) {
 		if counter == nil {
 			counter = &keyCounter{bytes: c.keyTotalFor(key.KeyID)}
 		}
-		counter.ingress.Add(delta.IngressBytes)
-		counter.egress.Add(delta.EgressBytes)
-		counter.requests.Add(delta.Requests)
-		counter.errors.Add(delta.Errors)
-		if total := delta.Total(); total != 0 && counter.bytes != nil {
-			counter.bytes.Add(total)
+		oldIngress, oldEgress := counter.ingress.Load(), counter.egress.Load()
+		atomicAddSaturating(&counter.ingress, delta.IngressBytes)
+		atomicAddSaturating(&counter.egress, delta.EgressBytes)
+		atomicAddSaturating(&counter.requests, delta.Requests)
+		atomicAddSaturating(&counter.errors, delta.Errors)
+		if counter.bytes != nil {
+			counter.bytes.change(counter.ingress.Load()-oldIngress, counter.egress.Load()-oldEgress, false)
 		}
 		return counter, xsync.UpdateOp
 	})
@@ -215,16 +371,18 @@ func (c *Counters) KeyBytes(key CounterKey) Delta {
 	if c == nil {
 		return Delta{}
 	}
-	counter, ok := c.entries.Load(key)
-	if !ok || counter == nil {
-		return Delta{}
-	}
-	return Delta{
-		IngressBytes: counter.ingress.Load(),
-		EgressBytes:  counter.egress.Load(),
-		Requests:     counter.requests.Load(),
-		Errors:       counter.errors.Load(),
-	}
+	var result Delta
+	c.entries.Range(func(candidate CounterKey, counter *keyCounter) bool {
+		if candidate.KeyID != key.KeyID || candidate.UserID != key.UserID || candidate.PlatformID != key.PlatformID || counter == nil {
+			return true
+		}
+		result.IngressBytes = saturatingInt64Add(result.IngressBytes, counter.ingress.Load())
+		result.EgressBytes = saturatingInt64Add(result.EgressBytes, counter.egress.Load())
+		result.Requests = saturatingInt64Add(result.Requests, counter.requests.Load())
+		result.Errors = saturatingInt64Add(result.Errors, counter.errors.Load())
+		return true
+	})
+	return result
 }
 
 // UserBytes returns the bytes counted for one user across all of their keys.
@@ -232,6 +390,8 @@ func (c *Counters) UserBytes(userID string) int64 {
 	if c == nil || userID == "" {
 		return 0
 	}
+	c.userMu.RLock()
+	defer c.userMu.RUnlock()
 	total, ok := c.users.Load(userID)
 	if !ok || total == nil {
 		return 0
@@ -252,6 +412,8 @@ func (c *Counters) UserBytesPresent(userID string) (int64, bool) {
 	if c == nil || userID == "" {
 		return 0, false
 	}
+	c.userMu.RLock()
+	defer c.userMu.RUnlock()
 	total, ok := c.users.Load(userID)
 	if !ok || total == nil {
 		return 0, false
@@ -285,11 +447,39 @@ func (c *Counters) MarkPersisted(userID string, bytes int64) {
 	if bytes == 0 {
 		return
 	}
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
 	mark := c.persistedFor(userID)
 	if mark == nil {
 		return
 	}
 	mark.Add(bytes)
+}
+
+func (c *Counters) settledUserBytes(userID string) (int64, bool) {
+	c.userMu.RLock()
+	defer c.userMu.RUnlock()
+	total, ok := c.users.Load(userID)
+	if !ok || total == nil {
+		return 0, false
+	}
+	return max(0, total.Load()-c.reserved[userID]), true
+}
+
+// A successful database flush can finish after the in-memory period rotated.
+// Its watermark belongs only to the generation whose bytes were drained.
+func (c *Counters) markPersistedGeneration(userID string, bytes int64, generation uint64) {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	if c.periods[userID].generation != generation {
+		return
+	}
+	if _, present := c.users.Load(userID); !present {
+		return
+	}
+	if mark := c.persistedFor(userID); mark != nil {
+		mark.Add(bytes)
+	}
 }
 
 // PersistedBytes returns a user's water mark and reports whether one exists,
@@ -302,6 +492,8 @@ func (c *Counters) PersistedBytes(userID string) (int64, bool) {
 	if c == nil || c.persisted == nil || userID == "" {
 		return 0, false
 	}
+	c.userMu.RLock()
+	defer c.userMu.RUnlock()
 	mark, ok := c.persisted.Load(userID)
 	if !ok || mark == nil {
 		return 0, false
@@ -355,7 +547,14 @@ func (c *Counters) drainOne(key CounterKey) Delta {
 			Errors:       counter.errors.Load(),
 		}
 		if counter.bytes != nil {
-			counter.bytes.Add(-delta.Total())
+			c.keyBytes.Compute(key.KeyID, func(total *keyTotal, _ bool) (*keyTotal, xsync.ComputeOp) {
+				total.change(delta.IngressBytes, delta.EgressBytes, true)
+				total.buckets--
+				if total.buckets == 0 {
+					return nil, xsync.DeleteOp
+				}
+				return total, xsync.UpdateOp
+			})
 		}
 		return nil, xsync.DeleteOp
 	})
@@ -367,7 +566,9 @@ func (c *Counters) Keys() []CounterKey {
 	if c == nil {
 		return nil
 	}
-	keys := make([]CounterKey, 0, c.entries.Size())
+	// xsync sums striped counters; concurrent churn can transiently report a
+	// negative size. It is only a capacity hint, never a validity predicate.
+	keys := make([]CounterKey, 0, max(0, c.entries.Size()))
 	c.entries.Range(func(key CounterKey, _ *keyCounter) bool {
 		keys = append(keys, key)
 		return true
@@ -381,7 +582,7 @@ func (c *Counters) Size() int {
 	if c == nil {
 		return 0
 	}
-	return c.entries.Size()
+	return max(0, c.entries.Size())
 }
 
 // ResetUser returns a user's running total to zero, and its water mark with it.
@@ -404,9 +605,114 @@ func (c *Counters) Size() int {
 // actually moved and are destined for the usage tables; the aggregate is only
 // ever a running total against an allowance.
 func (c *Counters) ResetUser(userID string) {
+	transition := c.BeginUserPeriodTransition(userID)
+	transition.Commit("", 0)
+}
+
+// UserPeriodTransition blocks this user's traffic accounting while a database
+// transaction replaces or advances the subscription window. Commit moves the
+// in-memory aggregate to the same window; Cancel leaves it untouched.
+type UserPeriodTransition struct {
+	c      *Counters
+	userID string
+	done   bool
+	unlock func()
+}
+
+// BeginUserPeriodTransition starts a short accounting critical section. The
+// caller must finish it with Commit or Cancel.
+func (c *Counters) BeginUserPeriodTransition(userID string) *UserPeriodTransition {
+	transition := &UserPeriodTransition{}
 	if c == nil || c.users == nil || userID == "" {
+		return transition
+	}
+	transition.unlock = c.lockUser(userID)
+	transition.c = c
+	transition.userID = userID
+	return transition
+}
+
+// Commit starts a new generation and clears the old period's aggregate and
+// persistence watermark before allowing more bytes for the user to arrive.
+func (t *UserPeriodTransition) Commit(subscriptionID string, periodStartNs int64) {
+	t.commit(subscriptionID, periodStartNs, nil, 0, nil)
+}
+
+// CommitSubscription also binds the sold plan version. Until key publication
+// catches up, existing streams must not use old terms in the new allowance.
+func (t *UserPeriodTransition) CommitSubscription(sub model.UserSubscription) {
+	t.ResumeSubscription(sub, nil)
+}
+
+// ResumeSubscription restores an existing window without giving back its spent
+// allowance or in-flight durable reservations. Read both under this transition.
+func (t *UserPeriodTransition) ResumeSubscription(sub model.UserSubscription, pending []model.UsageReservation) {
+	t.commit(sub.ID, sub.PeriodStartNs, &sub.PeriodIndex, sub.PeriodUsedBytes, pending)
+}
+
+func (t *UserPeriodTransition) commit(subscriptionID string, periodStartNs int64, planPeriodIndex *int, used int64, pending []model.UsageReservation) {
+	if t == nil || t.done {
 		return
 	}
+	t.done = true
+	if t.c == nil {
+		return
+	}
+	c := t.c
+	c.userMu.Lock()
+	defer t.unlock()
+	period := c.periods[t.userID]
+	period.generation++
+	period.subscriptionID = subscriptionID
+	period.periodStartNs = periodStartNs
+	if planPeriodIndex != nil {
+		period.planPeriodIndex = *planPeriodIndex
+	}
+	if c.periods == nil {
+		c.periods = make(map[string]counterPeriod)
+	}
+	c.periods[t.userID] = period
+	delete(c.reserved, t.userID)
+	delete(c.resumedReservations, t.userID)
+	c.resetUserLocked(t.userID)
+	var reserved int64
+	for _, liability := range pending {
+		if liability.UserID != t.userID || liability.SubscriptionID != subscriptionID || liability.PeriodStartNs != periodStartNs || liability.Bytes <= 0 {
+			continue
+		}
+		if c.resumedReservations == nil {
+			c.resumedReservations = make(map[string]map[string]bool)
+		}
+		if c.resumedReservations[t.userID] == nil {
+			c.resumedReservations[t.userID] = make(map[string]bool)
+		}
+		c.resumedReservations[t.userID][liability.ID] = true
+		reserved = saturatingInt64Add(reserved, liability.Bytes)
+	}
+	used = max(0, used)
+	if used > 0 || reserved > 0 {
+		total, _ := c.users.LoadOrCompute(t.userID, func() (*atomic.Int64, bool) { return new(atomic.Int64), false })
+		total.Store(saturatingInt64Add(used, reserved))
+		if mark := c.persistedFor(t.userID); mark != nil {
+			mark.Store(used)
+		}
+		c.reserved[t.userID] = reserved
+	}
+	c.userMu.Unlock()
+}
+
+// Cancel ends a transition without changing the active accounting window.
+func (t *UserPeriodTransition) Cancel() {
+	if t == nil || t.done {
+		return
+	}
+	t.done = true
+	if t.c != nil {
+		t.unlock()
+	}
+}
+
+func (c *Counters) resetUserLocked(userID string) {
 	if total, ok := c.users.Load(userID); ok && total != nil {
 		total.Store(0)
 	}
@@ -418,6 +724,35 @@ func (c *Counters) ResetUser(userID string) {
 			mark.Store(0)
 		}
 	}
+}
+
+// Matches checks a sweep's snapshot after taking the user's transition lock.
+// Unbound counters may be initialized by the first reset after startup.
+func (t *UserPeriodTransition) Matches(subscriptionID string, periodStartNs int64) bool {
+	if t == nil || t.c == nil {
+		return true
+	}
+	t.c.userMu.RLock()
+	defer t.c.userMu.RUnlock()
+	period := t.c.periods[t.userID]
+	return period.subscriptionID == "" || period.subscriptionID == subscriptionID && period.periodStartNs == periodStartNs
+}
+
+// ForgetUser releases quota metadata after the account's keys are removed.
+// Pending buckets still persist historical usage; late settlements cannot
+// recreate the removed aggregate because they retain its original pointer.
+func (c *Counters) ForgetUser(userID string) {
+	if c == nil || userID == "" {
+		return
+	}
+	defer c.lockUser(userID)()
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	c.users.Delete(userID)
+	c.persisted.Delete(userID)
+	delete(c.periods, userID)
+	delete(c.reserved, userID)
+	delete(c.resumedReservations, userID)
 }
 
 // LoadUser overwrites a user's running total, and the water mark with it.
@@ -435,6 +770,9 @@ func (c *Counters) LoadUser(userID string, bytes int64) {
 	if c == nil || c.users == nil || userID == "" {
 		return
 	}
+	defer c.lockUser(userID)()
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
 	total, _ := c.users.LoadOrCompute(userID, func() (*atomic.Int64, bool) {
 		return new(atomic.Int64), false
 	})
@@ -442,4 +780,35 @@ func (c *Counters) LoadUser(userID string, bytes int64) {
 	if mark := c.persistedFor(userID); mark != nil {
 		mark.Store(bytes)
 	}
+}
+
+// atomicAddSaturating adds a non-negative byte delta without wrapping. A
+// saturated counter deliberately stays at MaxInt64: quota checks then refuse
+// rather than turning an accounting overflow into a negative, unlimited total.
+func atomicAddSaturating(value *atomic.Int64, delta int64) {
+	if value == nil || delta <= 0 {
+		return
+	}
+	for {
+		old := value.Load()
+		if old == math.MaxInt64 || delta > math.MaxInt64-old {
+			if old == math.MaxInt64 || value.CompareAndSwap(old, math.MaxInt64) {
+				return
+			}
+			continue
+		}
+		if value.CompareAndSwap(old, old+delta) {
+			return
+		}
+	}
+}
+
+func saturatingInt64Add(current, delta int64) int64 {
+	if delta <= 0 {
+		return current
+	}
+	if current == math.MaxInt64 || delta > math.MaxInt64-current {
+		return math.MaxInt64
+	}
+	return current + delta
 }

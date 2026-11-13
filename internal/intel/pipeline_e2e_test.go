@@ -123,6 +123,8 @@ func fakeProviderHandler() http.Handler {
 			_, _ = io.WriteString(w, "fl=1f2\nh=1.1.1.1\n")
 		case strings.HasPrefix(r.URL.Path, "/proxycheck/"):
 			_, _ = io.WriteString(w, proxyCheck)
+		case strings.HasPrefix(r.URL.Path, "/ipapi-is"):
+			_, _ = io.WriteString(w, `{"ip":"8.8.8.8","is_datacenter":true,"is_vpn":false,"is_proxy":false,"is_tor":false,"is_abuser":false,"asn":{"asn":15169,"org":"Google LLC","type":"hosting"},"location":{"country_code":"US"}}`)
 		case strings.HasPrefix(r.URL.Path, "/ip-api"):
 			_, _ = io.WriteString(w, ipAPI)
 		case strings.HasPrefix(r.URL.Path, "/ippure"):
@@ -150,6 +152,8 @@ func e2eRegistry(t *testing.T, serverURL string) *providers.Registry {
 	})
 
 	rows := []model.IntelProviderSetting{
+		{ProviderID: "proxycheck_node", Enabled: true, ConfigJSON: `{"url":"` + serverURL + `/proxycheck/"}`},
+		{ProviderID: "ipapi_is_node", Enabled: true, ConfigJSON: `{"url":"` + serverURL + `/ipapi-is"}`},
 		{ProviderID: "geo_country", Enabled: true},
 		// Spamhaus et al. must never be queried from a test (and not from CI).
 		{ProviderID: "dnsbl", Enabled: false},
@@ -347,7 +351,7 @@ func TestIntelPipelineEndToEnd(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("ip_assessment row missing: found=%v err=%v", found, err)
 	}
-	if assessment.Profile != "prism-purity-v2" || assessment.Verdict == "" || assessment.Confidence == "" {
+	if assessment.Profile != "prism-purity-v5-ippure" || assessment.Verdict == "" || assessment.Confidence == "" {
 		t.Fatalf("unexpected assessment: %+v", assessment)
 	}
 	if !assessment.PurityScore.Valid || !assessment.Native.Valid {
@@ -464,8 +468,8 @@ func TestAssessStepWaitsForEvidence(t *testing.T) {
 	if _, ok := result.Summary["skipped"]; !ok {
 		t.Fatalf("assessment without egress must report a skip: %v", result.Summary)
 	}
-	if result.ErrorCode != "" {
-		t.Fatalf("assessment without egress must not fail the item: %q", result.ErrorCode)
+	if result.ErrorCode != "ASSESSMENT_UNAVAILABLE" {
+		t.Fatalf("assessment without egress must be an explicit failure: %q", result.ErrorCode)
 	}
 	if _, found, _ := st.GetAssessment(ctx, e2eEgressIP); found {
 		t.Fatal("assessment without an egress observation must not persist a verdict")
@@ -476,20 +480,20 @@ func TestAssessStepWaitsForEvidence(t *testing.T) {
 		t.Fatalf("seed node egress: %v", err)
 	}
 	result = svc.assessStep(ctx, "job-out-of-order", nodeHash)
-	reason, ok := result.Summary["skipped"].(string)
-	if !ok || !strings.Contains(reason, e2eEgressIP) {
-		t.Fatalf("assessment without evidence must name the address: %v", result.Summary)
+	if result.ErrorCode != "ASSESSMENT_UNAVAILABLE" {
+		t.Fatal("missing primary must fail closed")
 	}
-	if _, found, _ := st.GetAssessment(ctx, e2eEgressIP); found {
-		t.Fatal("assessment without evidence must not persist a verdict")
+	pending, found, err := st.GetAssessment(ctx, e2eEgressIP)
+	if err != nil || !found || pending.PurityScore.Valid || !strings.Contains(pending.ReasonsJSON, "IPPURE_NOT_RUN") {
+		t.Fatal("missing source diagnosis was not persisted")
 	}
 
 	// Now the evidence arrives: the step assesses and persists.
 	row := store.Evidence{
-		IP: e2eEgressIP, Provider: "proxycheck", Profile: providers.ProxyCheckProfile,
+		IP: e2eEgressIP, Provider: "ippure", Profile: providers.IPPureProfile,
 		Status: store.StatusOk, ObservedAtNs: time.Now().UnixNano(),
 		ValidUntilNs:   time.Now().Add(time.Hour).UnixNano(),
-		NormalizedJSON: `{"ip":"` + e2eEgressIP + `","provider":"proxycheck","ip_type":"business","risk_score":12}`,
+		NormalizedJSON: `{"ip":"` + e2eEgressIP + `","provider":"ippure","fraud_score":12}`,
 	}
 	if err := st.UpsertEvidence(ctx, row); err != nil {
 		t.Fatalf("seed evidence: %v", err)

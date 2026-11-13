@@ -1,12 +1,11 @@
 // Package assess implements the explainable purity scoring of
-// (profile "prism-purity-v2"). Every function here is pure: the same input
+// (profile "prism-purity-v5-ippure"). Every function here is pure: the same input
 // always produces the same output, so the whole algorithm is unit-testable
 // without a database, a network or a clock.
 package assess
 
 import (
 	"fmt"
-	"math"
 	"net/netip"
 	"sort"
 	"strings"
@@ -17,7 +16,7 @@ import (
 
 // Profile is the assessment profile written to ip_assessment.profile.
 // recomputes every row whose profile differs from this value.
-const Profile = "prism-purity-v2"
+const Profile = "prism-purity-v5-ippure"
 
 // Scoring source ids. The order is the stable output order of
 // Assessment.Components.
@@ -53,32 +52,9 @@ const (
 	SourceGeoCountry = "geo_country"
 )
 
-// Scoring sources with their weights.
-//
-// The set is deliberately the keyless, node-scoped one: every entry either
-// needs no credential at all or spends the vendor's anonymous quota per node
-// (ippure, ip_api, and the proxycheck via-node variant folded onto
-// SourceProxycheck). That is the only shape that covers a large node inventory,
-// because ipqs and abuseipdb hard-require an API key. Leaving them in the table
-// would only shrink the coverage denominator for a source that can never
-// answer, which is what made coverage and the derived confidence meaningless.
-//
-// SourceProxycheck carries both the host-side source and its anonymous via-node
-// variant: ProviderAliases folds the variant onto it, so one address still
-// yields exactly one component of weight 3 no matter which path answered.
-var scoringWeights = map[string]int{
-	SourceProxycheck: 3,
-	SourceIPPure:     4,
-	SourceIPAPIIs:    2,
-	SourceIPAPI:      1,
-	SourceDNSBL:      1,
-}
-
-// ScoringSources returns the scoring source ids in weight order. It is the
-// canonical list a caller uses to build the "enabled sources" map.
-func ScoringSources() []string {
-	return []string{SourceProxycheck, SourceIPPure, SourceIPAPIIs, SourceIPAPI, SourceDNSBL}
-}
+// ScoringSources names the sole primary score source. Other sources only
+// supply independent risk and network evidence.
+func ScoringSources() []string { return []string{SourceIPPure} }
 
 // offlineSources carry the registry/registration data used by the offline
 // fallbacks of and
@@ -88,11 +64,6 @@ var offlineSources = map[string]bool{
 	"maxmind_geolite2": true,
 	"ipinfo_lite":      true,
 	SourceTorProject:   true,
-}
-
-// componentOrder is the deterministic output order of components.
-var componentOrder = []string{
-	SourceProxycheck, SourceIPPure, SourceIPAPIIs, SourceIPAPI, SourceDNSBL,
 }
 
 // Flags is the 16-bit summary of an assessment that the routing admission path
@@ -114,17 +85,6 @@ const (
 	FlagAttackHistory Flags = 1 << 9
 )
 
-// Emission point costs of Each flag is applied at most once, no matter how
-// many sources report it.
-const (
-	penaltyCompromised = -40
-	penaltyTor         = -30
-	penaltyVPN         = -10
-	penaltyProxy       = -10
-	penaltyScraper     = -10
-	penaltyAbuse       = -10
-)
-
 // abuseDeductionConfidence is the AbuseConfidence threshold of the
 // "abuse" deduction.
 const abuseDeductionConfidence = 25
@@ -132,9 +92,6 @@ const abuseDeductionConfidence = 25
 // abuseHighRiskConfidence is the AbuseConfidence threshold of the
 // high_risk verdict.
 const abuseHighRiskConfidence = 75
-
-// dnsblPenaltyPerZone is the per-listed-zone penalty of
-const dnsblPenaltyPerZone = 34
 
 // Verdict values of
 const (
@@ -153,11 +110,6 @@ const (
 	StatePending     = "pending"
 	StateUnsupported = "unsupported"
 )
-
-// voteOrder is the deterministic iteration order of the vote types.
-var voteOrder = []string{
-	IPTypeResidential, IPTypeMobile, IPTypeBusiness, IPTypeWireless, IPTypeDatacenter,
-}
 
 // Confidence values of
 const (
@@ -215,6 +167,7 @@ type Component struct {
 	Clean      int       `json:"clean"`
 	Weight     int       `json:"weight"`
 	ObservedAt time.Time `json:"observed_at"`
+	ValidUntil time.Time `json:"valid_until"`
 }
 
 // Penalty is one applied deduction. Points is always negative.
@@ -226,30 +179,31 @@ type Penalty struct {
 
 // Assessment is the complete, explainable result of one scoring run.
 type Assessment struct {
-	IP            netip.Addr  `json:"-"`
-	IPText        string      `json:"ip"`
-	Profile       string      `json:"profile"`
-	State         string      `json:"state"`
-	Verdict       string      `json:"verdict"`
-	PurityScore   *int        `json:"purity_score"`
-	PurityBand    string      `json:"purity_band"`
-	Confidence    string      `json:"confidence"`
-	Coverage      float64     `json:"coverage"`
-	Agreement     float64     `json:"agreement"`
-	IPType        string      `json:"ip_type"`
-	Native        *bool       `json:"native"`
-	Flags         Flags       `json:"flags"`
-	Reasons       []string    `json:"reasons"`
-	Components    []Component `json:"components"`
-	Penalties     []Penalty   `json:"penalties"`
-	PenaltyPoints int         `json:"penalty_points"`
-	SourceCount   int         `json:"source_count"`
-	ASN           int         `json:"asn,omitempty"`
-	ASOrg         string      `json:"as_org,omitempty"`
-	Country       string      `json:"country,omitempty"`
-	City          string      `json:"city,omitempty"`
-	ComputedAt    time.Time   `json:"computed_at"`
-	ValidUntil    time.Time   `json:"valid_until"`
+	Facts         map[string]quality.Fact `json:"facts"`
+	IP            netip.Addr              `json:"-"`
+	IPText        string                  `json:"ip"`
+	Profile       string                  `json:"profile"`
+	State         string                  `json:"state"`
+	Verdict       string                  `json:"verdict"`
+	PurityScore   *int                    `json:"purity_score"`
+	PurityBand    string                  `json:"purity_band"`
+	Confidence    string                  `json:"confidence"`
+	Coverage      float64                 `json:"coverage"`
+	Agreement     float64                 `json:"agreement"`
+	IPType        string                  `json:"ip_type"`
+	Native        *bool                   `json:"native"`
+	Flags         Flags                   `json:"flags"`
+	Reasons       []string                `json:"reasons"`
+	Components    []Component             `json:"components"`
+	Penalties     []Penalty               `json:"penalties"`
+	PenaltyPoints int                     `json:"penalty_points"`
+	SourceCount   int                     `json:"source_count"`
+	ASN           int                     `json:"asn,omitempty"`
+	ASOrg         string                  `json:"as_org,omitempty"`
+	Country       string                  `json:"country,omitempty"`
+	City          string                  `json:"city,omitempty"`
+	ComputedAt    time.Time               `json:"computed_at"`
+	ValidUntil    time.Time               `json:"valid_until"`
 }
 
 // Input is the full input of one scoring run.
@@ -301,44 +255,31 @@ func AssessInput(in Input) Assessment {
 	}
 
 	evidence := validEvidence(in)
-	if len(evidence) > 0 {
-		out.ValidUntil = earliestValidUntil(evidence)
-	}
-
-	out.Components = components(evidence)
-	out.SourceCount = len(out.Components)
-	out.Coverage, out.Agreement = coverageAndAgreement(out.Components, in.Enabled)
-	out.Confidence = confidence(out.SourceCount, out.Coverage, out.Agreement)
-
+	out.Facts = fieldFacts(in, evidence)
 	flags, reasons := detectFlags(evidence)
 	out.Flags = flags
 	out.Reasons = append(out.Reasons, reasons...)
-
-	// Identity first: the hosting-ASN fallback needs the ASN.
 	attachIdentity(&out, evidence)
-
-	out.IPType = voteIPType(evidence, out.ASN, &out.Reasons)
+	out.IPType = networkType(evidence, &out.Reasons)
 	out.Native = nativeFlag(evidence, &out.Reasons)
-
-	out.Penalties, out.PenaltyPoints = penalties(out.Flags, evidence)
-
-	if out.SourceCount > 0 {
-		base := weightedBase(out.Components)
-		total := base + out.PenaltyPoints
-		if total < 0 {
-			total = 0
-		}
-		if total > 100 {
-			total = 100
-		}
-		score := total
+	primary, fact := primaryEvidence(in)
+	out.Facts["purity"] = fact
+	if primary != nil {
+		score := 100 - *primary.FraudScore
 		out.PurityScore = &score
-		out.PurityBand = in.bandSet().Name(out.PurityScore)
+		out.PurityBand = in.bandSet().Name(&score)
 		out.State = StateValid
+		out.ValidUntil = primary.ValidUntil
+		out.Components = []Component{{Source: SourceIPPure, Raw: *primary.FraudScore, Clean: score, Weight: 1, ObservedAt: primary.ObservedAt, ValidUntil: primary.ValidUntil}}
+		out.SourceCount, out.Coverage, out.Agreement, out.Confidence = 1, 1, 1, ConfidenceLow
 	} else {
-		state, reason := noEvidenceState(in, evidence)
-		out.State = state
-		out.Reasons = append(out.Reasons, reason)
+		out.Reasons = append(out.Reasons, fact.Cause)
+		if fact.ErrorCode != "" {
+			out.Reasons = append(out.Reasons, "IPPURE_ERROR:"+fact.ErrorCode)
+		}
+		if fact.Cause != "IPPURE_NOT_RUN" && fact.Cause != "EVIDENCE_EXPIRED" {
+			out.State = StateUnsupported
+		}
 	}
 
 	out.Verdict = verdict(&out, evidence)
@@ -360,22 +301,54 @@ func Assess(ip netip.Addr, ev []quality.Evidence, now time.Time, enabled map[str
 // validEvidence keeps only unexpired, address-matching rows and keeps the newest
 // row per provider.
 func validEvidence(in Input) []quality.Evidence {
-	now := in.Now.UTC()
-	want := in.IP.Unmap().String()
-	byProvider := make(map[string]quality.Evidence, len(in.Evidence))
+	rows := make([]quality.Evidence, 0, len(in.Evidence))
 	for _, ev := range in.Evidence {
+		if _, failed := in.Failed[ev.Provider]; !failed {
+			rows = append(rows, ev)
+		}
+	}
+	return CurrentEvidence(in.IP, rows, in.Now)
+}
+
+// CurrentEvidence is shared by assessment and presentation. Only a current,
+// address-matching observation participates, once per vendor (newest alias).
+func CurrentEvidence(ip netip.Addr, evidence []quality.Evidence, at time.Time) []quality.Evidence {
+	if !ip.IsValid() {
+		return nil
+	}
+	now := at.UTC()
+	want := ip.Unmap().String()
+	current := make([]quality.Evidence, 0, len(evidence))
+	for _, ev := range independentEvidence(evidence) {
+		ev.NormalizeLegacySignals()
 		if ev.Provider == "" {
 			continue
 		}
-		if ev.IP != "" && ev.IP != want {
+		addr, err := netip.ParseAddr(ev.IP)
+		if err != nil || addr.Unmap().String() != want {
 			continue
 		}
-		if !ev.ValidUntil.IsZero() && !now.Before(ev.ValidUntil.UTC()) {
+		if ev.ObservedAt.IsZero() || ev.ObservedAt.After(now) || ev.ValidUntil.IsZero() || !now.Before(ev.ValidUntil.UTC()) {
 			continue
 		}
-		current, ok := byProvider[ev.Provider]
-		if !ok || ev.ObservedAt.After(current.ObservedAt) {
-			byProvider[ev.Provider] = ev
+		current = append(current, ev)
+	}
+	return current
+}
+
+// independentEvidence selects one observation per vendor, including host/node
+// aliases. Selection precedes interpretation: a newer unknown replaces an old
+// vote too. Callers that need current observations must filter time/IP first.
+func independentEvidence(evidence []quality.Evidence) []quality.Evidence {
+	byProvider := make(map[string]quality.Evidence, len(evidence))
+	for _, ev := range evidence {
+		if ev.Provider == "" {
+			continue
+		}
+		provider := scoringSource(ev.Provider)
+		current, ok := byProvider[provider]
+		if !ok || ev.ObservedAt.After(current.ObservedAt) || (ev.ObservedAt.Equal(current.ObservedAt) && ev.Provider < current.Provider) {
+			byProvider[provider] = ev
 		}
 	}
 	out := make([]quality.Evidence, 0, len(byProvider))
@@ -384,24 +357,6 @@ func validEvidence(in Input) []quality.Evidence {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Provider < out[j].Provider })
 	return out
-}
-
-// earliestValidUntil is the validity window: the earliest expiry of all
-// valid evidence.
-func earliestValidUntil(evidence []quality.Evidence) time.Time {
-	earliest := time.Time{}
-	for _, ev := range evidence {
-		if ev.ValidUntil.IsZero() {
-			continue
-		}
-		if earliest.IsZero() || ev.ValidUntil.UTC().Before(earliest) {
-			earliest = ev.ValidUntil.UTC()
-		}
-	}
-	if earliest.IsZero() {
-		return time.Time{}
-	}
-	return earliest
 }
 
 // ProviderAliases maps a data source id onto the scoring source it feeds.
@@ -427,9 +382,8 @@ func scoringSource(provider string) string {
 	return provider
 }
 
-// lookup returns the valid evidence of one provider. An exact match wins; only
-// then does an aliased source stand in, so a host-side proxycheck row always
-// outranks the via-node one for the same address.
+// lookup returns one provider's selected evidence. CurrentEvidence has already
+// selected the newest alias; the exact match is only a deterministic fallback.
 func lookup(evidence []quality.Evidence, provider string) (quality.Evidence, bool) {
 	for _, ev := range evidence {
 		if ev.Provider == provider {
@@ -448,91 +402,12 @@ func lookup(evidence []quality.Evidence, provider string) (quality.Evidence, boo
 // Components
 // ------------------------------------------------------------------
 
-// components builds the clean sub-scores in the stable component order.
-func components(evidence []quality.Evidence) []Component {
-	out := make([]Component, 0, len(componentOrder))
-	for _, source := range componentOrder {
-		ev, ok := lookup(evidence, source)
-		if !ok {
-			continue
-		}
-		weight := scoringWeights[source]
-		raw, clean, ok := componentScore(source, ev)
-		if !ok {
-			continue
-		}
-		out = append(out, Component{
-			Source:     source,
-			Raw:        raw,
-			Clean:      clean,
-			Weight:     weight,
-			ObservedAt: ev.ObservedAt.UTC(),
-		})
-	}
-	return out
-}
-
-// componentScore converts one provider's evidence into a 0–100 clean score.
-// ok is false when the provider produced no scoring value.
+// componentScore accepts only the provider's actual fraudScore, never RiskScore.
 func componentScore(source string, ev quality.Evidence) (raw, clean int, ok bool) {
-	switch source {
-	case SourceProxycheck:
-		if ev.RiskScore == nil {
-			return 0, 0, false
-		}
-		raw = clampInt(*ev.RiskScore, 0, 100)
-		return raw, 100 - raw, true
-	case SourceIPPure:
-		// IPPure's fraud score is IPv4-only ().
-		if ev.FraudScore == nil || !isIPv4(ev.IP) {
-			return 0, 0, false
-		}
-		raw = clampInt(*ev.FraudScore, 0, 100)
-		return raw, 100 - raw, true
-	case SourceIPQS:
-		if ev.FraudScore == nil {
-			return 0, 0, false
-		}
-		raw = clampInt(*ev.FraudScore, 0, 100)
-		return raw, 100 - raw, true
-	case SourceAbuseIPDB:
-		if ev.AbuseConfidence == nil {
-			return 0, 0, false
-		}
-		raw = clampInt(*ev.AbuseConfidence, 0, 100)
-		return raw, 100 - raw, true
-	case SourceIPAPIIs:
-		switch {
-		case boolValue(ev.Signals.Compromised):
-			return 40, 40, true
-		case boolValue(ev.Signals.Proxy), boolValue(ev.Signals.VPN), boolValue(ev.Signals.Tor):
-			return 60, 60, true
-		default:
-			return 100, 100, true
-		}
-	case SourceIPAPI:
-		if ev.Signals.Proxy == nil {
-			return 0, 0, false
-		}
-		if *ev.Signals.Proxy {
-			return 60, 60, true
-		}
-		return 100, 100, true
-	case SourceDNSBL:
-		// Only zones that were queried successfully are counted.
-		if len(ev.DNSBLChecked) == 0 {
-			return 0, 0, false
-		}
-		hits := listedZones(ev)
-		raw = len(hits)
-		clean = 100 - dnsblPenaltyPerZone*len(hits)
-		if clean < 0 {
-			clean = 0
-		}
-		return raw, clean, true
-	default:
+	if source != SourceIPPure || ev.FraudScore == nil || *ev.FraudScore < 0 || *ev.FraudScore > 100 || !isIPv4(ev.IP) {
 		return 0, 0, false
 	}
+	return *ev.FraudScore, 100 - *ev.FraudScore, true
 }
 
 // listedZones returns the listed zones that were actually checked.
@@ -556,86 +431,6 @@ func listedZones(ev quality.Evidence) []string {
 	return out
 }
 
-// weightedBase is Σ(w·clean)/Σw over the available components.
-func weightedBase(items []Component) int {
-	sum, weight := 0, 0
-	for _, item := range items {
-		sum += item.Weight * item.Clean
-		weight += item.Weight
-	}
-	if weight == 0 {
-		return 0
-	}
-	return int(math.Round(float64(sum) / float64(weight)))
-}
-
-// ------------------------------------------------------------------
-// Confidence
-// ------------------------------------------------------------------
-
-// coverageAndAgreement computes the confidence inputs.
-func coverageAndAgreement(items []Component, enabled map[string]bool) (coverage, agreement float64) {
-	denominator := 0
-	for _, source := range ScoringSources() {
-		if sourceEnabled(enabled, source) {
-			denominator += scoringWeights[source]
-		}
-	}
-	numerator := 0
-	for _, item := range items {
-		numerator += item.Weight
-	}
-	if denominator > 0 {
-		coverage = float64(numerator) / float64(denominator)
-		if coverage > 1 {
-			coverage = 1
-		}
-	}
-	if len(items) == 0 {
-		return coverage, 0
-	}
-	mean := 0.0
-	for _, item := range items {
-		mean += float64(item.Clean)
-	}
-	mean /= float64(len(items))
-	variance := 0.0
-	for _, item := range items {
-		d := float64(item.Clean) - mean
-		variance += d * d
-	}
-	variance /= float64(len(items))
-	agreement = 1 - math.Min(1, math.Sqrt(variance)/50)
-	return coverage, agreement
-}
-
-// sourceEnabled reports whether a source is enabled. A nil map means every
-// source is enabled (the caller does not know better).
-func sourceEnabled(enabled map[string]bool, source string) bool {
-	if enabled == nil {
-		return true
-	}
-	return enabled[source]
-}
-
-// confidence maps the table.
-func confidence(sourceCount int, coverage, agreement float64) string {
-	switch {
-	case sourceCount == 0:
-		return ConfidenceNone
-	case sourceCount >= 2 && coverage >= 0.6 && agreement >= 0.7:
-		return ConfidenceHigh
-	case sourceCount >= 2 || coverage >= 0.4:
-		return ConfidenceMedium
-	default:
-		return ConfidenceLow
-	}
-}
-
-// ------------------------------------------------------------------
-// Signals and deductions
-// ------------------------------------------------------------------
-
 // detectFlags derives the flag bitmask and the reason codes.
 func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 	var flags Flags
@@ -650,7 +445,9 @@ func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 
 	compromised, torSignal, vpn, proxy, scraper, anonymous, hosting := false, false, false, false, false, false, false
 	attackHistory := false
+	recentAbuse := false
 	for _, ev := range evidence {
+		recentAbuse = recentAbuse || boolValue(ev.RecentAbuse)
 		compromised = compromised || boolValue(ev.Signals.Compromised)
 		torSignal = torSignal || boolValue(ev.Signals.Tor)
 		vpn = vpn || boolValue(ev.Signals.VPN)
@@ -686,6 +483,9 @@ func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 	report(FlagAnonymous, ReasonAnonymous, anonymous)
 	report(FlagHosting, ReasonHosting, hosting)
 	report(FlagAttackHistory, ReasonAttackHistory, attackHistory)
+	if recentAbuse {
+		reasons = append(reasons, "VENDOR_RECENT_ABUSE")
+	}
 
 	// Abuse confidence (and use two thresholds).
 	if abuse, ok := lookup(evidence, SourceAbuseIPDB); ok && abuse.AbuseConfidence != nil {
@@ -709,138 +509,6 @@ func detectFlags(evidence []quality.Evidence) (Flags, []string) {
 	return flags, reasons
 }
 
-// penalties turns the flags into the deductions. Each flag is applied at
-// most once.
-func penalties(flags Flags, evidence []quality.Evidence) ([]Penalty, int) {
-	order := []struct {
-		flag   Flags
-		name   string
-		points int
-	}{
-		{FlagCompromised, "compromised", penaltyCompromised},
-		{FlagTor, "tor", penaltyTor},
-		{FlagVPN, "vpn", penaltyVPN},
-		{FlagProxy, "proxy", penaltyProxy},
-		{FlagScraper, "scraper", penaltyScraper},
-		{FlagAbuse, "abuse", penaltyAbuse},
-	}
-	out := make([]Penalty, 0, len(order))
-	total := 0
-	for _, entry := range order {
-		if flags&entry.flag == 0 {
-			continue
-		}
-		total += entry.points
-		out = append(out, Penalty{
-			Flag:    entry.name,
-			Points:  entry.points,
-			Sources: flagSources(entry.flag, evidence),
-		})
-	}
-	return out, total
-}
-
-// flagSources lists the providers that reported one flag.
-func flagSources(flag Flags, evidence []quality.Evidence) []string {
-	out := make([]string, 0, 3)
-	for _, ev := range evidence {
-		reported := false
-		switch flag {
-		case FlagCompromised:
-			reported = boolValue(ev.Signals.Compromised)
-		case FlagTor:
-			reported = boolValue(ev.Signals.Tor) ||
-				(ev.Provider == SourceTorProject && hasRole(ev.TorRoles, "exit"))
-		case FlagVPN:
-			reported = boolValue(ev.Signals.VPN)
-		case FlagProxy:
-			reported = boolValue(ev.Signals.Proxy)
-		case FlagScraper:
-			reported = boolValue(ev.Signals.Scraper)
-		case FlagAbuse:
-			reported = ev.AbuseConfidence != nil && *ev.AbuseConfidence >= abuseDeductionConfidence
-		}
-		if reported {
-			out = append(out, ev.Provider)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// ------------------------------------------------------------------
-// IP type
-// ------------------------------------------------------------------
-
-// voteIPType votes on the allocation type. asn is only used by the offline
-// hosting fallback.
-func voteIPType(evidence []quality.Evidence, asn int, reasons *[]string) string {
-	counts := map[string]int{}
-	votes := 0
-	for _, ev := range evidence {
-		kind := voteOf(ev)
-		if kind == "" {
-			continue
-		}
-		counts[kind]++
-		votes++
-	}
-
-	// non_residential only wins when nothing else voted.
-	if votes > 0 {
-		if _, ok := counts[IPTypeNonResidential]; ok && len(counts) == 1 {
-			return IPTypeNonResidential
-		}
-		delete(counts, IPTypeNonResidential)
-		votes = 0
-		for _, n := range counts {
-			votes += n
-		}
-	}
-
-	if votes == 0 {
-		if _, ok := hostingASNName(asn); ok && asn > 0 {
-			*reasons = append(*reasons, ReasonASNHosting)
-			return IPTypeDatacenter
-		}
-		*reasons = append(*reasons, ReasonIPTypeUnknown)
-		return IPTypeUnknown
-	}
-
-	// Count in the fixed vote order so the result is deterministic (map
-	// iteration would randomize tie-breaking).
-	max := 0
-	for _, kind := range voteOrder {
-		if counts[kind] > max {
-			max = counts[kind]
-		}
-	}
-	best := ""
-	for _, kind := range voteOrder {
-		if counts[kind] != max {
-			continue
-		}
-		if best == "" {
-			best = kind
-			continue
-		}
-		// Tie-break: prefer the non-datacenter side.
-		if best == IPTypeDatacenter && kind != IPTypeDatacenter {
-			best = kind
-		}
-	}
-
-	// Conflicting: residential or mobile vs datacenter, both with ≥1 vote, and no
-	// type holds 2/3 of the votes.
-	residentialish := counts[IPTypeResidential] + counts[IPTypeMobile]
-	datacenter := counts[IPTypeDatacenter]
-	if residentialish > 0 && datacenter > 0 && float64(max) < 2.0/3.0*float64(votes) {
-		*reasons = append(*reasons, ReasonIPTypeConflicting)
-		return IPTypeConflicting
-	}
-	return best
-}
-
 // voteOf maps one source's evidence to a vote, or "" when it does not vote.
 func voteOf(ev quality.Evidence) string {
 	switch ev.Provider {
@@ -852,12 +520,15 @@ func voteOf(ev quality.Evidence) string {
 		}
 		return normalizeRawType(ev.IPType)
 	case SourceIPAPIIs, SourceIPAPIIsNode:
+		// Historical decoders promoted company.type=isp to residential. A
+		// company category cannot prove a residential access network.
+		if strings.EqualFold(strings.TrimSpace(ev.SourceType), "isp") && ev.IPType == IPTypeResidential {
+			return ""
+		}
 		if kind := normalizeRawType(ev.IPType); kind != "" {
 			return kind
 		}
 		switch strings.ToLower(strings.TrimSpace(ev.SourceType)) {
-		case "isp":
-			return IPTypeResidential
 		case "business":
 			return IPTypeBusiness
 		case "hosting":
@@ -898,6 +569,8 @@ func ipqsConnectionType(connectionType string) string {
 // normalizeRawType maps a provider network/usage type onto the vote set.
 func normalizeRawType(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "conflicting":
+		return IPTypeConflicting
 	case "residential":
 		return IPTypeResidential
 	case "mobile":
@@ -953,23 +626,18 @@ var identityPriority = []string{
 
 // attachIdentity fills ASN/ASOrg/Country/City from the best available source.
 func attachIdentity(out *Assessment, evidence []quality.Evidence) {
-	for _, provider := range identityPriority {
-		ev, ok := lookup(evidence, provider)
-		if !ok {
-			continue
-		}
-		if out.ASN == 0 && ev.ASNNumber > 0 {
-			out.ASN = ev.ASNNumber
-		}
-		if out.ASOrg == "" && strings.TrimSpace(ev.Organization) != "" {
-			out.ASOrg = ev.Organization
-		}
-		if out.Country == "" && strings.TrimSpace(ev.CountryCode) != "" {
-			out.Country = strings.ToUpper(strings.TrimSpace(ev.CountryCode))
-		}
-		if out.City == "" && strings.TrimSpace(ev.City) != "" {
-			out.City = ev.City
-		}
+	fields := out.Facts
+	if f := fields["asn"]; f.State == "known" {
+		out.ASN = fieldValue(f).(int)
+	}
+	if f := fields["as_org"]; f.State == "known" {
+		out.ASOrg = fieldValue(f).(string)
+	}
+	if f := fields["country"]; f.State == "known" {
+		out.Country = fieldValue(f).(string)
+	}
+	if f := fields["city"]; f.State == "known" {
+		out.City = fieldValue(f).(string)
 	}
 }
 
@@ -1022,6 +690,12 @@ func verdict(out *Assessment, evidence []quality.Evidence) string {
 		return VerdictReview
 	}
 
+	for _, ev := range evidence {
+		if boolValue(ev.RecentAbuse) {
+			return VerdictReview
+		}
+	}
+
 	// 4. pending.
 	if out.PurityScore == nil {
 		return VerdictPending
@@ -1038,40 +712,21 @@ func verdict(out *Assessment, evidence []quality.Evidence) string {
 		return VerdictCaution
 	}
 
-	// 7. favorable.
-	return VerdictFavorable
-}
-
-// noEvidenceState distinguishes a genuinely unfinished assessment from one whose
-// enabled sources all failed.
-func noEvidenceState(in Input, evidence []quality.Evidence) (state, reason string) {
-	enabledScoring := make([]string, 0, len(scoringWeights))
-	for _, source := range ScoringSources() {
-		if sourceEnabled(in.Enabled, source) {
-			enabledScoring = append(enabledScoring, source)
-		}
-	}
-	if len(enabledScoring) == 0 {
-		return StateUnsupported, ReasonNoScoringSource
-	}
-	// Stale-but-present evidence is a refresh problem, not an unsupported source.
-	// The check folds the via-node variants onto their scoring source, the same
-	// way components() does, so a proxycheck_node or ipapi_is_node row counts.
+	// A score describes the supplied risk evidence. It cannot fill missing
+	// network flags with false to manufacture a favorable overall verdict.
+	seen := [4]bool{}
 	for _, ev := range evidence {
-		if _, ok := scoringWeights[scoringSource(ev.Provider)]; ok {
-			return StatePending, ReasonNoValidEvidence
+		for i, value := range []*bool{ev.Signals.Proxy, ev.Signals.VPN, ev.Signals.Tor, ev.Signals.Compromised} {
+			seen[i] = seen[i] || value != nil
 		}
 	}
-	failures := 0
-	for _, source := range enabledScoring {
-		if _, ok := in.Failed[source]; ok {
-			failures++
+	for _, known := range seen {
+		if !known {
+			out.Reasons = append(out.Reasons, "NETWORK_EVIDENCE_INCOMPLETE")
+			return VerdictIncomplete
 		}
 	}
-	if failures == len(enabledScoring) {
-		return StateUnsupported, ReasonAllSourcesFailed
-	}
-	return StatePending, ReasonNoValidEvidence
+	return VerdictFavorable
 }
 
 // ------------------------------------------------------------------
@@ -1080,7 +735,7 @@ func noEvidenceState(in Input, evidence []quality.Evidence) (state, reason strin
 
 func isIPv4(raw string) bool {
 	if strings.TrimSpace(raw) == "" {
-		return true // an unset address cannot make the value inapplicable
+		return false // missing target identity is never scoreable
 	}
 	addr, err := netip.ParseAddr(raw)
 	if err != nil {

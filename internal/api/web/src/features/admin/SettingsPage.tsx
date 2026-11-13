@@ -35,6 +35,11 @@ import {
 } from "../systemConfig/api";
 import type { RegistrationMode, RuntimeConfigPatch, SystemConfigView } from "../systemConfig/types";
 
+import { NodePrivacySettings } from "./NodePrivacySettings";
+import { purityBandLabel } from "../nodes/quality/presentation";
+import { PurityGuide } from "../nodes/quality/PurityGuide";
+import { invalidatePurityQueries } from "../nodes/quality/cache";
+
 type SettingsPolicyView = Pick<SystemConfigView, "audit_retention_days" | "usage_retention_days" | "purity_bands" | "registration_mode">;
 const MAX_RETENTION_DAYS = 36_500;
 const REGISTRATION_MODES = ["off", "invite", "open"] as const;
@@ -109,7 +114,7 @@ export function SettingsPage() {
     return (
       <WorkspacePage conciseCards eyebrow="Governance / policy" title={t("策略与准入")} description={t("管理账户注册准入、数据保留周期与 IP 纯净度评估阈值。") }>
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-        <WorkspaceCard title={t("系统设置")}><EmptyWorkState title={t("系统设置读取失败")} detail={formatApiErrorMessage(configQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard>
+        <WorkspaceCard title={t("系统设置")}><EmptyWorkState embedded title={t("系统设置读取失败")} detail={formatApiErrorMessage(configQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard>
       </WorkspacePage>
     );
   }
@@ -130,6 +135,7 @@ export function SettingsPage() {
           </ControlButton>
         </div>
       ) : null}
+      {configQuery.data?.node_privacy ? <NodePrivacySettings key={JSON.stringify(configQuery.data.node_privacy)} config={configQuery.data.node_privacy} /> : null}
       <SettingsFormContent
         key={pinnedKey ?? liveKey}
         config={config}
@@ -183,6 +189,7 @@ function SettingsFormContent({
       setErrorMsg("");
       showToast("success", t("系统设置已更新"));
       await queryClient.invalidateQueries({ queryKey: SYSTEM_CONFIG_QUERY_KEY });
+      if (variables.purity_bands) await invalidatePurityQueries(queryClient);
       if (variables.registration_mode !== undefined) await fetchSession().catch(() => undefined);
     },
     onError: (error) => {
@@ -204,7 +211,7 @@ function SettingsFormContent({
   const [excellent, clean, fair, mixed] = purityValues.map((value) => value ?? 0);
   const purityOrdered = purityInRange && mixed < fair && fair < clean && clean < excellent;
   const purityNotConfigured = config.purity_bands == null && purityBlank;
-  const purityError = !purityNotConfigured && (!purityInRange || !purityOrdered) ? t("阈值必须是 1 到 100 之间的整数，并从高到低：极优 > 优良 > 一般 > 混合。") : "";
+  const purityError = !purityNotConfigured && (!purityInRange || !purityOrdered) ? t("阈值必须是 1 到 100 之间的整数，并从高到低：极度纯净 > 纯净 > 较纯净 > 一般。") : "";
 
   const patch: RuntimeConfigPatch = {};
   if (auditValue !== null && !auditError && auditValue !== (config.audit_retention_days ?? 0)) patch.audit_retention_days = auditValue;
@@ -269,7 +276,7 @@ function SettingsFormContent({
           {savedOverride !== null ? <ControlSwitch label={t("跟随部署环境") } hint={t("移除面板覆盖后，注册策略回到 PRISM_REGISTRATION。") } isSelected={followEnv} onChange={(value) => { setFollowEnv(value); if (value) setMode(envMode ?? "off"); }} /> : null}
           {mode === "invite" && !followEnv ? <div className="workspace-inset-stack"><span>{t("邀请码在邀请管理里创建，可以预先绑定套餐。")}</span><Link to={opsPaths.invites} className="link-quiet"><ArrowUpRight size={14} aria-hidden />{t("管理邀请码")}</Link></div> : null}
           {mode === "open" && !followEnv ? <p className="workspace-notice workspace-notice--warn"><TriangleAlert size={14} aria-hidden />{t("开放注册没有任何准入校验，建议同时在反向代理上限制注册请求频率。")}</p> : null}
-        </div> : <EmptyWorkState title={t("无法读取部署环境配置")} detail={t("暂时无法显示注册准入的当前状态。") } action={<ControlButton variant="secondary" size="sm" onPress={onRefetch}>{t("重试")}</ControlButton>} />}
+        </div> : <EmptyWorkState embedded title={t("无法读取部署环境配置")} detail={t("暂时无法显示注册准入的当前状态。") } action={<ControlButton variant="secondary" size="sm" onPress={onRefetch}>{t("重试")}</ControlButton>} />}
       </WorkspaceCard>
 
       <WorkspaceCard eyebrow="Governance / retention" title={t("数据保留周期")} description={t("设置审计日志与用量统计数据的自动清理周期，0 或留空表示使用出厂窗口。")}>
@@ -281,12 +288,13 @@ function SettingsFormContent({
 
       <WorkspaceCard eyebrow="Governance / purity policy" title={t("IP 纯净度等级分段")} description={t("配置网络节点 IP 纯净度评估的四个等级阈值（1 - 100 分）。")}>
         <div className="workspace-form-grid">
-          <ControlInput label={t("极优阈值 (Excellent)")} hint={config.purity_bands?.excellent == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityExcellent} onChange={(event) => setPurityExcellent(event.target.value)} />
-          <ControlInput label={t("优良阈值 (Clean)")} hint={config.purity_bands?.clean == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityClean} onChange={(event) => setPurityClean(event.target.value)} />
-          <ControlInput label={t("一般阈值 (Fair)")} hint={config.purity_bands?.fair == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityFair} onChange={(event) => setPurityFair(event.target.value)} />
-          <ControlInput label={t("混合阈值 (Mixed)")} hint={config.purity_bands?.mixed == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityMixed} onChange={(event) => setPurityMixed(event.target.value)} />
+          <ControlInput label={t(purityBandLabel("excellent"))} hint={config.purity_bands?.excellent == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityExcellent} onChange={(event) => setPurityExcellent(event.target.value)} />
+          <ControlInput label={t(purityBandLabel("clean"))} hint={config.purity_bands?.clean == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityClean} onChange={(event) => setPurityClean(event.target.value)} />
+          <ControlInput label={t(purityBandLabel("fair"))} hint={config.purity_bands?.fair == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityFair} onChange={(event) => setPurityFair(event.target.value)} />
+          <ControlInput label={t(purityBandLabel("mixed"))} hint={config.purity_bands?.mixed == null ? t("未设置") : t("已配置")} type="number" min="1" max="100" step="1" value={purityMixed} onChange={(event) => setPurityMixed(event.target.value)} />
         </div>
         {purityError ? <p className="workspace-form-error" role="alert">{purityError}</p> : null}
+        <PurityGuide bands={config.purity_bands} />
       </WorkspaceCard>
 
       <ConfirmDrawer open={resetOpen} onOpenChange={setResetOpen} title={t("确认恢复默认设置")} eyebrow="Governance / reset" message={t("确定要将数据保留周期和纯净度等级阈值恢复为系统默认配置吗？未保存的手动更改将丢失。")} cancelLabel={t("取消")} confirmLabel={t("确认恢复")} loading={updateMutation.isPending} onConfirm={handleResetToDefault} />

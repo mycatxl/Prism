@@ -158,9 +158,9 @@ export function PlansPage() {
         meta={plansQuery.data ? t("显示 {{shown}} / {{total}} 个套餐", { shown: filtered.length, total: plans.length }) : t("未加载")}
         description={t("价格、配额、周期、平台关系和活跃订阅数来自管理员套餐 API；选择一行查看编辑与上架动作。")}
       >
-        {plansQuery.isError && !plansQuery.data ? <EmptyWorkState title={t("套餐目录读取失败")} detail={formatApiErrorMessage(plansQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void plansQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+        {plansQuery.isError && !plansQuery.data ? <EmptyWorkState embedded title={t("套餐目录读取失败")} detail={formatApiErrorMessage(plansQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void plansQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
         {plansQuery.isLoading && !plansQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载套餐列表")}</div> : null}
-        {!plansQuery.isLoading && !plansQuery.isError && filtered.length === 0 ? <EmptyWorkState title={t(filtersActive ? "没有匹配的套餐" : "暂无套餐")} detail={t(filtersActive ? "调整搜索或状态筛选后重试。" : "创建第一个订阅套餐后，可在用户和邀请码流程中使用。")} action={filtersActive ? <ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : <ControlButton variant="primary" size="sm" onPress={openCreate}><Plus size={14} aria-hidden />{t("新建套餐")}</ControlButton>} /> : null}
+        {!plansQuery.isLoading && !plansQuery.isError && filtered.length === 0 ? <EmptyWorkState embedded title={t(filtersActive ? "没有匹配的套餐" : "暂无套餐")} detail={t(filtersActive ? "调整搜索或状态筛选后重试。" : "创建第一个订阅套餐后，可在用户和邀请码流程中使用。")} action={filtersActive ? <ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : <ControlButton variant="primary" size="sm" onPress={openCreate}><Plus size={14} aria-hidden />{t("新建套餐")}</ControlButton>} /> : null}
         {filtered.length > 0 ? <ObjectList>
           {filtered.map((plan) => {
             const active = plan.status === "active";

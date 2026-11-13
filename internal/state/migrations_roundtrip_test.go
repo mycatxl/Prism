@@ -31,6 +31,8 @@ type downUpPair struct {
 // introduced, and the ones an operator rolling back a release would touch.
 func TestDownMigrationsRunAndCanBeReapplied(t *testing.T) {
 	pairs := []downUpPair{
+		{name: "000030_payment_settings", table: ""},
+		{name: "000029_ldc_deposits", table: "ldc_deposits"},
 		{name: "000028_renewal_sweep_index", table: ""},
 		{name: "000027_deposits", table: "deposit_intents"},
 		{name: "000026_drop_orders", table: ""},

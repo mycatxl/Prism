@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"prism/internal/intel/assess"
 	"prism/internal/intel/store"
 	"prism/internal/quality"
 )
@@ -98,13 +99,13 @@ func TestQualitySummaryFromRowsProjectsTheLegacyShape(t *testing.T) {
 			IP: "203.0.113.7", Provider: "ippure", Profile: "ippure-via-node-v2",
 			Status: store.StatusOk, ObservedAtNs: observed.UnixNano(), ValidUntilNs: validUntil,
 			NormalizedJSON: `{"ip":"203.0.113.7","provider":"ippure","profile":"ippure-via-node-v2",` +
-				`"ip_type":"residential","source_type":"Residential","risk_score":12,` +
+				`"ip_type":"residential","source_type":"Residential","risk_score":12,"fraud_score":12,` +
 				`"grade":"low","signals":{},"observed_at":"2026-05-01T11:59:00Z","valid_until":"2026-05-01T13:00:00Z"}`,
 		},
 	}
 	score := int64(88)
 	assessment := &store.Assessment{
-		IP: "203.0.113.7", Profile: "prism-purity-v2", State: "valid", Verdict: "favorable",
+		IP: "203.0.113.7", Profile: assess.Profile, State: "valid", Verdict: "favorable",
 		PurityScore: sql.NullInt64{Int64: score, Valid: true}, PurityBand: "fair", IPType: "datacenter",
 		ReasonsJSON: `["NETWORK_EVIDENCE_INCOMPLETE"]`, ValidUntilNs: validUntil,
 	}
@@ -135,8 +136,8 @@ func TestQualitySummaryFromRowsProjectsTheLegacyShape(t *testing.T) {
 	if summary.Assessment.PurityScore == nil || *summary.Assessment.PurityScore != 88 {
 		t.Fatalf("purity_score: got %v, want 88", summary.Assessment.PurityScore)
 	}
-	if summary.Assessment.NetworkSource != quality.ProviderID {
-		t.Fatalf("network_source: got %q, want %q", summary.Assessment.NetworkSource, quality.ProviderID)
+	if summary.Assessment.NetworkSource != "assessment" {
+		t.Fatalf("network_source: got %q, want %q", summary.Assessment.NetworkSource, "assessment")
 	}
 	if len(summary.Assessment.Reasons) != 1 || summary.Assessment.Reasons[0] != "NETWORK_EVIDENCE_INCOMPLETE" {
 		t.Fatalf("reasons: got %v", summary.Assessment.Reasons)
@@ -157,8 +158,8 @@ func TestQualitySummaryFromRowsWithoutAssessment(t *testing.T) {
 
 	summary := qualitySummaryFromRows("198.51.100.9", rows, nil, now)
 
-	if summary.Assessment != nil {
-		t.Fatal("no assessment row must not invent one")
+	if summary.Assessment == nil || summary.Assessment.PurityScore != nil || summary.Assessment.Facts["purity"].Cause != "IPPURE_NOT_RUN" {
+		t.Fatal("missing assessment must carry an unscored diagnostic")
 	}
 	if summary.State != "stale" {
 		t.Fatalf("state: got %q, want stale", summary.State)

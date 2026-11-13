@@ -44,7 +44,7 @@ export function Stat({
             : "text-ink";
 
   return (
-    <div className="flex min-w-0 flex-col gap-1 bg-paper px-3 py-3">
+    <div className="flex min-w-0 flex-col gap-1 bg-paper p-4">
       <dt className="truncate text-2xs font-medium tracking-[0.04em] text-ink-faint uppercase">{label}</dt>
       <dd className={cn("readout text-base leading-tight font-semibold tabular-nums", toneClass)}>{value}</dd>
       {hint && <p className="truncate text-2xs text-ink-faint">{hint}</p>}

@@ -22,7 +22,7 @@ import (
 
 // testProxyAuthToken is the credential of the stub entries. It is never printed
 // in a failure message.
-const testProxyAuthToken = "proxy-auth-test-token-0001"
+const testProxyAuthToken = testMuxAccessKey
 
 // wrongProxyAuthSecret is deliberately not a credential of any kind: it is what
 // a brute-forcer would send.
@@ -132,6 +132,34 @@ func TestInboundMuxPathTokenIsNotMeteredWithoutALimiter(t *testing.T) {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/wrong-token/Default/https/example.com/x", nil))
 		assertCompatErrorHeader(t, rec, http.StatusForbidden, "AUTH_FAILED")
+	}
+}
+
+func TestInboundMuxTokenActionChecksSharedAuthBlockBeforeVerification(t *testing.T) {
+	limiter := api.NewAuthFailureLimiter(1, time.Minute, time.Minute, nil)
+	limiter.RecordFailure("192.0.2.1")
+	tokenCalls := 0
+	mux := newInboundMuxWithGuard(
+		testProxyAuthToken,
+		tagHandler("forward", http.StatusOK),
+		tagHandler("reverse", http.StatusOK),
+		tagHandler("api", http.StatusOK),
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			tokenCalls++
+			w.WriteHeader(http.StatusOK)
+		}),
+		limiter,
+	)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(
+		http.MethodPost,
+		"/"+testProxyAuthToken+"/api/v1/Default/actions/inherit-lease",
+		nil,
+	))
+	assertCompatErrorHeader(t, rec, http.StatusTooManyRequests, "RATE_LIMITED")
+	if tokenCalls != 0 {
+		t.Fatalf("token action verifier was invoked %d times for a blocked client", tokenCalls)
 	}
 }
 

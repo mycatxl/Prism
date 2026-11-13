@@ -19,6 +19,7 @@ import (
 func newNodeListTestPool(subMgr *topology.SubscriptionManager) *topology.GlobalNodePool {
 	return topology.NewGlobalNodePool(topology.PoolConfig{
 		SubLookup:              subMgr.Lookup,
+		QualityLookup:          testutil.MeasuredQuality,
 		GeoLookup:              func(netip.Addr) string { return "us" },
 		MaxLatencyTableEntries: 16,
 		MaxConsecutiveFailures: func() int { return 3 },

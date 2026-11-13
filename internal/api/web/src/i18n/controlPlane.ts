@@ -1,4 +1,10 @@
 export const CONTROL_PLANE_TRANSLATIONS: Readonly<Record<string, string>> = {
+  "部分数据尚未加载": "Some data has not loaded yet",
+  "已有待处理事项": "Items need attention",
+  "暂无待处理事项": "No items need attention",
+  "当前列表 {{count}} 项待处理事项": "{{count}} items in the current list need attention",
+  "部分数据读取失败，事项列表可能不完整。": "Some data could not be loaded. The list may be incomplete.",
+  "暂无需要处理的事项": "No items need attention",
   "{{count}} 个结果": "{{count}} results",
   "{{count}} 个套餐可引用此平台": "{{count}} plans can reference this platform",
   "按健康、来源、网络质量和情报证据查找可交付节点。所有条件都可深链、移除和重新执行。": "Find deliverable nodes by health, source, network quality and intelligence evidence. Every condition can be deep-linked, removed and rerun.",

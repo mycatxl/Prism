@@ -16,6 +16,7 @@ import {
   WorkspaceCard,
 } from "../../components/control-plane";
 import { ToastContainer } from "../../components/control-plane";
+import { Sparkline } from "../../components/ui/Sparkline";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -30,14 +31,13 @@ import {
   BALANCE_LEDGER_LIMIT,
   getBalance,
   getOverview,
-  getSessions,
   meBalanceQueryKey,
   redeemCode,
   renew,
-  revokeSession,
   setAutoRenew,
 } from "./api";
 import type { BalanceEntry, PurchaseResult, SubscriptionView } from "./types";
+import { ProxyGenerator } from "./ProxyGenerator";
 
 const NANOS_PER_MILLI = 1_000_000;
 const SUBSCRIPTION_WARN_MS = 48 * 3_600_000;
@@ -135,6 +135,7 @@ function BalanceSurface({
 
   return (
     <WorkspaceCard
+      className="overview-balance"
       eyebrow="Balance ledger"
       title={t("余额")}
       description={t("用兑换码或链上转账充值，余额用于购买与续费套餐。")}
@@ -157,8 +158,8 @@ function BalanceSurface({
           <ControlButton type="submit" variant="primary" size="sm" loading={redeemMutation.isPending}><WalletCards size={14} aria-hidden />{t("兑换")}</ControlButton>
         </form>
         {balanceQuery.isLoading ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载余额...")}</div> : null}
-        {balanceQuery.isError ? <EmptyWorkState title={t("读取失败")} detail={formatApiErrorMessage(balanceQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void balanceQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-        {!balanceQuery.isLoading && !balanceQuery.isError && ledger.length === 0 ? <EmptyWorkState title={t("暂无余额变动")} detail={t("充值或消费后，流水会显示在这里。")} /> : null}
+        {balanceQuery.isError ? <EmptyWorkState embedded title={t("读取失败")} detail={formatApiErrorMessage(balanceQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void balanceQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+        {!balanceQuery.isLoading && !balanceQuery.isError && ledger.length === 0 ? <EmptyWorkState embedded title={t("暂无余额变动")} detail={t("充值或消费后，流水会显示在这里。")} /> : null}
         {ledger.length > 0 ? <ObjectList>{ledger.map((entry) => <ObjectRow key={entry.id} leading={<span aria-hidden>{entry.delta_micro >= 0 ? "+" : "−"}</span>} title={entry.reason || t("余额变动")} subtitle={formatNsDateTime(entry.created_at_ns)} facts={<><span>{entry.delta_micro >= 0 ? "+" : ""}{formatMicro(entry.delta_micro)} USDT</span><span>{entry.note || entry.actor || "-"}</span></>} status={<StatusMark tone={entry.delta_micro >= 0 ? "signal" : "alert"} label={formatMicro(entry.balance_after_micro)} />} action={<span className="readout text-2xs">{entry.request_id || entry.ref_id || "-"}</span>} />)}</ObjectList> : null}
       </div>
     </WorkspaceCard>
@@ -171,7 +172,6 @@ export function OverviewPage() {
   const { toasts, showToast, dismissToast } = useToast();
   const [renewing, setRenewing] = useState(false);
   const overviewQuery = useQuery({ queryKey: ["me-overview"], queryFn: getOverview });
-  const sessionsQuery = useQuery({ queryKey: ["me-sessions"], queryFn: getSessions });
   const balanceQuery = useQuery({ queryKey: meBalanceQueryKey, queryFn: () => getBalance(BALANCE_LEDGER_LIMIT), staleTime: 30_000 });
   const autoRenewMutation = useMutation({
     mutationFn: (input: { subscriptionID: string; autoRenew: boolean }) => setAutoRenew(input.subscriptionID, input.autoRenew),
@@ -181,23 +181,17 @@ export function OverviewPage() {
     },
     onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
   });
-  const revokeMutation = useMutation({
-    mutationFn: (sessionID: string) => revokeSession(sessionID),
-    onSuccess: () => {
-      showToast("success", t("会话已撤销"));
-      void queryClient.invalidateQueries({ queryKey: ["me-sessions"] });
-    },
-    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
-  });
-
   const overview = overviewQuery.data;
   const subscription = overview?.subscription ?? null;
-  const sessions = sessionsQuery.data?.items ?? [];
   const dailyItems = overview?.usage_daily ?? [];
-  const refreshing = overviewQuery.isFetching || sessionsQuery.isFetching || balanceQuery.isFetching;
+  const orderedDailyItems = [...dailyItems].sort((left, right) => left.day_ns - right.day_ns);
+  const recentDailyItems = orderedDailyItems.slice(-7).reverse();
+  const recentUsageTotal = orderedDailyItems.reduce((sum, item) => sum + item.total_bytes, 0);
+  const quotaTotal = subscription?.traffic_bytes ?? 0;
+  const quotaPercent = quotaTotal > 0 ? Math.min(100, Math.round((overview?.period_used_bytes ?? 0) / quotaTotal * 100)) : 0;
+  const refreshing = overviewQuery.isFetching || balanceQuery.isFetching;
   const refresh = () => {
     void overviewQuery.refetch();
-    void sessionsQuery.refetch();
     void balanceQuery.refetch();
   };
   const subscriptionTone = subscription ? subscriptionState(subscription.status, t) : null;
@@ -212,9 +206,11 @@ export function OverviewPage() {
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       {overviewQuery.isLoading ? <WorkspaceCard headerless eyebrow="Tenant workspace" title={t("概览")}><div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载概览数据...")}</div></WorkspaceCard> : null}
-      {overviewQuery.isError ? <WorkspaceCard headerless eyebrow="Tenant workspace" title={t("概览")}><EmptyWorkState title={t("读取失败")} detail={formatApiErrorMessage(overviewQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void overviewQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard> : null}
+      {overviewQuery.isError ? <WorkspaceCard headerless eyebrow="Tenant workspace" title={t("概览")}><EmptyWorkState embedded title={t("读取失败")} detail={formatApiErrorMessage(overviewQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void overviewQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard> : null}
       {overview ? (
         <>
+          <ProxyGenerator platforms={overview.platforms ?? []} />
+
           <div className="workspace-data-grid">
             <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("当前套餐")}</span><strong className="workspace-data-grid__value workspace-data-grid__value--text">{subscription?.plan_name || t("暂无有效订阅")}</strong><span className="workspace-data-grid__hint">{subscriptionTone ? <StatusMark tone={subscriptionTone.tone} label={subscriptionTone.label} /> : t("需要购买")}</span></div>
             <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("周期流量")}</span><strong className="workspace-data-grid__value">{formatBytes(overview.period_used_bytes)}</strong><span className="workspace-data-grid__hint">{overview.remaining_bytes === null ? t("无限制") : t("剩余 {{value}}", { value: formatBytes(Math.max(0, overview.remaining_bytes)) })}</span></div>
@@ -222,18 +218,22 @@ export function OverviewPage() {
             <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("访问额度")}</span><strong className="workspace-data-grid__value">{overview.max_keys > 0 ? `${overview.active_keys} / ${overview.max_keys}` : `${overview.active_keys} / ${t("无限制")}`}</strong><span className="workspace-data-grid__hint">{t("实时连接 {{count}} 路", { count: overview.live_concurrent })}</span></div>
           </div>
 
-          <WorkspaceCard eyebrow="Access workspace" title={t("接入工作台")} description={t("密钥是访问平台代理的主入口，平台授权和连接状态在这里快速确认。")} meta={t("{{count}} 个平台", { count: overview.platforms?.length ?? 0 })} actions={<><Link className="link-quiet text-xs text-accent" to={mePaths.keys}><KeyRound size={14} aria-hidden />{t("管理密钥")}</Link><Link className="link-quiet text-xs text-accent" to={mePaths.guide}>{t("接入指南")} <ArrowUpRight size={14} aria-hidden /></Link></>}>
+          <WorkspaceCard className="overview-access" eyebrow="Access workspace" title={t("接入工作台")} description={t("密钥是访问平台代理的主入口，平台授权和连接状态在这里快速确认。")} meta={t("{{count}} 个平台", { count: overview.platforms?.length ?? 0 })} actions={<><Link className="link-quiet text-xs text-accent" to={mePaths.keys}><KeyRound size={14} aria-hidden />{t("管理密钥")}</Link><Link className="link-quiet text-xs text-accent" to={mePaths.usage}>{t("查看用量")} <ArrowUpRight size={14} aria-hidden /></Link></>}>
             <ObjectList>
               <ObjectRow leading={<KeyRound size={14} aria-hidden />} title={t("访问密钥")} subtitle={overview.max_keys > 0 ? t("已使用 {{active}} / {{max}}", { active: overview.active_keys, max: overview.max_keys }) : t("已创建 {{active}} 个", { active: overview.active_keys })} facts={<span>{t("打开密钥工作面管理凭据")}</span>} status={<StatusMark tone={overview.max_keys > 0 && overview.active_keys >= overview.max_keys ? "warn" : "signal"} label={overview.max_keys > 0 && overview.active_keys >= overview.max_keys ? t("配额已满") : t("可用")} />} action={<Link className="link-quiet" to={mePaths.keys}><ArrowUpRight size={14} aria-hidden /></Link>} />
-              <ObjectRow leading={<Activity size={14} aria-hidden />} title={t("授权平台")} subtitle={overview.platforms?.length ? overview.platforms.map((platform) => platform.platform_name || platform.platform_id).join(", ") : t("暂无限制或未授权")} facts={<span>{t("当前套餐允许的平台代理范围")}</span>} status={<StatusMark tone={overview.platforms?.length ? "signal" : "neutral"} label={overview.platforms?.length ? t("可用") : t("未知")} />} action={<Link className="link-quiet" to={mePaths.guide}><ArrowUpRight size={14} aria-hidden /></Link>} />
+              <ObjectRow leading={<Activity size={14} aria-hidden />} title={t("授权平台")} subtitle={overview.platforms?.length ? overview.platforms.map((platform) => platform.platform_name || platform.platform_id).join(", ") : t("暂无限制或未授权")} facts={<span>{t("当前套餐允许的平台代理范围")}</span>} status={<StatusMark tone={overview.platforms?.length ? "signal" : "neutral"} label={overview.platforms?.length ? t("可用") : t("未知")} />} />
               <ObjectRow leading={<Activity size={14} aria-hidden />} title={t("当前连接")} subtitle={overview.live_concurrent > 0 ? t("正在使用 {{count}} 路", { count: overview.live_concurrent }) : t("当前没有活跃连接")} facts={<span>{t("最大并发")} {overview.max_concurrent > 0 ? overview.max_concurrent : t("无限制")}</span>} status={<StatusMark tone={overview.live_concurrent > 0 ? "live" : "neutral"} label={overview.live_concurrent > 0 ? t("活跃") : t("空闲")} />} />
             </ObjectList>
           </WorkspaceCard>
 
           <div className="workbench-layout">
-            <WorkspaceCard eyebrow="Quota and usage" title={t("配额与实时使用")} description={t("剩余量、周期窗口和实时连接分别反映可用空间与当前负载。")} actions={subscription && subscription.price_micro > 0 ? <ControlButton variant="primary" size="sm" onPress={() => setRenewing(true)}><RefreshCw size={14} aria-hidden />{t("续费当前套餐")}</ControlButton> : <Link className="link-quiet text-xs text-accent" to={mePaths.plans}><ShoppingCart size={14} aria-hidden />{t("查看套餐")}</Link>}>
+            <WorkspaceCard className="overview-quota" eyebrow="Quota and usage" title={t("配额与实时使用")} description={t("剩余量、周期窗口和实时连接分别反映可用空间与当前负载。")} actions={subscription && subscription.price_micro > 0 ? <ControlButton variant="primary" size="sm" onPress={() => setRenewing(true)}><RefreshCw size={14} aria-hidden />{t("续费当前套餐")}</ControlButton> : <Link className="link-quiet text-xs text-accent" to={mePaths.plans}><ShoppingCart size={14} aria-hidden />{t("查看套餐")}</Link>}>
               <div className="workspace-stack">
-                {subscription ? <div className="flex items-center justify-between gap-3 border-b border-rule py-3"><DetailFact label={t("到期时间")} value={subscription.expires_at_ns > 0 ? formatNsDate(subscription.expires_at_ns) : t("永不过期")} mono /><SubscriptionRemaining subscription={subscription} /></div> : <EmptyWorkState title={t("暂无有效订阅")} detail={t("先购买套餐，再创建访问密钥。")} action={<Link className="link-quiet text-xs text-accent" to={mePaths.plans}><ShoppingCart size={14} aria-hidden />{t("查看套餐")}</Link>} />}
+                {subscription ? <div className="flex items-center justify-between gap-3 border-b border-rule py-3"><DetailFact label={t("到期时间")} value={subscription.expires_at_ns > 0 ? formatNsDate(subscription.expires_at_ns) : t("永不过期")} mono /><SubscriptionRemaining subscription={subscription} /></div> : <EmptyWorkState embedded title={t("暂无有效订阅")} detail={t("先购买套餐，再创建访问密钥。")} action={<Link className="link-quiet text-xs text-accent" to={mePaths.plans}><ShoppingCart size={14} aria-hidden />{t("查看套餐")}</Link>} />}
+                <div className="overview-quota-meter">
+                  <div><strong>{quotaTotal > 0 ? `${quotaPercent}%` : "∞"}</strong><span>{t("已使用")}</span></div>
+                  <span className="overview-quota-meter__track"><i style={{ width: quotaTotal > 0 ? `${quotaPercent}%` : "0%" }} /></span>
+                </div>
                 <dl className="workspace-detail-facts">
                   <DetailFact label={t("周期已用")} value={formatBytes(overview.period_used_bytes)} mono />
                   <DetailFact label={t("周期剩余")} value={overview.remaining_bytes === null ? t("无限制") : formatBytes(Math.max(0, overview.remaining_bytes))} mono />
@@ -243,20 +243,13 @@ export function OverviewPage() {
                 {subscription ? <ControlSwitch isSelected={subscription.auto_renew} onChange={(checked) => autoRenewMutation.mutate({ subscriptionID: subscription.id, autoRenew: checked })} isDisabled={autoRenewMutation.isPending || subscription.price_micro <= 0} label={t("自动续费")} hint={subscription.price_micro > 0 ? t("到期前 7 天尝试从余额扣 {{price}} USDT。", { price: formatMicro(subscription.price_micro) }) : t("该套餐未定价，无法自动续费。")} /> : null}
               </div>
             </WorkspaceCard>
-            <WorkspaceCard eyebrow="Authorized platforms" title={t("可访问平台")} description={t("当前套餐和密钥允许访问的平台代理范围。")} meta={t("{{count}} 个", { count: overview.platforms?.length ?? 0 })}>
-              {overview.platforms?.length ? <ObjectList>{overview.platforms.map((platform) => <ObjectRow key={platform.platform_id} leading={<Activity size={14} aria-hidden />} title={platform.platform_name || platform.platform_id} subtitle={platform.platform_id} status={<StatusMark tone="signal" label={t("可用")} />} />)}</ObjectList> : <EmptyWorkState title={t("暂无可路由平台")} detail={t("当前套餐没有配置平台限制，或运营侧尚未配置可用平台。")} />}
+            <WorkspaceCard className="overview-platforms" eyebrow="Authorized platforms" title={t("可访问平台")} description={t("当前套餐和密钥允许访问的平台代理范围。")} meta={t("{{count}} 个", { count: overview.platforms?.length ?? 0 })}>
+              {overview.platforms?.length ? <ObjectList>{overview.platforms.map((platform) => <ObjectRow key={platform.platform_id} leading={<Activity size={14} aria-hidden />} title={platform.platform_name || platform.platform_id} subtitle={platform.platform_id} status={<StatusMark tone="signal" label={t("可用")} />} />)}</ObjectList> : <EmptyWorkState embedded title={t("暂无可路由平台")} detail={t("当前套餐没有配置平台限制，或运营侧尚未配置可用平台。")} />}
             </WorkspaceCard>
           </div>
 
-          <WorkspaceCard eyebrow="Traffic evidence" title={t("近 30 天用量")} description={t("按天统计的历史入站与出站流量，只展示接口返回的记录。")} meta={dailyItems.length ? t("{{count}} 天", { count: dailyItems.length }) : t("暂无记录")}>
-            {dailyItems.length === 0 ? <EmptyWorkState title={t("暂无每日流量数据")} detail={t("最近 30 天内未记录到流量消耗。")} /> : <ObjectList>{dailyItems.map((day) => <ObjectRow key={day.day_ns} leading={<span aria-hidden>▦</span>} title={formatNsDate(day.day_ns)} subtitle={t("每日流量")} facts={<><span>{t("入站流量")} {formatBytes(day.ingress_bytes)}</span><span>{t("出站流量")} {formatBytes(day.egress_bytes)}</span><span>{t("合计流量")} {formatBytes(day.total_bytes)}</span></>} />)}</ObjectList>}
-          </WorkspaceCard>
-
-          <WorkspaceCard eyebrow="Session control" title={t("登录会话")} description={t("撤销不再使用的设备，当前会话不能从这里撤销。")} meta={sessionsQuery.data ? t("{{count}} 个会话", { count: sessions.length }) : t("未加载")}>
-            {sessionsQuery.isLoading ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载会话列表...")}</div> : null}
-            {sessionsQuery.isError ? <EmptyWorkState title={t("读取失败")} detail={formatApiErrorMessage(sessionsQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void sessionsQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-            {!sessionsQuery.isLoading && !sessionsQuery.isError && sessions.length === 0 ? <EmptyWorkState title={t("暂无活跃会话")} detail={t("未查询到任何活动的登录会话。")} /> : null}
-            {sessions.length > 0 ? <ObjectList>{sessions.map((session) => <ObjectRow key={session.id} leading={<span aria-hidden>◉</span>} title={session.ip || "-"} subtitle={session.user_agent || "-"} facts={<><span>{formatNsDateTime(session.created_at_ns)}</span><span>{t("会话到期")} {formatNsDateTime(session.expires_at_ns)}</span></>} status={<StatusMark tone={session.current ? "signal" : "neutral"} label={session.current ? t("当前设备") : t("可撤销")} />} action={session.current ? <span className="workspace-muted">{t("当前会话不可撤销")}</span> : <ControlButton variant="ghost" size="sm" onPress={() => revokeMutation.mutate(session.id)} isDisabled={revokeMutation.isPending}>{t("撤销")}</ControlButton>} />)}</ObjectList> : null}
+          <WorkspaceCard className="overview-traffic" eyebrow="Traffic evidence" title={t("近 30 天用量")} description={t("按天统计的历史入站与出站流量，只展示接口返回的记录。")} meta={dailyItems.length ? t("{{count}} 天", { count: dailyItems.length }) : t("暂无记录")}>
+            {dailyItems.length === 0 ? <EmptyWorkState embedded title={t("暂无每日流量数据")} detail={t("最近 30 天内未记录到流量消耗。")} /> : <div className="workspace-stack"><div className="overview-traffic__summary"><div><strong>{formatBytes(recentUsageTotal)}</strong><span>{t("所选周期总流量")}</span></div><Sparkline values={orderedDailyItems.map((day) => day.total_bytes)} height={76} /></div><ObjectList>{recentDailyItems.map((day) => <ObjectRow key={day.day_ns} leading={<span aria-hidden>▦</span>} title={formatNsDate(day.day_ns)} subtitle={t("每日流量")} facts={<><span>{t("入站流量")} {formatBytes(day.ingress_bytes)}</span><span>{t("出站流量")} {formatBytes(day.egress_bytes)}</span><span>{t("合计流量")} {formatBytes(day.total_bytes)}</span></>} />)}</ObjectList></div>}
           </WorkspaceCard>
 
           <BalanceSurface balanceQuery={balanceQuery} onBalanceChanged={() => { void queryClient.invalidateQueries({ queryKey: ["me-balance"] }); void queryClient.invalidateQueries({ queryKey: ["me-overview"] }); }} />

@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Area, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ControlButton, ControlSelect, DetailFact, EmptyWorkState, StatusMark, WorkspaceCard } from "../../components/control-plane";
+import { ChartGradient, ChartTooltip, ChartTooltipRow } from "../../components/ui/ChartPrimitives";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
 import { apiRequest } from "../../lib/api-client";
@@ -483,30 +484,16 @@ function TrendTooltipContent({ active, payload, label, lines, valueFormatter }: 
   }
 
   return (
-    <div className="rounded-control border border-rule bg-paper-raised px-2.5 py-2 text-xs">
-      <p className="font-mono text-2xs text-ink-faint">{label ?? "--"}</p>
-      <div className="mt-1 space-y-0.5">
-        {lines.map((line) => {
-          const entry = payload.find((item) => item.dataKey === line.dataKey);
-          const value = Number(entry?.value ?? 0);
-          const safeValue = Number.isFinite(value) ? value : 0;
+    <ChartTooltip label={label ?? "—"}>
+      {lines.map((line) => {
+        const entry = payload.find((item) => item.dataKey === line.dataKey);
+        const value = entry?.value == null ? NaN : Number(entry.value);
 
-          return (
-            <p key={line.dataKey} className="flex items-baseline justify-between gap-3">
-              <span className="flex items-center gap-1.5 text-ink-soft">
-                <i
-                  aria-hidden
-                  className="inline-block size-2 shrink-0 rounded-[2px]"
-                  style={{ background: line.color }}
-                />
-                {line.name}
-              </span>
-              <b className="readout font-semibold text-ink">{valueFormatter(safeValue)}</b>
-            </p>
-          );
-        })}
-      </div>
-    </div>
+        return (
+          <ChartTooltipRow key={line.dataKey} color={line.color} label={line.name} value={Number.isFinite(value) ? valueFormatter(value) : "—"} />
+        );
+      })}
+    </ChartTooltip>
   );
 }
 
@@ -524,18 +511,18 @@ function HistogramTooltipContent({ active, payload }: { active?: boolean; payloa
   const upperBound = typeof point?.upper_ms === "number" && Number.isFinite(point.upper_ms) ? point.upper_ms : 0;
 
   return (
-    <div className="rounded-control border border-rule bg-paper-raised px-2.5 py-2 text-xs">
-      <p className="readout font-semibold text-ink">{`${formatCount(lowerBound)}～${formatCount(upperBound)} ms`}</p>
-      <p className="mt-0.5 text-ink-soft">{t("节点数 {{count}}", { count: formatCount(safeCount) })}</p>
-    </div>
+    <ChartTooltip label={`${formatCount(lowerBound)}–${formatCount(upperBound)} ms`}>
+      <ChartTooltipRow color={latencyColor(upperBound)} label={t("样本")} value={formatCount(safeCount)} />
+    </ChartTooltip>
   );
 }
 
 function EmptyChart({ text }: { text: string }) {
-  return <EmptyWorkState title={text} />;
+  return <EmptyWorkState embedded title={text} />;
 }
 
 function TrendLineChart({ data, lines, yTickFormatter, tooltipValueFormatter, emptyText }: TrendLineChartProps) {
+  const id = useId().replace(/:/g, "");
   if (!data.length || !lines.length) {
     return <EmptyChart text={emptyText} />;
   }
@@ -544,33 +531,38 @@ function TrendLineChart({ data, lines, yTickFormatter, tooltipValueFormatter, em
   const formatTooltip = tooltipValueFormatter ?? formatYAxis;
 
   return (
-    <div className="h-48 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={data} margin={{ top: 6, right: 8, bottom: 4, left: 8 }}>
-          <CartesianGrid stroke="var(--color-rule)" strokeDasharray="2 4" vertical={false} />
+    <div className="telemetry-chart">
+      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+        <ComposedChart data={data} margin={{ top: 12, right: 12, bottom: 4, left: 4 }} accessibilityLayer>
+          <defs>{lines.map((line, index) => <ChartGradient key={line.dataKey} id={`${id}-${index}`} color={line.color} />)}</defs>
+          <CartesianGrid stroke="var(--color-chart-grid)" strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="label"
             interval="preserveStartEnd"
             minTickGap={18}
-            tickMargin={4}
+            tickMargin={8}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
+            tick={{ fill: "var(--color-chart-axis)", fontSize: 12 }}
           />
           <YAxis
             width="auto"
             tickMargin={4}
             axisLine={false}
             tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
+            tick={{ fill: "var(--color-chart-axis)", fontSize: 12 }}
             tickFormatter={(value) => formatYAxis(toNumber(value))}
             domain={[0, "auto"]}
           />
           <Tooltip
-            cursor={{ stroke: "var(--color-rule-strong)", strokeWidth: 1 }}
-            wrapperStyle={{ outline: "none" }}
+            cursor={{ stroke: "var(--color-rule-strong)", strokeWidth: 1, strokeDasharray: "3 3" }}
+            wrapperStyle={{ outline: "none", zIndex: 10 }}
+            isAnimationActive={false}
             content={<TrendTooltipContent lines={lines} valueFormatter={formatTooltip} />}
           />
+          {lines.map((line, index) => (
+            <Area key={line.dataKey} type="monotone" dataKey={line.dataKey} fill={`url(#${id}-${index})`} stroke="none" tooltipType="none" activeDot={false} isAnimationActive={false} />
+          ))}
           {lines.map((line) => (
             <Line
               key={line.dataKey}
@@ -578,11 +570,10 @@ function TrendLineChart({ data, lines, yTickFormatter, tooltipValueFormatter, em
               dataKey={line.dataKey}
               name={line.name}
               stroke={line.color}
-              strokeWidth={1.8}
-              dot={false}
-              activeDot={{ r: 3, stroke: "var(--color-paper-raised)", strokeWidth: 1, fill: line.color }}
+              strokeWidth={2.2}
+              dot={data.length === 1 ? { r: 3, fill: line.color } : false}
+              activeDot={{ r: 4, stroke: "var(--color-paper-raised)", strokeWidth: 2, fill: line.color }}
               isAnimationActive={false}
-              connectNulls
             />
           ))}
         </ComposedChart>
@@ -639,7 +630,16 @@ function toHistogramBarPoints(buckets: LatencyBucket[]): HistogramBarPoint[] {
   ).points;
 }
 
+// Classify by the inclusive upper bound: a mixed bucket never implies its
+// slowest samples were fast. The tooltip retains the exact measured interval.
+function latencyColor(upperMs: number): string {
+  if (upperMs < 150) return "var(--color-latency-fast)";
+  if (upperMs <= 500) return "var(--color-latency-medium)";
+  return "var(--color-latency-slow)";
+}
+
 function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
+  const { t } = useI18n();
   if (!buckets.length) {
     return <EmptyChart text={emptyText} />;
   }
@@ -650,43 +650,54 @@ function LatencyHistogram({ buckets, emptyText }: LatencyHistogramProps) {
   }
 
   return (
-    <div className="h-48 w-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 6, right: 8, bottom: 4, left: 8 }}>
-          <CartesianGrid stroke="var(--color-rule)" strokeDasharray="2 4" vertical={false} />
-          <XAxis
-            dataKey="label"
-            interval="preserveStartEnd"
-            minTickGap={14}
-            tickMargin={4}
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
-            tickFormatter={(value) => formatLatency(toNumber(value))}
-          />
-          <YAxis
-            width="auto"
-            allowDecimals={false}
-            tickMargin={4}
-            axisLine={false}
-            tickLine={false}
-            tick={{ fill: "var(--color-ink-faint)", fontSize: 12 }}
-            tickFormatter={(value) => formatShortNumber(toNumber(value))}
-          />
-          <Tooltip
-            cursor={{ fill: "var(--color-paper-sunk)" }}
-            wrapperStyle={{ outline: "none" }}
-            content={<HistogramTooltipContent />}
-          />
-          <Bar
-            dataKey="count"
-            fill="var(--color-signal)"
-            radius={[2, 2, 0, 0]}
-            maxBarSize={28}
-            isAnimationActive={false}
-          />
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="latency-chart">
+      <div className="chart-legend" aria-label={t("延迟分布")}>
+        <span><i className="chart-dot" style={{ background: "var(--color-latency-fast)" }} aria-hidden />&lt; 150 ms</span>
+        <span><i className="chart-dot" style={{ background: "var(--color-latency-medium)" }} aria-hidden />150–500 ms</span>
+        <span><i className="chart-dot" style={{ background: "var(--color-latency-slow)" }} aria-hidden />&gt; 500 ms</span>
+      </div>
+      <div className="telemetry-chart">
+        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+          <BarChart data={data} margin={{ top: 12, right: 12, bottom: 4, left: 4 }} accessibilityLayer>
+            <CartesianGrid stroke="var(--color-chart-grid)" strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="label"
+              interval="preserveStartEnd"
+              minTickGap={14}
+              tickMargin={4}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: "var(--color-chart-axis)", fontSize: 12 }}
+              tickFormatter={(value) => formatLatency(toNumber(value))}
+            />
+            <YAxis
+              width="auto"
+              allowDecimals={false}
+              tickMargin={4}
+              axisLine={false}
+              tickLine={false}
+              tick={{ fill: "var(--color-chart-axis)", fontSize: 12 }}
+              tickFormatter={(value) => formatShortNumber(toNumber(value))}
+            />
+            <Tooltip
+              cursor={{ fill: "var(--color-chart-grid)", radius: 4 }}
+              wrapperStyle={{ outline: "none", zIndex: 10 }}
+              isAnimationActive={false}
+              content={<HistogramTooltipContent />}
+            />
+            <Bar
+              dataKey="count"
+              radius={[4, 4, 0, 0]}
+              maxBarSize={28}
+              fillOpacity={0.86}
+              activeBar={{ fillOpacity: 1, stroke: "var(--color-paper-raised)", strokeWidth: 1 }}
+              isAnimationActive={false}
+            >
+              {data.map((point) => <Cell key={point.lower_ms} fill={latencyColor(point.upper_ms)} />)}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
     </div>
   );
 }
@@ -860,7 +871,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
         }
       >
         {monitorError && !hasAnyData && !isInitialLoading ? (
-          <EmptyWorkState
+          <EmptyWorkState embedded
             title={t("平台监控数据读取失败")}
             detail={formatApiErrorMessage(monitorError, t)}
             action={<ControlButton variant="secondary" size="sm" onPress={() => void Promise.all([realtimeQuery.refetch(), historyQuery.refetch(), snapshotQuery.refetch()])}>{t("重试")}</ControlButton>}
@@ -868,7 +879,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
         ) : null}
         {monitorError && hasAnyData ? <p className="workspace-notice workspace-notice--warn">{formatApiErrorMessage(monitorError, t)}</p> : null}
         {isInitialLoading ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("平台监控数据加载中...")}</div> : null}
-        {!hasAnyData && !monitorError && !isInitialLoading ? <EmptyWorkState title={t("暂无平台监控数据")} detail={t("当前时间范围内没有服务端监控样本。")} /> : null}
+        {!hasAnyData && !monitorError && !isInitialLoading ? <EmptyWorkState embedded title={t("暂无平台监控数据")} detail={t("当前时间范围内没有服务端监控样本。")} /> : null}
         {hasAnyData ? (
           <div className="workspace-data-grid workspace-monitor-summary" aria-busy={isRefreshing}>
             <div className="workspace-data-grid__cell">
@@ -901,11 +912,11 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
         <>
           <div className="workspace-monitor-grid">
             <WorkspaceCard eyebrow="Telemetry / leases" title={t("活跃租约趋势")} meta={isRefreshing ? t("监控数据刷新中") : undefined} description={t("平台实时租约数量")} className="workspace-monitor-surface">
-              <div className="workspace-monitor-chart"><TrendLineChart data={leaseTrendData} emptyText={t("暂无租约实时数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "var(--color-live)" }]} /></div>
+              <div className="workspace-monitor-chart"><TrendLineChart data={leaseTrendData} emptyText={t("暂无租约实时数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "active_leases", name: t("活跃租约"), color: "var(--color-chart-cyan)" }]} /></div>
             </WorkspaceCard>
 
             <WorkspaceCard eyebrow="Telemetry / requests" title={t("请求统计")} description={t("总请求数 / 成功请求数")} className="workspace-monitor-surface">
-              <div className="workspace-monitor-chart"><TrendLineChart data={requestTrendData} emptyText={t("暂无请求统计数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "total_requests", name: t("总请求数"), color: "var(--color-live)" }, { dataKey: "success_requests", name: t("成功请求数"), color: "var(--color-signal)" }]} /></div>
+              <div className="workspace-monitor-chart"><TrendLineChart data={requestTrendData} emptyText={t("暂无请求统计数据")} yTickFormatter={formatShortNumber} lines={[{ dataKey: "total_requests", name: t("总请求数"), color: "var(--color-chart-cyan)" }, { dataKey: "success_requests", name: t("成功请求数"), color: "var(--color-chart-teal)" }]} /></div>
               <dl className="workspace-detail-facts workspace-monitor-facts">
                 <DetailFact label={t("总请求")} value={formatKnownMetric(totalRequests, requestsAvailable)} mono />
                 <DetailFact label={t("成功请求")} value={formatKnownMetric(successRequests, requestsAvailable)} mono />
@@ -913,7 +924,7 @@ export function PlatformMonitorPanel({ platform }: { platform: Platform }) {
             </WorkspaceCard>
 
             <WorkspaceCard eyebrow="Telemetry / lease lifetime" title={t("租约存活分位趋势")} description="P1 / P5 / P50" className="workspace-monitor-surface">
-              <div className="workspace-monitor-chart"><TrendLineChart data={leaseLifetimeTrendData} emptyText={t("暂无租约生命周期数据")} yTickFormatter={formatLatency} tooltipValueFormatter={formatLeaseDuration} lines={[{ dataKey: "p1_ms", name: "P1", color: "var(--color-ink-faint)" }, { dataKey: "p5_ms", name: "P5", color: "var(--color-live)" }, { dataKey: "p50_ms", name: "P50", color: "var(--color-signal)" }]} /></div>
+              <div className="workspace-monitor-chart"><TrendLineChart data={leaseLifetimeTrendData} emptyText={t("暂无租约生命周期数据")} yTickFormatter={formatLatency} tooltipValueFormatter={formatLeaseDuration} lines={[{ dataKey: "p1_ms", name: "P1", color: "var(--color-chart-violet)" }, { dataKey: "p5_ms", name: "P5", color: "var(--color-chart-cyan)" }, { dataKey: "p50_ms", name: "P50", color: "var(--color-chart-teal)" }]} /></div>
               <dl className="workspace-detail-facts workspace-monitor-facts workspace-monitor-facts--three">
                 <DetailFact label="P1" value={formatKnownMetric(latestLeaseLifetime?.p1_ms, leaseLifetimeAvailable, formatLeaseDuration)} mono />
                 <DetailFact label="P5" value={formatKnownMetric(latestLeaseLifetime?.p5_ms, leaseLifetimeAvailable, formatLeaseDuration)} mono />

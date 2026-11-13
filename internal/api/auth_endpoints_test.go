@@ -34,8 +34,10 @@ type fakeSessions struct {
 	loginCalls  []loginCall
 
 	logoutCalls  []string
+	logoutErr    error
 	revokeCalls  []string
 	revokedCount int64
+	revokeErr    error
 }
 
 type loginCall struct {
@@ -73,13 +75,16 @@ func (f *fakeSessions) Logout(sessionID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.logoutCalls = append(f.logoutCalls, sessionID)
-	return nil
+	return f.logoutErr
 }
 
 func (f *fakeSessions) RevokeUserSessions(userID string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.revokeCalls = append(f.revokeCalls, userID)
+	if f.revokeErr != nil {
+		return 0, f.revokeErr
+	}
 	return f.revokedCount, nil
 }
 
@@ -129,6 +134,13 @@ func (f *fakeAccounts) ConfirmTOTPEnrolment(_, _, _ string, _ int64) error {
 	defer f.mu.Unlock()
 	f.confirmCalls++
 	return f.confirmErr
+}
+
+func (f *fakeAccounts) DisableTOTPWithPassword(id, password string, nowNs int64) error {
+	if err := f.VerifyAccountPassword(id, password); err != nil {
+		return err
+	}
+	return f.DisableTOTP(id, nowNs)
 }
 
 func (f *fakeAccounts) DisableTOTP(string, int64) error {
@@ -356,6 +368,9 @@ func TestIdentity_AdminKeyNeedsNoCSRF(t *testing.T) {
 	if seen.UserID != "u-admin" {
 		t.Fatalf("actor user = %q", seen.UserID)
 	}
+	if seen.KeyID != "k-1" {
+		t.Fatalf("actor key = %q", seen.KeyID)
+	}
 }
 
 // The session is preferred when a request carries both, so the CSRF requirement
@@ -526,9 +541,10 @@ func TestIdentity_RefusesARevokedSession(t *testing.T) {
 
 func newAuthHandlers(sessions *fakeSessions, accounts *fakeAccounts) *AuthHandlers {
 	return &AuthHandlers{
-		Sessions:  sessions,
-		Accounts:  accounts,
-		ClientKey: func(*http.Request) string { return "203.0.113.9" },
+		Sessions:       sessions,
+		Accounts:       accounts,
+		ClientKey:      func(*http.Request) string { return "203.0.113.9" },
+		AllowPlainHTTP: func(r *http.Request) bool { return auth.PlainHTTPAllowed(r.Host) },
 	}
 }
 
@@ -668,6 +684,7 @@ func TestHandleLogin_ErrorMapping(t *testing.T) {
 		{"second factor required", auth.ErrTOTPRequired, http.StatusUnauthorized, "TOTP_REQUIRED"},
 		{"bad second factor", auth.ErrTOTPInvalid, http.StatusUnauthorized, "TOTP_INVALID"},
 		{"spent second factor", auth.ErrTOTPAlreadyUsed, http.StatusUnauthorized, "TOTP_ALREADY_USED"},
+		{"account lock stays generic", errors.Join(auth.ErrTooManyAttempts, auth.ErrAccountLocked), http.StatusUnauthorized, "UNAUTHORIZED"},
 		{"rate limited", auth.ErrTooManyAttempts, http.StatusTooManyRequests, "RATE_LIMITED"},
 		{"a server fault", errors.New("the database is gone"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}
@@ -747,6 +764,21 @@ func TestHandleLogout(t *testing.T) {
 		if cookie.Value != "" {
 			t.Errorf("cookie %s was cleared but still carries a value", cookie.Name)
 		}
+	}
+}
+
+func TestHandleLogoutReportsSessionStoreFailure(t *testing.T) {
+	sessions := &fakeSessions{logoutErr: errors.New("database unavailable")}
+	handler := newAuthHandlers(sessions, &fakeAccounts{}).HandleLogout()
+	req := sessionRequest(http.MethodPost, "/api/v1/auth/logout", "the-session-id")
+	req.Host = "127.0.0.1"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INTERNAL_ERROR") {
+		t.Fatalf("body = %s, want INTERNAL_ERROR", rec.Body.String())
 	}
 }
 
@@ -835,6 +867,23 @@ func TestHandleChangePassword_RevokesEverySession(t *testing.T) {
 	// session that no longer exists.
 	if len(rec.Result().Cookies()) != 2 {
 		t.Fatalf("cleared %d cookies, want 2", len(rec.Result().Cookies()))
+	}
+}
+
+func TestHandleChangePasswordReportsSessionRevokeFailure(t *testing.T) {
+	sessions := &fakeSessions{revokeErr: errors.New("database unavailable")}
+	handlers := newAuthHandlers(sessions, &fakeAccounts{})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/password",
+		strings.NewReader(`{"current_password":"the-old-one","new_password":"a-brand-new-long-one"}`))
+	req.Host = "127.0.0.1"
+	req = req.WithContext(contextWithActor(req.Context(), Actor{UserID: "u-admin", Role: model.UserRoleAdmin, ViaSession: true}))
+	rec := httptest.NewRecorder()
+	handlers.HandleChangePassword().ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "INTERNAL_ERROR") {
+		t.Fatalf("body = %s, want INTERNAL_ERROR", rec.Body.String())
 	}
 }
 

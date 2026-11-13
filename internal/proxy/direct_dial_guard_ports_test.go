@@ -170,7 +170,9 @@ func TestDirectDialGuard_BlockedPortsAllowOtherPorts(t *testing.T) {
 // port instead of dialling it.
 func TestForwardProxy_BlockedDestinationPortsRefuseBypassTarget(t *testing.T) {
 	fp := NewForwardProxy(ForwardProxyConfig{
-		ProxyToken:              "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:              keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:                  NoOpEventEmitter{},
 		ProxyBypassRules:        []string{"bypass.test"},
 		BlockedDestinationPorts: []int{25},

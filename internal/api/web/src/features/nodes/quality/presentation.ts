@@ -1,10 +1,11 @@
 import type { BadgeProps } from "../../../components/ui/Badge";
 import type { QualitySummary } from "./types";
+import type { EvidenceFact } from "../types";
 
 export const riskLabels = { unknown: "评级未知", low: "较低风险", moderate: "一般风险", high: "较高风险", severe: "严重风险" };
-export const typeLabels = { unknown: "类型未知", residential: "住宅网络", non_residential: "非住宅网络", datacenter: "数据中心", mobile: "移动网络", business: "企业网络", wireless: "无线网络", conflicting: "来源有分歧" };
+export const typeLabels = { unknown: "类型未知", residential: "住宅网络", non_residential: "非住宅网络", datacenter: "数据中心", mobile: "移动网络", business: "企业网络", wireless: "无线网络", conflicting: "类型有分歧" };
 
-export const verdictLabels = { pending: "等待评分", incomplete: "特征未齐", review: "需要复核", conflicting: "类型有分歧", caution: "谨慎使用", high_risk: "风险较高", favorable: "未见明显风险" };
+export const verdictLabels = { pending: "评分未知", incomplete: "特征未齐", review: "需要复核", conflicting: "类型有分歧", caution: "谨慎使用", high_risk: "风险较高", favorable: "未见明显风险" };
 export const assessmentReasons: Record<string, string> = {
   IPPURE_REQUIRED: "尚未取得纯净度评分", IPPURE_SCORE_UNAVAILABLE: "未提供纯净度评分",
   NETWORK_EVIDENCE_MISSING: "缺少有效的网络特征", NETWORK_EVIDENCE_INCOMPLETE: "部分网络标记未知",
@@ -22,9 +23,11 @@ export const torRoleLabels = { exit: "Tor 出口", guard: "Tor 入口守卫（�
 // beside one component.
 export const stateLabels: Record<string, string> = {
   unassessed: "未评估",
-  pending: "等待评估",
+  pending: "无有效评估",
   unsupported: "不支持评估",
   stale: "评估已过期",
+  valid: "评估有效",
+  conflicting: "类型有分歧",
 };
 
 export const confidenceLabels: Record<string, string> = {
@@ -68,27 +71,38 @@ export const outcomeTones: Record<string, Tone> = {
 };
 
 export function evidenceFor(summary: QualitySummary | null | undefined, provider: string) {
-  const source = summary?.sources?.find(source => source.provider === provider)?.evidence;
-  return source?.provider === provider ? source : summary?.evidence?.provider === provider ? summary.evidence : null;
+  const matches = (id: string | undefined) => id === provider || id === `${provider}_node`;
+  const source = summary?.sources?.find(source => matches(source.provider))?.evidence;
+  return matches(source?.provider) ? source : matches(summary?.evidence?.provider) ? summary?.evidence : null;
 }
 
 export function sourceIsFresh(summary: QualitySummary | null | undefined, provider: string, now: number) {
   const evidence = evidenceFor(summary, provider);
-  return Boolean(evidence && evidence.ip === summary?.ip && Date.parse(evidence.valid_until) > now);
+  const source = summary?.sources?.find(source => source.provider === provider || source.provider === `${provider}_node`);
+  return Boolean(source && ["valid", "conflicting"].includes(source.state) && evidence && evidence.ip === summary?.ip && Date.parse(evidence.valid_until) > now);
 }
 
 export const purityBands = [
-  { id: "excellent", min: 95, max: 100, label: "极度纯净", variant: "success" },
-  { id: "clean", min: 90, max: 94, label: "纯净", variant: "success" },
-  { id: "fair", min: 80, max: 89, label: "较纯净", variant: "info" },
-  { id: "mixed", min: 60, max: 79, label: "一般", variant: "warning" },
-  { id: "poor", min: 0, max: 59, label: "风险较高", variant: "danger" },
+  { id: "excellent", label: "极度纯净", variant: "success" },
+  { id: "clean", label: "纯净", variant: "success" },
+  { id: "fair", label: "较纯净", variant: "info" },
+  { id: "mixed", label: "一般", variant: "warning" },
+  { id: "poor", label: "风险较高", variant: "danger" },
 ] as const;
 
-export function purityScore(risk?: number | null): number | null {
-  return typeof risk === "number" && Number.isInteger(risk) && risk >= 0 && risk <= 100 ? 100 - risk : null;
+export function purityBandLabel(id: string) {
+  return purityBands.find(band => band.id === id)?.label ?? ({ unknown: "未评估", review: "人工复核" }[id] ?? id);
 }
-export const purityBand = (score: number | null) => score === null ? undefined : purityBands.find(band => score >= band.min && score <= band.max);
+
+// Every purity surface consumes the authoritative assessment. Provider risk is
+// never inverted into another purity value in the browser.
+export function canonicalPurity(summary: QualitySummary | null | undefined) {
+  const value = summary?.assessment?.purity_score;
+  const until = summary?.assessment?.facts?.purity?.valid_until;
+  const expired = summary?.state === "stale" || (until !== undefined && !(Date.parse(until) > Date.now()));
+  const score = expired ? null : validPurityScore(value);
+  return { score, band: score === null ? undefined : purityBands.find(band => band.id === summary?.assessment?.purity_band) };
+}
 export function hasCurrentEvidence(summary: QualitySummary | null | undefined, now: number) {
   return Boolean(summary?.evidence) && (summary?.state === "valid" || summary?.state === "conflicting") && Date.parse(summary!.evidence!.valid_until) > now;
 }
@@ -97,7 +111,7 @@ export function hasContradictingSignals(summary: QualitySummary | null | undefin
   if (!hasCurrentEvidence(summary, now)) return false;
   const signals = summary!.evidence!.signals;
   if (signals.compromised === true) return true;
-  const score = purityScore(summary!.evidence!.risk_score);
+  const { score } = canonicalPurity(summary);
   return score !== null && score >= 80 && [signals.proxy, signals.vpn, signals.tor, signals.anonymous, signals.scraper].some(value => value === true);
 }
 
@@ -112,11 +126,39 @@ export function needsReview(summary: QualitySummary | null | undefined, now: num
 }
 
 const errorLabels: Record<string, string> = {
-  PROVIDER_LIMIT: "来源额度已用完，稍后自动重试",
-  PROVIDER_AUTH: "数据源凭据需要检查",
-  PROVIDER_RESPONSE: "来源返回的数据不完整，未生成评级",
-  PROVIDER_UNAVAILABLE: "暂时无法访问数据源",
+  PROVIDER_LIMIT: "检测暂时受限，请稍后重试",
+  PROVIDER_AUTH: "检测暂时不可用，请稍后重试",
+  PROVIDER_RESPONSE: "检测结果不完整，请重新检测",
+  PROVIDER_UNAVAILABLE: "检测暂时不可用，请稍后重试",
   ATTEMPTS_EXHAUSTED: "重试次数已用完，可稍后手动检测",
   QUALITY_STORAGE_UNAVAILABLE: "检测结果暂时无法保存",
 };
 export const inspectionErrorLabel = (code?: string) => errorLabels[code ?? ""] || "检测暂未完成";
+
+const measurementStatusLabels: Record<string, string> = {
+  NO_EGRESS: "请先完成出口探测",
+  IPPURE_TIMEOUT: "检测超时，请稍后重试",
+  IPPURE_RATE_LIMITED: "检测暂时受限，请稍后重试",
+  IPPURE_AUTH_FAILED: "检测暂时不可用，请稍后重试",
+  IPPURE_EGRESS_MISMATCH: "出口已变化，请重新检测",
+  IPPURE_INVALID_RESPONSE: "检测结果不完整，请重新检测",
+  IPPURE_NO_FRAUD_SCORE: "暂未获得有效评分，请重新检测",
+  IPPURE_IPV6_SCORE_UNAVAILABLE: "当前 IPv6 出口暂不支持评分",
+  EVIDENCE_EXPIRED: "检测结果已过期，请重新检测",
+  ...errorLabels,
+};
+
+// Keep provider identifiers and diagnostic payloads out of business surfaces.
+export function measurementStatusLabel(fact?: Pick<EvidenceFact, "state" | "cause" | "error_code">): string {
+  if (fact?.state === "expired") return measurementStatusLabels.EVIDENCE_EXPIRED;
+  return measurementStatusLabels[fact?.cause ?? ""] || measurementStatusLabels[fact?.error_code ?? ""] || "尚无有效检测结果，请运行完整检测";
+}
+
+export const evidenceClassLabels: Record<string, string> = {
+  static_config: "静态配置检查", active_probe: "主动网络测量", vendor_claim: "供应商声明", derived: "计算值", heuristic: "启发式",
+};
+
+
+export function validPurityScore(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100 ? value : null;
+}

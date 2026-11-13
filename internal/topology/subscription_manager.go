@@ -1,14 +1,17 @@
 package topology
 
 import (
+	"encoding/json"
 	"github.com/puzpuzpuz/xsync/v4"
+	"prism/internal/node"
 	"prism/internal/subscription"
 )
 
 // SubscriptionManager holds all subscription instances and provides
 // lifecycle-safe lookup/register/unregister for subscription instances.
 type SubscriptionManager struct {
-	subs *xsync.Map[string, *subscription.Subscription]
+	PrivacyFilter func(node.Hash, json.RawMessage) bool
+	subs          *xsync.Map[string, *subscription.Subscription]
 }
 
 // NewSubscriptionManager creates a new SubscriptionManager.
@@ -25,6 +28,8 @@ func (m *SubscriptionManager) Get(id string) (*subscription.Subscription, bool) 
 
 // Register adds a subscription to the manager.
 func (m *SubscriptionManager) Register(sub *subscription.Subscription) {
+	sub.SetPrivacyFilter(m.PrivacyFilter)
+	sub.SetContent(sub.Content())
 	m.subs.Store(sub.ID, sub)
 }
 
@@ -46,5 +51,5 @@ func (m *SubscriptionManager) Range(fn func(id string, sub *subscription.Subscri
 
 // Size returns the number of subscriptions.
 func (m *SubscriptionManager) Size() int {
-	return m.subs.Size()
+	return max(0, m.subs.Size())
 }

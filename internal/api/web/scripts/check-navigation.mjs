@@ -197,12 +197,15 @@ const legacy = records.get("legacyRedirects") ?? new Map();
 const OPS_ROOT = constants.get("OPS_ROOT");
 const ME_ROOT = constants.get("ME_ROOT");
 const ACCOUNT = constants.get("ACCOUNT");
+const CUSTOMER_PATHS = new Set(
+  [...(records.get("mePaths")?.values() ?? [])].map(resolve).filter(Boolean),
+);
 const inNamespace = (path) =>
   path === ACCOUNT || (OPS_ROOT && (path === OPS_ROOT || path.startsWith(`${OPS_ROOT}/`))) ||
-  (ME_ROOT && (path === ME_ROOT || path.startsWith(`${ME_ROOT}/`)));
+  CUSTOMER_PATHS.has(path);
 
 /** Routes that deliberately have no rail entry: doors, redirects, wildcards. */
-const UNLISTED = new Set(["/", "/login", "/register", "*", `${OPS_ROOT}/*`, `${OPS_ROOT}/quality`]);
+const UNLISTED = new Set(["/", "/login", "/register", "*", `${OPS_ROOT}/*`, `${OPS_ROOT}/quality`, `${OPS_ROOT}/logs`, `${OPS_ROOT}/redeem`]);
 
 // 1. No destination twice.
 const seen = new Map();
@@ -278,12 +281,11 @@ for (const file of NAV_SOURCES) {
   if (groups.size > MAX_GROUPS) failures.push(`${file}: ${groups.size} groups (max ${MAX_GROUPS})`);
 }
 
-// 7. One of two namespaces, or the account page both sessions share. This is what
-//    the shell reads to decide which rail and which instance probes it runs, so a
-//    destination outside them would be a page the shell cannot frame.
+// 7. Operator pages stay in /ops; customer pages use the canonical flat paths
+//    declared by mePaths; /account is shared by both roles.
 for (const item of items) {
   if (!inNamespace(item.path)) {
-    failures.push(`rail entry "${item.label}" points at ${item.path}, outside ${OPS_ROOT}/*, ${ME_ROOT}/* and ${ACCOUNT}`);
+    failures.push(`rail entry "${item.label}" points at ${item.path}, outside ${OPS_ROOT}/*, the customer route table and ${ACCOUNT}`);
   }
 }
 
@@ -296,7 +298,7 @@ for (const [from, target] of legacy) {
     continue;
   }
   if (!inNamespace(to)) {
-    failures.push(`redirect ${from} points at ${to}, outside ${OPS_ROOT}/*, ${ME_ROOT}/* and ${ACCOUNT}`);
+    failures.push(`redirect ${from} points at ${to}, outside ${OPS_ROOT}/*, the customer route table and ${ACCOUNT}`);
   }
   if (!routes.has(to)) {
     failures.push(`redirect ${from} points at ${to}, which no route serves`);

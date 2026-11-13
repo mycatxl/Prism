@@ -97,7 +97,7 @@ func TestTorProviderRoles(t *testing.T) {
 		t.Fatal("source updated at missing")
 	}
 	// An address without a registry entry produces no evidence, not a clean bill.
-	_ = expectCode(t, provider.Lookup(netip.MustParseAddr("9.9.9.9")), CodeUnavailable)
+	_ = expectCode(t, provider.Lookup(netip.MustParseAddr("9.9.9.9")), CodeTorNotListed)
 	if status := registry.Status(); !status.Ready || status.Entries != 1 {
 		t.Fatalf("status: %+v", status)
 	}
@@ -394,6 +394,12 @@ func TestRegistryApplyRebuildsInstances(t *testing.T) {
 	}
 	if _, ok := registry.ViaNode("ippure"); !ok {
 		t.Fatal("ippure is enabled by default")
+	}
+	if _, ok := registry.ViaNode("ipapi_is_node"); ok {
+		t.Fatal("paused default source can still receive fleet requests")
+	}
+	if setting, ok := registry.Setting("ipapi_is_node"); !ok || setting.Enabled {
+		t.Fatal("paused source disappeared from diagnostics or stayed enabled")
 	}
 
 	specs := registry.QueueSpecs()

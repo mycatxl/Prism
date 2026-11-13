@@ -32,6 +32,11 @@ var (
 	// ErrTooManyAttempts is returned while an address is blocked after too many
 	// failures.
 	ErrTooManyAttempts = errors.New("auth: too many failed attempts")
+	// ErrAccountLocked marks the account-wide form of ErrTooManyAttempts. API
+	// callers render it like a generic credential failure so the lock state does
+	// not become a username-existence oracle; errors.Is still reports
+	// ErrTooManyAttempts to internal callers enforcing the block.
+	ErrAccountLocked = errors.New("auth: account login temporarily locked")
 	// ErrNoSession is returned for a missing, expired or revoked session.
 	ErrNoSession = errors.New("auth: no valid session")
 )
@@ -47,8 +52,8 @@ type Store interface {
 	// GetUser finds an account by id, which is how a session resolves to its
 	// owner.
 	GetUser(id string) (*model.User, error)
-	// InsertSession persists a new session row.
-	InsertSession(s model.Session) error
+	// InsertVerifiedSession atomically rejects credentials changed during login.
+	InsertVerifiedSession(s model.Session, verified model.User) (bool, error)
 	// GetSession finds a session by its stored hash. A missing or expired row
 	// is an error; the caller decides which.
 	GetSession(idHash string) (*model.Session, error)
@@ -62,14 +67,15 @@ type Store interface {
 	DeleteSessionsByUser(userID string) (int64, error)
 	// MarkUserLogin records a successful login.
 	MarkUserLogin(userID string, atNs int64) error
-	// AdvanceTOTPLastUsed spends the TOTP step a code belonged to, and reports
+	// AdvanceVerifiedTOTPLastUsed spends the TOTP step a code belonged to, and reports
 	// whether this call is the one that spent it.
 	//
 	// It is a compare-and-set: the step must be newer than the last one the
 	// account spent, so of two logins arriving with the same code exactly one
 	// is accepted. An error is not "not spent" - it means the state of the
-	// factor is unknown, and the caller refuses in that case too.
-	AdvanceTOTPLastUsed(userID string, stepNs int64) (bool, error)
+	// factor is unknown, and the caller refuses in that case too. The verified
+	// credential snapshot prevents a stale login spending a replacement factor.
+	AdvanceVerifiedTOTPLastUsed(verified model.User, stepNs int64) (bool, error)
 }
 
 // Blocklist decides whether an address has failed too often.
@@ -186,14 +192,25 @@ func (s *Service) Login(username, password, totpCode, clientKey, ip, userAgent s
 	if s.Blocklist != nil {
 		if blocked, retryAfter := s.Blocklist.Blocked(accountFailureKey(user.ID)); blocked {
 			s.logf("auth: login for account %s refused, blocked for another %s", user.ID, retryAfter.Round(time.Second))
-			return result, ErrTooManyAttempts
+			// A missing username pays this same fixed Argon2 cost. Keeping the
+			// account block on the same path prevents the otherwise fast refusal
+			// from revealing that the submitted username exists.
+			burnPasswordVerification(password)
+			return result, errors.Join(ErrTooManyAttempts, ErrAccountLocked)
 		}
 	}
+	needsTimingPadding := passwordHashNeedsTimingPadding(user.PasswordHash)
 	if err := VerifyPassword(user.PasswordHash, password); err != nil {
+		if needsTimingPadding {
+			burnPasswordVerification(password)
+		}
 		s.recordFailure(clientKey)
 		s.recordAccountFailure(user.ID)
 		s.logf("auth: login refused for user %s, wrong password", user.ID)
 		return result, ErrInvalidCredentials
+	}
+	if needsTimingPadding {
+		burnPasswordVerification(password)
 	}
 
 	// The password was right. From here the failures can be specific, because
@@ -205,13 +222,14 @@ func (s *Service) Login(username, password, totpCode, clientKey, ip, userAgent s
 	}
 
 	if err := s.verifySecondFactor(user, totpCode); err != nil {
-		s.recordFailure(clientKey)
 		// A missing code is the ordinary first step of a two-step login rather
 		// than a failure, so it is not counted against the account: an account
 		// that is blocked refuses even a correct password, and counting the
 		// first step would lock every second-factor user out of their own
-		// console. The address bucket keeps counting it, as it always has.
+		// console. It is not counted against the address bucket either: a normal
+		// two-step login must not consume a failure on every successful sign-in.
 		if !errors.Is(err, ErrTOTPRequired) {
+			s.recordFailure(clientKey)
 			s.recordAccountFailure(user.ID)
 		}
 		return result, err
@@ -231,22 +249,26 @@ func (s *Service) Login(username, password, totpCode, clientKey, ip, userAgent s
 	if err != nil {
 		return result, err
 	}
-	if err := s.Store.InsertSession(model.Session{
+	inserted, err := s.Store.InsertVerifiedSession(model.Session{
 		IDHash:      record.IDHash,
 		UserID:      record.UserID,
 		CreatedAtNs: record.CreatedAtNs,
 		ExpiresAtNs: record.ExpiresAtNs,
 		IP:          record.IP,
 		UA:          record.UA,
-	}); err != nil {
+	}, *user)
+	if err != nil {
 		return result, fmt.Errorf("auth: store session: %w", err)
+	}
+	if !inserted {
+		return result, ErrInvalidCredentials
 	}
 
 	// A login timestamp that cannot be written must not fail the login: the
 	// session is already valid, and refusing here would lock the user out over
 	// a cosmetic column.
 	if err := s.Store.MarkUserLogin(user.ID, nowNs); err != nil {
-		s.logf("auth: could not record the login time for user %s: %v", user.ID, err)
+		s.logf("auth: could not record the login time for user %s: %T", user.ID, err)
 	}
 
 	// The credential was right, so the failures the account bucket was counting
@@ -281,7 +303,7 @@ func (s *Service) verifySecondFactor(user *model.User, code string) error {
 		// pepper silently remove the protection it was there to provide.
 		return fmt.Errorf("auth: user %s has a second factor but no pepper can open it", user.ID)
 	}
-	secret, err := DecryptTOTPSecret(s.Pepper, user.TOTPSecretEnc)
+	secret, err := DecryptTOTPSecretForUser(s.Pepper, user.ID, user.TOTPSecretEnc)
 	if err != nil {
 		return fmt.Errorf("auth: open the second factor for user %s: %w", user.ID, err)
 	}
@@ -300,7 +322,7 @@ func (s *Service) verifySecondFactor(user *model.User, code string) error {
 	// login" true of two attempts arriving at once as well as of two arriving
 	// in sequence, and an error is a refusal too: an unknown state must not be
 	// the state that lets a replay through.
-	spent, err := s.Store.AdvanceTOTPLastUsed(user.ID, stepNs)
+	spent, err := s.Store.AdvanceVerifiedTOTPLastUsed(*user, stepNs)
 	if err != nil {
 		return fmt.Errorf("auth: spend the second factor step of user %s: %w", user.ID, err)
 	}
@@ -368,7 +390,7 @@ func (s *Service) Authenticate(sessionID string) (*model.User, *model.Session, e
 		// Expired: remove it on the way past so the table does not accumulate
 		// rows that the pruner would eventually collect anyway.
 		if err := s.Store.DeleteSession(session.IDHash); err != nil {
-			s.logf("auth: could not remove the expired session of user %s: %v", session.UserID, err)
+			s.logf("auth: could not remove the expired session of user %s: %T", session.UserID, err)
 		}
 		return nil, nil, ErrNoSession
 	}
@@ -382,7 +404,7 @@ func (s *Service) Authenticate(sessionID string) (*model.User, *model.Session, e
 		// session here is what makes a disable immediate for the console too,
 		// not only for the data plane.
 		if _, err := s.Store.DeleteSessionsByUser(user.ID); err != nil {
-			s.logf("auth: could not revoke the sessions of disabled user %s: %v", user.ID, err)
+			s.logf("auth: could not revoke the sessions of disabled user %s: %T", user.ID, err)
 		}
 		return nil, nil, ErrNoSession
 	}
@@ -390,7 +412,7 @@ func (s *Service) Authenticate(sessionID string) (*model.User, *model.Session, e
 	if SessionNeedsRefresh(session.ExpiresAtNs, nowNs) {
 		expiresAtNs := SessionExpiry(nowNs)
 		if err := s.Store.TouchSession(session.IDHash, expiresAtNs); err != nil {
-			s.logf("auth: could not extend the session of user %s: %v", user.ID, err)
+			s.logf("auth: could not extend the session of user %s: %T", user.ID, err)
 		} else {
 			session.ExpiresAtNs = expiresAtNs
 		}
@@ -448,10 +470,11 @@ var (
 
 func burnPasswordVerification(password string) {
 	burnOnce.Do(func() {
-		// The failure is deliberately ignored: with no hash there is nothing to
-		// verify against, and the call below then costs nothing. That is a
-		// weaker timing guarantee, not a correctness problem.
-		burnHash, _ = HashPassword("prism-timing-equaliser-not-a-real-password")
+		// Build the PHC value without entropy. The hash bytes are deliberately
+		// meaningless; verification still performs the full configured Argon2id
+		// work, and an unavailable random source cannot reopen the enumeration
+		// timing gap.
+		burnHash = encodeHash(make([]byte, argonSaltLength), make([]byte, argonKeyLength))
 	})
 	if burnHash == "" {
 		return

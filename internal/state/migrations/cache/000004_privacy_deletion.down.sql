@@ -1,0 +1,11 @@
+DROP TRIGGER privacy_fence_nodes_static_insert;
+DROP TRIGGER privacy_fence_nodes_static_update;
+DROP TRIGGER privacy_fence_nodes_dynamic_insert;
+DROP TRIGGER privacy_fence_nodes_dynamic_update;
+DROP TRIGGER privacy_fence_node_latency_insert;
+DROP TRIGGER privacy_fence_node_latency_update;
+DROP TRIGGER privacy_fence_subscription_nodes_insert;
+DROP TRIGGER privacy_fence_subscription_nodes_update;
+DROP TRIGGER privacy_fence_leases_insert;
+DROP TRIGGER privacy_fence_leases_update;
+DROP TABLE privacy_deleted_hashes;

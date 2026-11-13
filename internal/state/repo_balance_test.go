@@ -2,6 +2,8 @@ package state
 
 import (
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"prism/internal/model"
@@ -146,6 +148,55 @@ func TestStateRepo_ApplyBalanceDeltaIsIdempotentPerReference(t *testing.T) {
 	}
 	if balance, _ := repo.GetBalance("u-1"); balance != 7_000_000 {
 		t.Fatalf("the same transaction was credited twice: got %d", balance)
+	}
+}
+
+func TestStateRepo_ApplyBalanceDeltaConcurrentReferenceCreditsOnce(t *testing.T) {
+	repo := openBalanceRepo(t)
+	const workers = 32
+
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := repo.ApplyBalanceDelta(model.BalanceEntry{
+				ID: fmt.Sprintf("bl-parallel-%d", i), UserID: "u-1",
+				DeltaMicro: 7_000_000, Reason: model.BalanceReasonDeposit,
+				RefID: "provider-tx-parallel", CreatedAtNs: int64(100 + i),
+			})
+			errs <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	succeeded := 0
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrConflict):
+		default:
+			t.Fatalf("parallel credit: %v", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d parallel credits succeeded, want exactly 1", succeeded)
+	}
+	if balance, err := repo.GetBalance("u-1"); err != nil || balance != 7_000_000 {
+		t.Fatalf("balance after parallel replay = %d, %v; want 7000000", balance, err)
+	}
+	ledger, err := repo.ListBalanceLedger("u-1", 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	if len(ledger) != 1 {
+		t.Fatalf("parallel replay wrote %d ledger rows, want 1", len(ledger))
 	}
 }
 

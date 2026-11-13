@@ -76,11 +76,9 @@ type prismApp struct {
 	intelSvc    *intel.Service
 	// the background refresher of the offline databases.
 	geoDBs *providers.GeoManager
-	// keyPepper is the key pepper every access-key secret is verified against.
-	// It is nil when no pepper is configured, which disables access-key
-	// authentication and leaves the transitional global proxy token as the
-	// only credential - the behaviour of a deployment that has not been
-	// migrated yet.
+	// keyPepper is the key pepper every AccessKey secret is verified against.
+	// It is nil when no pepper is configured, which causes every proxy
+	// authentication attempt to fail closed.
 	keyPepper *auth.Pepper
 	// usageCounters is the live per-key traffic view the data plane writes to.
 	// It is the only accounting structure the proxy touches; persistence
@@ -170,6 +168,10 @@ func run() error {
 		return fmt.Errorf("persistence bootstrap: %w", err)
 	}
 	log.Println("Persistence bootstrap complete")
+	if err := initializeNodePrivacy(engine, envCfg); err != nil {
+		_ = dbCloser.Close()
+		return err
+	}
 
 	// 3. Open the intel store: intel.db is a separate SQLite file with its own
 	// open path, pragmas and 0600 file mode.
@@ -265,9 +267,8 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 	// The key pepper is loaded before anything that verifies a credential is
 	// built. Doing it later would hand the data plane a nil pepper, which fails
 	// every key check - and the symptom would be "valid keys are refused", not
-	// "the pepper was missing". A missing pepper is not fatal: access-key
-	// authentication stays off and the transitional global proxy token keeps
-	// working, which is what a deployment that has not been migrated yet needs.
+	// "the pepper was missing". A missing pepper is not fatal to startup, but
+	// proxy authentication remains unavailable until it is provisioned.
 	app.loadKeyPepper(envCfg.StateDir)
 
 	// 5.-10. GeoIP, node builder, topology, probes and routing incl. the
@@ -277,6 +278,9 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 		return nil, err
 	}
 	app.wireRetryDownloader(retryDL)
+	if err := app.initPrivacyDeletion(); err != nil {
+		return nil, err
+	}
 
 	if err := app.bootstrapFromPersistence(engine); err != nil {
 		return nil, err
@@ -358,10 +362,10 @@ func (a *prismApp) initTopologyRuntime(engine *state.StateEngine) (*netutil.Retr
 		// Keep this callback lightweight and non-blocking.
 		OnLeaseEvent: func(e routing.LeaseEvent) {
 			switch e.Type {
-			case routing.LeaseCreate, routing.LeaseTouch, routing.LeaseReplace:
+			case routing.LeaseCreate, routing.LeaseTouch, routing.LeaseReplace, routing.LeaseRemove, routing.LeaseExpire:
+				// Read the latest value at flush: concurrent events may arrive in
+				// either order; a stale deletion must not erase a recreated lease.
 				engine.MarkLease(e.PlatformID, e.UserID, e.Account)
-			case routing.LeaseRemove, routing.LeaseExpire:
-				engine.MarkLeaseDelete(e.PlatformID, e.UserID, e.Account)
 			}
 			a.onLeaseEventForMetrics(e)
 		},
@@ -586,16 +590,15 @@ func (a *prismApp) startBackgroundServices() {
 // loadKeyPepper loads the key pepper, or reports why access-key authentication
 // stays off.
 //
-// A missing pepper is not fatal: the transitional global proxy token keeps
-// working exactly as before, which is what a deployment that has not been
-// migrated yet needs. It is reported at startup rather than at first use so the
-// degradation is visible in the log instead of showing up as every key failing.
+// A missing pepper is not fatal to startup, but every proxy credential fails
+// closed. It is reported at startup rather than at first use so the operator
+// sees the configuration problem directly.
 func (a *prismApp) loadKeyPepper(stateDir string) {
 	pepper, err := auth.LoadPepper(stateDir)
 	if err != nil {
 		if errors.Is(err, auth.ErrPepperMissing) {
 			log.Println("Access key authentication is unavailable: no key pepper configured; " +
-				"the global proxy token remains the only credential")
+				"all proxy credentials are rejected until it is provisioned")
 			return
 		}
 		// A pepper that exists but cannot be read is a different problem, and
@@ -610,9 +613,9 @@ func (a *prismApp) loadKeyPepper(stateDir string) {
 
 // loadAccessKeys builds the in-memory key view the data plane reads.
 //
-// A failure here is not fatal for the same reason a missing pepper is not: the
-// global proxy token still authenticates. It is logged loudly because it means
-// the keys an operator created are not live.
+// A failure here is not fatal to startup, but it leaves the data plane with no
+// usable AccessKeys and therefore no authenticated proxy traffic. It is logged
+// loudly because keys an operator created are not live.
 func (a *prismApp) loadAccessKeys(engine *state.StateEngine) *keys.Store {
 	store, err := keys.LoadFromState(engine, log.Printf)
 	if err != nil {
@@ -655,6 +658,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		// publish that failed after a charge was committed.
 		Logf: log.Printf,
 	}
+	cpService.InitializeLDC()
 
 	// audit retention runs once a day. The window is read from the runtime
 	// config at each pass, so a change made in the console applies without a
@@ -674,6 +678,11 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// which is what keeps the hot path free of database reads.
 	accessKeys := a.loadAccessKeys(engine)
 	keyVerifier := proxy.NewAccessKeyVerifier(accessKeys, a.keyPepper)
+	// The data plane verifier is deliberately proxy-scoped. Management
+	// authentication needs a separate verifier over the same store so an
+	// admin-scoped automation key can resolve there without becoming usable as a
+	// proxy credential.
+	adminKeyVerifier := proxy.NewAccessKeyVerifierForScope(accessKeys, a.keyPepper, model.KeyScopeAdmin)
 
 	// The usage summary runs hourly: state.db has one write connection shared
 	// with the flush worker, and a summary pass is heavier than a bounded
@@ -728,19 +737,17 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	//
 	// It writes state.db, so it is stopped with the other loops before the
 	// database closes.
-	if address := a.envCfg.USDTAddress; address != "" {
-		cpService.Tron = tron.NewClient(a.envCfg.TronGridEndpoint, a.envCfg.TronGridAPIKey, a.envCfg.USDTContract)
-		a.stopDepositScanner = service.StartDepositScanner(cpService, 0, log.Printf)
-		log.Println("On-chain deposit scanner started")
-	}
+	cpService.Tron = tron.NewClient(a.envCfg.TronGridEndpoint, a.envCfg.TronGridAPIKey, a.envCfg.USDTContract)
+	a.stopDepositScanner = service.StartDepositScanner(cpService, 0, log.Printf)
+	log.Println("On-chain deposit scanner started")
 
 	// Accounting. One counter set and one session registry are shared by every
 	// inbound: a key's allowance spans the protocols it uses, and so does the
 	// set of tunnels that may need ending.
 	//
-	// Nothing here touches the database on the data path. The counters are
-	// in-memory atomics, and the flusher below is the only thing that reaches
-	// disk.
+	// Byte reservations reach durable storage before service; the asynchronous
+	// flusher handles request/error aggregates. Unresolved crash liabilities
+	// keep the affected user closed until offline reconciliation.
 	a.usageCounters = usage.NewCounters()
 	a.usageSessions = usage.NewConnRegistry()
 	usageLimiter := usage.NewLimiter(a.usageCounters)
@@ -754,7 +761,11 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	cpService.Usage = a.usageCounters
 	cpService.Conns = a.usageSessions
 	cpService.Limiter = usageLimiter
-	usageQuota := &usage.Gate{Limiter: usageLimiter}
+	usageJournal, err := usage.NewJournal(engine, usage.DefaultLogf)
+	if err != nil {
+		return err
+	}
+	usageQuota := &usage.Gate{Limiter: usageLimiter, Keys: accessKeys, Journal: usageJournal}
 	usageMetering := &usage.Sink{Counters: a.usageCounters}
 
 	// A refused request never reaches the request lifecycle, so it would
@@ -768,6 +779,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 
 	accountingCtx, cancelAccounting := context.WithCancel(context.Background())
 	a.stopUsageAccounting = cancelAccounting
+	go usageJournal.Start(accountingCtx)
 
 	// The allowance is a running total and the counters start empty, so the
 	// persisted usage is loaded back before anything can be served. Without
@@ -775,24 +787,26 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// the disk rows the flusher keeps adding to would keep the old usage:
 	// memory and disk would disagree for as long as the process lived.
 	//
-	// The read is retried, because a state.db that is momentarily busy must
-	// not cost every user a second allowance. Serving from zero is the only
-	// remaining option - refusing service would be worse - so the process does
-	// that, says so loudly, and keeps trying in the background until the
-	// persisted totals are back in memory.
+	// The read is retried, because a state.db that is momentarily busy must not
+	// cost every user a second allowance. Until persisted totals are back in
+	// memory, finite user quotas fail closed instead of being checked against an
+	// empty aggregate.
 	seedRetry := usageSeedRetry{attempts: 4, backoff: 250 * time.Millisecond}
+	a.usageCounters.RequireSeed()
 	seeded, seedErr := seedUsage(a.usageCounters, engine, seedRetry, usage.DefaultLogf)
 	if seedErr != nil {
 		usage.DefaultLogf(
 			"Usage accounting: cannot read subscriptions to restore usage after %d attempts: %v; "+
-				"period usage is counted from zero for now, which hands every user a second allowance "+
-				"until a re-seed succeeds - the process keeps trying every %s",
+				"finite user quotas remain closed until a re-seed succeeds - the process keeps trying every %s",
 			seedRetry.attempts, seedErr, usage.DefaultFlushInterval)
 		safego.Go("the usage re-seed", func() {
 			reseedUsageUntilApplied(accountingCtx, a.usageCounters, engine, usage.DefaultFlushInterval, usage.DefaultLogf)
 		})
-	} else if seeded > 0 {
-		usage.DefaultLogf("Usage accounting: restored period usage for %d subscription(s)", seeded)
+	} else {
+		a.usageCounters.MarkSeedReady()
+		if seeded > 0 {
+			usage.DefaultLogf("Usage accounting: restored period usage for %d subscription(s)", seeded)
+		}
 	}
 
 	go (&usage.Flusher{
@@ -867,7 +881,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Blocklist: loginBlocklist,
 		Identity: &api.Identity{
 			Sessions:  sessionService,
-			AdminKeys: adminKeyResolver{verifier: keyVerifier},
+			AdminKeys: adminKeyResolver{verifier: adminKeyVerifier},
 			// Administrators must carry a second factor when the policy says
 			// so. An administrator without one is admitted only far enough to
 			// enrol, which is what keeps the requirement from locking everyone
@@ -908,7 +922,21 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// The optional admin listener (PRISM_ADMIN_LISTEN) reuses this handler but
 	// only exposes the management paths, never a proxy protocol.
 	a.apiHandler = apiSrv.Handler()
-	tokenActionHandler := api.NewTokenActionHandler(
+	// proxy-entry (407/403) failure limiting is opt-in and disabled by default
+	// (PRISM_PROXY_AUTH_FAIL_LIMIT=0 keeps Resin behaviour). Build the shared
+	// guard before the token-action handler so key-shaped token failures use the
+	// same bucket as the HTTP and SOCKS5 entries.
+	proxy.SetTrustedProxies(a.envCfg.TrustedProxies)
+	var proxyAuthGuard proxy.AuthFailureGuard
+	if a.envCfg.ProxyAuthFailLimit > 0 {
+		proxyAuthGuard = api.NewAuthFailureLimiter(
+			a.envCfg.ProxyAuthFailLimit,
+			time.Minute,
+			api.AuthFailureBlockDuration,
+			a.envCfg.TrustedProxies,
+		)
+	}
+	tokenActionHandler := api.NewTokenActionHandlerWithAuthFailureRecorder(
 		a.envCfg.ProxyToken,
 		keyVerifier,
 		cpService,
@@ -917,6 +945,11 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		// client address exactly like the proxy entry points do: a key pinned
 		// to an allowlist must see the real client behind a trusted proxy.
 		proxy.ProxyClientIP,
+		func(r *http.Request) {
+			if proxyAuthGuard != nil {
+				proxyAuthGuard.RecordFailure(proxy.ProxyClientIP(r))
+			}
+		},
 	)
 
 	proxyEvents := a.buildProxyEvents()
@@ -933,22 +966,6 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	}
 	if a.transportPool == nil {
 		a.transportPool = proxy.NewOutboundTransportPool(outboundTransportCfg)
-	}
-
-	// proxy-entry (407/403) failure limiting is opt-in and disabled
-	// by default (PRISM_PROXY_AUTH_FAIL_LIMIT=0 keeps Resin behaviour).
-	// The proxy entry points resolve their client key with the same trusted
-	// proxy list the management API uses, so a client behind a listed proxy
-	// gets one bucket per client instead of one per proxy.
-	proxy.SetTrustedProxies(a.envCfg.TrustedProxies)
-	var proxyAuthGuard proxy.AuthFailureGuard
-	if a.envCfg.ProxyAuthFailLimit > 0 {
-		proxyAuthGuard = api.NewAuthFailureLimiter(
-			a.envCfg.ProxyAuthFailLimit,
-			time.Minute,
-			api.AuthFailureBlockDuration,
-			a.envCfg.TrustedProxies,
-		)
 	}
 
 	forwardProxy := proxy.NewForwardProxy(proxy.ForwardProxyConfig{
@@ -1208,17 +1225,12 @@ func reseedUsageUntilApplied(
 			}
 			continue
 		}
-		pending := pendingUsageSeed(subs, counters, time.Now().UnixNano())
-		if len(pending) == 0 {
-			if logf != nil {
-				logf("Usage accounting: re-seed complete, the persisted period usage is live again")
-			}
-			return
-		}
-		seeded := counters.SeedFromSubscriptions(pending, time.Now().UnixNano())
+		seeded := counters.SeedFromSubscriptions(subs, time.Now().UnixNano())
+		counters.MarkSeedReady()
 		if logf != nil {
-			logf("Usage accounting: re-seeded period usage for %d of %d subscription(s)", seeded, len(pending))
+			logf("Usage accounting: re-seed complete, restored %d subscription(s)", seeded)
 		}
+		return
 	}
 }
 

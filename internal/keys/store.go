@@ -5,15 +5,17 @@
 // API changes a key. Nothing here touches the database: the caller owns
 // persistence and calls Upsert or Delete after a successful write.
 //
-// Reads are lock-free. The store is an xsync.Map, so a refresh that replaces
-// one key does not block readers of any other key, and the values are treated
-// as immutable once published.
+// Individual map operations use xsync. A small RWMutex protects whole-map
+// replacement, and published values are copied on ingress and egress so a
+// caller cannot mutate authorization state behind the store's back.
 package keys
 
 import (
 	"fmt"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
@@ -28,6 +30,8 @@ import (
 // The zero value means "no plan": the key then has no platform restriction
 // beyond its own, no quota and no expiry.
 type PlanSnapshot struct {
+	SubscriptionID  string
+	PeriodIndex     int
 	Platforms       []string
 	IPTiers         []string
 	TrafficBytes    int64
@@ -58,13 +62,16 @@ func (p PlanSnapshot) ExpiresAt() time.Time {
 // which is what keeps the hot path free of database access. Platforms is the
 // key's own restriction; when it is empty the plan's set applies instead.
 type KeyState struct {
-	KeyID       string
-	UserID      string
-	SecretHash  []byte
-	Scope       string
-	Status      string
-	ExpiresAtNs int64
-	Platforms   []string
+	// SessionEpoch invalidates authentication captured before a security write,
+	// including a request that has not registered its connection yet.
+	SessionEpoch uint64 `json:"-"`
+	KeyID        string
+	UserID       string
+	SecretHash   []byte `json:"-"`
+	Scope        string
+	Status       string
+	ExpiresAtNs  int64
+	Platforms    []string
 	// AllowlistSet records that a source-address allowlist was configured for
 	// this key, and Allowlist holds it in parsed form. They are separate so a
 	// list whose every entry failed to parse still restricts instead of
@@ -87,17 +94,22 @@ func (k *KeyState) Usable(nowNs int64) bool {
 	if k.Status != model.KeyStatusActive {
 		return false
 	}
-	if k.ExpiresAtNs > 0 && nowNs >= k.ExpiresAtNs {
+	if k.ExpiresAtNs < 0 || k.ExpiresAtNs > 0 && nowNs >= k.ExpiresAtNs {
 		return false
 	}
 	if k.UserStatus != model.UserStatusActive {
 		return false
 	}
-	if k.Plan.Status != "" && k.Plan.Status != model.SubscriptionStatusActive {
-		return false
-	}
-	if k.Plan.ExpiresAtNs > 0 && nowNs >= k.Plan.ExpiresAtNs {
-		return false
+	// Admin automation keys protect the management plane and are independent
+	// of the owner's proxy subscription. Suspending a traffic plan must not lock
+	// an operator out of the API needed to repair it.
+	if k.Scope != model.KeyScopeAdmin {
+		if k.Plan.Status != "" && k.Plan.Status != model.SubscriptionStatusActive {
+			return false
+		}
+		if k.Plan.ExpiresAtNs < 0 || k.Plan.ExpiresAtNs > 0 && nowNs >= k.Plan.ExpiresAtNs {
+			return false
+		}
 	}
 	return true
 }
@@ -195,7 +207,9 @@ func parseAllowlist(values []string) []netip.Prefix {
 
 // Store holds every active key.
 type Store struct {
-	keys *xsync.Map[string, *KeyState]
+	mu    sync.RWMutex
+	keys  *xsync.Map[string, *KeyState]
+	epoch atomic.Uint64
 }
 
 // NewStore returns an empty store.
@@ -226,7 +240,9 @@ func (s *Store) Load(
 		}
 		next.Store(key.ID, newKeyState(key, user, plans[key.UserID]))
 	}
+	s.mu.Lock()
 	s.keys = next
+	s.mu.Unlock()
 	return nil
 }
 
@@ -245,6 +261,8 @@ func newKeyState(key model.AccessKey, user model.User, plan PlanSnapshot) *KeySt
 		UserStatus:  user.Status,
 		UserRole:    user.Role,
 		Plan: PlanSnapshot{
+			SubscriptionID:  plan.SubscriptionID,
+			PeriodIndex:     plan.PeriodIndex,
 			TrafficBytes:    plan.TrafficBytes,
 			MaxConcurrent:   plan.MaxConcurrent,
 			MaxRPS:          plan.MaxRPS,
@@ -255,8 +273,30 @@ func newKeyState(key model.AccessKey, user model.User, plan PlanSnapshot) *KeySt
 			IPTiers:         append([]string(nil), plan.IPTiers...),
 		},
 	}
-	if len(key.Platforms) > 0 {
-		state.Platforms = append([]string(nil), key.Platforms...)
+	if key.Scope != model.KeyScopeAdmin && len(key.Platforms) > 0 {
+		if len(plan.Platforms) == 0 {
+			state.Platforms = append([]string(nil), key.Platforms...)
+		} else {
+			// A key list is intended to narrow the plan. Intersect it again at
+			// publication time so legacy rows, a plan edit, or a direct database
+			// import cannot turn that override into an entitlement bypass.
+			allowed := make(map[string]struct{}, len(plan.Platforms))
+			for _, platform := range plan.Platforms {
+				allowed[platform] = struct{}{}
+			}
+			for _, platform := range key.Platforms {
+				if _, ok := allowed[platform]; ok {
+					state.Platforms = append(state.Platforms, platform)
+				}
+			}
+			if len(state.Platforms) == 0 {
+				// An invalid key/plan combination must fail closed. An empty
+				// key list normally means unrestricted, so mark the state
+				// unusable instead of representing an empty intersection as
+				// an unrestricted one.
+				state.Status = model.KeyStatusDisabled
+			}
+		}
 	}
 	if len(key.IPAllowlist) > 0 {
 		state.AllowlistSet = true
@@ -267,42 +307,118 @@ func newKeyState(key model.AccessKey, user model.User, plan PlanSnapshot) *KeySt
 
 // Get returns the key state for a key id.
 func (s *Store) Get(keyID string) (*KeyState, bool) {
-	if s == nil || s.keys == nil {
+	if s == nil {
 		return nil, false
 	}
-	return s.keys.Load(keyID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	current := s.keys
+	if current == nil {
+		return nil, false
+	}
+	state, ok := current.Load(keyID)
+	if !ok {
+		return nil, false
+	}
+	return cloneKeyState(state), true
 }
 
 // Upsert publishes one key, replacing any previous state for it.
 func (s *Store) Upsert(state *KeyState) {
-	if s == nil || s.keys == nil || state == nil {
+	if s == nil || state == nil {
 		return
 	}
-	s.keys.Store(state.KeyID, state)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	current := s.keys
+	if current == nil {
+		return
+	}
+	current.Compute(state.KeyID, func(previous *KeyState, loaded bool) (*KeyState, xsync.ComputeOp) {
+		next := cloneKeyState(state)
+		next.SessionEpoch = s.epoch.Load()
+		if loaded {
+			next.SessionEpoch = previous.SessionEpoch
+		}
+		return next, xsync.UpdateOp
+	})
+}
+
+// RevokeSessions advances the key's authentication generation. New requests
+// may authenticate with the current policy; old snapshots can never resume.
+func (s *Store) RevokeSessions(keyID string) {
+	if s == nil {
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.keys == nil {
+		return
+	}
+	s.keys.Compute(keyID, func(previous *KeyState, loaded bool) (*KeyState, xsync.ComputeOp) {
+		epoch := s.epoch.Add(1)
+		if !loaded {
+			return nil, xsync.CancelOp
+		}
+		next := cloneKeyState(previous)
+		next.SessionEpoch = epoch
+		return next, xsync.UpdateOp
+	})
 }
 
 // Delete removes one key. A revoked key stops being resolvable immediately.
 func (s *Store) Delete(keyID string) {
-	if s == nil || s.keys == nil {
+	if s == nil {
 		return
 	}
-	s.keys.Delete(keyID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	current := s.keys
+	if current != nil {
+		s.epoch.Add(1)
+		current.Delete(keyID)
+	}
 }
 
 // Len reports how many keys are published.
 func (s *Store) Len() int {
-	if s == nil || s.keys == nil {
+	if s == nil {
 		return 0
 	}
-	return s.keys.Size()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	current := s.keys
+	if current == nil {
+		return 0
+	}
+	return max(0, current.Size())
 }
 
 // Range calls fn for every published key. Returning false stops the walk.
 func (s *Store) Range(fn func(state *KeyState) bool) {
-	if s == nil || s.keys == nil || fn == nil {
+	if s == nil || fn == nil {
 		return
 	}
-	s.keys.Range(func(_ string, state *KeyState) bool {
-		return fn(state)
+	s.mu.RLock()
+	current := s.keys
+	s.mu.RUnlock()
+	if current == nil {
+		return
+	}
+	current.Range(func(_ string, state *KeyState) bool {
+		return fn(cloneKeyState(state))
 	})
+}
+
+func cloneKeyState(state *KeyState) *KeyState {
+	if state == nil {
+		return nil
+	}
+	clone := *state
+	clone.SecretHash = append([]byte(nil), state.SecretHash...)
+	clone.Platforms = append([]string(nil), state.Platforms...)
+	clone.Allowlist = append([]netip.Prefix(nil), state.Allowlist...)
+	clone.Plan.Platforms = append([]string(nil), state.Plan.Platforms...)
+	clone.Plan.IPTiers = append([]string(nil), state.Plan.IPTiers...)
+	return &clone
 }

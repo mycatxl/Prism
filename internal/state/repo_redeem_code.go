@@ -141,9 +141,9 @@ func (r *StateRepo) RedeemCodeAndCredit(codeHash []byte, entry model.BalanceEntr
 	if err != nil {
 		return model.BalanceEntry{}, err
 	}
-	after := current + entry.DeltaMicro
-	if after < 0 {
-		return model.BalanceEntry{}, ErrInsufficientBalance
+	after, err := checkedBalanceAfter(current, entry.DeltaMicro)
+	if err != nil {
+		return model.BalanceEntry{}, err
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO user_balance (user_id, balance_micro, updated_at_ns)

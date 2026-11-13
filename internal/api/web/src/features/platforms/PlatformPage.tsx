@@ -1,23 +1,21 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ExternalLink, Plus, RefreshCw, Search } from "lucide-react";
+import { ArrowRight, Plus, RefreshCw, Search } from "lucide-react";
 import { useMemo } from "react";
 import { useForm, useWatch } from "react-hook-form";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   ControlButton,
   ControlInput,
   ControlSelect,
   ControlSwitch,
   ControlTextarea,
-  DetailFact,
   EmptyWorkState,
   FilterChip,
   InspectorDrawer,
   ObjectList,
   ObjectRow,
   WorkspacePage,
-  QueryBadge,
   StatusMark,
   WorkspaceCard,
 } from "../../components/control-plane";
@@ -27,12 +25,12 @@ import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
-import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
+import { formatRelativeTime } from "../../lib/time";
 import { adminPlansQueryKey, listPlans } from "../admin/api";
 import { getPlatformPulse } from "../dashboard/api";
 import { getTimeWindow } from "../dashboard/range";
 import { listSubscriptions } from "../subscriptions/api";
-import { createPlatform, getPlatform, listPlatforms } from "./api";
+import { createPlatform, listPlatforms } from "./api";
 import {
   allocationPolicies,
   allocationPolicyLabel,
@@ -50,7 +48,6 @@ import {
 } from "./formModel";
 import { NodeCriteriaFields } from "./NodeCriteriaFields";
 import { platformStatus } from "./platformMeta";
-import type { Platform } from "./types";
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 const PAGE_SIZE_OPTIONS = [12, 24, 48, 96] as const;
@@ -132,26 +129,10 @@ function PlatformPageNavigator({
   );
 }
 
-function CriteriaSummary({ platform }: { platform: Platform }) {
-  const { t } = useI18n();
-  const criteria = [
-    ...platform.region_filters.map((value) => `${t("地区")} ${value.toUpperCase()}`),
-    ...platform.ip_types.map((value) => `${t("网络类型")} ${value}`),
-    ...platform.purity_bands.map((value) => `${t("纯净度")} ${value}`),
-    ...platform.protocols.map((value) => `${t("协议")} ${value}`),
-    ...platform.subscription_filters.map((value) => `${t("订阅")} ${value}`),
-  ];
-  return criteria.length > 0 ? (
-    <div className="workspace-platform-criteria-summary">
-      {criteria.slice(0, 4).map((item) => <QueryBadge key={item} label={item} />)}
-      {criteria.length > 4 ? <span>+{criteria.length - 4}</span> : null}
-    </div>
-  ) : <span className="workspace-muted">{t("不限制节点条件")}</span>;
-}
-
 export function PlatformPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const location = useLocation();
   const [params, setParams] = useSearchParams();
   const { toasts, showToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
@@ -175,8 +156,6 @@ export function PlatformPage() {
   };
   const openCreate = () => updateParam("create", "1", false);
   const closeCreate = () => updateParam("create", "", false);
-  const openInspector = (id: string) => updateParam("selected", id, false);
-  const closeInspector = () => updateParam("selected", "", false);
   const clearFilters = () => {
     setParams((previous) => {
       const next = new URLSearchParams();
@@ -201,13 +180,6 @@ export function PlatformPage() {
   });
   const plansQuery = useQuery({ queryKey: adminPlansQueryKey, queryFn: listPlans, staleTime: 60_000 });
   const platformItems = platformsQuery.data?.items ?? [];
-  const selectedQuery = useQuery({
-    queryKey: ["platform", selected],
-    queryFn: () => getPlatform(selected),
-    enabled: Boolean(selected),
-    placeholderData: (previous) => previous,
-  });
-  const selectedPlatform = selectedQuery.data ?? platformItems.find((platform) => platform.id === selected);
   const pulses = useQueries({
     queries: platformItems.map((platform) => ({
       queryKey: ["platforms", "pulse", platform.id],
@@ -255,6 +227,8 @@ export function PlatformPage() {
     void queryClient.invalidateQueries({ queryKey: adminPlansQueryKey });
   };
   const statusTone = platformsQuery.isError ? "warn" : platformsQuery.isSuccess ? "live" : "neutral";
+
+  if (selected) return <Navigate replace to={`${opsPaths.platforms}/${encodeURIComponent(selected)}`} />;
 
   return (
     <WorkspacePage
@@ -309,7 +283,7 @@ export function PlatformPage() {
         description={t("每个平台都链接到真实节点准入、套餐引用、活动租约和最近变更；选择一行打开 inspector。")}
       >
         {platformsQuery.isError && !platformsQuery.data ? (
-          <EmptyWorkState
+          <EmptyWorkState embedded
             title={t("平台目录读取失败")}
             detail={formatApiErrorMessage(platformsQuery.error, t)}
             action={<ControlButton variant="secondary" size="sm" onPress={() => void platformsQuery.refetch()}>{t("重试")}</ControlButton>}
@@ -319,7 +293,7 @@ export function PlatformPage() {
           <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在读取平台目录")}</div>
         ) : null}
         {!platformsQuery.isLoading && !platformsQuery.isError && visiblePlatforms.length === 0 ? (
-          <EmptyWorkState
+          <EmptyWorkState embedded
             title={t(hasActiveFilters ? "没有匹配的平台" : "还没有平台")}
             detail={hasActiveFilters ? t("移除筛选后重新查看管理员定义的平台。") : t("创建第一个平台后，节点准入和租约关系会显示在这里。")}
             action={hasActiveFilters ? <ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : <ControlButton variant="primary" size="sm" onPress={openCreate}><Plus size={14} aria-hidden />{t("新建平台")}</ControlButton>}
@@ -337,8 +311,8 @@ export function PlatformPage() {
               return (
                 <ObjectRow
                   key={platform.id}
-                  active={platform.id === selected}
-                  onClick={() => openInspector(platform.id)}
+                  to={`${opsPaths.platforms}/${platform.id}`}
+                  state={{ returnTo: location.pathname + location.search, fromList: true }}
                   leading={<span className="workspace-platform-row__mark" aria-hidden>{platform.name.slice(0, 1).toUpperCase()}</span>}
                   title={platform.name}
                   subtitle={`${platform.id === ZERO_UUID ? t("内置平台") : t("管理员平台")} · ${upstream[0] ?? t("不限订阅")}`}
@@ -362,37 +336,6 @@ export function PlatformPage() {
           />
         ) : null}
       </WorkspaceCard>
-
-      <InspectorDrawer
-        open={Boolean(selected) && !createOpen}
-        onOpenChange={(open) => { if (!open) closeInspector(); }}
-        title={selectedPlatform?.name ?? selected.slice(0, 12)}
-        eyebrow={t("Platform inspector")}
-        footer={selectedPlatform ? <div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={closeInspector}>{t("关闭")}</ControlButton><ControlButton variant="primary" size="sm" onPress={() => navigate(`${opsPaths.platforms}/${selectedPlatform.id}`)}><ExternalLink size={14} aria-hidden />{t("打开完整工作面")}</ControlButton></div> : undefined}
-      >
-        {selectedQuery.isLoading && !selectedPlatform ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在读取平台")}</div> : null}
-        {selectedQuery.isError && !selectedPlatform ? <EmptyWorkState title={t("平台读取失败")} detail={formatApiErrorMessage(selectedQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void selectedQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-        {selectedPlatform ? (
-          <div className="workspace-platform-inspector">
-            <div className="workspace-platform-inspector__identity">
-              <span className="workspace-platform-row__mark" aria-hidden>{selectedPlatform.name.slice(0, 1).toUpperCase()}</span>
-              <div><strong>{selectedPlatform.name}</strong><code>{selectedPlatform.id}</code></div>
-              <StatusMark tone={platformStatus(selectedPlatform).tone === "alert" ? "alert" : "signal"} label={t(platformStatus(selectedPlatform).label)} />
-            </div>
-            <dl className="workspace-detail-facts">
-              <DetailFact label={t("可路由节点")} value={selectedPlatform.routable_node_count.toLocaleString()} mono />
-              <DetailFact label={t("租约保持") } value={formatGoDuration(selectedPlatform.sticky_ttl, t("默认"))} mono />
-              <DetailFact label={t("节点分配")} value={t(allocationPolicyLabel[selectedPlatform.allocation_policy])} />
-              <DetailFact label={t("未命中行为")} value={t(missActionLabel[selectedPlatform.reverse_proxy_miss_action])} />
-              <DetailFact label={t("空账号行为")} value={t(emptyAccountBehaviorLabel[selectedPlatform.reverse_proxy_empty_account_behavior])} />
-              <DetailFact label={t("最近更新")} value={formatDateTime(selectedPlatform.updated_at)} mono />
-            </dl>
-            <section className="workspace-platform-inspector__section"><h3>{t("节点准入")}</h3><CriteriaSummary platform={selectedPlatform} /></section>
-            <section className="workspace-platform-inspector__section"><h3>{t("关系")}</h3><p>{selectedPlatform.subscription_filters.length ? t("绑定 {{count}} 个订阅来源", { count: selectedPlatform.subscription_filters.length }) : t("未限制订阅来源")}</p><p>{plansQuery.data ? t("{{count}} 个套餐可引用此平台", { count: plansQuery.data.items.filter((plan) => (plan.platforms ?? []).length === 0 || (plan.platforms ?? []).includes(selectedPlatform.name)).length }) : t("套餐关系暂不可用")}</p></section>
-            {selectedPlatform.regex_filters.length > 0 ? <p className="workspace-legacy-note">{t("此平台仍包含历史节点名规则；新配置不会创建或修改该规则。")}</p> : null}
-          </div>
-        ) : null}
-      </InspectorDrawer>
 
       <InspectorDrawer
         open={createOpen}

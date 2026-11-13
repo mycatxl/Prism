@@ -30,6 +30,7 @@ var ErrScopeExpansionStalled = errors.New("scope expansion cursor did not advanc
 
 // CreateJob inserts a job and its node items in one transaction.
 func (s *Store) CreateJob(ctx context.Context, job Job, items []JobItem) error {
+	defer s.notifyMeasurementJob(job.ID)
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -95,6 +96,7 @@ func (s *Store) CreateJob(ctx context.Context, job Job, items []JobItem) error {
 // newly inserted items move together, so a crash cannot advance the cursor
 // without persisting the corresponding work.
 func (s *Store) ExpandJobScope(ctx context.Context, jobID string, batch ScopeExpansionBatch) (ScopeExpansionResult, error) {
+	defer s.notifyMeasurementNodes(batch.Nodes)
 	db, err := s.conn()
 	if err != nil {
 		return ScopeExpansionResult{}, err
@@ -340,6 +342,7 @@ func (s *Store) MarkJobRunning(ctx context.Context, id string, nowNs int64) erro
 // when the row is still running, and the item would go back to queued inside a
 // job no worker can ever claim from again.
 func (s *Store) CancelJob(ctx context.Context, id string, nowNs int64) error {
+	defer s.notifyMeasurementJob(id)
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -407,6 +410,7 @@ func (s *Store) CancelJob(ctx context.Context, id string, nowNs int64) error {
 // items) and would erase the failure records the operator is reading. The call is
 // a no-op that returns 0.
 func (s *Store) RetryFailedJobItems(ctx context.Context, id string, nowNs int64) (int64, error) {
+	defer s.notifyMeasurementJob(id)
 	db, err := s.conn()
 	if err != nil {
 		return 0, err
@@ -533,6 +537,8 @@ type ClaimOptions struct {
 
 // ClaimJobItems leases due items and stamps the owning jobs as running.
 func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem, error) {
+	var changed []string
+	defer func() { s.notifyMeasurementNodes(changed) }()
 	db, err := s.conn()
 	if err != nil {
 		return nil, err
@@ -613,6 +619,9 @@ func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	for _, item := range claimed {
+		changed = append(changed, item.NodeHash)
+	}
 	return claimed, nil
 }
 
@@ -622,6 +631,7 @@ func (s *Store) ClaimJobItems(ctx context.Context, opts ClaimOptions) ([]JobItem
 // The status predicate is the authority that keeps a worker from writing to an
 // item the timeout sweep already settled: it returns ErrJobItemSettled instead.
 func (s *Store) SaveJobItemStep(ctx context.Context, jobID, nodeHash string, stepIndex int, resultJSON string, leaseUntilNs, updatedAtNs int64) error {
+	defer s.notifyMeasurementNodes([]string{nodeHash})
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -648,6 +658,7 @@ func (s *Store) SaveJobItemStep(ctx context.Context, jobID, nodeHash string, ste
 // passes "" and clears it - the same "the last thing that happened" rule
 // SaveJobItemStep follows when a step completes.
 func (s *Store) DeferJobItem(ctx context.Context, jobID, nodeHash string, stepIndex int, nextRunAtNs int64, resultJSON, errorCode string, updatedAtNs int64) error {
+	defer s.notifyMeasurementNodes([]string{nodeHash})
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -666,6 +677,7 @@ func (s *Store) DeferJobItem(ctx context.Context, jobID, nodeHash string, stepIn
 
 // FinishJobItem moves an item to a terminal status and clears its lease.
 func (s *Store) FinishJobItem(ctx context.Context, jobID, nodeHash, status, errorCode, resultJSON string, updatedAtNs int64) error {
+	defer s.notifyMeasurementNodes([]string{nodeHash})
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -701,6 +713,7 @@ func jobItemSettledIfUnchanged(res sql.Result) error {
 // purpose - a worker still inside one of them notices the settled job and stops
 // without writing the item back to life.
 func (s *Store) FailPendingJobItems(ctx context.Context, jobID, errorCode string, updatedAtNs int64) (int64, error) {
+	defer s.notifyMeasurementJob(jobID)
 	db, err := s.conn()
 	if err != nil {
 		return 0, err
@@ -720,6 +733,7 @@ func (s *Store) FailPendingJobItems(ctx context.Context, jobID, errorCode string
 // number of items that went back to queued. Running jobs stay running so the
 // worker pool continues them after a restart.
 func (s *Store) ResetRunningJobItems(ctx context.Context) (int64, error) {
+	defer s.notifyMeasurementJob("")
 	db, err := s.conn()
 	if err != nil {
 		return 0, err
@@ -877,7 +891,11 @@ func (s *Store) refreshJob(ctx context.Context, jobID string, nowNs int64, attem
 		}
 		return s.refreshJob(ctx, jobID, nowNs, attempt+1)
 	}
-	return s.GetJob(ctx, jobID)
+	updated, err := s.GetJob(ctx, jobID)
+	if err == nil && updated.Terminal() {
+		s.notifyMeasurementJob(jobID)
+	}
+	return updated, err
 }
 
 // JobProgressView aggregates the counters plus the pending online lookups of a

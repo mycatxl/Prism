@@ -22,10 +22,9 @@ type StateReader interface {
 
 // LoadFromState builds a store from the database.
 //
-// A missing pepper is not a failure here: without it every key check fails and
-// the data plane falls back to the transitional global token, which is the
-// behaviour a deployment that has not been migrated yet must keep. The caller
-// reports that degradation; this function only reports what it could not read.
+// A missing pepper is not a failure here: without it every key check fails
+// closed. The caller reports that degradation; this function only reports what
+// it could not read.
 //
 // The subscription snapshot is taken per user from the subscription that
 // decides that user's access (DecidingSubscription): the active one if there is
@@ -75,22 +74,24 @@ func LoadFromState(reader StateReader, logf func(format string, args ...any)) (*
 // console publishes with (SnapshotForPlan), so a restart and a change made in
 // the console cannot disagree about whether a user may connect; Usable() refuses
 // a subscription whose status is not active. A row whose snapshot cannot be
-// decoded is skipped and reported rather than guessed at, and only a user with
-// no readable row at all keeps the zero snapshot.
+// decoded is reported rather than guessed at, and the affected user's state is
+// marked suspended so it cannot become an unlimited key after restart.
 func planSnapshots(subscriptions []model.UserSubscription, logf func(format string, args ...any)) map[string]PlanSnapshot {
 	plans := make(map[string]model.Plan, len(subscriptions))
 	byUser := make(map[string][]model.UserSubscription, len(subscriptions))
+	unreadableUsers := make(map[string]bool)
 	for _, sub := range subscriptions {
 		var plan model.Plan
 		if raw := strings.TrimSpace(sub.PlanSnapshotJSON); raw != "" {
 			if err := json.Unmarshal([]byte(raw), &plan); err != nil {
 				// A snapshot that cannot be read must not silently become an
 				// unlimited plan, so the row is skipped and reported. The user
-				// keeps the global-token path, which is unrestricted but also
-				// not what a paying user should silently get.
+				// leaves the affected key unavailable rather than silently
+				// granting an unmetered identity.
 				if logf != nil {
 					logf("Access keys: subscription %s has an unreadable plan snapshot, skipped: %v", sub.ID, err)
 				}
+				unreadableUsers[sub.UserID] = true
 				continue
 			}
 		}
@@ -105,7 +106,16 @@ func planSnapshots(subscriptions []model.UserSubscription, logf func(format stri
 			continue
 		}
 		plan := plans[sub.ID]
-		snapshots[userID] = SnapshotForPlan(sub, &plan)
+		snapshot := SnapshotForPlan(sub, &plan)
+		if unreadableUsers[userID] {
+			snapshot.Status = model.SubscriptionStatusSuspended
+		}
+		snapshots[userID] = snapshot
+	}
+	for userID := range unreadableUsers {
+		if _, ok := snapshots[userID]; !ok {
+			snapshots[userID] = PlanSnapshot{Status: model.SubscriptionStatusSuspended}
+		}
 	}
 	return snapshots
 }

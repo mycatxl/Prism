@@ -24,6 +24,11 @@ const logSummarySelectColumns = "id, ts_ns, proxy_type, client_ip, platform_id, 
 // Repo manages rolling SQLite databases for request logs.
 // Each DB is named request_logs-<unix_ms>.db and lives in logDir.
 type Repo struct {
+	writeMu sync.Mutex
+	// Pin retained files from directory snapshot until the read handles close.
+	// The flush barrier must run before this lock to avoid waiting on cleanup
+	// while holding the lock that cleanup needs.
+	shardsMu    sync.RWMutex
 	logDir      string
 	maxBytes    int64
 	retainCount int
@@ -58,6 +63,8 @@ func NewRepo(logDir string, maxBytes int64, retainCount int) *Repo {
 // If a previous DB exists in the directory it is reused as active;
 // a new one is created only when no existing DB is found.
 func (r *Repo) Open() error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	if err := os.MkdirAll(r.logDir, 0o700); err != nil {
 		return fmt.Errorf("requestlog repo mkdir %s: %w", r.logDir, err)
 	}
@@ -85,6 +92,8 @@ func (r *Repo) Open() error {
 
 // Close closes the active DB.
 func (r *Repo) Close() error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	if r.activeDB != nil {
 		err := r.activeDB.Close()
 		r.activeDB = nil
@@ -97,6 +106,8 @@ func (r *Repo) Close() error {
 // InsertBatch inserts a batch of log entries + optional payloads in a single
 // transaction. Returns the number of rows successfully inserted.
 func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
 	if r.activeDB == nil {
 		if err := r.recoverActiveDB(); err != nil {
 			return 0, err
@@ -141,11 +152,12 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 
 	inserted := 0
 	for i := range entries {
-		e := &entries[i]
-		id := e.ID
-		if id == "" {
-			id = uuid.NewString()
+		if entries[i].ID == "" {
+			entries[i].ID = uuid.NewString()
 		}
+		safeEntry := proxy.SanitizeRequestLogEntry(entries[i])
+		e := &safeEntry
+		id := e.ID
 		netOK := 0
 		if e.NetOK {
 			netOK = 1
@@ -155,7 +167,7 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 			hasPayload = 1
 		}
 
-		_, err := insertLog.Exec(
+		result, err := insertLog.Exec(
 			id, e.StartedAtNs, int(e.ProxyType), e.ClientIP,
 			e.PlatformID, e.PlatformName, e.Account,
 			e.TargetHost, e.TargetURL, e.NodeHash, e.NodeTag, e.EgressIP,
@@ -169,20 +181,21 @@ func (r *Repo) InsertBatch(entries []proxy.RequestLogEntry) (int, error) {
 			boolToInt(e.RespHeadersTruncated), boolToInt(e.RespBodyTruncated),
 		)
 		if err != nil {
-			log.Printf("[requestlog] warning: skip log row id=%q insert failed: %v", id, err)
-			continue // skip individual row errors
+			return 0, fmt.Errorf("requestlog repo insert log row: %w", err)
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("requestlog repo count inserted log row: %w", err)
+		}
+		if affected == 0 {
+			// A retry after an ambiguous commit may find the same stable ID. The
+			// original transaction already contains its payload as well.
+			continue
 		}
 
 		if hasPayload == 1 {
 			if _, err := insertPayload.Exec(id, e.ReqHeaders, e.ReqBody, e.RespHeaders, e.RespBody); err != nil {
-				// The log row is written but its payload is not, so the flag has
-				// to follow it: a reader that trusts payload_present=1 would
-				// show an empty payload as if the request had carried none.
-				log.Printf("[requestlog] warning: payload insert failed for id=%q: %v", id, err)
-				if _, clearErr := tx.Exec(
-					`UPDATE request_logs SET payload_present = 0 WHERE id = ?`, id); clearErr != nil {
-					log.Printf("[requestlog] warning: clear payload flag failed for id=%q: %v", id, clearErr)
-				}
+				return 0, fmt.Errorf("requestlog repo insert payload: %w", err)
 			}
 		}
 		inserted++
@@ -288,6 +301,8 @@ type ListCursor struct {
 // ordered by ts_ns DESC, same ts_ns by id ASC.
 func (r *Repo) List(f ListFilter) ([]LogSummary, bool, *ListCursor, error) {
 	r.runReadBarrier()
+	r.shardsMu.RLock()
+	defer r.shardsMu.RUnlock()
 
 	files, err := r.listDBFiles()
 	if err != nil {
@@ -307,16 +322,15 @@ func (r *Repo) List(f ListFilter) ([]LogSummary, bool, *ListCursor, error) {
 	for i := len(files) - 1; i >= 0; i-- {
 		db, err := r.openReadOnly(files[i])
 		if err != nil {
-			log.Printf("[requestlog] warning: list open db failed path=%q: %v", files[i], err)
-			continue
+			return nil, false, nil, fmt.Errorf("requestlog list: open retained database: %w", err)
 		}
 		rows, err := r.queryLogs(db, f, fetchLimit)
-		if closeErr := db.Close(); closeErr != nil {
-			log.Printf("[requestlog] warning: list close db failed path=%q: %v", files[i], closeErr)
-		}
+		closeErr := db.Close()
 		if err != nil {
-			log.Printf("[requestlog] warning: list query failed path=%q: %v", files[i], err)
-			continue
+			return nil, false, nil, fmt.Errorf("requestlog list: query retained database: %w", err)
+		}
+		if closeErr != nil {
+			return nil, false, nil, fmt.Errorf("requestlog list: close retained database: %w", closeErr)
 		}
 		results = append(results, rows...)
 	}
@@ -348,6 +362,8 @@ func (r *Repo) List(f ListFilter) ([]LogSummary, bool, *ListCursor, error) {
 // GetByID looks up a single log entry across all retained DBs.
 func (r *Repo) GetByID(id string) (*LogSummary, error) {
 	r.runReadBarrier()
+	r.shardsMu.RLock()
+	defer r.shardsMu.RUnlock()
 
 	files, err := r.listDBFiles()
 	if err != nil {
@@ -355,7 +371,7 @@ func (r *Repo) GetByID(id string) (*LogSummary, error) {
 	}
 
 	var result *LogSummary
-	r.queryAcrossRetainedDBs(files, "get_by_id", "id", id, func(db *sql.DB) (bool, error) {
+	err = r.queryAcrossRetainedDBs(files, "get_by_id", func(db *sql.DB) (bool, error) {
 		row, err := r.queryLogByID(db, id)
 		if err != nil {
 			return false, err
@@ -366,12 +382,17 @@ func (r *Repo) GetByID(id string) (*LogSummary, error) {
 		}
 		return false, nil
 	})
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 // GetPayloads retrieves payload data for a given log ID across all retained DBs.
 func (r *Repo) GetPayloads(logID string) (*PayloadRow, error) {
 	r.runReadBarrier()
+	r.shardsMu.RLock()
+	defer r.shardsMu.RUnlock()
 
 	files, err := r.listDBFiles()
 	if err != nil {
@@ -379,7 +400,7 @@ func (r *Repo) GetPayloads(logID string) (*PayloadRow, error) {
 	}
 
 	var result *PayloadRow
-	r.queryAcrossRetainedDBs(files, "get_payloads", "log_id", logID, func(db *sql.DB) (bool, error) {
+	err = r.queryAcrossRetainedDBs(files, "get_payloads", func(db *sql.DB) (bool, error) {
 		row, err := r.queryPayload(db, logID)
 		if err != nil {
 			return false, err
@@ -390,34 +411,36 @@ func (r *Repo) GetPayloads(logID string) (*PayloadRow, error) {
 		}
 		return false, nil
 	})
+	if err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 func (r *Repo) queryAcrossRetainedDBs(
 	files []string,
 	op string,
-	keyName string,
-	keyValue string,
 	query func(*sql.DB) (bool, error),
-) {
+) error {
 	for i := len(files) - 1; i >= 0; i-- {
 		path := files[i]
 		db, err := r.openReadOnly(path)
 		if err != nil {
-			log.Printf("[requestlog] warning: %s open db failed path=%q %s=%q: %v", op, path, keyName, keyValue, err)
-			continue
+			return fmt.Errorf("requestlog %s: open retained database: %w", op, err)
 		}
 		row, err := query(db)
-		if closeErr := db.Close(); closeErr != nil {
-			log.Printf("[requestlog] warning: %s close db failed path=%q %s=%q: %v", op, path, keyName, keyValue, closeErr)
-		}
+		closeErr := db.Close()
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			log.Printf("[requestlog] warning: %s query failed path=%q %s=%q: %v", op, path, keyName, keyValue, err)
+			return fmt.Errorf("requestlog %s: query retained database: %w", op, err)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("requestlog %s: close retained database: %w", op, closeErr)
 		}
 		if err == nil && row {
-			return
+			return nil
 		}
 	}
+	return nil
 }
 
 func (r *Repo) setReadBarrier(fn func()) {
@@ -480,16 +503,20 @@ func (r *Repo) migrateRetainedDBs() {
 }
 
 func (r *Repo) rotateDB() error {
+	// A new filename is visible as soon as SQLite opens it, before its schema
+	// exists. Pin the entire rotation so readers see only initialized shards.
+	r.shardsMu.Lock()
+	defer r.shardsMu.Unlock()
 	if r.activeDB != nil {
 		r.activeDB.Close()
 		r.activeDB = nil
 	}
-	name := fmt.Sprintf("request_logs-%d.db", time.Now().UnixMilli())
+	name := fmt.Sprintf("request_logs-%d.db", time.Now().UnixNano())
 	path := filepath.Join(r.logDir, name)
 	if err := r.openDB(path); err != nil {
 		return fmt.Errorf("requestlog rotate: %w", err)
 	}
-	return r.cleanup()
+	return r.cleanupLocked()
 }
 
 func (r *Repo) maybeRotate() error {
@@ -498,8 +525,7 @@ func (r *Repo) maybeRotate() error {
 	}
 	totalSize, err := sqliteFilesSize(r.activePath)
 	if err != nil {
-		log.Printf("[requestlog] warning: stat active db failed path=%q: %v", r.activePath, err)
-		return nil // can't stat; skip rotation check
+		return fmt.Errorf("requestlog stat active database: %w", err)
 	}
 	if totalSize >= r.maxBytes {
 		return r.rotateDB()
@@ -508,20 +534,39 @@ func (r *Repo) maybeRotate() error {
 }
 
 func (r *Repo) cleanup() error {
+	r.shardsMu.Lock()
+	defer r.shardsMu.Unlock()
+	return r.cleanupLocked()
+}
+
+func (r *Repo) cleanupLocked() error {
 	files, err := r.listDBFiles()
 	if err != nil {
 		return err
 	}
-	// Keep retainCount most recent files (the active one is always latest).
+	// Keep retainCount most recent files. A clock rollback can make the active
+	// name older than another shard, so never delete it based on ordering alone.
 	if len(files) <= r.retainCount {
 		return nil
 	}
-	toRemove := files[:len(files)-r.retainCount]
-	for _, f := range toRemove {
-		os.Remove(f)
+	removeNeeded := len(files) - r.retainCount
+	for _, f := range files {
+		if removeNeeded == 0 {
+			break
+		}
+		if f == r.activePath {
+			continue
+		}
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("requestlog cleanup retained database: %w", err)
+		}
 		// Also clean up WAL/SHM files.
-		os.Remove(f + "-wal")
-		os.Remove(f + "-shm")
+		for _, suffix := range []string{"-wal", "-shm"} {
+			if err := os.Remove(f + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("requestlog cleanup database sidecar: %w", err)
+			}
+		}
+		removeNeeded--
 	}
 	return nil
 }
@@ -546,7 +591,9 @@ func (r *Repo) listDBFiles() ([]string, error) {
 }
 
 func (r *Repo) openReadOnly(path string) (*sql.DB, error) {
-	dsn := path + "?mode=ro"
+	// Readers can contend while SQLite opens or recovers the WAL shared-memory
+	// index, even when no application writer holds a transaction.
+	dsn := path + "?mode=ro&_pragma=busy_timeout(5000)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -658,6 +705,9 @@ func (r *Repo) queryPayload(db *sql.DB, logID string) (*PayloadRow, error) {
 	if err != nil {
 		return nil, err
 	}
+	p.ReqHeaders, p.ReqBody, p.RespHeaders, p.RespBody = proxy.SanitizeStoredRequestLogPayloads(
+		p.ReqHeaders, p.ReqBody, p.RespHeaders, p.RespBody,
+	)
 	return &p, nil
 }
 
@@ -666,8 +716,7 @@ func scanLogSummaries(rows *sql.Rows) ([]LogSummary, error) {
 	for rows.Next() {
 		s, err := scanLogSummary(rows)
 		if err != nil {
-			log.Printf("[requestlog] warning: skip malformed log row during scan: %v", err)
-			continue
+			return nil, fmt.Errorf("requestlog: malformed retained row")
 		}
 		results = append(results, s)
 	}
@@ -698,6 +747,7 @@ func scanLogSummary(s rowScanner) (LogSummary, error) {
 		return LogSummary{}, err
 	}
 	row.NetOK = netOK != 0
+	row.TargetURL, row.UpstreamErrMsg = proxy.SanitizeStoredRequestLogSummary(row.TargetURL, row.UpstreamErrMsg)
 	row.PayloadPresent = payloadPresent != 0
 	row.ReqHeadersTruncated = rht != 0
 	row.ReqBodyTruncated = rbt != 0

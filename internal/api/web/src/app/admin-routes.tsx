@@ -1,9 +1,10 @@
 import { lazy } from "react";
-import { Outlet, useRoutes, type RouteObject } from "react-router-dom";
+import { Navigate, Outlet, useRoutes, useLocation, type RouteObject } from "react-router-dom";
 import { RequireAdmin } from "../features/auth/RequireAdmin";
 import { NotFoundPage } from "../components/NotFoundPage";
 import { LegacyQualityRedirect } from "./legacy-quality-redirect";
 import { Page } from "./page";
+import { legacyTargetFor } from "../lib/paths";
 
 /**
  * The operator surface: every management page, mounted at `OPS_ROOT` (`/ops/*`)
@@ -62,6 +63,7 @@ const adminRouteObjects: RouteObject[] = [
       { path: "quality", element: <LegacyQualityRedirect /> },
       { path: "endpoints", element: <Page><EndpointsPage /></Page> },
       { path: "rules", element: <Page><RulesPage /></Page> },
+      { path: "logs", element: <Navigate to="../request-logs" replace /> },
       { path: "request-logs", element: <Page><RequestLogsPage /></Page> },
       { path: "resources", element: <Page><GeoIPPage /></Page> },
       { path: "config", element: <Page><SystemConfigPage /></Page> },
@@ -71,6 +73,7 @@ const adminRouteObjects: RouteObject[] = [
       { path: "users/:userId", element: <Page><AdminUserDetailPage /></Page> },
       { path: "plans", element: <Page><AdminPlansPage /></Page> },
       { path: "invites", element: <Page><AdminInvitesPage /></Page> },
+      { path: "redeem", element: <Navigate to="../redeem-codes" replace /> },
       { path: "redeem-codes", element: <Page><AdminRedeemCodesPage /></Page> },
       { path: "usage", element: <Page><AdminUsagePage /></Page> },
       { path: "settings", element: <Page><AdminSettingsPage /></Page> },
@@ -84,5 +87,8 @@ const adminRouteObjects: RouteObject[] = [
  * path a tenant may not use.
  */
 export function AdminRoutes() {
-  return useRoutes(adminRouteObjects) ?? <NotFoundPage />;
+  const routes = useRoutes(adminRouteObjects);
+  const { pathname, search } = useLocation();
+  const target = legacyTargetFor(pathname);
+  return target ? <Navigate to={`${target}${search}`} replace /> : routes ?? <NotFoundPage />;
 }

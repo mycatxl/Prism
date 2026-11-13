@@ -35,6 +35,7 @@ export function GeoIPPage() {
       if (!ip) throw new Error(t("请输入 IP 地址"));
       return lookupIP(ip);
     },
+    onMutate: () => setSingleResult(null),
     onSuccess: setSingleResult,
     onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
   });
@@ -73,7 +74,7 @@ export function GeoIPPage() {
 
       <div className="workspace-split">
         <WorkspaceCard eyebrow="Governance / database" title={t("GeoIP 数据库状态")} description={t("当前加载时间与下一次计划更新时间来自 GeoIP 状态接口。")}>
-          {statusQuery.isError && !statusQuery.data ? <EmptyWorkState title={t("GeoIP 状态读取失败")} detail={formatApiErrorMessage(statusQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void statusQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+          {statusQuery.isError && !statusQuery.data ? <EmptyWorkState embedded title={t("GeoIP 状态读取失败")} detail={formatApiErrorMessage(statusQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void statusQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
           {statusQuery.isLoading && !statusQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载 GeoIP 状态")}</div> : null}
           {status ? (
             <div className="workspace-stack">
@@ -83,7 +84,7 @@ export function GeoIPPage() {
                 <DetailFact label={t("下次计划更新")} value={hasNextSchedule ? formatDateTime(status.next_scheduled_update) : "-"} mono />
               </dl>
               <div className="workspace-drawer-actions">
-                <ControlButton variant="secondary" size="sm" onPress={() => void updateMutation.mutateAsync()} loading={updateMutation.isPending}>
+                <ControlButton variant="secondary" size="sm" onPress={() => updateMutation.mutate()} loading={updateMutation.isPending}>
                   <ArrowDownToLine size={14} aria-hidden className={cn(updateMutation.isPending && "animate-spin")} />
                   {t("立即更新")}
                 </ControlButton>
@@ -94,8 +95,8 @@ export function GeoIPPage() {
         </WorkspaceCard>
 
         <WorkspaceCard eyebrow="Governance / lookup" title={t("单 IP 查询")} description={t("输入 IP 后查询服务端当前 GeoIP 区域结果。")}>
-          <form className="workspace-form-stack" onSubmit={(event) => { event.preventDefault(); void lookupMutation.mutateAsync(); }}>
-            <ControlInput label={t("IP 地址")} hint={t("例如 8.8.8.8")} className="readout" value={singleIP} onChange={(event) => setSingleIP(event.target.value)} />
+          <form className="workspace-form-stack" onSubmit={(event) => { event.preventDefault(); if (!lookupMutation.isPending) lookupMutation.mutate(); }}>
+            <ControlInput label={t("IP 地址")} hint={t("例如 8.8.8.8")} className="readout" value={singleIP} disabled={lookupMutation.isPending} onChange={(event) => { setSingleIP(event.target.value); setSingleResult(null); }} />
             <div className="workspace-drawer-actions">
               <ControlButton type="submit" variant="primary" size="sm" loading={lookupMutation.isPending}><Search size={14} aria-hidden />{t("查询")}</ControlButton>
             </div>
@@ -106,7 +107,7 @@ export function GeoIPPage() {
               <DetailFact label={t("区域")} value={singleRegion} />
             </dl>
           ) : (
-            <EmptyWorkState title={t("输入 IP 执行查询")} detail={t("查询结果会在这里显示，不会生成未返回的区域信息。")} />
+            <EmptyWorkState embedded title={t("输入 IP 执行查询")} detail={t("查询结果会在这里显示，不会生成未返回的区域信息。")} />
           )}
         </WorkspaceCard>
       </div>

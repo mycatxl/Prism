@@ -4,13 +4,16 @@ package intel
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"net/netip"
 	"strings"
 	"sync"
+	"time"
 
 	"prism/internal/intel/assess"
 	"prism/internal/intel/store"
+	"prism/internal/quality"
 )
 
 // Band codes used by AssessmentLite.
@@ -212,25 +215,28 @@ func nameOf(names []string, code uint8) string {
 // can render a node's assessment without a database read on the request
 // path.
 type AssessmentLite struct {
-	Score      int8
-	Band       uint8
-	Verdict    uint8
-	IPType     uint8
-	Confidence uint8
-	State      uint8
-	Native     int8
-	Flags      uint16
-	ASN        int32
-	ASOrg      string
-	Country    string
-	City       string
-	ValidUntil int64
-	ComputedAt int64
+	ReasonsJSON     string
+	FactsJSON       string
+	NextFieldExpiry int64
+	Score           int8
+	Band            uint8
+	Verdict         uint8
+	IPType          uint8
+	Confidence      uint8
+	State           uint8
+	Native          int8
+	Flags           uint16
+	ASN             int32
+	ASOrg           string
+	Country         string
+	City            string
+	ValidUntil      int64
+	ComputedAt      int64
 }
 
 // ScoreValue returns the purity score pointer (nil when unknown).
 func (a AssessmentLite) ScoreValue() *int {
-	if a.Score < 0 {
+	if a.Score < 0 || a.Score > 100 {
 		return nil
 	}
 	v := int(a.Score)
@@ -268,10 +274,14 @@ func (a AssessmentLite) Valid(nowNs int64) bool {
 }
 
 // AssessmentLiteFromRow converts a stored assessment into its projection.
-func AssessmentLiteFromRow(row store.Assessment) AssessmentLite {
+func AssessmentLiteFromRow(row store.Assessment, configured ...quality.Bands) AssessmentLite {
+	bands := quality.DefaultBands()
+	if len(configured) > 0 {
+		bands = configured[0]
+	}
 	lite := AssessmentLite{
 		Score:      -1,
-		Band:       BandCode(row.PurityBand),
+		Band:       BandUnknown,
 		Verdict:    VerdictCode(row.Verdict),
 		IPType:     IPTypeCode(row.IPType),
 		Confidence: ConfidenceCode(row.Confidence),
@@ -284,12 +294,31 @@ func AssessmentLiteFromRow(row store.Assessment) AssessmentLite {
 		ValidUntil: row.ValidUntilNs,
 		ComputedAt: row.ComputedAtNs,
 	}
-	if score := row.ScoreOrNil(); score != nil {
-		if *score > 127 {
-			lite.Score = 127
-		} else {
-			lite.Score = int8(*score)
+	lite.ReasonsJSON = row.ReasonsJSON
+	var detail componentsBlob
+	_ = json.Unmarshal([]byte(row.ComponentsJSON), &detail)
+	lite.FactsJSON = marshalJSON(detail.Facts)
+	for _, f := range detail.Facts {
+		if f.ValidUntil != nil && (lite.NextFieldExpiry == 0 || f.ValidUntil.UnixNano() < lite.NextFieldExpiry) {
+			lite.NextFieldExpiry = f.ValidUntil.UnixNano()
 		}
+		for _, o := range f.Observations {
+			if lite.NextFieldExpiry == 0 || o.ValidUntil.UnixNano() < lite.NextFieldExpiry {
+				lite.NextFieldExpiry = o.ValidUntil.UnixNano()
+			}
+		}
+	}
+	if score := row.ScoreOrNil(); row.Profile == assess.Profile && row.State == "valid" && score != nil && *score >= 0 && *score <= 100 {
+		lite.Score = int8(*score)
+	}
+	if row.Profile != assess.Profile {
+		lite.State = StatePending
+		lite.ReasonsJSON = marshalJSON([]string{"ASSESSMENT_PROFILE_OBSOLETE"})
+		lite.FactsJSON = marshalJSON(map[string]quality.Fact{"purity": quality.PurityDiagnostic("ASSESSMENT_PROFILE_OBSOLETE")})
+	}
+	lite.Band = BandCode(bands.Name(lite.ScoreValue()))
+	if lite.ScoreValue() == nil && lite.Verdict == VerdictFavorable {
+		lite.Verdict = VerdictPending
 	}
 	if native := row.NativeOrNil(); native != nil {
 		lite.Native = int8(*native)
@@ -298,6 +327,102 @@ func AssessmentLiteFromRow(row store.Assessment) AssessmentLite {
 		lite.ASN = int32(*asn)
 	}
 	return lite
+}
+
+// FactValues returns a detached map: callers cannot mutate the routing snapshot.
+func (a AssessmentLite) FactValues() map[string]quality.Fact {
+	out := map[string]quality.Fact{}
+	_ = json.Unmarshal([]byte(a.FactsJSON), &out)
+	if out == nil {
+		out = map[string]quality.Fact{}
+	}
+	return out
+}
+
+// Current removes expired values at the read boundary, before the next sweep.
+// Each network field has its own TTL; an auxiliary TTL never expires purity.
+func (a AssessmentLite) Current(now time.Time) AssessmentLite {
+	if a.Valid(now.UnixNano()) && (a.NextFieldExpiry == 0 || a.NextFieldExpiry > now.UnixNano()) {
+		return a
+	}
+	facts := a.FactValues()
+	auxiliaryExpired := false
+	for key, f := range facts {
+		if strings.HasPrefix(key, "flag:") {
+			var current []quality.FieldObservation
+			for _, o := range f.Observations {
+				if now.Before(o.ValidUntil) {
+					current = append(current, o)
+				} else {
+					auxiliaryExpired = true
+				}
+			}
+			if len(current) > 0 {
+				f.Observations = current
+				first := current[0]
+				f.Provider = first.Provider
+				f.ObservedAt = &first.ObservedAt
+				f.ValidUntil = &first.ValidUntil
+				facts[key] = f
+				continue
+			}
+			a.Flags &^= FlagFromName(strings.TrimPrefix(key, "flag:"))
+		}
+		expired := f.ValidUntil != nil && !now.Before(*f.ValidUntil)
+		for _, o := range f.Observations {
+			expired = expired || !now.Before(o.ValidUntil)
+		}
+		if !expired || (f.State != "known" && f.State != "conflicting") {
+			continue
+		}
+		f.State = "stale"
+		f.Cause = "EVIDENCE_EXPIRED"
+		f.Explanation = "字段证据已过期。"
+		f.Action = "刷新该字段来源后重新评估。"
+		facts[key] = f
+		switch key {
+		case "network_type":
+			auxiliaryExpired = true
+			a.IPType = IPTypeUnknown
+		case "asn":
+			a.ASN = 0
+		case "as_org":
+			a.ASOrg = ""
+		case "country":
+			a.Country = ""
+		case "city":
+			a.City = ""
+		case "native":
+			a.Native = -1
+		}
+	}
+	if auxiliaryExpired && a.ScoreValue() != nil {
+		a.Verdict = VerdictIncomplete
+		if a.Flags&(FlagCompromised|FlagTor) != 0 || a.Score < 60 {
+			a.Verdict = VerdictHighRisk
+		} else if a.IPType == IPTypeConflicting {
+			a.Verdict = VerdictConflicting
+		} else if a.Flags&(FlagProxy|FlagVPN|FlagScraper|FlagAnonymous|FlagAbuse|FlagDNSBL|FlagAttackHistory) != 0 {
+			a.Verdict = VerdictReview
+		}
+	}
+	if !a.Valid(now.UnixNano()) {
+		a.Score = -1
+		a.Band = BandUnknown
+		a.State = StatePending
+		f := quality.PurityDiagnostic("EVIDENCE_EXPIRED")
+		old := facts["purity"]
+		f.ObservedAt = old.ObservedAt
+		f.ValidUntil = old.ValidUntil
+		f.FraudScore = old.FraudScore
+		facts["purity"] = f
+		a.ReasonsJSON = marshalJSON(append(a.ReasonValues(), "EVIDENCE_EXPIRED"))
+	}
+	if a.ScoreValue() == nil && a.Verdict == VerdictFavorable {
+		a.Verdict = VerdictPending
+	}
+	a.FactsJSON = marshalJSON(facts)
+	return a
 }
 
 // OutcomeLite is the projection of one node_checks row.
@@ -353,16 +478,22 @@ type SnapshotSource interface {
 // Snapshot is the in-memory projection of ip_assessment and node_checks. It is
 // only a cache: every entry can be rebuilt from intel.db on restart.
 type Snapshot struct {
-	mu          sync.RWMutex
-	assessments map[netip.Addr]AssessmentLite
-	checks      map[string]map[string]OutcomeLite
+	// Installed before publication; reads the current atomic runtime settings.
+	Bands            func() quality.Bands
+	deletedNodes     map[string]bool
+	PrivacyIPDeleted func(string) bool // publication-only DB check; never used by routing
+	mu               sync.RWMutex
+	assessments      map[netip.Addr]AssessmentLite
+	checks           map[string]map[string]OutcomeLite
+	measurements     map[string]store.MeasurementStatus
 }
 
 // NewSnapshot returns an empty projection.
 func NewSnapshot() *Snapshot {
 	return &Snapshot{
-		assessments: make(map[netip.Addr]AssessmentLite),
-		checks:      make(map[string]map[string]OutcomeLite),
+		assessments:  make(map[netip.Addr]AssessmentLite),
+		checks:       make(map[string]map[string]OutcomeLite),
+		measurements: make(map[string]store.MeasurementStatus),
 	}
 }
 
@@ -379,6 +510,15 @@ func (s *Snapshot) LoadFrom(ctx context.Context, src SnapshotSource) error {
 	checks, err := src.ListAllNodeChecks(ctx)
 	if err != nil {
 		return err
+	}
+	measurements := map[string]store.MeasurementStatus{}
+	if source, ok := src.(interface {
+		ListAllMeasurementStates(context.Context) (map[string]store.MeasurementStatus, error)
+	}); ok {
+		measurements, err = source.ListAllMeasurementStates(ctx)
+		if err != nil {
+			return err
+		}
 	}
 
 	nextAssessments := make(map[netip.Addr]AssessmentLite, len(assessments))
@@ -406,6 +546,7 @@ func (s *Snapshot) LoadFrom(ctx context.Context, src SnapshotSource) error {
 	s.mu.Lock()
 	s.assessments = nextAssessments
 	s.checks = nextChecks
+	s.measurements = measurements
 	s.mu.Unlock()
 	return nil
 }
@@ -416,6 +557,10 @@ func (s *Snapshot) SetAssessment(ip netip.Addr, lite AssessmentLite) {
 		return
 	}
 	s.mu.Lock()
+	if s.PrivacyIPDeleted != nil && s.PrivacyIPDeleted(ip.String()) {
+		s.mu.Unlock()
+		return
+	}
 	s.assessments[ip.Unmap()] = lite
 	s.mu.Unlock()
 }
@@ -435,6 +580,10 @@ func (s *Snapshot) SetCheck(nodeHash, checkID string, lite OutcomeLite) {
 		return
 	}
 	s.mu.Lock()
+	if s.deletedNodes[nodeHash] {
+		s.mu.Unlock()
+		return
+	}
 	entry, ok := s.checks[nodeHash]
 	if !ok {
 		entry = make(map[string]OutcomeLite)
@@ -462,6 +611,14 @@ func (s *Snapshot) Assessment(ip netip.Addr) (AssessmentLite, bool) {
 	s.mu.RLock()
 	lite, ok := s.assessments[ip.Unmap()]
 	s.mu.RUnlock()
+	bands := quality.DefaultBands()
+	if s.Bands != nil {
+		bands = s.Bands()
+	}
+	lite.Band = BandCode(bands.Name(lite.ScoreValue()))
+	if lite.ScoreValue() == nil && lite.Verdict == VerdictFavorable {
+		lite.Verdict = VerdictPending
+	}
 	return lite, ok
 }
 
@@ -517,7 +674,14 @@ func (s *Snapshot) Clear() {
 	s.mu.Lock()
 	s.assessments = make(map[netip.Addr]AssessmentLite)
 	s.checks = make(map[string]map[string]OutcomeLite)
+	s.measurements = make(map[string]store.MeasurementStatus)
 	s.mu.Unlock()
 }
 
 var _ SnapshotReader = (*Snapshot)(nil)
+
+func (a AssessmentLite) ReasonValues() []string {
+	out := []string{}
+	_ = json.Unmarshal([]byte(a.ReasonsJSON), &out)
+	return out
+}

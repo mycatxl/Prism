@@ -175,11 +175,11 @@ export function AuditLogsPage() {
       actions={<ControlButton variant="secondary" size="sm" onPress={() => void entriesQuery.refetch()} loading={entriesQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>}
     >
       <WorkspaceCard headerless eyebrow="Governance / write evidence" title={t("写操作时间线")} meta={hasData ? t("第 {{page}} 页", { page: settledPageIndex + 1 }) : t("未加载")} description={t("仅记录已成功应用的管理写操作；凭据本身不会进入审计详情。") }>
-        {entriesQuery.isError && !hasData ? <EmptyWorkState title={t("审计日志读取失败")} detail={formatApiErrorMessage(entriesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void entriesQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+        {entriesQuery.isError && !hasData ? <EmptyWorkState embedded title={t("审计日志读取失败")} detail={formatApiErrorMessage(entriesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void entriesQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
         {isInitialLoading ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载审计日志")}</div> : null}
         {isPageTransitioning ? <p className="workspace-muted"><span className="workspace-spinner" aria-hidden />{t("更新中...")}</p> : null}
         {hasStaleError ? <div className="workspace-notice workspace-notice--warn" role="status"><span>{t("数据可能已过期")} · {formatApiErrorMessage(entriesQuery.error, t)}</span><ControlButton variant="ghost" size="sm" onPress={() => void entriesQuery.refetch()}>{t("重试")}</ControlButton></div> : null}
-        {ready && !isPageTransitioning && !entriesQuery.isError && visibleEntries.length === 0 ? <EmptyWorkState title={t("暂无审计记录")} detail={t("成功的管理写操作会在这里按时间倒序显示。")} /> : null}
+        {ready && !isPageTransitioning && !entriesQuery.isError && visibleEntries.length === 0 ? <EmptyWorkState embedded title={t("暂无审计记录")} detail={t("成功的管理写操作会在这里按时间倒序显示。")} /> : null}
         {ready && visibleEntries.length ? <ObjectList>{visibleEntries.map((entry) => <AuditEntryRow key={entry.id} entry={entry} t={t} />)}</ObjectList> : null}
         <AuditPagination pageIndex={settledPageIndex} hasMore={hasMore} pageSize={pageSize} disabled={isPageTransitioning || entriesQuery.isError} onPageSizeChange={(next) => { setPageSize(next); resetPagination(); }} onPrev={movePrev} onNext={moveNext} />
       </WorkspaceCard>

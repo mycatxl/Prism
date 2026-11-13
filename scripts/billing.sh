@@ -23,6 +23,7 @@ set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="${PRISM_BIN:-$ROOT_DIR/bin/prism}"
+source "$ROOT_DIR/scripts/test-env.sh"
 
 PASS=0
 FAIL=0
@@ -93,6 +94,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$WORK_DIR/state" "$WORK_DIR/cache" "$WORK_DIR/logs"
+cd "$WORK_DIR" || exit 1
 
 # --- fake TronGrid -----------------------------------------------------------
 # The rows live in a file the walk rewrites, so nothing has to travel through a
@@ -114,6 +116,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path == "/self":
+            body = b"192.0.2.10"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         with open(LOG, "a", encoding="utf-8") as handle:
             handle.write(self.path + "\n")
         try:
@@ -164,6 +173,7 @@ export PRISM_TRONGRID_ENDPOINT="http://127.0.0.1:$CHAIN_PORT"
 export PRISM_DENY_PRIVATE_NODES=false
 export PRISM_DIRECT_DENY_PRIVATE=false
 
+python3 "$ROOT_DIR/scripts/seed-test-privacy.py" "$WORK_DIR/state/state.db" "http://127.0.0.1:$CHAIN_PORT" || exit 1
 "$BIN" run > "$WORK_DIR/server.log" 2>&1 &
 SRV_PID=$!
 

@@ -19,8 +19,9 @@ import (
 // StateRepo wraps state.db and provides transactional CRUD for strong-persist data.
 // All writes are serialized by an internal mutex.
 type StateRepo struct {
-	db *sql.DB
-	mu sync.Mutex
+	privacyEnabled bool
+	db             *sql.DB
+	mu             sync.Mutex
 }
 
 // newStateRepo creates a StateRepo for the given state.db connection.
@@ -398,6 +399,13 @@ func (r *StateRepo) UpsertSubscription(s model.Subscription) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if s.Content != "" {
+		clean, err := r.scrubSubscription(s.ID, s.Content)
+		if err != nil {
+			return err
+		}
+		s.Content = clean
+	}
 	_, err := r.db.Exec(`
 			INSERT INTO subscriptions (id, name, source_type, url, content, update_interval_ns, enabled,
 			                           ephemeral, incremental_alive_nodes, ephemeral_node_evict_delay_ns,

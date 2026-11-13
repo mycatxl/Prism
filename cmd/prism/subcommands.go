@@ -55,6 +55,10 @@ func runCLI(args []string) error {
 		return run()
 	case "init":
 		return runInitCommand(rest, os.Stdout, os.Stderr)
+	case "recover-admin":
+		return runRecoverAdminCommand(rest, os.Stdin, os.Stdout, os.Stderr)
+	case "usage-recovery":
+		return runUsageRecoveryCommand(rest, os.Stdout, os.Stderr)
 	case "version":
 		return runVersionCommand(rest, os.Stdout, os.Stderr)
 	case "check-config":
@@ -82,6 +86,12 @@ Usage:
   prism init [--dir DIR] [--force] [--admin-username NAME] [--admin-password PW]
                                   Create the databases, the key pepper and the
                                   built-in administrator; writes DIR/.env (0600)
+  prism recover-admin --state-dir DIR --cache-dir DIR --username NAME
+          --password-stdin --reason INCIDENT --confirm-offline
+                                  Create an audited recovery administrator offline
+  prism usage-recovery --state-dir DIR --cache-dir DIR
+          [--reservation ID --actual-bytes N --reason EVIDENCE --confirm-offline]
+                                  List or reconcile unresolved byte liabilities offline
   prism version                   Print version, commit, build time and build tags
   prism check-config              Validate and print the effective configuration
   prism backup --out DIR          Online backup of state.db, cache.db and intel.db
@@ -467,6 +477,14 @@ func printEnvConfig(w io.Writer, cfg *config.EnvConfig) {
 		{name: "PRISM_USDT_CONTRACT", value: cfg.USDTContract},
 		{name: "PRISM_TRONGRID_ENDPOINT", value: cfg.TronGridEndpoint},
 		{name: "PRISM_TRONGRID_API_KEY", value: maskSecret(cfg.TronGridAPIKey)},
+		{name: "# --- Linux.do Credit deposits ---"},
+		{name: "PRISM_LDC_PID", value: formatStringValue(cfg.LDCPID)},
+		{name: "PRISM_LDC_CLIENT_ID", value: formatStringValue(cfg.LDCPID)},
+		{name: "PRISM_LDC_KEY", value: maskSecret(cfg.LDCKey)},
+		{name: "PRISM_LDC_CLIENT_SECRET", value: maskSecret(cfg.LDCKey)},
+		{name: "PRISM_LDC_GATEWAY_URL", value: formatStringValue(cfg.LDCGatewayURL)},
+		{name: "PRISM_LDC_NOTIFY_URL", value: formatStringValue(cfg.LDCNotifyURL)},
+		{name: "PRISM_LDC_RETURN_URL", value: formatStringValue(cfg.LDCReturnURL)},
 		{name: "# --- usage alerts ---"},
 		{name: "PRISM_ALERT_USAGE_RATIO", value: strconv.FormatFloat(cfg.AlertUsageRatio, 'g', -1, 64)},
 		{name: "PRISM_ALERT_WINDOW_MINUTES", value: strconv.Itoa(cfg.AlertWindowMinutes)},

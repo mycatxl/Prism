@@ -2,8 +2,10 @@ package service
 
 import (
 	"encoding/json"
+	"prism/internal/intel/assess"
 	"strings"
 	"testing"
+	"time"
 
 	"prism/internal/intel"
 	"prism/internal/intel/store"
@@ -40,7 +42,7 @@ func TestQualityAssessmentReasonsIsAlwaysAList(t *testing.T) {
 		},
 		{
 			name:  "row projection without stored reasons",
-			value: qualityAssessmentFromRow(store.Assessment{}),
+			value: qualityAssessmentFromRow(store.Assessment{Profile: assess.Profile, ValidUntilNs: time.Now().Add(time.Hour).UnixNano()}),
 		},
 	}
 
@@ -60,7 +62,7 @@ func TestQualityAssessmentReasonsIsAlwaysAList(t *testing.T) {
 // TestQualityAssessmentPreservesStoredReasons is the other half of the contract:
 // the default above must not swallow reasons that really were stored.
 func TestQualityAssessmentPreservesStoredReasons(t *testing.T) {
-	row := store.Assessment{ReasonsJSON: `["RECENT_ABUSE","COMPROMISED"]`}
+	row := store.Assessment{Profile: assess.Profile, ValidUntilNs: time.Now().Add(time.Hour).UnixNano(), ReasonsJSON: `["RECENT_ABUSE","COMPROMISED"]`}
 	assessment := qualityAssessmentFromRow(row)
 
 	if len(assessment.Reasons) != 2 {

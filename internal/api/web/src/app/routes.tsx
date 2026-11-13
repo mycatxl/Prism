@@ -13,12 +13,13 @@ import { Page } from "./page";
 const AccountSecurityPage = lazy(() => import("../features/auth/AccountSecurityPage").then((m) => ({ default: m.AccountSecurityPage })));
 const LoginPage = lazy(() => import("../features/auth/LoginPage").then((m) => ({ default: m.LoginPage })));
 const RegisterPage = lazy(() => import("../features/auth/RegisterPage").then((m) => ({ default: m.RegisterPage })));
-const MeGuidePage = lazy(() => import("../features/me/GuidePage").then((m) => ({ default: m.GuidePage })));
 const MeKeysPage = lazy(() => import("../features/me/KeysPage").then((m) => ({ default: m.KeysPage })));
-const MeLeasesPage = lazy(() => import("../features/me/LeasesPage").then((m) => ({ default: m.LeasesPage })));
 const MeDepositPage = lazy(() => import("../features/me/DepositPage").then((m) => ({ default: m.DepositPage })));
 const MeOverviewPage = lazy(() => import("../features/me/OverviewPage").then((m) => ({ default: m.OverviewPage })));
 const MePlansPage = lazy(() => import("../features/me/PlansPage").then((m) => ({ default: m.PlansPage })));
+const MeGuidePage = lazy(() => import("../features/me/GuidePage").then((m) => ({ default: m.GuidePage })));
+const MeLeasesPage = lazy(() => import("../features/me/LeasesPage").then((m) => ({ default: m.LeasesPage })));
+const MeUsagePage = lazy(() => import("../features/me/UsagePage").then((m) => ({ default: m.UsagePage })));
 
 /** Landing route: the workbench for operators, the self-service surface for a tenant session. */
 function HomeRedirect() {
@@ -109,10 +110,11 @@ export function AppRoutes() {
         <Route path="/" element={<HomeRedirect />} />
         <Route path={mePaths.overview} element={<Page><MeOverviewPage /></Page>} />
         <Route path={mePaths.keys} element={<Page><MeKeysPage /></Page>} />
-        <Route path={mePaths.guide} element={<Page><MeGuidePage /></Page>} />
+        <Route path={mePaths.usage} element={<Page><MeUsagePage /></Page>} />
         <Route path={mePaths.plans} element={<Page><MePlansPage /></Page>} />
-        <Route path={mePaths.leases} element={<Page><MeLeasesPage /></Page>} />
         <Route path={mePaths.deposit} element={<Page><MeDepositPage /></Page>} />
+        <Route path={mePaths.guide} element={<Page><MeGuidePage /></Page>} />
+        <Route path={mePaths.leases} element={<Page><MeLeasesPage /></Page>} />
         <Route path={ACCOUNT} element={<Page><AccountSecurityPage /></Page>} />
         <Route path={`${OPS_ROOT}/*`} element={<AdminSurface />} />
         <Route path="*" element={<FallbackRoute />} />

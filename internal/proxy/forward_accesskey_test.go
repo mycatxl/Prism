@@ -15,10 +15,9 @@ func basicAuthRaw(raw string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(raw))
 }
 
-// The transitional contract: during P2 the data plane accepts both an access
-// key and the global proxy token, and each entry point must agree. These tests
-// pin that agreement for the forward proxy; the SOCKS5 and reverse cases follow
-// the same table in their own files.
+// The data plane accepts only verified AccessKeys. These tests pin that
+// contract for the forward proxy; the SOCKS5 and reverse cases follow the same
+// negative coverage in their own files.
 
 func TestForwardProxy_AcceptsAnAccessKey(t *testing.T) {
 	fx := newKeyFixture(t)
@@ -69,9 +68,7 @@ func TestForwardProxy_AcceptsAnAccessKeyWithoutAnIdentity(t *testing.T) {
 	}
 }
 
-// The regression that matters most for P2: a deployment that has not issued any
-// key yet must keep working exactly as before.
-func TestForwardProxy_StillAcceptsTheGlobalToken(t *testing.T) {
+func TestForwardProxy_RejectsTheGlobalToken(t *testing.T) {
 	fx := newKeyFixture(t)
 	fp := &ForwardProxy{
 		token:      "global-token",
@@ -83,14 +80,11 @@ func TestForwardProxy_StillAcceptsTheGlobalToken(t *testing.T) {
 	req.Header.Set("Proxy-Authorization", basicAuth("plat.acct", "global-token"))
 
 	identity, err := fp.authenticate(req)
-	if err != nil {
-		t.Fatalf("the global token was refused: %v", err)
-	}
 	if identity.Key != nil {
-		t.Fatal("the global-token path must not carry a key")
+		t.Fatal("a rejected global token returned a key")
 	}
-	if identity.PlatformName != "plat" || identity.Account != "acct" {
-		t.Fatalf("got plat=%q acct=%q", identity.PlatformName, identity.Account)
+	if err != ErrAuthFailed {
+		t.Fatalf("the global token produced %v, want ErrAuthFailed", err)
 	}
 }
 
@@ -122,6 +116,21 @@ func TestForwardProxy_RejectsARevokedKeyRatherThanFallingBack(t *testing.T) {
 	}
 }
 
+func TestForwardProxy_RejectsAKeyShapedCredentialWithoutAVerifier(t *testing.T) {
+	fx := newKeyFixture(t)
+	fp := &ForwardProxy{
+		token:      fx.credential,
+		events:     NoOpEventEmitter{},
+		accessKeys: nil,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	req.Header.Set("Proxy-Authorization", basicAuth("plat.acct", fx.credential))
+	if _, err := fp.authenticate(req); err != ErrAuthFailed {
+		t.Fatalf("a key-shaped credential without a verifier produced %v, want ErrAuthFailed", err)
+	}
+}
+
 func TestForwardProxy_RejectsBothWhenNeitherMatches(t *testing.T) {
 	fx := newKeyFixture(t)
 	fp := &ForwardProxy{
@@ -150,8 +159,8 @@ func TestForwardProxy_RejectsBothWhenNeitherMatches(t *testing.T) {
 	}
 }
 
-// With authentication disabled the credential may omit the identity, and a key
-// must still be recognized in either shape.
+// A valid AccessKey remains required even when the endpoint policy does not
+// require an identity prefix.
 func TestForwardProxy_AcceptsAKeyWhenAuthenticationIsDisabled(t *testing.T) {
 	fx := newKeyFixture(t)
 	fp := &ForwardProxy{

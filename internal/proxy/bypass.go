@@ -43,7 +43,7 @@ func (m *TargetBypassMatcher) ShouldBypass(target string) bool {
 	if host == "" {
 		return false
 	}
-	host = strings.ToLower(host)
+	host = normalizeBypassHostname(host)
 	addr, hasAddr := parseAddrForBypass(host)
 	for _, rule := range m.rules {
 		switch {
@@ -80,7 +80,7 @@ func compileTargetBypassRule(raw string) (targetBypassRule, bool) {
 		return targetBypassRule{cidr: prefix}, true
 	}
 
-	pattern = strings.ToLower(targetHostForBypass(pattern))
+	pattern = normalizeBypassHostname(targetHostForBypass(pattern))
 	if pattern == "" {
 		return targetBypassRule{}, false
 	}
@@ -88,6 +88,16 @@ func compileTargetBypassRule(raw string) (targetBypassRule, bool) {
 		return targetBypassRule{glob: compileBypassGlob(pattern)}, true
 	}
 	return targetBypassRule{exact: pattern}, true
+}
+
+// normalizeBypassHostname gives DNS names their canonical comparison form.
+// A trailing root label is equivalent on the wire, but an exact or glob rule
+// must not be bypassed merely by spelling "internal.example.com." in a request.
+// IP literals are unaffected except for the harmless removal of that label.
+func normalizeBypassHostname(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	host = strings.TrimRight(host, ".")
+	return host
 }
 
 func compileBypassGlob(pattern string) *regexp.Regexp {

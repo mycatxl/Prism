@@ -63,15 +63,14 @@ var (
 		PrismError: "ACCOUNT_REJECTED",
 		Message:    "Account extraction failed and platform rejects unmatched requests",
 	}
-	// ErrQuotaExceeded is returned when the key is valid but has used up its
-	// allowance, or is otherwise not in a state to serve requests (disabled,
-	// expired, or over its concurrency limit). 429 rather than 403: the
-	// credential is fine, and the client's correct response is to back off
-	// rather than to stop presenting it.
-	//
-	// The message stays general on purpose. Saying which limit was hit would
-	// tell a caller about an account they may not own.
-	ErrQuotaExceeded = &ProxyError{
+	// Traffic is a purchased allowance; retrying without topping up cannot help.
+	ErrAccountingUnavailable = &ProxyError{HTTPCode: http.StatusServiceUnavailable, PrismError: "ACCOUNTING_UNAVAILABLE", Message: "Usage accounting requires reconciliation"}
+	ErrQuotaExceeded         = &ProxyError{
+		HTTPCode:   http.StatusPaymentRequired,
+		PrismError: "QUOTA_EXCEEDED",
+		Message:    "Traffic allowance exhausted",
+	}
+	ErrCapacityExceeded = &ProxyError{
 		HTTPCode:   http.StatusTooManyRequests,
 		PrismError: "QUOTA_EXCEEDED",
 		Message:    "Access key is not allowed to make more requests",
@@ -123,6 +122,9 @@ var (
 // upstream Resin spelling with the same value, so Resin clients that read
 // X-Resin-Error keep working.
 func writeProxyError(w http.ResponseWriter, pe *ProxyError) {
+	// Refusals may precede any body read. Do not let net/http drain an
+	// unfinished upload before delivering the error and releasing the socket.
+	w.Header().Set("Connection", "close")
 	if pe.HTTPCode == http.StatusProxyAuthRequired {
 		w.Header().Set("Proxy-Authenticate", `Basic realm="Prism"`)
 	}

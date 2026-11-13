@@ -4,7 +4,7 @@ import { ControlButton, ControlTable, ControlTableBody, ControlTableCell, Contro
 import { Badge } from "../../../components/ui/Badge";
 import { useI18n } from "../../../i18n";
 import { formatDateTime } from "../../../lib/time";
-import { confidenceLabels, flagLabels, stateLabels } from "../quality/presentation";
+import { assessmentReasons, confidenceLabels, flagLabels, stateLabels } from "../quality/presentation";
 import { purityBands, typeLabels, verdictLabels } from "../quality/presentation";
 import type { NodeSummary } from "../types";
 import { protocolLabel } from "./nodeMeta";
@@ -35,8 +35,8 @@ export function NodeAttributesPanel({
   const { t } = useI18n();
   const intel = node.intel ?? null;
   const score = typeof intel?.purity_score === "number" ? intel.purity_score : null;
-  const band = score === null ? undefined : purityBands.find((entry) => score >= entry.min && score <= entry.max);
-  const ipv4 = intelDetail?.egress.ipv4 || node.egress_ip || "";
+  const band = score === null ? undefined : purityBands.find((entry) => entry.id === intel?.purity_band);
+  const ipv4 = intelDetail?.egress.ipv4 || intel?.egress_ipv4 || (node.egress_ip?.includes(":") ? "" : node.egress_ip) || "";
 
   const copyButton = (value: string, label: string) => (
     <ControlButton
@@ -51,6 +51,7 @@ export function NodeAttributesPanel({
   );
 
   const rows: AttributeRow[] = [
+ ...(["proxy", "vpn", "tor", "hosting", "compromised", "scraper", "anonymous"] as const).filter(key => intel?.signals?.[key] != null).map(key => ({label:key.toUpperCase(),value:intel?.signals?.[key] == null ? t("未知") : t(intel.signals[key] ? "是" : "否")})),
     {
       label: t("节点哈希"),
       value: (
@@ -62,16 +63,11 @@ export function NodeAttributesPanel({
     },
     { label: t("连接协议"), value: protocolLabel(node.protocol) || "--" },
     {
-      label: t("订阅来源"),
+      label: t("节点标签"),
       value:
         node.tags.length > 0 ? (
           <span className="flex flex-col gap-0.5">
-            {node.tags.map((tag) => (
-              <span key={tag.subscription_id + tag.tag}>
-                {tag.subscription_name}
-                <span className="text-ink-faint"> · {tag.tag}</span>
-              </span>
-            ))}
+            {[...new Set(node.tags.map(({ tag }) => tag.trim()).filter(Boolean))].map((tag) => <span key={tag}>{tag}</span>)}
           </span>
         ) : (
           "--"
@@ -98,7 +94,7 @@ export function NodeAttributesPanel({
     { label: t("运营组织"), value: intel?.as_org || "--" },
     {
       label: t("IP 类型"),
-      value: intel?.ip_type ? t((typeLabels as Record<string, string>)[intel.ip_type] || intel.ip_type) : "--",
+      value: intel?.ip_type && intel.ip_type !== "unknown" ? t((typeLabels as Record<string, string>)[intel.ip_type] || intel.ip_type) : "--",
     },
     {
       label: t("原生 IP"),
@@ -114,6 +110,8 @@ export function NodeAttributesPanel({
       label: t("置信度"),
       value: intel?.confidence ? t(confidenceLabels[intel.confidence] || intel.confidence) : "--",
     },
+    { label: t("检测任务"), value: intel?.measurement_state === "measured_failed" ? t("检测失败（已结束）") : t(({ never_scheduled: "尚未安排检测", complete: "检测已结束", queued: "排队中", running: "检测中", skipped: "已跳过", canceled: "已取消" } as Record<string, string>)[intel?.measurement_state ?? "never_scheduled"] ?? "未知") },
+    { label: t("风险原因"), value: intel?.reasons?.map((reason) => assessmentReasons[reason]).filter(Boolean).map((reason) => t(reason)).join(" · ") || "--" },
     { label: t("评估状态"), value: intel ? t(STATE_LABELS[intel.state] || intel.state) : t("未评估") },
     {
       label: t("评估时间"),
@@ -149,7 +147,7 @@ export function NodeAttributesPanel({
             <ControlTableColumn className="sr-only">{t("详情")}</ControlTableColumn>
           </ControlTableHead>
           <ControlTableBody>
-            {rows.map((row) => (
+            {rows.filter(row => row.value !== "--" && row.value !== t("未知")).map((row) => (
               <ControlTableRow key={row.label}>
                 <ControlTableCell className="w-32 whitespace-nowrap text-left align-top">
                   <span className="label">{row.label}</span>

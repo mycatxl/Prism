@@ -40,6 +40,19 @@ func TestTOTPCode_MatchesTheRFC6238Vectors(t *testing.T) {
 	}
 }
 
+func TestValidateTOTPEnrollmentSecret_RequiresGeneratedStrength(t *testing.T) {
+	secret, err := GenerateTOTPSecret()
+	if err != nil {
+		t.Fatalf("GenerateTOTPSecret: %v", err)
+	}
+	if err := ValidateTOTPEnrollmentSecret(secret); err != nil {
+		t.Fatalf("generated secret was rejected: %v", err)
+	}
+	if err := ValidateTOTPEnrollmentSecret(base32NoPadding.EncodeToString([]byte{1})); err == nil {
+		t.Fatal("a one-byte enrollment secret was accepted")
+	}
+}
+
 // The code changes when the step rolls over and not before.
 func TestTOTPCode_IsStableWithinAStep(t *testing.T) {
 	secret, err := GenerateTOTPSecret()
@@ -240,7 +253,7 @@ func TestGenerateTOTPSecret_ProducesTheExpectedShape(t *testing.T) {
 
 // The secret is stored sealed, and only the pepper that sealed it can open it.
 func TestTOTPSecretEncryptionRoundTrip(t *testing.T) {
-	pepper, err := NewPepper([]byte("a-test-pepper-of-at-least-16-bytes"))
+	pepper, err := NewPepper([]byte(strings.Repeat("p", pepperLength)))
 	if err != nil {
 		t.Fatalf("NewPepper: %v", err)
 	}
@@ -278,14 +291,36 @@ func TestTOTPSecretEncryptionRoundTrip(t *testing.T) {
 	}
 }
 
-// A different pepper cannot open the secret: losing the pepper means losing the
-// second factor, which is why the backup has to include it.
-func TestDecryptTOTPSecret_RefusesAnotherPepper(t *testing.T) {
-	sealer, err := NewPepper([]byte("the-pepper-that-sealed-it"))
+func TestEncryptTOTPSecretForUserRejectsCiphertextTransplant(t *testing.T) {
+	pepper, err := NewPepper([]byte(strings.Repeat("p", pepperLength)))
 	if err != nil {
 		t.Fatalf("NewPepper: %v", err)
 	}
-	other, err := NewPepper([]byte("a-completely-different-pepper"))
+	secret, err := GenerateTOTPSecret()
+	if err != nil {
+		t.Fatalf("GenerateTOTPSecret: %v", err)
+	}
+	sealed, err := EncryptTOTPSecretForUser(pepper, "user-a", secret)
+	if err != nil {
+		t.Fatalf("EncryptTOTPSecretForUser: %v", err)
+	}
+	opened, err := DecryptTOTPSecretForUser(pepper, "user-a", sealed)
+	if err != nil || opened != secret {
+		t.Fatalf("bound round trip: opened=%q err=%v", opened, err)
+	}
+	if _, err := DecryptTOTPSecretForUser(pepper, "user-b", sealed); err == nil {
+		t.Fatal("account-bound TOTP ciphertext opened under another user")
+	}
+}
+
+// A different pepper cannot open the secret: losing the pepper means losing the
+// second factor, which is why the backup has to include it.
+func TestDecryptTOTPSecret_RefusesAnotherPepper(t *testing.T) {
+	sealer, err := NewPepper([]byte(strings.Repeat("s", pepperLength)))
+	if err != nil {
+		t.Fatalf("NewPepper: %v", err)
+	}
+	other, err := NewPepper([]byte(strings.Repeat("o", pepperLength)))
 	if err != nil {
 		t.Fatalf("NewPepper: %v", err)
 	}
@@ -302,7 +337,7 @@ func TestDecryptTOTPSecret_RefusesAnotherPepper(t *testing.T) {
 // A tampered or truncated value fails closed rather than being treated as an
 // empty secret, which would silently disable the second factor for that user.
 func TestDecryptTOTPSecret_RefusesTamperedAndTruncatedValues(t *testing.T) {
-	pepper, err := NewPepper([]byte("a-test-pepper-of-at-least-16-bytes"))
+	pepper, err := NewPepper([]byte(strings.Repeat("p", pepperLength)))
 	if err != nil {
 		t.Fatalf("NewPepper: %v", err)
 	}

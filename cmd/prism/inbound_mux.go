@@ -1,11 +1,13 @@
 package main
 
 import (
-	"crypto/subtle"
+	"bufio"
+	"errors"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
-	"runtime/debug"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -61,6 +63,7 @@ func newEndpointInboundMux(
 		}
 		if shouldRouteControlPlane(r) {
 			if r.URL != nil && r.URL.Path != "/healthz" && !endpoint.AllowManagement {
+				w.Header().Set("Connection", "close")
 				http.NotFound(w, r)
 				return
 			}
@@ -71,6 +74,16 @@ func newEndpointInboundMux(
 			if !endpoint.AllowProxy {
 				writeEndpointCapabilityDisabled(w)
 				return
+			}
+			// Token actions are another credentialed proxy entry point. Check the
+			// shared limiter before invoking the verifier, just as the forward and
+			// reverse entries do.
+			if authGuard != nil {
+				clientIP := proxy.ProxyClientIP(r)
+				if blocked, retryAfter := authGuard.Blocked(clientIP); blocked {
+					writeInboundRateLimited(w, retryAfter)
+					return
+				}
 			}
 			tokenActionHandler.ServeHTTP(w, r)
 			return
@@ -115,24 +128,87 @@ func recoverProxyPanic(name string, next http.Handler) http.Handler {
 		return http.NotFoundHandler()
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tracked := &proxyRecoveryResponseWriter{ResponseWriter: w}
 		defer func() {
 			recovered := recover()
 			if recovered == nil {
 				return
 			}
+			tracked.closeHijacked()
 			if recovered == http.ErrAbortHandler {
 				panic(recovered)
 			}
-			log.Printf("proxy: recovered a panic in the %s handler: %v\n%s", name, recovered, debug.Stack())
+			log.Printf("proxy: recovered a panic in the %s handler", name)
+			if tracked.committed {
+				// The response head or a hijacked socket is already committed. A
+				// second 502 would append a forged response to the original bytes;
+				// abort the connection instead.
+				panic(http.ErrAbortHandler)
+			}
 			writeInboundProxyFailure(w)
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(tracked, r)
 	})
+}
+
+// proxyRecoveryResponseWriter tracks commitment and hijacking without hiding
+// the interfaces the data-plane handlers rely on. Its Unwrap method also lets
+// http.ResponseController reach the underlying writer for flush and hijack.
+type proxyRecoveryResponseWriter struct {
+	http.ResponseWriter
+	committed    bool
+	hijackedConn net.Conn
+}
+
+func (w *proxyRecoveryResponseWriter) WriteHeader(statusCode int) {
+	w.committed = true
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *proxyRecoveryResponseWriter) Write(p []byte) (int, error) {
+	w.committed = true
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *proxyRecoveryResponseWriter) Unwrap() http.ResponseWriter {
+	if w == nil {
+		return nil
+	}
+	return w.ResponseWriter
+}
+
+func (w *proxyRecoveryResponseWriter) Flush() {
+	w.committed = true
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *proxyRecoveryResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	conn, rw, err := hijacker.Hijack()
+	if err == nil {
+		w.committed = true
+		w.hijackedConn = conn
+	}
+	return conn, rw, err
+}
+
+func (w *proxyRecoveryResponseWriter) closeHijacked() {
+	if w == nil || w.hijackedConn == nil {
+		return
+	}
+	_ = w.hijackedConn.Close()
+	w.hijackedConn = nil
 }
 
 // PRISM-DEVIATION: X4 — error responses carry both the Prism and the upstream
 // Resin header, with the same value.
 func writeInboundProxyFailure(w http.ResponseWriter) {
+	w.Header().Set("Connection", "close")
 	w.Header().Set("X-Prism-Error", "PROXY_FAILURE")
 	w.Header().Set("X-Resin-Error", "PROXY_FAILURE")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -143,6 +219,7 @@ func writeInboundProxyFailure(w http.ResponseWriter) {
 // PRISM-DEVIATION: X4 — error responses carry both the Prism and the upstream
 // Resin header, with the same value.
 func writeEndpointCapabilityDisabled(w http.ResponseWriter) {
+	w.Header().Set("Connection", "close")
 	w.Header().Set("X-Prism-Error", "ENDPOINT_CAPABILITY_DISABLED")
 	w.Header().Set("X-Resin-Error", "ENDPOINT_CAPABILITY_DISABLED")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -168,6 +245,9 @@ func shouldRouteTokenAPI(r *http.Request, proxyToken string) bool {
 	if r == nil {
 		return false
 	}
+	if !isCanonicalInboundPath(r) {
+		return false
+	}
 	segments := escapedPathSegments(r)
 	if len(segments) < 2 {
 		return false
@@ -183,9 +263,12 @@ func shouldRouteTokenAPI(r *http.Request, proxyToken string) bool {
 	return ok && apiSeg == "api"
 }
 
-func shouldRejectReverseProxyByToken(r *http.Request, proxyToken string) bool {
-	if proxyToken == "" || r == nil {
+func shouldRejectReverseProxyByToken(r *http.Request, _ string) bool {
+	if r == nil {
 		return false
+	}
+	if !isCanonicalInboundPath(r) {
+		return true
 	}
 	segments := escapedPathSegments(r)
 	if len(segments) == 0 {
@@ -193,16 +276,14 @@ func shouldRejectReverseProxyByToken(r *http.Request, proxyToken string) bool {
 	}
 	token, ok := decodePathSegment(segments[0])
 	if !ok {
-		// Keep malformed percent-encoding behavior in reverse parser.
-		return false
+		// A malformed first segment cannot be a valid credential. Treat it as
+		// an authentication failure at the entry point so it cannot bypass the
+		// shared failure limiter and reach a different route.
+		return true
 	}
-	// An access key is a candidate even though it is not the configured token:
-	// the reverse parser resolves it. Only a segment that is neither the token
-	// nor key-shaped is refused here.
-	if keys.IsCredentialShape(token) {
-		return false
-	}
-	return !tokenMatches(token, proxyToken)
+	// The reverse parser resolves the key, but the mux must never admit a
+	// legacy global-token segment as a reverse-proxy candidate.
+	return !keys.IsCredentialShape(token)
 }
 
 // isTokenPositionCandidate reports whether a path segment may carry a
@@ -213,36 +294,17 @@ func shouldRejectReverseProxyByToken(r *http.Request, proxyToken string) bool {
 // key store while still letting a key-shaped segment through to the handler
 // that can verify it.
 //
-// A segment is a candidate when it is key-shaped or equals the configured
-// token. With no token configured, any segment is a candidate, which is the
-// behaviour before access keys existed.
-func isTokenPositionCandidate(segment string, proxyToken string) bool {
-	if keys.IsCredentialShape(segment) {
-		return true
-	}
-	if proxyToken == "" {
-		return true
-	}
-	return tokenMatches(segment, proxyToken)
-}
-
-// tokenMatches reports whether the path token equals the configured proxy
-// token, comparing the two in constant time so a wrong token cannot be
-// discovered byte by byte from the response latency of this gate. The mux
-// owns this decision (internal/proxy only sees the requests the mux lets
-// through), so this is the real gate for.
-//
-// Known limit: crypto/subtle returns 0 immediately when the lengths differ, so
-// the length of the configured token is observable. The token length is not a
-// secret (the token itself is the secret, and it is a fixed-length hex string),
-// so this is accepted; only the content comparison is constant time.
-func tokenMatches(got, want string) bool {
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+// isTokenPositionCandidate reports whether a path segment may carry an
+// AccessKey. The configured proxy token is intentionally ignored: only a
+// structurally valid AccessKey is admitted to the token-action route.
+func isTokenPositionCandidate(segment string, _ string) bool {
+	return keys.IsCredentialShape(segment)
 }
 
 // PRISM-DEVIATION: X4 — error responses carry both the Prism and the upstream
 // Resin header, with the same value.
 func writeInboundAuthFailed(w http.ResponseWriter) {
+	w.Header().Set("Connection", "close")
 	w.Header().Set("X-Prism-Error", "AUTH_FAILED")
 	w.Header().Set("X-Resin-Error", "AUTH_FAILED")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -257,6 +319,9 @@ func shouldRouteControlPlane(r *http.Request) bool {
 		return false
 	}
 	if r.URL == nil {
+		return false
+	}
+	if !isCanonicalInboundPath(r) {
 		return false
 	}
 	switch p := r.URL.Path; {
@@ -277,6 +342,9 @@ func escapedPathSegments(r *http.Request) []string {
 	if r == nil || r.URL == nil {
 		return nil
 	}
+	if !isCanonicalInboundPath(r) {
+		return nil
+	}
 	rawPath := r.URL.EscapedPath()
 	if rawPath == "" {
 		rawPath = r.URL.Path
@@ -286,6 +354,34 @@ func escapedPathSegments(r *http.Request) []string {
 		return nil
 	}
 	return strings.Split(path, "/")
+}
+
+// isCanonicalInboundPath keeps the protocol dispatchers from making different
+// routing decisions for equivalent URL spellings. The reverse and token-action
+// grammars use path segments as credentials and control data, so duplicate
+// slashes, dot segments, backslashes and decoded controls are rejected instead
+// of being cleaned into a different route by one downstream handler.
+func isCanonicalInboundPath(r *http.Request) bool {
+	if r == nil || r.URL == nil {
+		return false
+	}
+	p := r.URL.Path
+	if p == "" {
+		return true
+	}
+	if !strings.HasPrefix(p, "/") || strings.Contains(p, "//") || strings.ContainsAny(p, "\\\x00\r\n\t") {
+		return false
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(p, "/"), "/") {
+		if segment == "." || segment == ".." {
+			return false
+		}
+	}
+	clean := path.Clean(p)
+	if p != "/" && strings.HasSuffix(p, "/") {
+		clean += "/"
+	}
+	return clean == p
 }
 
 func decodePathSegment(segment string) (string, bool) {
@@ -301,6 +397,7 @@ func decodePathSegment(segment string) (string, bool) {
 // carries both the Prism and the upstream Resin error header, with the same
 // value.
 func writeInboundRateLimited(w http.ResponseWriter, retryAfter time.Duration) {
+	w.Header().Set("Connection", "close")
 	if retryAfter > 0 {
 		seconds := int((retryAfter + time.Second - 1) / time.Second)
 		if seconds < 1 {

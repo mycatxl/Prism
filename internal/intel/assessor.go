@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/netip"
 	"time"
 
@@ -89,27 +90,54 @@ func (a *Assessor) AssessIP(ctx context.Context, ip netip.Addr) (store.Assessmen
 	if a == nil || a.store == nil || !ip.IsValid() {
 		return store.Assessment{}, nil
 	}
+	ip = ip.Unmap()
+	var row store.Assessment
+	err := a.store.WithEvidenceLock(ip.String(), func() error {
+		var err error
+		row, err = a.assessIP(ctx, ip)
+		return err
+	})
+	return row, err
+}
+
+// assessIP requires the store's evidence lock for this IP.
+func (a *Assessor) assessIP(ctx context.Context, ip netip.Addr) (store.Assessment, error) {
 	now := a.now().UTC()
-	evidence, failed, err := a.loadEvidence(ctx, ip)
+	input, err := a.loadEvidence(ctx, ip, now)
 	if err != nil {
+		if ctx.Err() == nil {
+			a.invalidate(ip, "EVIDENCE_READ_FAILED", now)
+		}
 		return store.Assessment{}, err
 	}
-	result := assess.AssessInput(assess.Input{
-		IP:       ip,
-		Evidence: evidence,
-		Enabled:  a.enabledSources(),
-		Failed:   failed,
-		Now:      now,
-		Bands:    a.bandSet(),
-	})
+	input.Enabled, input.Bands = a.enabledSources(), a.bandSet()
+	result := assess.AssessInput(input)
 	row := AssessmentRow(result, now)
 	if err := a.store.UpsertAssessment(ctx, row); err != nil {
+		if ctx.Err() == nil {
+			a.invalidate(ip, "ASSESSMENT_WRITE_FAILED", now)
+		}
 		return store.Assessment{}, err
 	}
 	if a.snapshot != nil {
 		a.snapshot.SetAssessmentFromRow(row)
 	}
+	// All callers, including the job's final single-IP step, must publish the
+	// committed projection before views re-evaluate membership.
+	if a.onChange != nil {
+		a.onChange([]netip.Addr{ip.Unmap()})
+	}
 	return row, nil
+}
+
+func (a *Assessor) invalidate(ip netip.Addr, code string, now time.Time) {
+	if a.snapshot != nil {
+		facts := map[string]quality.Fact{"purity": quality.PurityDiagnostic(code)}
+		a.snapshot.SetAssessment(ip, AssessmentLite{Score: -1, Native: -1, State: StatePending, ReasonsJSON: marshalJSON([]string{code}), FactsJSON: marshalJSON(facts), ComputedAt: now.UnixNano(), ValidUntil: now.Add(time.Hour).UnixNano()})
+	}
+	if a.onChange != nil {
+		a.onChange([]netip.Addr{ip.Unmap()})
+	}
 }
 
 // AssessMany recomputes the assessments of several IPs. Errors are logged and
@@ -128,9 +156,6 @@ func (a *Assessor) AssessMany(ctx context.Context, ips []netip.Addr) int {
 			continue
 		}
 		done++
-	}
-	if done > 0 && a.onChange != nil {
-		a.onChange(ips)
 	}
 	return done
 }
@@ -181,9 +206,6 @@ func (a *Assessor) SweepExpired(ctx context.Context, expiredAfterNs int64) (int,
 		}
 		changed = append(changed, ip.Unmap())
 	}
-	if len(changed) > 0 && a.onChange != nil {
-		a.onChange(changed)
-	}
 	return len(changed), nil
 }
 
@@ -204,11 +226,10 @@ func (a *Assessor) RecomputeForeignProfiles(ctx context.Context, limit int) (int
 	for _, row := range rows {
 		ip, err := netip.ParseAddr(row.IP)
 		if err != nil {
-			continue
+			return done, fmt.Errorf("assessment profile migration: invalid stored IP")
 		}
 		if _, err := a.AssessIP(ctx, ip.Unmap()); err != nil {
-			a.logf("[intel] recompute %s: %v", row.IP, err)
-			continue
+			return done, fmt.Errorf("assessment profile migration: %w", err)
 		}
 		done++
 	}
@@ -220,12 +241,20 @@ const maxAssessmentSweep = 5000
 
 // loadEvidence reads the status=ok evidence rows of one IP plus the last error
 // code of every enabled source that has no current evidence.
-func (a *Assessor) loadEvidence(ctx context.Context, ip netip.Addr) ([]quality.Evidence, map[string]string, error) {
+func (a *Assessor) loadEvidence(ctx context.Context, ip netip.Addr, now time.Time) (assess.Input, error) {
 	rows, err := a.store.ListEvidenceByIP(ctx, ip.Unmap().String())
 	if err != nil {
-		return nil, nil, err
+		return assess.Input{}, err
 	}
-	all := a.enabledSources()
+	return AssessmentInputFromRows(ip, rows, now), nil
+}
+
+// AssessmentInputFromRows is shared by persisted assessments and API diagnostics.
+// Precedence: latest provider status, successful-row expiry, then payload
+// validation. An expired payload is never decoded, so malformed JSON cannot
+// replace EVIDENCE_EXPIRED. Explicit failures retain their atomic error code.
+func AssessmentInputFromRows(ip netip.Addr, rows []store.Evidence, now time.Time) assess.Input {
+	input := assess.Input{IP: ip, Now: now, Failed: map[string]string{}}
 	newest := make(map[string]store.Evidence, len(rows))
 	for _, row := range rows {
 		current, ok := newest[row.Provider]
@@ -235,24 +264,27 @@ func (a *Assessor) loadEvidence(ctx context.Context, ip netip.Addr) ([]quality.E
 		newest[row.Provider] = row
 	}
 
-	evidence := make([]quality.Evidence, 0, len(newest))
-	failed := make(map[string]string)
 	for provider, row := range newest {
 		if row.Status != store.StatusOk {
-			// "enabled" is only meaningful for sources the caller tracks.
-			if all == nil || all[provider] {
-				failed[provider] = row.ErrorCode
-			}
+			input.Failed[provider] = quality.SafeCode(row.ErrorCode)
+			continue
+		}
+		if row.ValidUntilNs > 0 && row.ValidUntilNs <= now.UnixNano() {
+			input.Evidence = append(input.Evidence, quality.Evidence{
+				IP: row.IP, Provider: provider, Profile: row.Profile,
+				ObservedAt: time.Unix(0, row.ObservedAtNs).UTC(),
+				ValidUntil: time.Unix(0, row.ValidUntilNs).UTC(),
+			})
 			continue
 		}
 		ev, err := EvidenceFromRow(row)
 		if err != nil {
-			a.logf("[intel] decode evidence %s/%s: %v", row.IP, provider, err)
+			input.Failed[provider] = "PROVIDER_RESPONSE"
 			continue
 		}
-		evidence = append(evidence, ev)
+		input.Evidence = append(input.Evidence, ev)
 	}
-	return evidence, failed, nil
+	return input
 }
 
 // EvidenceFromRow decodes one stored evidence row into the normalised
@@ -278,12 +310,27 @@ func EvidenceFromRow(row store.Evidence) (quality.Evidence, error) {
 	if ev.Profile == "" {
 		ev.Profile = row.Profile
 	}
-	if ev.ObservedAt.IsZero() && row.ObservedAtNs > 0 {
+	storedIP, storedErr := netip.ParseAddr(row.IP)
+	payloadIP, payloadErr := netip.ParseAddr(ev.IP)
+	if storedErr != nil || payloadErr != nil || storedIP.Unmap() != payloadIP.Unmap() || ev.Provider != row.Provider {
+		return quality.Evidence{}, fmt.Errorf("evidence identity mismatch")
+	}
+	ev.IP = storedIP.Unmap().String()
+	// Row metadata is authoritative. Embedded timestamps cannot extend its TTL.
+	if row.ObservedAtNs > 0 {
 		ev.ObservedAt = time.Unix(0, row.ObservedAtNs).UTC()
+	} else {
+		ev.ObservedAt = time.Time{}
 	}
-	if ev.ValidUntil.IsZero() && row.ValidUntilNs > 0 {
-		ev.ValidUntil = time.Unix(0, row.ValidUntilNs).UTC()
+	if row.ValidUntilNs > 0 {
+		until := time.Unix(0, row.ValidUntilNs).UTC()
+		if ev.ValidUntil.IsZero() || until.Before(ev.ValidUntil) {
+			ev.ValidUntil = until
+		}
+	} else {
+		ev.ValidUntil = time.Time{}
 	}
+	ev.NormalizeLegacySignals()
 	return ev, nil
 }
 
@@ -328,17 +375,19 @@ func AssessmentRow(result assess.Assessment, computedAt time.Time) store.Assessm
 
 // componentsBlob is the explainable detail persisted in components_json.
 type componentsBlob struct {
-	Components    []assess.Component `json:"components"`
-	Penalties     []assess.Penalty   `json:"penalties"`
-	PenaltyPoints int                `json:"penalty_points"`
-	Coverage      float64            `json:"coverage"`
-	Agreement     float64            `json:"agreement"`
-	SourceCount   int                `json:"source_count"`
-	Explain       string             `json:"explain"`
+	Facts         map[string]quality.Fact `json:"facts"`
+	Components    []assess.Component      `json:"components"`
+	Penalties     []assess.Penalty        `json:"penalties"`
+	PenaltyPoints int                     `json:"penalty_points"`
+	Coverage      float64                 `json:"coverage"`
+	Agreement     float64                 `json:"agreement"`
+	SourceCount   int                     `json:"source_count"`
+	Explain       string                  `json:"explain"`
 }
 
 func marshalComponents(result assess.Assessment) string {
 	return marshalJSON(componentsBlob{
+		Facts:         result.Facts,
 		Components:    result.Components,
 		Penalties:     result.Penalties,
 		PenaltyPoints: result.PenaltyPoints,

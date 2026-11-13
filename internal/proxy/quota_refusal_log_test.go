@@ -98,8 +98,8 @@ func TestQuotaRefusal_IsReportedWithItsReasonOnEveryInbound(t *testing.T) {
 		w := httptest.NewRecorder()
 		fp.ServeHTTP(w, req)
 
-		if w.Code != http.StatusTooManyRequests {
-			t.Fatalf("status = %d, want 429 (body %q)", w.Code, w.Body.String())
+		if w.Code != http.StatusPaymentRequired {
+			t.Fatalf("status = %d, want 402 (body %q)", w.Code, w.Body.String())
 		}
 		assertRefusalLogged(t, logs, reason)
 	})
@@ -140,8 +140,8 @@ func TestQuotaRefusal_IsReportedWithItsReasonOnEveryInbound(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read CONNECT status: %v", err)
 		}
-		if !strings.Contains(statusLine, "429") {
-			t.Fatalf("CONNECT answered %q, want 429", statusLine)
+		if !strings.Contains(statusLine, "402") {
+			t.Fatalf("CONNECT answered %q, want 402", statusLine)
 		}
 		assertRefusalLogged(t, logs, reason)
 	})
@@ -177,8 +177,8 @@ func TestQuotaRefusal_IsReportedWithItsReasonOnEveryInbound(t *testing.T) {
 		w := httptest.NewRecorder()
 		rp.ServeHTTP(w, req)
 
-		if w.Code != http.StatusTooManyRequests {
-			t.Fatalf("status = %d, want 429 (body %q)", w.Code, w.Body.String())
+		if w.Code != http.StatusPaymentRequired {
+			t.Fatalf("status = %d, want 402 (body %q)", w.Code, w.Body.String())
 		}
 		assertRefusalLogged(t, logs, reason)
 	})
@@ -266,8 +266,8 @@ func TestQuotaRefusal_AdmittedRequestReportsNothing(t *testing.T) {
 func TestRefusalProxyError_HandlesMissingKeyAndMissingLogf(t *testing.T) {
 	logs := &refusalLogRecorder{}
 	err := refusalProxyError("concurrency", nil, logs.logf)
-	if err != ErrQuotaExceeded {
-		t.Fatalf("error = %v, want ErrQuotaExceeded", err)
+	if err != ErrCapacityExceeded {
+		t.Fatalf("error = %v, want ErrCapacityExceeded", err)
 	}
 	lines := logs.snapshot()
 	if len(lines) != 1 || !strings.Contains(lines[0], "concurrency") {

@@ -63,7 +63,7 @@ func (c *LeaseCleaner) sweep() {
 		platID string
 		state  *PlatformRoutingState
 	}
-	states := make([]platformState, 0, c.router.states.Size())
+	states := make([]platformState, 0, max(0, c.router.states.Size()))
 	c.router.states.Range(func(platID string, state *PlatformRoutingState) bool {
 		select {
 		case <-c.stopCh:
@@ -116,18 +116,19 @@ func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingS
 		default:
 		}
 
-		if lease.ExpiryNs < nowNs {
+		if lease.expiryNs() <= nowNs {
+			var expired *LeaseEvent
 			// Expired. Use Compute to verify and delete atomically.
 			state.Leases.leases.Compute(o, func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
 				if !loaded {
 					return current, xsync.CancelOp
 				}
 				// Double-check expiry inside lock
-				if current.ExpiryNs < nowNs {
+				if current.expiryNs() <= nowNs {
 					state.Leases.stats.Dec(current.EgressIP)
 
 					if c.router.onLeaseEvent != nil {
-						c.router.onLeaseEvent(LeaseEvent{
+						expired = &LeaseEvent{
 							Type:        LeaseExpire,
 							PlatformID:  platID,
 							UserID:      o.UserID,
@@ -135,13 +136,16 @@ func (c *LeaseCleaner) sweepPlatformState(platID string, state *PlatformRoutingS
 							NodeHash:    current.NodeHash,
 							EgressIP:    current.EgressIP,
 							CreatedAtNs: current.CreatedAtNs,
-						})
+						}
 					}
 
 					return current, xsync.DeleteOp
 				}
 				return current, xsync.CancelOp // Renewed concurrently, don't delete
 			})
+			if expired != nil {
+				c.router.emitLeaseEvent(*expired)
+			}
 		}
 		return true
 	})

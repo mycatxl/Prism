@@ -154,31 +154,6 @@ type nodeListPageResponse struct {
 	UniqueHealthyIPsLower  bool                  `json:"unique_healthy_egress_ips_lower_bound"`
 }
 
-func countUniqueEgressIPs(nodes []service.NodeSummary) int {
-	seen := make(map[string]struct{})
-	for _, n := range nodes {
-		if n.EgressIP == "" {
-			continue
-		}
-		seen[n.EgressIP] = struct{}{}
-	}
-	return len(seen)
-}
-
-func countUniqueHealthyAndEnabledEgressIPs(nodes []service.NodeSummary) int {
-	seen := make(map[string]struct{})
-	for _, n := range nodes {
-		if n.EgressIP == "" {
-			continue
-		}
-		if !n.IsHealthyAndEnabled() {
-			continue
-		}
-		seen[n.EgressIP] = struct{}{}
-	}
-	return len(seen)
-}
-
 // HandleListNodes returns a handler for GET /api/v1/nodes.
 func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +190,7 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 		// intel filters (purity, verdict, confidence, native, asn,
 		// country and the repeatable check filter).
 		intelFilters := nodeIntelFilterValues{
+			PurityState: q.Get("purity_state"), PurityReason: q.Get("purity_reason"),
 			PurityMin:     q.Get("purity_min"),
 			PurityMax:     q.Get("purity_max"),
 			Verdict:       q.Get("verdict"),

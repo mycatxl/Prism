@@ -343,6 +343,9 @@ func TestTenantUserWriteErrorsAreClientErrors(t *testing.T) {
 		{"short password", TenantUserInput{Username: "short_password_user", Password: "short", Role: "user"}, "INVALID_ARGUMENT"},
 		{"unknown role", TenantUserInput{Username: "unknown_role_user", Password: "password-123456", Role: "superuser"}, "INVALID_ARGUMENT"},
 		{"empty username", TenantUserInput{Username: "   ", Password: "password-123456", Role: "user"}, "INVALID_ARGUMENT"},
+		{"short username", TenantUserInput{Username: "ab", Password: "password-123456", Role: "user"}, "INVALID_ARGUMENT"},
+		{"invalid username characters", TenantUserInput{Username: "bad name", Password: "password-123456", Role: "user"}, "INVALID_ARGUMENT"},
+		{"overlong username", TenantUserInput{Username: strings.Repeat("u", 65), Password: "password-123456", Role: "user"}, "INVALID_ARGUMENT"},
 	}
 	for _, tc := range cases {
 		_, err := cp.CreateTenantUser(tc.input, nowNs)

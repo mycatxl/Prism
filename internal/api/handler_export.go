@@ -22,6 +22,8 @@ import (
 // The intel filters are part of it, so an export filters a node exactly
 // the way the live node list does.
 type exportNodeFilter struct {
+	PurityState    string   `json:"purity_state,omitempty"`
+	PurityReason   string   `json:"purity_reason,omitempty"`
 	IPType         string   `json:"ip_type,omitempty"`
 	QualityState   string   `json:"quality_state,omitempty"`
 	RiskGrade      string   `json:"risk_grade,omitempty"`
@@ -120,6 +122,7 @@ func (f exportNodeFilter) toNodeFilters() (service.NodeFilters, error) {
 	// intel filters. They share the node list validators, so an export
 	// and a live query accept exactly the same values.
 	intelValues := nodeIntelFilterValues{
+		PurityState: f.PurityState, PurityReason: f.PurityReason,
 		Verdict:       f.Verdict,
 		ConfidenceMin: f.ConfidenceMin,
 		Native:        f.Native,
@@ -146,6 +149,7 @@ func (f exportNodeFilter) toNodeFilters() (service.NodeFilters, error) {
 func exportFilterFromQuery(r *http.Request) (exportNodeFilter, error) {
 	q := r.URL.Query()
 	filter := exportNodeFilter{
+		PurityState: q.Get("purity_state"), PurityReason: q.Get("purity_reason"),
 		IPType:         q.Get("ip_type"),
 		QualityState:   q.Get("quality_state"),
 		RiskGrade:      q.Get("risk_grade"),
@@ -257,6 +261,9 @@ const maxExportNameTemplateBytes = 256
 // HandleExportNodes returns a handler for GET /api/v1/nodes/export.
 func HandleExportNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 		format := strings.TrimSpace(r.URL.Query().Get("format"))
 		if !export.ValidFormat(format) {
 			writeInvalidArgument(w, "format: must be one of "+strings.Join(export.Formats(), ", "))
@@ -354,6 +361,13 @@ func runNodeExport(cp *service.ControlPlaneService, req exportRequest, offset in
 		item, ok := cp.ExportItem(summary)
 		if !ok {
 			continue
+		}
+		// Analysis downloads promise not to expose node credentials. Node hashes
+		// are derived from the full raw options (including passwords, UUIDs and
+		// private keys), so exposing one would give an offline verifier for weak
+		// node secrets even though the plaintext fields are omitted.
+		if req.Format == export.FormatCSV || req.Format == export.FormatJSON {
+			item.Hash = ""
 		}
 		items = append(items, item)
 	}

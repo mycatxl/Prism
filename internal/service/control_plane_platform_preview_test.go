@@ -9,6 +9,7 @@ import (
 	"prism/internal/node"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -75,6 +76,7 @@ func buildPreviewFilterFixture(t *testing.T) previewFilterFixture {
 	unknownEntry.Outbound.Store(&unknownOutbound)
 	unknownEntry.SetEgressIP(netip.MustParseAddr("3.3.3.3"))
 
+	pool.SetQualitySnapshot(measurement.Snapshot(netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("2.2.2.2"), netip.MustParseAddr("3.3.3.3")))
 	cp := &ControlPlaneService{
 		Pool:   pool,
 		SubMgr: subMgr,

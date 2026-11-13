@@ -198,7 +198,18 @@ func TestAdminRevocationEndpoints_AcceptAnAutomationKey(t *testing.T) {
 
 	rec = admin.do(http.MethodPost, "/api/v1/admin/invites", map[string]any{"max_uses": 1, "expires_in_days": 7})
 	tenantAssertStatus(t, rec, http.StatusCreated)
-	inviteID := tenantField(t, decodeJSONMap(t, rec), "id")
+	createdInvite := decodeJSONMap(t, rec)
+	inviteID := tenantField(t, createdInvite, "id")
+	if code := tenantField(t, createdInvite, "code"); code == "" {
+		t.Fatal("the console must receive the freshly created invite code")
+	}
+	keyInvites := tenantItems(t, env.doAsKey(http.MethodGet, "/api/v1/admin/invites", nil))
+	if len(keyInvites) != 1 {
+		t.Fatalf("automation invite list: got %d items, want 1", len(keyInvites))
+	}
+	if code, _ := keyInvites[0]["code"].(string); code != "" {
+		t.Fatalf("automation invite list exposed a usable code %q", code)
+	}
 
 	rec = admin.do(http.MethodPost, "/api/v1/admin/redeem-codes", map[string]any{
 		"amount_micro": int64(1_000_000),
@@ -221,6 +232,34 @@ func TestAdminRevocationEndpoints_AcceptAnAutomationKey(t *testing.T) {
 			t.Fatalf("DELETE %s with an automation key: status = %d, want 204 (body=%s)",
 				path, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// A bearer admin key may read /me, but it must not create an entitlement that
+// survives key revocation. These routes all resolve the owner from the actor,
+// so the check has to distinguish the credential kind rather than the role.
+func TestAdminKeyCannotWriteSelfEntitlementsOrRegistrationPolicy(t *testing.T) {
+	env := newTenantE2EEnv(t, config.RegistrationOff)
+	for _, tc := range []struct {
+		name   string
+		method string
+		path   string
+		body   map[string]any
+	}{
+		{"purchase", http.MethodPost, "/api/v1/me/purchases", map[string]any{"plan_id": "missing", "request_id": "key-purchase"}},
+		{"auto renew", http.MethodPatch, "/api/v1/me/subscription", map[string]any{"subscription_id": "missing", "auto_renew": true}},
+		{"renew", http.MethodPost, "/api/v1/me/renewals", map[string]any{"subscription_id": "missing", "request_id": "key-renew"}},
+		{"deposit intent", http.MethodPost, "/api/v1/me/deposits", map[string]any{"amount_micro": int64(1_000_000)}},
+		{"ldc payment", http.MethodPost, "/api/v1/me/ldc/pay", map[string]any{"points": 1}},
+		{"registration policy", http.MethodPatch, "/api/v1/system/config", map[string]any{"registration_mode": "open"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := env.doAsKey(tc.method, tc.path, tc.body)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 (body=%s)", rec.Code, rec.Body.String())
+			}
+			assertErrorCode(t, rec, "CREDENTIAL_MANAGEMENT_REQUIRES_SESSION")
+		})
 	}
 }
 
@@ -459,6 +498,7 @@ func registerAuthHandlers(limiter *AuthFailureLimiter, registrar *stubRegistrar,
 		ClientKey:        func(*http.Request) string { return clientKey },
 		FailureLimiter:   limiter,
 		Logf:             func(string, ...any) {},
+		AllowPlainHTTP:   func(r *http.Request) bool { return auth.PlainHTTPAllowed(r.Host) },
 	}
 }
 

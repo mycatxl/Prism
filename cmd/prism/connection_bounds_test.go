@@ -314,6 +314,8 @@ func TestInboundDemuxStreamingResponseOutlivesHeaderTimeout(t *testing.T) {
 // under a new directory, or in an existing one outside cmd/prism, is exactly the
 // case a package-local scan would miss. Test files and the vendored frontend
 // sources are skipped - they may construct a server for their own fixtures.
+// Root-level runtime data and ignored audit/build artifacts are not production
+// source; skip them before descending, especially the protected preview tree.
 func TestNoBareHTTPServerInProductionSources(t *testing.T) {
 	root, err := moduleRoot()
 	if err != nil {
@@ -326,6 +328,12 @@ func TestNoBareHTTPServerInProductionSources(t *testing.T) {
 		}
 		name := entry.Name()
 		if entry.IsDir() {
+			if filepath.Dir(path) == root {
+				switch name {
+				case "preview_data", "notes", ".local", "bin", "state", "data", "backups":
+					return fs.SkipDir
+				}
+			}
 			switch name {
 			case ".git", "node_modules", "vendor", "dist", "testdata":
 				return fs.SkipDir

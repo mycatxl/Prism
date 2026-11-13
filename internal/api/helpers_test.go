@@ -1,10 +1,33 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"prism/internal/service"
 )
+
+func TestWriteServiceErrorHidesInternalDetails(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeServiceError(rec, &service.ServiceError{
+		Code: "INTERNAL", Message: "query /srv/prism/state.db: no such column password_hash",
+		Err: errors.New("database failure"),
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	for _, leaked := range []string{"/srv/prism", "password_hash", "database failure"} {
+		if strings.Contains(rec.Body.String(), leaked) {
+			t.Fatalf("internal response leaked %q: %s", leaked, rec.Body.String())
+		}
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"INTERNAL"`) {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+}
 
 func TestParseSorting_Defaults(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/test", nil)

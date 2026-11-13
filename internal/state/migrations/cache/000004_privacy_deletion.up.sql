@@ -1,0 +1,11 @@
+CREATE TABLE privacy_deleted_hashes (node_hash TEXT PRIMARY KEY);
+CREATE TRIGGER privacy_fence_nodes_static_insert BEFORE INSERT ON nodes_static WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_nodes_static_update BEFORE UPDATE ON nodes_static WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_nodes_dynamic_insert BEFORE INSERT ON nodes_dynamic WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_nodes_dynamic_update BEFORE UPDATE ON nodes_dynamic WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_node_latency_insert BEFORE INSERT ON node_latency WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.node_hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_node_latency_update BEFORE UPDATE ON node_latency WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.node_hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_subscription_nodes_insert BEFORE INSERT ON subscription_nodes WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.node_hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_subscription_nodes_update BEFORE UPDATE ON subscription_nodes WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.node_hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_leases_insert BEFORE INSERT ON leases WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.node_hash) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER privacy_fence_leases_update BEFORE UPDATE ON leases WHEN EXISTS (SELECT 1 FROM privacy_deleted_hashes WHERE node_hash=NEW.node_hash) BEGIN SELECT RAISE(IGNORE); END;

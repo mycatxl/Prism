@@ -1,23 +1,43 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
+import { KeyRound, Laptop, LogOut, RefreshCw, ShieldCheck, ShieldOff } from "lucide-react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ControlButton,
   ControlInput,
   ControlTextarea,
+  EmptyWorkState,
+  ObjectList,
+  ObjectRow,
   WorkspacePage,
   QueryBadge,
   StatusMark,
   WorkspaceCard,
 } from "../../components/control-plane";
 import { useI18n } from "../../i18n";
-import { apiRequest, ApiError, fetchSession } from "../../lib/api-client";
-import { useAuthStore, clearSession, setSession, type SessionInfo } from "./auth-store";
+import { useToast } from "../../hooks/useToast";
+import { apiRequest, ApiError, logout } from "../../lib/api-client";
+import { formatApiErrorMessage } from "../../lib/error-message";
+import { getSessions, revokeSession } from "../me/api";
+import { useAuthStore, clearSession } from "./auth-store";
 
 type Enrolment = {
   secret: string;
   uri: string;
 };
+
+const NANOS_PER_MILLI = 1_000_000;
+
+function formatSessionTime(ns: number) {
+  if (!ns) return "-";
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(Math.round(ns / NANOS_PER_MILLI)));
+}
 
 function errorMessage(error: unknown, t: (text: string, options?: Record<string, unknown>) => string): string {
   if (error instanceof ApiError) {
@@ -35,17 +55,11 @@ function errorMessage(error: unknown, t: (text: string, options?: Record<string,
   return error instanceof Error ? error.message : t("未知错误");
 }
 
-function updateUserSession(session: SessionInfo, hasTotp: boolean): void {
-  if (!session.user) return;
-  setSession({
-    ...session,
-    user: { ...session.user, has_totp: hasTotp },
-  });
-}
-
 export function AccountSecurityPage() {
   const { t } = useI18n();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const session = useAuthStore((state) => state.session);
   const [currentPassword, setCurrentPassword] = useState("");
@@ -63,6 +77,16 @@ export function AccountSecurityPage() {
 
   const user = session.user;
   const hasTotp = user?.has_totp === true;
+  const sessionsQuery = useQuery({ queryKey: ["me-sessions"], queryFn: getSessions, enabled: Boolean(user) });
+  const sessions = sessionsQuery.data?.items ?? [];
+  const revokeMutation = useMutation({
+    mutationFn: revokeSession,
+    onSuccess: () => {
+      showToast("success", t("会话已撤销"));
+      void queryClient.invalidateQueries({ queryKey: ["me-sessions"] });
+    },
+    onError: (error) => showToast("error", formatApiErrorMessage(error, t)),
+  });
 
   useEffect(() => {
     if (searchParams.get("enrol") !== "1" || hasTotp || enrolPromptSpent) return;
@@ -113,12 +137,8 @@ export function AccountSecurityPage() {
         method: "POST",
         body: { secret: enrolment.secret, code: totpCode.trim() },
       });
-      const next = await fetchSession();
-      updateUserSession(next, true);
-      setEnrolment(null);
-      clearEnrolFlag();
-      setTotpCode("");
-      setTotpMessage(t("双因素认证已启用。"));
+      clearSession();
+      navigate("/login?reauth=1", { replace: true });
     } catch (error) {
       setTotpError(errorMessage(error, t));
     } finally {
@@ -170,12 +190,22 @@ export function AccountSecurityPage() {
     }
   }
 
+  async function signOut() {
+    try {
+      await logout();
+    } finally {
+      clearSession();
+      queryClient.clear();
+      navigate("/login", { replace: true });
+    }
+  }
+
   if (!user) return null;
 
   return (
     <WorkspacePage
       eyebrow="Account / security"
-      title={t("账户安全")}
+      title={t("账户与安全")}
       description={t("管理密码与双因素认证，保护控制台访问。")}
       meta={<QueryBadge label={user.username} tone="neutral" />}
     >
@@ -246,6 +276,38 @@ export function AccountSecurityPage() {
               )}
             </div>
           )}
+        </WorkspaceCard>
+
+        <WorkspaceCard
+          className="account-sessions-card"
+          eyebrow="Account sessions"
+          title={t("登录会话")}
+          description={t("查看已登录设备并撤销不再使用的会话。")}
+          actions={<ControlButton variant="ghost" size="sm" onPress={() => void sessionsQuery.refetch()} loading={sessionsQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>}
+        >
+          <div className="workspace-stack">
+            {sessionsQuery.isError ? <EmptyWorkState embedded title={t("读取失败")} detail={formatApiErrorMessage(sessionsQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void sessionsQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+            {!sessionsQuery.isLoading && !sessionsQuery.isError && sessions.length === 0 ? <EmptyWorkState embedded title={t("暂无活跃会话")} /> : null}
+            {sessions.length > 0 ? (
+              <ObjectList>
+                {sessions.map((item) => (
+                  <ObjectRow
+                    key={item.id}
+                    leading={<Laptop size={15} aria-hidden />}
+                    title={item.ip || "-"}
+                    subtitle={item.user_agent || "-"}
+                    facts={<><span>{t("登录时间")} {formatSessionTime(item.created_at_ns)}</span><span>{t("会话到期")} {formatSessionTime(item.expires_at_ns)}</span></>}
+                    status={<StatusMark tone={item.current ? "signal" : "neutral"} label={item.current ? t("当前设备") : t("已登录")} />}
+                    action={item.current ? <span className="workspace-muted">{t("当前会话")}</span> : <ControlButton variant="ghost" size="sm" isDisabled={revokeMutation.isPending} onPress={() => revokeMutation.mutate(item.id)}>{t("撤销")}</ControlButton>}
+                  />
+                ))}
+              </ObjectList>
+            ) : null}
+            <div className="workspace-danger-row workspace-danger-row--warn">
+              <div><strong>{t("退出当前账户")}</strong><p>{t("结束当前浏览器中的登录会话。")}</p></div>
+              <ControlButton variant="danger" size="sm" onPress={() => void signOut()}><LogOut size={14} aria-hidden />{t("退出登录")}</ControlButton>
+            </div>
+          </div>
         </WorkspaceCard>
       </div>
     </WorkspacePage>

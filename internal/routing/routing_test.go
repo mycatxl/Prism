@@ -15,6 +15,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -52,6 +53,10 @@ func makeRoutableNode(t testing.TB, pool *topology.GlobalNodePool, subMgr *topol
 	entry.LatencyTable.Update(latDomain, latency, 10*time.Minute)
 	pool.RecordResult(h, true)
 
+	var ips []netip.Addr
+	pool.RangeNodes(func(_ node.Hash, e *node.NodeEntry) bool { ips = append(ips, e.GetEgressIP()); return true })
+	pool.SetQualitySnapshot(measurement.Snapshot(ips...))
+
 	// Trigger platform re-evaluation
 	pool.NotifyNodeDirty(h)
 
@@ -65,6 +70,7 @@ func setupPool(t testing.TB) (*topology.GlobalNodePool, *topology.SubscriptionMa
 
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
 		SubLookup:              subMgr.Lookup,
+		QualityLookup:          testutil.MeasuredQuality,
 		GeoLookup:              geoLookup,
 		MaxLatencyTableEntries: 10,
 		MaxConsecutiveFailures: func() int { return 3 },

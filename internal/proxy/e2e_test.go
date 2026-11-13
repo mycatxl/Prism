@@ -22,6 +22,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -35,6 +36,7 @@ func newProxyE2EEnv(t *testing.T) *proxyE2EEnv {
 
 	subMgr := topology.NewSubscriptionManager()
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		QualitySnapshot:        measurement.Snapshot(netip.MustParseAddr("203.0.113.10")),
 		SubLookup:              subMgr.Lookup,
 		GeoLookup:              func(_ netip.Addr) string { return "us" },
 		MaxLatencyTableEntries: 16,
@@ -130,6 +132,8 @@ func TestForwardProxy_E2EHTTPSuccess(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     &mockHealthRecorder{},
@@ -180,7 +184,9 @@ func TestForwardProxy_E2EHTTPBypassDialsDirect(t *testing.T) {
 	defer upstream.Close()
 
 	fp := NewForwardProxy(ForwardProxyConfig{
-		ProxyToken:       "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:       keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:           emitter,
 		ProxyBypassRules: []string{"127.*"},
 	})
@@ -220,6 +226,8 @@ func TestForwardProxy_E2EHTTPDialTimeout_ZeroEgress(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -265,6 +273,8 @@ func TestForwardProxy_E2EHTTPClientCanceledBeforeResponse(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -317,10 +327,12 @@ func TestReverseProxy_E2ESuccess(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/v1/items?k=v", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/v1/items?k=v", host)
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -357,10 +369,12 @@ func TestReverseProxy_E2EHTTPBypassDialsDirect(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/direct", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/direct", host)
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:       "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:       keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:           emitter,
 		ProxyBypassRules: []string{"127.*"},
 	})
@@ -398,7 +412,9 @@ func TestReverseProxy_E2EDialTimeout_ZeroEgress(t *testing.T) {
 	})
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -407,7 +423,7 @@ func TestReverseProxy_E2EDialTimeout_ZeroEgress(t *testing.T) {
 	})
 
 	body := strings.Repeat("b", 256*1024)
-	req := httptest.NewRequest(http.MethodPost, "/tok/plat:acct/http/example.com/upload", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/"+testCredential+"/plat:acct/http/example.com/upload", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/octet-stream")
 	w := httptest.NewRecorder()
 
@@ -443,7 +459,9 @@ func TestReverseProxy_E2EClientCanceledBeforeResponse(t *testing.T) {
 	health := &mockHealthRecorder{}
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -451,7 +469,7 @@ func TestReverseProxy_E2EClientCanceledBeforeResponse(t *testing.T) {
 		Events:         emitter,
 	})
 
-	req := httptest.NewRequest(http.MethodGet, "/tok/plat:acct/http/example.com/v1/cancel", nil)
+	req := httptest.NewRequest(http.MethodGet, "/"+testCredential+"/plat:acct/http/example.com/v1/cancel", nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	cancel()
 	req = req.WithContext(ctx)
@@ -490,11 +508,13 @@ func TestReverseProxy_E2ECapturesDetailPayloads(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/v1/items", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/v1/items", host)
 	reqBody := "request-body-data"
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -523,11 +543,11 @@ func TestReverseProxy_E2ECapturesDetailPayloads(t *testing.T) {
 		if len(logEv.ReqHeaders) == 0 || logEv.ReqHeadersLen == 0 {
 			t.Fatalf("expected req headers capture, got len=%d payload=%d", logEv.ReqHeadersLen, len(logEv.ReqHeaders))
 		}
-		if string(logEv.ReqBody) != reqBody {
-			t.Fatalf("ReqBody: got %q, want %q", string(logEv.ReqBody), reqBody)
+		if string(logEv.ReqBody) != redactedLogValue {
+			t.Fatalf("ReqBody: got %q, want redacted", string(logEv.ReqBody))
 		}
-		if logEv.ReqBodyLen != len(reqBody) || logEv.ReqBodyTruncated {
-			t.Fatalf("ReqBody meta: len=%d truncated=%v, want len=%d truncated=false",
+		if logEv.ReqBodyLen != len(reqBody) || !logEv.ReqBodyTruncated {
+			t.Fatalf("ReqBody meta: len=%d truncated=%v, want len=%d truncated=true",
 				logEv.ReqBodyLen, logEv.ReqBodyTruncated, len(reqBody))
 		}
 		if len(logEv.RespHeaders) == 0 || logEv.RespHeadersLen == 0 {
@@ -536,11 +556,11 @@ func TestReverseProxy_E2ECapturesDetailPayloads(t *testing.T) {
 		if !strings.Contains(string(logEv.RespHeaders), "X-Upstream-Header: yes") {
 			t.Fatalf("RespHeaders missing upstream header, payload=%q", string(logEv.RespHeaders))
 		}
-		if string(logEv.RespBody) != upstreamBody {
-			t.Fatalf("RespBody: got %q, want %q", string(logEv.RespBody), upstreamBody)
+		if string(logEv.RespBody) != redactedLogValue {
+			t.Fatalf("RespBody: got %q, want redacted", string(logEv.RespBody))
 		}
-		if logEv.RespBodyLen != len(upstreamBody) || logEv.RespBodyTruncated {
-			t.Fatalf("RespBody meta: len=%d truncated=%v, want len=%d truncated=false",
+		if logEv.RespBodyLen != len(upstreamBody) || !logEv.RespBodyTruncated {
+			t.Fatalf("RespBody meta: len=%d truncated=%v, want len=%d truncated=true",
 				logEv.RespBodyLen, logEv.RespBodyTruncated, len(upstreamBody))
 		}
 		if logEv.EgressBytes < int64(len(reqBody)) {
@@ -600,7 +620,9 @@ func TestReverseProxy_E2EWebSocketUpgrade_WithDetailCapture(t *testing.T) {
 	defer upstream.Close()
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:     "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:     keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:         env.router,
 		Pool:           env.pool,
 		PlatformLookup: env.pool,
@@ -623,7 +645,7 @@ func TestReverseProxy_E2EWebSocketUpgrade_WithDetailCapture(t *testing.T) {
 
 	upstreamHost := strings.TrimPrefix(upstream.URL, "http://")
 	req := fmt.Sprintf(
-		"GET /tok/plat:acct/http/%s/ws HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+		"GET /"+testCredential+"/plat:acct/http/%s/ws HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
 		upstreamHost,
 		reverseAddr,
 	)
@@ -722,6 +744,8 @@ func TestForwardProxy_CONNECTTunnelSemantics(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -836,6 +860,8 @@ func TestForwardProxy_CONNECTPreservesBufferedClientBytesAfterHijack(t *testing.
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -913,6 +939,8 @@ func TestForwardProxy_CONNECTClientCanceledBeforeResponse(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -958,6 +986,8 @@ func TestForwardProxy_CONNECTResponseFlushFailureDoesNotPenalizeNode(t *testing.
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -1030,6 +1060,8 @@ func TestForwardProxy_CONNECTZeroTrafficNotMarkedFailed(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -1136,6 +1168,8 @@ func TestForwardProxy_CONNECTHalfTrafficNotMarkedZeroTraffic(t *testing.T) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,

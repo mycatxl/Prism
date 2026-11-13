@@ -14,6 +14,7 @@ import (
 
 const redactedLogValue = "[redacted]"
 const maxLogURLBytes = 2048
+const maxPersistedLogPayloadBytes = 1 << 20
 
 var loggedErrorURLPattern = regexp.MustCompile("(?i)\\b[a-z][a-z0-9+.-]*://[^\\s\"'<>]+")
 
@@ -143,12 +144,111 @@ func sensitiveLogHeader(name string, accountHeaders []string) bool {
 	case "cookie", "setcookie", "xprismaccount", "authenticationinfo", "proxyauthenticationinfo":
 		return true
 	}
-	for _, part := range []string{"auth", "apikey", "token", "secret", "password", "credential", "signature", "session", "csrf", "xsrf"} {
+	for _, part := range []string{"auth", "apikey", "token", "secret", "password", "pepper", "credential", "signature", "privatekey", "psk", "session", "csrf", "xsrf"} {
 		if strings.Contains(normalized, part) {
 			return true
 		}
 	}
 	return false
+}
+
+// sanitizeLogPayload replaces every captured body wholesale. Arbitrary bodies
+// can be compressed, multipart, binary or use application-specific field names,
+// so field-level parsing cannot uphold the rule that credentials never become
+// durable telemetry. Length and truncation metadata are kept separately.
+func sanitizeLogPayload(payload []byte) []byte {
+	if len(payload) == 0 {
+		return nil
+	}
+	return []byte(redactedLogValue)
+}
+
+// SanitizeRequestLogEntry is the persistence-boundary privacy filter. Producers
+// already sanitize their normal paths, but the request-log repository is an
+// exported sink and must stay safe when a future producer, importer or test
+// constructs an entry directly.
+func SanitizeRequestLogEntry(entry RequestLogEntry) RequestLogEntry {
+	entry.TargetURL = sanitizeLogURL(entry.TargetURL)
+	entry.UpstreamErrMsg = sanitizeUpstreamErrMsg(entry.UpstreamErrMsg)
+	entry.ReqHeaders = capLogPayload(entry.ReqHeaders, &entry.ReqHeadersLen, &entry.ReqHeadersTruncated)
+	entry.ReqBody = capLogPayload(entry.ReqBody, &entry.ReqBodyLen, &entry.ReqBodyTruncated)
+	entry.RespHeaders = capLogPayload(entry.RespHeaders, &entry.RespHeadersLen, &entry.RespHeadersTruncated)
+	entry.RespBody = capLogPayload(entry.RespBody, &entry.RespBodyLen, &entry.RespBodyTruncated)
+	entry.ReqHeaders = sanitizeLogHeaders(entry.ReqHeaders)
+	entry.ReqBody = sanitizeLogPayload(entry.ReqBody)
+	entry.RespHeaders = sanitizeLogHeaders(entry.RespHeaders)
+	entry.RespBody = sanitizeLogPayload(entry.RespBody)
+	entry.ReqHeaders = capSanitizedLogPayload(entry.ReqHeaders, &entry.ReqHeadersTruncated)
+	entry.ReqBody = capSanitizedLogPayload(entry.ReqBody, &entry.ReqBodyTruncated)
+	entry.RespHeaders = capSanitizedLogPayload(entry.RespHeaders, &entry.RespHeadersTruncated)
+	entry.RespBody = capSanitizedLogPayload(entry.RespBody, &entry.RespBodyTruncated)
+	entry.Events = append([]string(nil), entry.Events...)
+	return entry
+}
+
+// SanitizeStoredRequestLogPayloads is a read-side backstop for legacy/imported
+// shards written before persistence-boundary redaction was enforced.
+func SanitizeStoredRequestLogPayloads(reqHeaders, reqBody, respHeaders, respBody []byte) ([]byte, []byte, []byte, []byte) {
+	return sanitizeLogHeaders(reqHeaders), sanitizeLogPayload(reqBody),
+		sanitizeLogHeaders(respHeaders), sanitizeLogPayload(respBody)
+}
+
+// SanitizeStoredRequestLogSummary applies the same URL/error policy when an
+// older or imported shard is read.
+func SanitizeStoredRequestLogSummary(targetURL, upstreamErrMsg string) (string, string) {
+	return sanitizeLogURL(targetURL), sanitizeUpstreamErrMsg(upstreamErrMsg)
+}
+
+func capLogPayload(payload []byte, total *int, truncated *bool) []byte {
+	if *total < len(payload) {
+		*total = len(payload)
+	}
+	if len(payload) > maxPersistedLogPayloadBytes {
+		payload = payload[:maxPersistedLogPayloadBytes]
+		*truncated = true
+	}
+	return payload
+}
+
+func capSanitizedLogPayload(payload []byte, truncated *bool) []byte {
+	if len(payload) > maxPersistedLogPayloadBytes {
+		*truncated = true
+		return payload[:maxPersistedLogPayloadBytes]
+	}
+	return payload
+}
+
+func sanitizeLogHeaders(payload []byte) []byte {
+	if len(payload) == 0 {
+		return nil
+	}
+	lines := strings.Split(string(payload), "\n")
+	changed := false
+	for i, line := range lines {
+		trimmed := strings.TrimSuffix(line, "\r")
+		name, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		if sensitiveLogHeader(name, nil) {
+			ending := ""
+			if strings.HasSuffix(line, "\r") {
+				ending = "\r"
+			}
+			lines[i] = name + ": " + redactedLogValue + ending
+			changed = true
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "location", "content-location", "referer":
+			lines[i] = name + ": " + sanitizeLogURL(strings.TrimSpace(value))
+			changed = true
+		}
+	}
+	if !changed {
+		return append([]byte(nil), payload...)
+	}
+	return []byte(strings.Join(lines, "\n"))
 }
 
 func headersForRequestLog(header http.Header, accountHeaders []string) http.Header {

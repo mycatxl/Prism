@@ -190,7 +190,7 @@ func TestUpdateUserSubscriptionTerms_UnchangedTermsAreNotAMissingRow(t *testing.
 	sub := mustInsertReviewSubscription(t, repo, "u-terms", "p-terms")
 
 	// The same terms, written twice.
-	if err := repo.UpdateUserSubscriptionTerms(sub); err != nil {
+	if err := repo.UpdateUserSubscriptionTerms(sub, sub); err != nil {
 		t.Fatalf("rewriting a row with the terms it already holds: %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestUpdateUserSubscriptionTerms_UnchangedTermsAreNotAMissingRow(t *testing.
 	// A row that really is absent is still ErrNotFound.
 	missing := sub
 	missing.ID = "us-missing"
-	if err := repo.UpdateUserSubscriptionTerms(missing); !errors.Is(err, ErrNotFound) {
+	if err := repo.UpdateUserSubscriptionTerms(missing, sub); !errors.Is(err, ErrNotFound) {
 		t.Errorf("rewriting a missing row: got %v, want ErrNotFound", err)
 	}
 

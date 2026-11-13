@@ -1,4 +1,4 @@
-import { clearSession, setSession, type SessionInfo } from "../features/auth/auth-store";
+import { getSessionGeneration, clearSession, setSession, type SessionInfo } from "../features/auth/auth-store";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.trim() ?? "";
 
@@ -78,6 +78,7 @@ async function parseErrorBody(response: Response): Promise<ApiErrorBody | null> 
   }
 }
 export async function fetchSession(signal?: AbortSignal): Promise<SessionInfo> {
+  const generation = getSessionGeneration();
   const response = await fetch(buildURL("/ui/session.json"), {
     credentials: "same-origin",
     headers: { Accept: "application/json" },
@@ -94,15 +95,16 @@ export async function fetchSession(signal?: AbortSignal): Promise<SessionInfo> {
     must_enrol_totp: body.must_enrol_totp === true,
     registration_mode: body.registration_mode,
   };
+  if (generation !== getSessionGeneration()) throw new ApiError(401, "SESSION_CHANGED", "Session changed", null);
   setSession(session);
   return session;
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  const generation = getSessionGeneration();
   const { method = "GET", body, signal } = options;
-  if (method !== "GET" && typeof navigator !== "undefined" && !navigator.onLine) {
-    throw new ApiError(0, "OFFLINE", "离线时无法提交操作", null);
-  }
+  // Browser internet status does not establish whether this API is reachable
+  // (loopback/LAN deployments work without internet). Let the bounded fetch decide.
 
   const headers = new Headers();
   headers.set("Accept", "application/json");
@@ -128,11 +130,13 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     const parsed = await parseErrorBody(response);
     const code = parsed?.error?.code ?? "HTTP_ERROR";
     const message = parsed?.error?.message ?? response.statusText;
-    if (response.status === 401) {
+    if (response.status === 401 && generation === getSessionGeneration()) {
       clearSession();
     }
     throw new ApiError(response.status, code, message, parsed);
   }
+
+  if (generation !== getSessionGeneration()) throw new ApiError(401, "SESSION_CHANGED", "Session changed", null);
 
   if (response.status === 204) {
     return undefined as T;
@@ -143,7 +147,9 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     throw new ApiError(response.status, "INVALID_RESPONSE", "服务返回了无法识别的数据", null);
   }
 
-  return (await response.json()) as T;
+  const data = (await response.json()) as T;
+  if (generation !== getSessionGeneration()) throw new ApiError(401, "SESSION_CHANGED", "Session changed", null);
+  return data;
 }
 
 export type LoginResponse = {

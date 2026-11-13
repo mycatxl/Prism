@@ -26,6 +26,23 @@ type fakePeriodStore struct {
 	planMisses int
 }
 
+type guardedPeriodStore struct {
+	*fakePeriodStore
+	mu        sync.Mutex
+	resetDone bool
+}
+
+func (s *guardedPeriodStore) ResetSubscriptionPeriodIfCurrent(id string, fromNs, toNs int64) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.resetDone {
+		return false, nil
+	}
+	s.resetDone = true
+	s.resetCall = append(s.resetCall, periodResetCall{id: id, fromNs: fromNs, toNs: toNs})
+	return true, nil
+}
+
 type periodResetCall struct {
 	id     string
 	fromNs int64
@@ -486,6 +503,31 @@ func TestPeriodReset_ConcurrentPassesDoNotDoubleReset(t *testing.T) {
 		if call.fromNs != start.UnixNano() {
 			t.Fatalf("a reset used period start %d, want %d", call.fromNs, start.UnixNano())
 		}
+	}
+}
+
+func TestPeriodReset_LosingGuardCannotClearNewPeriodTraffic(t *testing.T) {
+	base := newFakePeriodStore()
+	base.plans["p-1"] = &model.Plan{ID: "p-1", Period: "day"}
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := start.AddDate(0, 0, 2)
+	base.subs = []model.UserSubscription{activePeriodSub("s-1", "u-1", "p-1", start.UnixNano())}
+	store := &guardedPeriodStore{fakePeriodStore: base}
+	counters := NewCounters()
+	counters.LoadUser("u-1", 100)
+
+	first := &PeriodReset{Store: store, Counters: counters}
+	if result, err := first.RunOnce(now.UnixNano()); err != nil || result.Rolled != 1 {
+		t.Fatalf("winning reset = %+v, %v", result, err)
+	}
+	counters.Add(CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}, Delta{IngressBytes: 40})
+
+	second := &PeriodReset{Store: store, Counters: counters}
+	if result, err := second.RunOnce(now.UnixNano()); err != nil || result.Rolled != 0 {
+		t.Fatalf("losing reset = %+v, %v", result, err)
+	}
+	if got := counters.UserBytes("u-1"); got != 40 {
+		t.Fatalf("losing reset erased %d bytes from the new period, want 40", got)
 	}
 }
 

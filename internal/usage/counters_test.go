@@ -294,3 +294,46 @@ func TestCounters_UserBytesPresentDistinguishesZeroFromAbsent(t *testing.T) {
 		t.Fatalf("after a rollover the user reported (%d, %v), want (0, true): the entry has to survive the reset", total, ok)
 	}
 }
+
+func TestCounters_PeriodTransitionDoesNotLoseConcurrentBytes(t *testing.T) {
+	counters := NewCounters()
+	key := CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}
+	counters.Add(key, Delta{IngressBytes: 100})
+
+	transition := counters.BeginUserPeriodTransition("u-1")
+	added := make(chan struct{})
+	go func() {
+		counters.Add(key, Delta{IngressBytes: 25})
+		close(added)
+	}()
+	// The add is blocked until the transition commits, so it is assigned to
+	// the new generation rather than being erased by the reset.
+	transition.Commit("s-new", 2)
+	<-added
+
+	if got := counters.UserBytes("u-1"); got != 25 {
+		t.Fatalf("new-period aggregate = %d, want 25", got)
+	}
+	if got := counters.KeyTotal("k-1"); got != 125 {
+		t.Fatalf("undrained key total = %d, want old+new 125", got)
+	}
+	if got := len(counters.Keys()); got != 2 {
+		t.Fatalf("period transition retained %d buckets, want 2 for old and new traffic", got)
+	}
+}
+
+func TestCounters_RejectNegativeAndSaturateByteDeltas(t *testing.T) {
+	counters := NewCounters()
+	key := CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}
+	counters.Add(key, Delta{IngressBytes: -1})
+	if got := counters.UserBytes("u-1"); got != 0 {
+		t.Fatalf("negative traffic changed the aggregate to %d", got)
+	}
+	counters.Add(key, Delta{IngressBytes: int64(^uint64(0) >> 1), EgressBytes: 1})
+	if got := counters.UserBytes("u-1"); got != int64(^uint64(0)>>1) {
+		t.Fatalf("overflowing traffic aggregate = %d, want MaxInt64", got)
+	}
+	if got := counters.KeyBytes(key).Total(); got != int64(^uint64(0)>>1) {
+		t.Fatalf("overflowing key total = %d, want MaxInt64", got)
+	}
+}

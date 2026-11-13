@@ -2,7 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/cn";
-import { ControlButton } from "../control-plane";
+import { ControlButton, EmptyWorkState } from "../control-plane";
 
 export function LoadingState({ label, className }: { label?: string; className?: string }) {
   const { t } = useI18n();
@@ -32,14 +32,7 @@ export function ErrorState({ message, onRetry, className }: { message: ReactNode
 }
 
 export function EmptyState({ title, hint, action, className }: { title: ReactNode; hint?: ReactNode; action?: ReactNode; className?: string }) {
-  return (
-    <div className={cn("workspace-state workspace-state--empty", className)}>
-      <span className="workspace-state__empty-mark" aria-hidden />
-      <p>{title}</p>
-      {hint ? <span>{hint}</span> : null}
-      {action ? <div>{action}</div> : null}
-    </div>
-  );
+  return <EmptyWorkState embedded title={title} detail={hint} action={action} className={className} />;
 }
 export type QueryPhase =
   | "loading"

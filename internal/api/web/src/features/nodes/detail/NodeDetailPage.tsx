@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Globe2, ShieldCheck, Zap } from "lucide-react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Globe2, ShieldCheck, Zap } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { BackLink } from "../../../components/ui/BackLink";
 import {
   ControlButton,
   ControlToastContainer,
@@ -37,7 +38,6 @@ import { nodeName, nodeStatus } from "./nodeMeta";
 export function NodeDetailPage() {
   const { nodeId } = useParams<{ nodeId: string }>();
   const hash = (nodeId ?? "").trim();
-  const navigate = useNavigate();
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { toasts, showToast, dismissToast } = useToast();
@@ -139,6 +139,7 @@ export function NodeDetailPage() {
       eyebrow="Inventory / node detail"
       title={detail ? nodeName(detail) : hash.slice(0, 12)}
       description={<code className="readout text-xs text-ink-faint">{hash || "--"}</code>}
+      navigation={<BackLink fallback={opsPaths.nodes}>{t("返回列表")}</BackLink>}
       meta={
         detail && state ? (
           <>
@@ -156,10 +157,6 @@ export function NodeDetailPage() {
       }
       actions={
         <>
-          <ControlButton variant="secondary" size="sm" onPress={() => navigate(opsPaths.nodes)}>
-            <ArrowLeft size={15} aria-hidden />
-            {t("返回列表")}
-          </ControlButton>
           <ControlButton
             variant="secondary"
             size="sm"

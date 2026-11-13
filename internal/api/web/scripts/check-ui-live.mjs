@@ -11,17 +11,22 @@
  * drawn. No check looks for a Tailwind utility by name except the two structural
  * hooks documented inline.
  */
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
+import { measureCardInsets } from "./card-insets.mjs";
+import { registerNodePlatformChecks } from "../tests/node-platform-ui.mjs";
+import { registerPanelWorkflowChecks } from "../tests/panel-workflows.mjs";
+import { registerPanelSurfaceChecks } from "../tests/panel-surfaces.mjs";
+import { registerPanelTaskChecks } from "../tests/panel-tasks.mjs";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,7 +125,7 @@ RAIL_PATHS.push(ui(namespace.ACCOUNT));
 
 // What a tenant session gets instead: the self-service destinations, which an
 // operator never sees, plus the account page both roles share.
-const TENANT_RAIL = ["overview", "keys", "guide", "plans", "leases", "deposit"].map((key) =>
+const TENANT_RAIL = ["overview", "keys", "usage", "leases", "guide", "plans", "deposit"].map((key) =>
   ui(recordPath(mePaths, key)),
 );
 TENANT_RAIL.push(ui(namespace.ACCOUNT));
@@ -283,11 +288,16 @@ async function reservePort() {
   return port;
 }
 
+function testEnvironment() {
+  return Object.fromEntries(["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "TZ", "SystemRoot"]
+    .filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]));
+}
+
 function startBackend({ root, port, proxyToken }) {
   const backend = spawn(binary, [], {
     cwd: root,
     env: {
-      ...process.env,
+      ...testEnvironment(),
       PRISM_PROXY_TOKEN: proxyToken,
       PRISM_STATE_DIR: join(root, "state"),
       PRISM_CACHE_DIR: join(root, "cache"),
@@ -326,7 +336,7 @@ async function initBackend({ root, adminPassword }) {
     {
       cwd: root,
       env: {
-        ...process.env,
+        ...testEnvironment(),
         PRISM_STATE_DIR: join(root, "state"),
         PRISM_CACHE_DIR: join(root, "cache"),
         PRISM_LOG_DIR: join(root, "logs"),
@@ -395,16 +405,23 @@ async function seedInventory(origin, context) {
   const headers = { "Content-Type": "application/json", ...(await csrfHeaders(context)) };
   const content = JSON.stringify({
     outbounds: [
-      { type: "http", tag: "Local Alpha", server: "127.0.0.1", server_port: 9 },
-      { type: "http", tag: "Local Beta", server: "127.0.0.1", server_port: 10 },
+      { type: "http", tag: "Local Alpha", server: "127.0.0.1", server_port: 9, tls: { enabled: true, server_name: "localhost" } },
+      { type: "http", tag: "Local Beta", server: "127.0.0.1", server_port: 10, tls: { enabled: true, server_name: "localhost" } },
     ],
   });
-  const created = await context.request.post(origin + "/api/v1/subscriptions", {
-    headers,
-    data: { name: "UI_Local", source_type: "local", enabled: true, content },
-  });
-  assert(created.ok(), `fixture subscription must be created (HTTP ${created.status()})`);
-  const { id } = await created.json();
+  // Both sign-in and the privacy check need this fixture. Reuse the same source
+  // so a full run has the same inventory as a filtered run.
+  const existing = await context.request.get(origin + "/api/v1/subscriptions?keyword=UI_Local&limit=100");
+  assert(existing.ok(), "fixture subscriptions must be readable");
+  let id = (await existing.json()).items.find((item) => item.name === "UI_Local")?.id;
+  if (!id) {
+    const created = await context.request.post(origin + "/api/v1/subscriptions", {
+      headers,
+      data: { name: "UI_Local", source_type: "local", enabled: true, content },
+    });
+    assert(created.ok(), `fixture subscription must be created (HTTP ${created.status()})`);
+    id = (await created.json()).id;
+  }
 
   const refreshed = await context.request.post(origin + `/api/v1/subscriptions/${id}/actions/refresh`, {
     headers,
@@ -447,6 +464,51 @@ check("backend boots, inventory imports and the panel signs in", async ({ origin
 
   const nodes = await seedInventory(origin, context);
   assert(nodes >= 2, `the fixture subscription must import two nodes (imported ${nodes})`);
+});
+
+check("privacy deletion rejects plaintext, quarantine explains retained nodes and admin policy survives reload", async ({ origin, page, context }) => {
+  await seedInventory(origin, context);
+  const headers = { "Content-Type": "application/json", ...(await csrfHeaders(context)) };
+  const plaintext = JSON.stringify({outbounds:[{type:"http",tag:"forbidden-plaintext",server:"127.0.0.1",server_port:11}]});
+  const sourceResponse = await context.request.post(origin + "/api/v1/subscriptions", {headers, data:{name:"UI_Plaintext",source_type:"local",content:plaintext,auto_intel:false}});
+  assert(sourceResponse.ok(), "plaintext fixture import must reach the normal privacy boundary");
+  const source = await sourceResponse.json();
+  const refresh = () => context.request.post(origin + `/api/v1/subscriptions/${source.id}/actions/refresh`, {headers});
+  assert((await refresh()).ok());
+  let response = await context.request.get(origin + "/api/v1/nodes?limit=100");
+  let inventory = await response.json();
+  assert.equal(inventory.total, 2, "confirmed plaintext must be permanently deleted, while TLS nodes remain");
+  const replay = await context.request.patch(origin + `/api/v1/subscriptions/${source.id}`, {headers,data:{content:plaintext}});
+  assert(replay.ok());
+  assert((await refresh()).ok());
+  inventory = await (await context.request.get(origin + "/api/v1/nodes?limit=100")).json();
+  assert.equal(inventory.total, 2, "replaying a deleted plaintext source must not resurrect it");
+  const node = inventory.items[0];
+  const quarantine = await context.request.patch(origin + "/api/v1/system/config", {headers,data:{node_privacy:{manual_quarantine:[node.node_hash]}}});
+  assert(quarantine.ok(), `quarantine fixture patch returned HTTP ${quarantine.status()}`);
+  const detail = await (await context.request.get(origin + `/api/v1/nodes/${node.node_hash}`)).json();
+  assert.equal(detail.privacy.status, "quarantined");
+  assert(detail.privacy.reasons.includes("ADMIN_QUARANTINE"));
+  await page.goto(origin + `/ui/ops/nodes/${node.node_hash}`);
+  await page.getByTestId("node-privacy").waitFor();
+  assert.match(await page.getByTestId("node-privacy").innerText(), /管理员手动隔离/);
+  await page.goto(origin + "/ui/ops/settings");
+  const own = page.getByLabel("自有资产 IP / CIDR，每行一个", { exact: true });
+  await own.fill("192.0.2.0/24");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/v1/system/config") && r.request().method() === "GET"),
+    page.getByRole("button", { name: "保存隐私策略", exact: true }).click(),
+  ]);
+  await page.reload();
+  await own.waitFor();
+  assert.equal(await own.inputValue(), "192.0.2.0/24");
+  await own.fill("");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/v1/system/config") && r.request().method() === "GET"),
+    page.getByRole("button", { name: "保存隐私策略", exact: true }).click(),
+  ]);
+  const cleared = await context.request.patch(origin + "/api/v1/system/config", {headers,data:{node_privacy:{manual_quarantine:[]}}});
+  assert(cleared.ok());
 });
 
 check("every route renders without a page or console error", async ({ origin, page, errors }) => {
@@ -503,6 +565,92 @@ check("no removed class token survives in the DOM", async ({ origin, page }) => 
   assert.deepEqual(failures, [], "removed class tokens found:\n  " + failures.join("\n  "));
 });
 
+check("nodes, subscriptions and workbench egress render polished embedded empty states", async ({ origin, page, errors }) => {
+  const nodesRoute = /\/api\/v1\/nodes(?:\?|$)/;
+  const subscriptionsRoute = /\/api\/v1\/subscriptions(?:\?|$)/;
+  const emptyPage = async (route) => {
+    const url = new URL(route.request().url());
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        items: [],
+        total: 0,
+        limit: Number(url.searchParams.get("limit") ?? 50),
+        offset: Number(url.searchParams.get("offset") ?? 0),
+      }),
+    });
+  };
+  const assertEmbeddedState = async (state, iconClass, label) => {
+    await state.waitFor({ state: "visible", timeout: 15000 });
+    assert.equal(await state.locator(".workspace-empty__mark").count(), 0, `${label} must not render the retired blue mark`);
+    assert.equal(await state.locator(`.workspace-empty__icon .${iconClass}`).count(), 1, `${label} must render its intended icon`);
+    const metrics = await state.evaluate((element) => {
+      const style = getComputedStyle(element);
+      const icon = element.querySelector(".workspace-empty__icon");
+      const iconStyle = icon ? getComputedStyle(icon) : null;
+      const bounds = element.getBoundingClientRect();
+      const iconBounds = icon?.getBoundingClientRect();
+      return {
+        embedded: element.classList.contains("workspace-empty--embedded"),
+        display: style.display,
+        direction: style.flexDirection,
+        align: style.alignItems,
+        textAlign: style.textAlign,
+        padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft],
+        border: style.borderTopStyle,
+        background: style.backgroundColor,
+        shadow: style.boxShadow,
+        iconSize: iconBounds ? [iconBounds.width, iconBounds.height] : null,
+        iconBackground: iconStyle?.backgroundColor ?? "transparent",
+        iconCenterDelta: iconBounds
+          ? Math.abs(bounds.left + bounds.width / 2 - (iconBounds.left + iconBounds.width / 2))
+          : Number.POSITIVE_INFINITY,
+        overflows: element.scrollWidth > element.clientWidth,
+      };
+    });
+    assert.equal(metrics.embedded, true, `${label} must use the embedded variant inside its card`);
+    assert.deepEqual([metrics.display, metrics.direction, metrics.align, metrics.textAlign], ["flex", "column", "center", "center"], `${label} must use the centered vertical layout`);
+    assert.deepEqual(metrics.padding, ["28px", "16px", "28px", "16px"], `${label} must use balanced embedded padding`);
+    assert.equal(metrics.border, "none", `${label} must not add a nested card border`);
+    assert.equal(metrics.background, "rgba(0, 0, 0, 0)", `${label} must keep the host card surface visible`);
+    assert.equal(metrics.shadow, "none", `${label} must not add a nested card shadow`);
+    assert.deepEqual(metrics.iconSize, [44, 44], `${label} must render a stable 44px icon plate`);
+    assert.notEqual(metrics.iconBackground, "rgba(0, 0, 0, 0)", `${label} must render the soft accent plate`);
+    assert(metrics.iconCenterDelta <= 0.5, `${label} icon must be centered (delta ${metrics.iconCenterDelta}px)`);
+    assert.equal(metrics.overflows, false, `${label} must fit its card without horizontal overflow`);
+  };
+
+  await page.route(nodesRoute, emptyPage);
+  await page.route(subscriptionsRoute, emptyPage);
+  try {
+    errors.reset("polished embedded empty states");
+
+    await page.goto(origin + NODES);
+    assert(await rendered(page), "the node page must render its empty state");
+    const nodeState = page.locator(".workspace-empty").filter({ hasText: "还没有节点" });
+    await assertEmbeddedState(nodeState, "lucide-radio", "node empty state");
+
+    await page.goto(origin + SUBSCRIPTIONS);
+    assert(await rendered(page), "the subscription page must render its empty state");
+    const subscriptionState = page.locator(".workspace-empty").filter({ hasText: "尚未添加任何订阅源" });
+    await assertEmbeddedState(subscriptionState, "lucide-rss", "subscription empty state");
+
+    await page.goto(origin + DASHBOARD);
+    assert(await rendered(page), "the workbench must render its egress empty state");
+    const egressCard = page.locator(".workspace-card").filter({ has: page.getByRole("heading", { name: "出口覆盖", exact: true }) });
+    const egressState = egressCard.locator(".workspace-empty").filter({ hasText: "还没有出口事实" });
+    await assertEmbeddedState(egressState, "lucide-inbox", "workbench egress empty state");
+    assert.equal(await egressCard.locator(".workspace-coverage-list").count(), 0, "empty egress coverage must not retain the data grid");
+
+    await quiet(page);
+    assert.deepEqual(errors.drain(), [], "empty-state coverage must not emit a browser error");
+  } finally {
+    await page.unroute(nodesRoute);
+    await page.unroute(subscriptionsRoute);
+  }
+});
+
 check("legacy node envelopes do not crash the node pool", async ({ origin, page, errors }) => {
   const legacyItems = [
     null,
@@ -539,10 +687,10 @@ check("legacy node envelopes do not crash the node pool", async ({ origin, page,
   }
 });
 
-// Shared HeroUI primitives must work against their actual rendered DOM, not only
+// Shared Radix primitives must work against their actual rendered DOM, not only
 // satisfy TypeScript. This reaches an anonymous tooltip plus the signed-in node
 // filters and inspector, including the single global toast queue.
-check("shared HeroUI overlays open, close and restore focus", async ({ origin, page, context, errors, browser }) => {
+check("shared Radix overlays open, close and restore focus", async ({ origin, page, context, errors, browser }) => {
   const anonymous = await browser.newContext({
     locale: LOCALE,
     viewport: { width: 1440, height: 900 },
@@ -556,16 +704,14 @@ check("shared HeroUI overlays open, close and restore focus", async ({ origin, p
     await loginPage.goto(origin + "/ui/login");
     const passwordToggle = loginPage.getByRole("button", { name: "显示密码" });
     await passwordToggle.waitFor({ state: "visible", timeout: 15000 });
-    const tooltipTrigger = passwordToggle.locator('xpath=ancestor::*[@data-slot="tooltip-trigger"]');
-    assert.equal(await tooltipTrigger.count(), 1, "the password toggle must have one HeroUI tooltip trigger");
-    const triggerBox = await tooltipTrigger.boundingBox();
+    const triggerBox = await passwordToggle.boundingBox();
     assert(triggerBox && triggerBox.width >= 32 && triggerBox.height >= 32, "the tooltip trigger must own a real hit target");
 
     let tooltipText = [];
     for (let attempt = 0; attempt < 3 && !tooltipText.length; attempt += 1) {
       await loginPage.mouse.move(8 + attempt, 8 + attempt);
       await loginPage.waitForTimeout(80);
-      await tooltipTrigger.hover({ position: { x: 16, y: 16 } });
+      await passwordToggle.hover({ position: { x: 16, y: 16 } });
       await loginPage.waitForTimeout(700);
       tooltipText = await loginPage.locator('[role="tooltip"]:visible').allTextContents();
     }
@@ -605,7 +751,7 @@ check("shared HeroUI overlays open, close and restore focus", async ({ origin, p
     const healthSelect = page
       .locator(".workspace-select")
       .filter({ hasText: "健康状态" })
-      .locator('[data-slot="select-trigger"]')
+      .locator(".workspace-select__trigger")
       .first();
     await healthSelect.waitFor({ state: "visible", timeout: 10000 });
     await healthSelect.click();
@@ -621,15 +767,15 @@ check("shared HeroUI overlays open, close and restore focus", async ({ origin, p
     await nodeRow.waitFor({ state: "visible", timeout: 15000 });
     await nodeRow.focus();
     await nodeRow.click();
-    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    const drawer = page.locator('.workspace-drawer[role="dialog"]').last();
     await drawer.waitFor({ state: "visible", timeout: 15000 });
-    assert.equal(await page.locator('[data-slot="drawer-backdrop"]:visible').count(), 1, "the inspector must render one backdrop");
+    assert.equal(await page.locator('.workspace-drawer-overlay:visible').count(), 1, "the inspector must render one backdrop");
 
     await drawer.getByRole("button", { name: "复制出口 IP" }).click();
-    const toast = page.locator('[data-slot="toast"]:visible').first();
+    const toast = page.locator('.toast-item:visible').first();
     await toast.waitFor({ state: "visible", timeout: 5000 });
     assert.match(await toast.innerText(), /已复制/, "copying the exit IP must use the global ToastProvider");
-    assert.equal(await toast.locator('xpath=ancestor::*[@data-slot="toast-region"]').count(), 1, "the toast must live in the global region");
+    assert.equal(await toast.locator('xpath=ancestor::*[contains(@class,"toast-viewport")]').count(), 1, "the toast must live in the global region");
 
     await drawer.getByRole("button", { name: "关闭" }).click();
     await drawer.waitFor({ state: "hidden", timeout: 3000 });
@@ -653,7 +799,7 @@ check("shared HeroUI overlays open, close and restore focus", async ({ origin, p
 });
 
 // The isolated backend has no retained request traffic, so replay one complete
-// row to exercise the HeroUI Table collection and its row action.
+// row to exercise the semantic table and its row action.
 function requestLogFixture(overrides = {}) {
   return {
     id: "log_ui_check",
@@ -694,7 +840,7 @@ function requestLogFixture(overrides = {}) {
 }
 
 check("the request log table exposes row headers and opens its inspector", async ({ origin, page, errors }) => {
-  const log = requestLogFixture();
+  const log = requestLogFixture({ node_tag: "Internal source/UI check node" });
   const listRoute = /\/api\/v1\/request-logs(?:\?|$)/;
   const detailRoute = /\/api\/v1\/request-logs\/log_ui_check(?:\?|$)/;
   await page.route(listRoute, async (route) => {
@@ -711,22 +857,29 @@ check("the request log table exposes row headers and opens its inspector", async
     errors.reset(`${REQUEST_LOGS} table interaction`);
     await page.goto(origin + REQUEST_LOGS);
     await rendered(page);
-    const table = page.locator('[data-slot="table-content"]');
+    const table = page.locator('table.workspace-table');
     await table.waitFor({ state: "visible", timeout: 15000 });
-    assert.equal(await table.getAttribute("role"), "grid", "ControlTable must expose grid semantics");
+    assert.equal(await table.evaluate((element) => element.tagName), "TABLE", "ControlTable must render a native table");
     assert((await table.getByRole("columnheader").count()) >= 10, "the request table must expose its columns");
-    assert((await table.getByRole("rowheader").count()) >= 1, "the request table must expose a row header");
 
-    const row = table.locator('[data-slot="table-row"]').filter({ hasText: "api.example.test" }).first();
+    const row = table.locator('tr.workspace-table__row').filter({ hasText: "api.example.test" }).first();
     await row.waitFor({ state: "visible", timeout: 5000 });
+    const nodeLink = row.getByRole("link", { name: "UI check node", exact: true });
+    assert.doesNotMatch(await row.innerText(), /Internal source/);
+    assert.doesNotMatch(await nodeLink.getAttribute("title"), /Internal source/);
+    assert.equal(await nodeLink.getAttribute("href"), NODES + "?tag_keyword=" + encodeURIComponent("UI check node"));
     await row.click();
-    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    const drawer = page.locator('.workspace-drawer[role="dialog"]').last();
     await drawer.waitFor({ state: "visible", timeout: 10000 });
     assert.match(await drawer.innerText(), /api\.example\.test/, "the table row action must open the matching inspector");
+    assert.match(await drawer.innerText(), /UI check node/);
+    assert.doesNotMatch(await drawer.innerText(), /Internal source/);
     await drawer.getByRole("button", { name: "关闭" }).click();
     await drawer.waitFor({ state: "hidden", timeout: 3000 });
     await quiet(page);
     assert.deepEqual(errors.drain(), [], "the request table interaction must not emit a browser error");
+    await auditResponsiveRoutes(page, origin, [REQUEST_LOGS], "populated-table");
+    await page.setViewportSize({ width: 1440, height: 900 });
   } finally {
     await page.unroute(listRoute);
     await page.unroute(detailRoute);
@@ -816,7 +969,7 @@ check("log pages retain the settled page during delayed failure and recover on r
         assert.deepEqual(errors.drain(), [], "recovery must not produce a browser error");
       } finally {
         releaseFailure();
-        await page.unroute(scenario.route, { behavior: "wait" });
+        await page.unroute(scenario.route);
       }
     }
   }
@@ -879,12 +1032,12 @@ check("platform destructive actions cancel, surface failure and retry", async ({
     await rendered(page);
     await page.getByRole("heading", { name: "危险操作" }).waitFor({ timeout: 10000 });
     const clearButton = page.getByRole("button", { name: "清除全部", exact: true });
-    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    const drawer = page.locator('.workspace-drawer[role="dialog"]').last();
 
     await clearButton.click();
     await drawer.waitFor({ state: "visible", timeout: 5000 });
     await drawer.getByRole("button", { name: "取消", exact: true }).click();
-    await page.locator('[data-slot="drawer-backdrop"]').last().waitFor({ state: "detached", timeout: 5000 });
+    await page.locator('.workspace-drawer-overlay').last().waitFor({ state: "detached", timeout: 5000 });
     assert.equal(clearRequests, 0, "cancelling a destructive action must send no request");
 
     await clearButton.click();
@@ -905,7 +1058,7 @@ check("platform destructive actions cancel, surface failure and retry", async ({
     );
   } finally {
     await page.unroute(platformRoute);
-    await page.unroute(leasesRoute, { behavior: "wait" });
+    await page.unroute(leasesRoute);
   }
 });
 
@@ -955,7 +1108,7 @@ check("server-paged invite filtering remains current-page scoped and paginates",
     assert.match(await pagination.innerText(), /第 2 \/ 2 页/, "the page summary must follow the server page, not the filtered row count");
     assert.deepEqual(errors.drain(), [], "current-page filtering and pagination must not emit a browser error");
   } finally {
-    await page.unroute(invitesRoute, { behavior: "wait" });
+    await page.unroute(invitesRoute);
     await page.unroute(plansRoute);
   }
 });
@@ -984,8 +1137,8 @@ check("unknown balance blocks purchase without inventing zero or a negative rema
     await page.goto(origin + ui(recordPath(mePaths, "plans")));
     await rendered(page);
     await page.getByText(plan.name, { exact: true }).first().waitFor({ timeout: 10000 });
-    await page.getByText(plan.name, { exact: true }).first().click();
-    const drawer = page.locator('[data-slot="drawer-dialog"][role="dialog"]').last();
+    await page.locator(".pricing-card").filter({ hasText: plan.name }).getByRole("button", { name: "选择套餐" }).click();
+    const drawer = page.locator('.workspace-drawer[role="dialog"]').last();
     await drawer.waitFor({ state: "visible", timeout: 10000 });
     await drawer.getByText("余额未知，无法确认购买", { exact: true }).waitFor();
     const confirm = drawer.getByRole("button", { name: "确认购买", exact: true });
@@ -994,7 +1147,7 @@ check("unknown balance blocks purchase without inventing zero or a negative rema
     assert.equal(purchaseRequests, 0, "an unknown balance must send no purchase");
     releaseBalance();
     await page.waitForFunction(() => {
-      const dialog = document.querySelector('[data-slot="drawer-dialog"]');
+      const dialog = document.querySelector('.workspace-drawer[role="dialog"]');
       return dialog && !dialog.textContent.includes("余额未知，无法确认购买") && dialog.textContent.includes("1.500000");
     });
     assert(await confirm.isEnabled(), "a funded balance must re-enable confirmation in the same drawer");
@@ -1005,7 +1158,7 @@ check("unknown balance blocks purchase without inventing zero or a negative rema
   } finally {
     releaseBalance();
     await page.unroute(plansRoute);
-    await page.unroute(balanceRoute, { behavior: "wait" });
+    await page.unroute(balanceRoute);
     await page.unroute(purchaseRoute);
   }
 });
@@ -1031,11 +1184,12 @@ check("deposit amount validation exposes format and range errors before sending 
     errors.reset("deposit amount validation");
     await page.goto(origin + ui(recordPath(mePaths, "deposit")));
     await rendered(page);
+    await page.getByRole("tab", { name: "USDT (TRC20 链上)", exact: true }).click();
     const input = page.getByRole("textbox", { name: "充值金额 (USDT)", exact: true });
     await input.waitFor({ timeout: 10000 });
     const create = page.getByRole("button", { name: "生成充值单", exact: true });
     assert(await create.isDisabled(), "empty amount must not submit");
-    for (const [value, message] of [["abc", "请输入有效金额，最多六位小数。"], ["1.0000001", "请输入有效金额，最多六位小数。"], ["0.999999", "低于最小充值额"], ["10.000001", "超过最大充值额"]]) {
+    for (const [value, message] of [["-1", "请输入有效金额，最多六位小数。"], ["1e6", "请输入有效金额，最多六位小数。"], ["9".repeat(1000), "请输入有效金额，最多六位小数。"], ["abc", "请输入有效金额，最多六位小数。"], ["1.0000001", "请输入有效金额，最多六位小数。"], ["0.999999", "低于最小充值额"], ["10.000001", "超过最大充值额"]]) {
       await input.fill(value);
       await page.getByRole("alert").filter({ hasText: message }).first().waitFor({ timeout: 5000 });
       assert(await create.isDisabled(), `${value}: invalid amount must block submission`);
@@ -1053,6 +1207,184 @@ check("deposit amount validation exposes format and range errors before sending 
   } finally {
     await page.unroute(infoRoute);
     await page.unroute(intentsRoute);
+  }
+});
+
+check("dynamic payment gateways save live settings without returning secrets", async ({ origin, page, context, errors }) => {
+  const configURL = origin + "/api/v1/system/config";
+  const original = await (await context.request.get(configURL)).json();
+  const keys = ["ldc_enabled", "ldc_pid", "ldc_key", "ldc_rate", "tron_deposit_enabled", "tron_address", "tron_api_key", "tron_trx_enabled", "tron_trx_ratio"];
+  try {
+    errors.reset("payment settings");
+    await page.goto(origin + ui(recordPath(opsPaths, "config")) + "?category=payments");
+    await page.getByLabel("商户 ID", { exact: true }).fill("ui-merchant");
+    await page.getByLabel("商户密钥", { exact: true }).fill("ui-private-secret");
+    const rateInput = page.getByLabel("每积分兑换余额", { exact: true });
+    for (const invalid of ["abc", "-1", "1e6", "9".repeat(1000), "1000000.0000000001"]) {
+      await rateInput.fill(invalid);
+      await page.getByRole("alert").filter({ hasText: "不支持科学计数法" }).waitFor();
+      assert(await page.getByRole("button", { name: "保存全部更改", exact: true }).isDisabled(), "invalid rate must block saving");
+    }
+    await rateInput.fill("0.25");
+    await page.getByRole("switch", { name: /启用 LinuxDO Credit/ }).click();
+    const saved = page.waitForResponse((r) => r.url() === configURL && r.request().method() === "PATCH");
+    await page.getByRole("button", { name: "保存全部更改", exact: true }).click();
+    const response = await saved;
+    assert.equal(response.status(), 200);
+    assert(!(await response.text()).includes("ui-private-secret"), "PATCH must mask the merchant secret");
+    assert.equal((await (await context.request.get(origin + "/api/v1/me/ldc/info")).json()).rate, 0.25);
+    await rateInput.fill("0.0000001");
+    const tinyRateSaved = page.waitForResponse((r) => r.url() === configURL && r.request().method() === "PATCH");
+    await page.getByRole("button", { name: "保存全部更改", exact: true }).click();
+    assert.equal((await tinyRateSaved).status(), 200);
+    await page.reload();
+    await rateInput.waitFor();
+    assert.equal(await rateInput.inputValue(), "0.0000001", "small rates must reload as editable decimal text");
+    await rateInput.fill("0.25");
+    await page.getByRole("tab", { name: "TRON (USDT & TRX)", exact: true }).click();
+    await page.getByLabel("TRON 收款地址", { exact: true }).fill("TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE");
+    await page.getByLabel("TronGrid API Key", { exact: true }).fill("ui-private-grid");
+    await page.getByLabel("每 TRX 兑换余额", { exact: true }).fill("0.125");
+    const windowInput = page.getByLabel("订单有效分钟数", { exact: true });
+    for (const invalid of ["0", "1441", "1e2", "-1", "abc", "9".repeat(1000)]) {
+      await windowInput.fill(invalid);
+      await page.getByRole("alert").filter({ hasText: "订单有效分钟数" }).waitFor();
+      assert(await page.getByRole("button", { name: "保存全部更改", exact: true }).isDisabled(), "invalid order window must block saving");
+    }
+    await windowInput.fill(String(original.tron_window_minutes));
+    await page.getByRole("switch", { name: /启用 TRON 充值/ }).click();
+    await page.getByRole("switch", { name: /启用原生 TRX 充值/ }).click();
+    const tronSaved = page.waitForResponse((r) => r.url() === configURL && r.request().method() === "PATCH");
+    await page.getByRole("button", { name: "保存全部更改", exact: true }).click();
+    const tronResponse = await tronSaved;
+    assert.equal(tronResponse.status(), 200);
+    assert(!("ldc_key" in tronResponse.request().postDataJSON()), "another tab must omit the untouched merchant secret");
+    const info = await (await context.request.get(origin + "/api/v1/me/deposit")).json();
+    assert(info.enabled && info.trx_enabled && info.trx_ratio === 0.125, "saved gateway settings must apply immediately");
+    const persisted = await (await context.request.get(configURL)).json();
+    assert(persisted.ldc_key_set && persisted.tron_api_key_set, "saving another tab must preserve the first secret");
+    assert.equal(persisted.ldc_key, "");
+    assert.equal(persisted.tron_api_key, "");
+    for (const width of [1440, 1100, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `payment settings overflow at ${width}px`);
+      if (process.env.PRISM_UI_SCREENSHOT_DIR) {
+        await mkdir(process.env.PRISM_UI_SCREENSHOT_DIR, { recursive: true });
+        await page.screenshot({ path: join(process.env.PRISM_UI_SCREENSHOT_DIR, `payment-settings-${width}.png`), fullPage: true });
+      }
+    }
+    assert.deepEqual(errors.drain(), []);
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const restored = await context.request.patch(configURL, { headers: await csrfHeaders(context), data: Object.fromEntries(keys.map((key) => [key, original[key]])) });
+    assert(restored.ok(), `restore isolated payment fixture settings: HTTP ${restored.status()}`);
+  }
+});
+
+check("LDC input rejects malformed decimals and credit overflow", async ({ origin, page }) => {
+  const routePattern = /\/api\/v1\/me\/ldc\/info(?:\?|$)/;
+  await page.route(routePattern, (route) => route.fulfill({ json: { enabled: true, rate: 2 } }));
+  try {
+    await page.goto(origin + ui(recordPath(mePaths, "deposit")));
+    const input = page.getByLabel("充值积分数量", { exact: true });
+    const submit = page.getByRole("button", { name: "前往收银台支付" });
+    for (const value of ["abc", "-1", "1e6", "9".repeat(1000), "1.001", "500000.01"]) {
+      await input.fill(value);
+      await page.getByRole("alert").filter({ hasText: "最多两位小数" }).waitFor();
+      assert(await submit.isDisabled(), "invalid points must not submit");
+      assert.equal(await input.getAttribute("aria-invalid"), "true");
+    }
+    await input.fill("500000.00");
+    assert(await submit.isEnabled(), "exact credit ceiling must be accepted");
+  } finally { await page.unroute(routePattern); }
+});
+
+check("TRX deposit retains its address, QR, rate and refreshed paid state", async ({ origin, page, errors }) => {
+  const infoRoute = /\/api\/v1\/me\/deposit(?:\?|$)/;
+  const intentsRoute = /\/api\/v1\/me\/deposits(?:\?|$)/;
+  const now = Date.now();
+  const info = { enabled: true, trx_enabled: true, trx_ratio: 0.125, address: "TCurrentWallet", contract: "contract", min_micro: 1000000, max_micro: 100000000000, window_secs: 900 };
+  let intent = { id: "trx-ui-order", currency: "trx", amount_micro: 50000123, credit_micro: 6250015, rate: 0.125, address: "TOriginalOrderWallet", contract: "", status: "pending", tx_id: "", created_at_ns: now * 1e6, expires_at_ns: (now + 900000) * 1e6, hold_until_ns: (now + 1800000) * 1e6, paid_at_ns: 0 };
+  let submitted;
+  await page.route(infoRoute, (route) => route.fulfill({ json: info }));
+  await page.route(intentsRoute, (route) => {
+    if (route.request().method() === "POST") {
+      submitted = route.request().postDataJSON();
+      return route.fulfill({ json: intent });
+    }
+    return route.fulfill({ json: { items: submitted ? [intent] : [] } });
+  });
+  try {
+    errors.reset("TRX deposit");
+    await page.goto(origin + ui(recordPath(mePaths, "deposit")));
+    await page.getByRole("tab", { name: "TRX (波场主币)", exact: true }).click();
+    await page.getByLabel("充值金额 (TRX)", { exact: true }).fill("50");
+    await page.getByRole("button", { name: "生成充值单", exact: true }).click();
+    await page.getByText(intent.address, { exact: true }).waitFor();
+    assert.deepEqual(submitted, { amount_micro: 50000000, currency: "trx" });
+    await page.getByText("50.000123", { exact: true }).waitFor();
+    await page.getByText("6.250015 USDT", { exact: true }).waitFor();
+    assert.equal(await page.locator('svg title').filter({ hasText: "收款地址二维码" }).count(), 1);
+    for (const width of [1440, 1100, 390]) {
+      await page.setViewportSize({ width, height: 900 });
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `TRX deposit overflow at ${width}px`);
+      if (process.env.PRISM_UI_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.PRISM_UI_SCREENSHOT_DIR, `trx-deposit-${width}.png`), fullPage: true });
+    }
+    intent = { ...intent, status: "paid", tx_id: "confirmed-native-transaction", paid_at_ns: Date.now() * 1e6 };
+    await page.getByText("已到账，余额已更新", { exact: true }).waitFor({ timeout: 15000 });
+    assert.deepEqual(errors.drain(), []);
+  } finally {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.unroute(infoRoute);
+    await page.unroute(intentsRoute);
+  }
+});
+
+check("session expiry clears cached tenant data before another account signs in", async ({ origin, context, browser }) => {
+  const suffix = randomBytes(4).toString("hex");
+  const password = randomBytes(16).toString("hex");
+  const names = [`cache-a-${suffix}`, `cache-b-${suffix}`];
+  for (const username of names) {
+    const response = await context.request.post(origin + "/api/v1/admin/users", { headers: await csrfHeaders(context), data: { username, password, role: "user" } });
+    assert(response.ok(), "create cache isolation fixture user");
+  }
+  const tenantContext = await browser.newContext({ locale: LOCALE, viewport: { width: 1440, height: 900 } });
+  await tenantContext.addInitScript((locale) => localStorage.setItem("prism.locale", locale), LOCALE);
+  const tenantPage = await tenantContext.newPage();
+  let phase = "a";
+  let releaseBalance;
+  const blockedBalance = new Promise((resolve) => { releaseBalance = resolve; });
+  let bRequested = false;
+  await tenantPage.route(/\/api\/v1\/me\/balance(?:\?|$)/, async (route) => {
+    if (phase === "expired") return route.fulfill({ status: 401, json: { error: { code: "UNAUTHORIZED" } } });
+    if (phase === "b") { bRequested = true; await blockedBalance; }
+    return route.fulfill({ json: { balance_micro: phase === "a" ? 135123456 : 0, ledger: [] } });
+  });
+  const signIn = async (username) => {
+    await tenantPage.locator("#username").fill(username);
+    await tenantPage.locator("#password").fill(password);
+    await tenantPage.locator('form button[type="submit"]').click();
+    await tenantPage.waitForURL(/\/ui\/overview$/, { timeout: 15000 });
+  };
+  try {
+    await tenantPage.goto(origin + "/ui/");
+    await signIn(names[0]);
+    await tenantPage.getByText("135.123456", { exact: true }).first().waitFor();
+    phase = "expired";
+    await tenantContext.clearCookies();
+    await tenantPage.getByRole("button", { name: "刷新", exact: true }).click();
+    await tenantPage.locator("#username").waitFor();
+    phase = "b";
+    await signIn(names[1]);
+    await tenantPage.locator("main h1").waitFor();
+    for (let i = 0; i < 50 && !bRequested; i++) await tenantPage.waitForTimeout(50);
+    assert(bRequested, "the new account must fetch its own balance");
+    assert.equal(await tenantPage.getByText("135.123456", { exact: true }).count(), 0, "previous tenant balance must be absent even while the new response is pending");
+    releaseBalance();
+    await tenantPage.getByText("0.000000", { exact: true }).first().waitFor();
+  } finally {
+    releaseBalance();
+    await tenantContext.close();
   }
 });
 
@@ -1188,10 +1520,8 @@ check("the command palette opens from the keyboard, filters and routes", async (
   await rendered(page);
 
   /*
-   * The palette is HeroUI's modal, search field and listbox now, so the markers
-   * are the vendor's: a dialog, a searchbox and listbox options. What is proven is
-   * unchanged — the lazy chunk arrives, the index is the rail plus the five shell
-   * actions, typing narrows it, and both ways out work.
+   * The palette uses a Radix dialog with a search field and listbox options. The
+   * lazy chunk, index, filtering, keyboard selection and dismissal are all real.
    */
   const palette = page.getByRole("dialog");
   const options = page.getByRole("option");
@@ -1243,8 +1573,22 @@ check("switching to English fetches its dictionary and stays English", async ({ 
     );
   assert.deepEqual(await seen(), [], "a Chinese session must never download the English dictionary");
 
+  const waitForLanguage = async (language, phase) => {
+    try {
+      await page.waitForFunction((expected) => document.documentElement.lang === expected, language, { timeout: 15000 });
+    } catch (error) {
+      const state = await page.evaluate(() => ({
+        language: document.documentElement.lang,
+        stored: localStorage.getItem("prism.locale"),
+        title: document.title,
+        labels: [...document.querySelectorAll("button[aria-label]")].map((button) => button.getAttribute("aria-label")),
+      }));
+      throw new Error(`${phase}: language did not become ${language}: ${JSON.stringify(state)}; ${error.message}`);
+    }
+  };
+
   await page.locator('button[aria-label="切换语言"]').click();
-  await page.waitForFunction(() => document.documentElement.lang === "en-US", null, { timeout: 15000 });
+  await waitForLanguage("en-US", "switch to English");
   // The rail's own name is translated, so it is the cheapest honest witness that
   // the tree re-rendered in English rather than only the <html lang> attribute.
   await page.locator('nav[aria-label="Main Navigation"]').waitFor({ state: "visible", timeout: 15000 });
@@ -1252,7 +1596,7 @@ check("switching to English fetches its dictionary and stays English", async ({ 
   assert.equal((await seen()).length, 1, "the chunk is fetched once, not per render");
 
   await page.locator('button[aria-label="Switch Language"]').click();
-  await page.waitForFunction(() => document.documentElement.lang === "zh-CN", null, { timeout: 15000 });
+  await waitForLanguage("zh-CN", "switch back to Chinese");
   await page.locator('nav[aria-label="主导航"]').waitFor({ state: "visible", timeout: 15000 });
 });
 
@@ -1278,6 +1622,7 @@ check("a tenant session reaches the self-service panel and nothing else", async 
       max_bandwidth_bps: 0,
       max_keys: 2,
       duration_days: 30,
+      price_micro: 2000000,
       status: "active",
     },
   });
@@ -1317,10 +1662,30 @@ check("a tenant session reaches the self-service panel and nothing else", async 
     await tenantPage.locator('form button[type="submit"]').click();
     // The landing page comes from the role the server returned, not from a path
     // baked into the sign-in form.
-    await tenantPage.waitForURL(/\/ui\/me$/, { timeout: 15000 });
+    await tenantPage.waitForURL(/\/ui\/overview$/, { timeout: 15000 });
+
+    const keyResponse = await tenantContext.request.post(origin + "/api/v1/me/keys", {
+      headers: { "Content-Type": "application/json", ...(await csrfHeaders(tenantContext)) },
+      data: { name: "UI tenant access key" },
+    });
+    assert(keyResponse.ok(), `the fixture key must be created (HTTP ${keyResponse.status()})`);
 
     const rail = tenantPage.locator('nav[aria-label="主导航"]');
     await rail.waitFor({ state: "visible", timeout: 15000 });
+    if (process.env.PRISM_UI_SCREENSHOT_DIR) {
+      await mkdir(process.env.PRISM_UI_SCREENSHOT_DIR, { recursive: true });
+      await rendered(tenantPage);
+      await quiet(tenantPage);
+      await tenantPage.screenshot({ path: join(process.env.PRISM_UI_SCREENSHOT_DIR, "overview-desktop.png"), fullPage: true });
+      await tenantPage.setViewportSize({ width: 390, height: 844 });
+      await tenantPage.goto(origin + ui(recordPath(mePaths, "overview")));
+      await rendered(tenantPage);
+      await quiet(tenantPage);
+      await tenantPage.screenshot({ path: join(process.env.PRISM_UI_SCREENSHOT_DIR, "overview-mobile.png"), fullPage: true });
+      await tenantPage.setViewportSize({ width: 1440, height: 900 });
+      await tenantPage.goto(origin + ui(recordPath(mePaths, "overview")));
+      await rendered(tenantPage);
+    }
     assert.equal(
       await rail.locator("a:visible").count(),
       TENANT_RAIL.length,
@@ -1362,9 +1727,12 @@ check("a tenant session reaches the self-service panel and nothing else", async 
       assert.deepEqual(logged, [], `${path}: ${logged.map((entry) => entry.text).join("; ")}`);
     }
 
+    await auditResponsiveRoutes(tenantPage, origin, TENANT_RAIL, "tenant");
+    await tenantPage.setViewportSize({ width: 1440, height: 900 });
+
     // A management path must be indistinguishable from one that was never
     // routed: same page, same URL, no bounce home. Sending the tenant back to
-    // /ui/me would confirm the path exists, which is what a prober wants.
+    // /ui/overview would confirm the path exists, which is what a prober wants.
     await tenantPage.goto(origin + DASHBOARD);
     await tenantPage.locator("main").waitFor({ state: "visible", timeout: 15000 });
     const managementText = await tenantPage.locator("main").innerText();
@@ -1407,33 +1775,64 @@ check("keyboard focus is visible", async ({ origin, page }) => {
   assert(focused, "tabbing must reach a control drawn with an outline of at least 2px");
 });
 
-check("the page never overflows horizontally", async ({ origin, page }) => {
+async function auditResponsiveRoutes(page, origin, paths, role) {
   const failures = [];
-  for (const viewport of [
-    { width: 1440, height: 900 },
-    { width: 1024, height: 900 },
-    { width: 390, height: 844 },
-  ]) {
-    await page.setViewportSize(viewport);
-    for (const path of [DASHBOARD, NODES]) {
+  const measurements = [];
+  for (const width of [1440, 1100, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : width === 1100 ? 800 : 900 });
+    for (const path of paths) {
       await page.goto(origin + path);
-      await rendered(page);
-      await page.waitForTimeout(150);
-      const metrics = await page.evaluate(() => ({
-        scrollWidth: document.documentElement.scrollWidth,
-        clientWidth: document.documentElement.clientWidth,
-        bodyScrollWidth: document.body.scrollWidth,
-        innerWidth: window.innerWidth,
-      }));
-      if (metrics.scrollWidth > metrics.clientWidth) {
-        failures.push(
-          `${path} @${viewport.width}px: document scrollWidth ${metrics.scrollWidth} > viewport ${metrics.clientWidth}` +
-            ` (body ${metrics.bodyScrollWidth}, window ${metrics.innerWidth})`,
-        );
+      assert(await rendered(page), `${path}: the page must render at ${width}px`);
+      await quiet(page);
+      const metrics = await page.evaluate(() => {
+        const root = document.documentElement;
+        const main = document.querySelector("main");
+        const clipped = [...document.querySelectorAll(".workspace-card, .workspace-data-grid__cell, .pricing-card, .workspace-empty")]
+          .filter((el) => el.getBoundingClientRect().width > 0 && el.scrollWidth > el.clientWidth + 2)
+          .map((el) => `${el.className}: ${el.scrollWidth}/${el.clientWidth}`);
+        return { overflow: root.scrollWidth - root.clientWidth, mainWidth: main?.getBoundingClientRect().width ?? 0, clipped };
+      });
+      if (metrics.overflow > 1 || metrics.mainWidth < width * 0.6 || metrics.clipped.length) {
+        failures.push(`${path} @${width}px: ${JSON.stringify(metrics)}`);
+      }
+      const insets = await page.evaluate(measureCardInsets);
+      assert(insets.checked > 0, `${path} @${width}px: no card surfaces were measured`);
+      if (insets.failures.length) failures.push(`${path} @${width}px card insets: ${JSON.stringify(insets.failures)}`);
+      measurements.push({ path, viewport: page.viewportSize(), ...metrics, insets });
+      if (process.env.PRISM_UI_SCREENSHOT_DIR) {
+        await mkdir(process.env.PRISM_UI_SCREENSHOT_DIR, { recursive: true });
+        const name = `${role}-${path.replaceAll("/", "-")}-${width}`;
+        await page.screenshot({ path: join(process.env.PRISM_UI_SCREENSHOT_DIR, `${name}.png`), fullPage: true });
+        const scrolled = await page.locator("main").evaluate((main) => {
+          main.scrollTop = main.scrollHeight;
+          return main.scrollHeight > main.clientHeight;
+        });
+        if (scrolled) await page.screenshot({ path: join(process.env.PRISM_UI_SCREENSHOT_DIR, `${name}-bottom.png`), fullPage: true });
       }
     }
   }
-  assert.deepEqual(failures, [], "horizontal overflow:\n  " + failures.join("\n  "));
+  if (process.env.PRISM_UI_SCREENSHOT_DIR) {
+    await writeFile(join(process.env.PRISM_UI_SCREENSHOT_DIR, `${role}-measurements.json`), JSON.stringify(measurements, null, 2));
+  }
+  console.log(`Responsive ${role}: ${paths.length} routes × 3 viewports, ${measurements.reduce((sum, row) => sum + row.insets.checked, 0)} card measurements, ${failures.length} failures`);
+  assert.deepEqual(failures, [], "responsive layout:\n  " + failures.join("\n  "));
+}
+
+check("the page never overflows horizontally", async ({ origin, page }) => {
+  await auditResponsiveRoutes(page, origin, [...RAIL_PATHS, "/ui/ops/logs", "/ui/ops/redeem"], "ops");
+  await auditResponsiveRoutes(page, origin, [`${NODES}?tag_keyword=padding-no-matches`, `${NODES}?view=exits`], "empty-and-nested");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(origin + DASHBOARD);
+  await rendered(page);
+  await page.locator(".workspace-sidebar-toggle").click();
+  assert(await page.locator(".workspace-shell.is-nav-collapsed").count(), "the rail must collapse");
+  for (const width of [1100, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    const main = await page.locator("main").boundingBox();
+    assert(main && main.width >= width - 2, `collapsed rail must release its grid column at ${width}px`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.locator(".workspace-sidebar-toggle").click();
 });
 
 check("the workbench bounds its exit sample at 200 and platform pulses at 8 visible rows", async ({ origin, page, errors }) => {
@@ -1520,9 +1919,9 @@ check("the workbench bounds its exit sample at 200 and platform pulses at 8 visi
     assert.equal(leasePulseIds.size, 8, "platform lease pulses must be limited to the eight visible rows");
     assert.deepEqual(errors.drain(), [], "bounded workbench sampling must not emit a browser error");
   } finally {
-    await page.unroute(platformRoute, { behavior: "wait" });
-    await page.unroute(nodesRoute, { behavior: "wait" });
-    await page.unroute(pulseRoute, { behavior: "wait" });
+    await page.unroute(platformRoute);
+    await page.unroute(nodesRoute);
+    await page.unroute(pulseRoute);
   }
 });
 
@@ -1538,6 +1937,7 @@ check("the dashboard states its condition and works from real registers", async 
   assert.equal(await statusCells.count(), 4, "the workbench must state four global facts");
   const statusText = await statusCells.allInnerTexts();
   assert(statusText.some((text) => /\d/.test(text)), "at least one global fact must carry a number");
+  assert.doesNotMatch(await page.locator("main").innerText(), /采样来源|已加载来源|部分来源/);
   await page.getByRole("heading", { name: "需要处理", exact: true }).waitFor({ state: "visible", timeout: 20000 });
   await page.getByRole("heading", { name: "平台配线" }).waitFor({ state: "visible", timeout: 20000 });
   await page.getByRole("heading", { name: "最近变更" }).waitFor({ state: "visible", timeout: 20000 });
@@ -1805,6 +2205,11 @@ async function quiet(page) {
   await page.waitForLoadState("networkidle", { timeout: 3000 }).catch(() => {});
 }
 
+registerNodePlatformChecks(check);
+registerPanelWorkflowChecks(check);
+registerPanelSurfaceChecks(check);
+registerPanelTaskChecks(check);
+
 const root = await mkdtemp(join(tmpdir(), "prism-live-test-"));
 const adminPassword = randomBytes(24).toString("hex");
 const results = [];
@@ -1812,11 +2217,17 @@ let browser;
 let backend;
 let backendExit;
 let setupError;
+let privacyProbe;
 
 try {
+  privacyProbe = http.createServer((_request, response) => response.end("192.0.2.10"));
+  privacyProbe.listen(0, "127.0.0.1");
+  await once(privacyProbe, "listening");
   const port = await reservePort();
   const origin = `http://127.0.0.1:${port}`;
   const proxyToken = await initBackend({ root, adminPassword });
+  execFileSync("python3", [fileURLToPath(new URL("../../../../scripts/seed-test-privacy.py", import.meta.url)),
+    join(root, "state", "state.db"), `http://127.0.0.1:${privacyProbe.address().port}`], { env: testEnvironment() });
   const started = startBackend({ root, port, proxyToken });
   backend = started.backend;
   backendExit = started.exit;
@@ -1828,6 +2239,7 @@ try {
     viewport: { width: 1440, height: 900 },
     reducedMotion: "reduce",
   });
+  context.setDefaultTimeout(15000);
   await context.addInitScript((locale) => {
     localStorage.setItem("prism.locale", locale);
   }, LOCALE);
@@ -1835,13 +2247,21 @@ try {
   const errors = watchPage(page);
 
   const fixture = { origin, page, context, adminPassword, errors, browser };
-  for (const { name, run } of checks) {
+  const filter = process.env.PRISM_UI_CHECK_FILTER
+    ? new RegExp(process.env.PRISM_UI_CHECK_FILTER, "i")
+    : null;
+  const selectedChecks = filter ? checks.filter(({ name }) => filter.test(name)) : checks;
+  if (selectedChecks.length === 0) throw new Error("PRISM_UI_CHECK_FILTER matched no browser checks");
+  for (const { name, run } of selectedChecks) {
+    console.log(`RUN   ${name}`);
+    const startedAt = performance.now();
     try {
       await run(fixture);
       results.push({ name, ok: true });
     } catch (error) {
       results.push({ name, ok: false, message: error?.message ?? String(error) });
     }
+    console.log(`${results.at(-1).ok ? "PASS" : "FAIL"}  ${name} (${Math.round(performance.now() - startedAt)} ms)`);
   }
 } catch (error) {
   setupError = error;
@@ -1853,6 +2273,7 @@ try {
     await backendExit;
     clearTimeout(timer);
   }
+  if (privacyProbe) await new Promise((resolve) => privacyProbe.close(resolve));
   await rm(root, { recursive: true, force: true });
 }
 

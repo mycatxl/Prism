@@ -1,7 +1,9 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/netip"
 	"regexp"
 	"strings"
@@ -33,11 +35,20 @@ func (f TagFilter) Empty() bool {
 // NodeEntry represents a node in the global pool.
 // Static fields are set at creation; dynamic fields use atomics or mutex.
 type NodeEntry struct {
+	privacyConnMu  sync.Mutex
+	privacyConns   map[io.Closer]struct{}
+	privacyClosed  bool
+	privacyContext context.Context
+	privacyCancel  context.CancelFunc
 	// --- Static (immutable after creation) ---
-	Hash       Hash
-	RawOptions json.RawMessage
-	Protocol   string
-	CreatedAt  time.Time
+	privacySource   *atomic.Pointer[PrivacyPolicy]
+	privacyReasons  []string
+	privacyWarnings []string
+	identityCheck   atomic.Pointer[IdentityMeasurement]
+	Hash            Hash
+	RawOptions      json.RawMessage
+	Protocol        string
+	CreatedAt       time.Time
 	// Engine is the runtime that builds this node: "singbox" or "mihomo".
 	Engine string
 	// ProtocolDetail is the display form of the node protocol, for example
@@ -104,6 +115,8 @@ func NewNodeEntry(hash Hash, rawOptions json.RawMessage, createdAt time.Time, ma
 			e.Protocol = strings.ToLower(metadata.Type)
 		}
 	}
+	e.privacyContext, e.privacyCancel = context.WithCancel(context.Background())
+	e.privacyReasons, e.privacyWarnings = ClassifyPrivacy(rawOptions)
 	if maxLatencyTableEntries > 0 {
 		e.LatencyTable = NewLatencyTable(maxLatencyTableEntries)
 	}

@@ -47,6 +47,8 @@ func SnapshotForPlan(sub *model.UserSubscription, plan *model.Plan) PlanSnapshot
 	if sub == nil {
 		return snap
 	}
+	snap.SubscriptionID = sub.ID
+	snap.PeriodIndex = sub.PeriodIndex
 	snap.ExpiresAtNs = sub.ExpiresAtNs
 	if sub.Status != model.SubscriptionStatusActive {
 		snap.Status = sub.Status

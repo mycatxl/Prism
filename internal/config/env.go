@@ -157,6 +157,14 @@ type EnvConfig struct {
 	TronGridAPIKey   string `json:"-"`
 	TronGridEndpoint string
 
+	// Linux.do Credit (EasyPay) checkout. Credentials are never included in
+	// environment diagnostics. An empty PID or key leaves the integration off.
+	LDCPID        string `json:"-"`
+	LDCKey        string `json:"-"`
+	LDCGatewayURL string
+	LDCNotifyURL  string
+	LDCReturnURL  string
+
 	// Request log
 	RequestLogQueueSize           int
 	RequestLogQueueFlushBatchSize int
@@ -321,6 +329,24 @@ func LoadEnvConfig() (*EnvConfig, error) {
 	if cfg.TronGridEndpoint == "" {
 		cfg.TronGridEndpoint = DefaultTronGridEndpoint
 	}
+	// --- Linux.do Credit (EasyPay) ---
+	// The client-id/client-secret spellings are accepted alongside the shorter
+	// PID/key names because both are used by existing deployments. A non-empty
+	// primary spelling wins; an empty primary value falls back to its alias.
+	cfg.LDCPID = strings.TrimSpace(envStrAliases([]string{
+		"PRISM_LDC_PID",
+		"PRISM_LDC_CLIENT_ID",
+	}, ""))
+	cfg.LDCKey = strings.TrimSpace(envStrAliases([]string{
+		"PRISM_LDC_KEY",
+		"PRISM_LDC_CLIENT_SECRET",
+	}, ""))
+	cfg.LDCGatewayURL = strings.TrimSpace(envStr("PRISM_LDC_GATEWAY_URL", "https://credit.linux.do/epay"))
+	if cfg.LDCGatewayURL == "" {
+		cfg.LDCGatewayURL = "https://credit.linux.do/epay"
+	}
+	cfg.LDCNotifyURL = strings.TrimSpace(envStr("PRISM_LDC_NOTIFY_URL", ""))
+	cfg.LDCReturnURL = strings.TrimSpace(envStr("PRISM_LDC_RETURN_URL", ""))
 	// --- Usage alerts ---
 	// The three PRISM_ALERT_* variables seed the alert settings at startup; the
 	// same three fields stay hot-updatable through the settings page, which is
@@ -722,6 +748,26 @@ func envBool(key string, defaultVal bool, errs *[]string) bool {
 func envStr(key, defaultVal string) string {
 	if v, ok := lookupEnv(key); ok {
 		return v
+	}
+	return defaultVal
+}
+
+// envStrAliases returns the first non-empty value among keys. Each spelling is
+// considered through lookupEnv so check-config can report the source of the
+// spelling that supplied the value. An explicitly empty primary value therefore
+// behaves as an unset alias and lets a populated compatibility spelling take
+// effect.
+func envStrAliases(keys []string, defaultVal string) string {
+	for _, key := range keys {
+		if value, ok := lookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			// The first spelling is the canonical row in check-config. When an
+			// alias supplies the value, carry its source over so that row does
+			// not claim the effective value came from the default.
+			if key != keys[0] {
+				recordEnvOrigin(keys[0], EnvSourceOf(key))
+			}
+			return value
+		}
 	}
 	return defaultVal
 }

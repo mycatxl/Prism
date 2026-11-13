@@ -9,6 +9,7 @@ import (
 	"net/http/httptrace"
 	"time"
 
+	"prism/internal/netutil"
 	"prism/internal/node"
 )
 
@@ -18,9 +19,7 @@ import (
 //
 // timeout is a closure that returns the current probe timeout.
 func DirectFetcher(timeout func() time.Duration) Fetcher {
-	transport := &http.Transport{
-		// Disable redirect following for trace endpoint handled below.
-	}
+	transport := &http.Transport{DisableKeepAlives: true}
 
 	return func(_ node.Hash, url string) ([]byte, time.Duration, error) {
 		t := timeout()
@@ -53,10 +52,16 @@ func DirectFetcher(timeout func() time.Duration) Fetcher {
 		}
 		requestDone := time.Now()
 		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, 0, fmt.Errorf("probe: HTTP status %d", resp.StatusCode)
+		}
 
-		body, err := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, netutil.ProbeResponseMaxBytes+1))
 		if err != nil {
 			return nil, 0, fmt.Errorf("probe: read body: %w", err)
+		}
+		if int64(len(body)) > netutil.ProbeResponseMaxBytes {
+			return nil, 0, fmt.Errorf("probe: response exceeds %d bytes", netutil.ProbeResponseMaxBytes)
 		}
 
 		// Prefer TLS handshake latency. If there is no handshake event (for

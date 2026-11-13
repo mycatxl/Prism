@@ -95,6 +95,8 @@ func newBenchEnv(b *testing.B, upstreamAddr string) (*benchEnv, *ForwardProxy) {
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "bench-token",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     router,
 		Pool:       pool,
 		// The shared test recorder keeps the benchmark off the real health

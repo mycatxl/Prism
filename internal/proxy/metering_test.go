@@ -203,8 +203,8 @@ func TestMetering_QuotaRefusalHappensBeforeTheUpstream(t *testing.T) {
 	w := httptest.NewRecorder()
 	fp.ServeHTTP(w, req)
 
-	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("status = %d, want 429 (body %q, err %q)", w.Code, w.Body.String(), w.Header().Get("X-Prism-Error"))
+	if w.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402 (body %q, err %q)", w.Code, w.Body.String(), w.Header().Get("X-Prism-Error"))
 	}
 	if got := w.Header().Get("X-Prism-Error"); got != "QUOTA_EXCEEDED" {
 		t.Fatalf("X-Prism-Error = %q, want QUOTA_EXCEEDED", got)
@@ -220,9 +220,8 @@ func TestMetering_QuotaRefusalHappensBeforeTheUpstream(t *testing.T) {
 	}
 }
 
-// A request carrying no key is attributed to nobody: the transitional token
-// path has no allowance and must not be billed to an arbitrary key.
-func TestMetering_TokenPathIsNotAttributed(t *testing.T) {
+// A request carrying a legacy token is rejected before metering starts.
+func TestMetering_LegacyTokenIsRejectedWithoutAttribution(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	}))
@@ -236,6 +235,8 @@ func TestMetering_TokenPathIsNotAttributed(t *testing.T) {
 	meter := newRecordingMeter()
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     &mockHealthRecorder{},
@@ -244,12 +245,12 @@ func TestMetering_TokenPathIsNotAttributed(t *testing.T) {
 	})
 
 	req := httptest.NewRequest(http.MethodGet, upstream.URL+"/token", nil)
-	req.Header.Set("Proxy-Authorization", basicAuth("plat", "tok"))
+	req.Header.Set("Proxy-Authorization", basicAuth("plat", "legacy-token"))
 	w := httptest.NewRecorder()
 	fp.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body %q)", w.Code, w.Body.String())
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (body %q)", w.Code, w.Body.String())
 	}
 	if got := meter.attributedKeyCount(); got != 0 {
 		t.Fatalf("the token path attributed traffic to %d keys, want 0", got)

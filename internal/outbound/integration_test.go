@@ -30,6 +30,7 @@ func TestEndToEnd_NodeEnterRoutableView(t *testing.T) {
 
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
 		SubLookup:              subMgr.Lookup,
+		QualityLookup:          testutil.MeasuredQuality,
 		GeoLookup:              geoLookup,
 		MaxLatencyTableEntries: 10,
 		MaxConsecutiveFailures: func() int { return 3 },

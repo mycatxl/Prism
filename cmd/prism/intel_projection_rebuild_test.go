@@ -92,9 +92,19 @@ func newProjectionStartApp(t *testing.T) (*prismApp, *platform.Platform) {
 	}); err != nil {
 		t.Fatalf("UpsertNodeEgress: %v", err)
 	}
+	// Startup migrates the old assessment from actual primary evidence. The
+	// legacy score alone must never satisfy the measurement floor.
+	now := time.Now().UTC()
+	if err := st.UpsertEvidence(ctx, store.Evidence{
+		IP: projectionEgressIP, Provider: "ippure", Status: store.StatusOk,
+		ObservedAtNs: now.UnixNano(), ValidUntilNs: now.Add(time.Hour).UnixNano(),
+		NormalizedJSON: `{"fraud_score":10,"is_residential":true}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.UpsertAssessment(ctx, store.Assessment{
 		IP:           projectionEgressIP,
-		Profile:      "prism-purity-v2",
+		Profile:      "prism-purity-v4",
 		State:        "valid",
 		Verdict:      "favorable",
 		PurityScore:  sql.NullInt64{Int64: 90, Valid: true},

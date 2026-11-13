@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"math"
 	"sync"
 	"time"
 
@@ -29,15 +30,8 @@ const (
 	ReasonDisabled    = "disabled"
 )
 
-// DefaultGracePercent is the tolerance applied to the traffic limit before a
-// session that is already running is cut.
-//
-// It is not a free allowance: a request that would start after the limit has
-// no grace at all, and is refused outright. The grace exists only so that a
-// transfer that crossed the line is not severed with its last bytes still in
-// flight, which costs the operator one percent and saves every large download
-// from failing at the finish line.
-const DefaultGracePercent = 1
+// DefaultGracePercent grants no traffic beyond the purchased allowance.
+const DefaultGracePercent = 0
 
 // Limiter decides whether a request may proceed.
 //
@@ -46,8 +40,10 @@ const DefaultGracePercent = 1
 type Limiter struct {
 	counters *Counters
 	// now is the clock the expiry checks read. It is a field so tests can pin
-	// it without sleeping.
-	now func() int64
+	// it without sleeping. nowMu protects the test hook as Check may run in
+	// parallel with a test (or a live clock refresh).
+	nowMu sync.RWMutex
+	now   func() int64
 	// rates is the per-key request schedule behind MaxRPS. It lives here
 	// rather than in the data plane because this is the only object that sees
 	// every request a key makes.
@@ -72,21 +68,23 @@ func NewLimiter(counters *Counters) *Limiter {
 // concurrent is the number of connections this key already holds, which the
 // caller tracks because only it knows when a connection opens and closes.
 //
-// A nil limiter allows everything: the data plane holds one unconditionally,
-// and a deployment that never built one must behave as it did before quotas
-// existed rather than refuse every request.
+// A nil limiter allows a keyed request when quota enforcement is not wired.
+// Unkeyed requests are always refused, even when the limiter itself is absent.
 func (l *Limiter) Check(key *keys.KeyState, concurrent int) Decision {
+	if key == nil {
+		return Decision{Reason: ReasonDisabled}
+	}
 	if l == nil {
 		return Decision{Allowed: true}
 	}
-	if key == nil {
-		// No key means the transitional global-token path, which has no plan
-		// and therefore no quota. Refusing here would break every deployment
-		// that has not been migrated.
-		return Decision{Allowed: true}
-	}
 
-	nowNs := l.now()
+	l.nowMu.RLock()
+	now := l.now
+	l.nowMu.RUnlock()
+	if now == nil {
+		now = time.Now().UnixNano
+	}
+	nowNs := now()
 	if !key.Usable(nowNs) {
 		// Usable already covers a disabled key, a disabled user, an expired key
 		// and an expired or suspended plan. The distinction matters to the
@@ -102,6 +100,12 @@ func (l *Limiter) Check(key *keys.KeyState, concurrent int) Decision {
 	if limit := key.Plan.MaxRPS; limit > 0 {
 		if name := rateKey(key); name != "" {
 			interval := int64(time.Second) / int64(limit)
+			if interval < 1 {
+				// A plan cannot issue more than one request per nanosecond. Treat
+				// larger configured values as the tightest representable schedule
+				// instead of turning the limit off when integer division yields 0.
+				interval = 1
+			}
 			if !l.rates.allow(name, interval, int64(time.Second), nowNs) {
 				return Decision{Reason: ReasonRate}
 			}
@@ -122,10 +126,9 @@ func (l *Limiter) Check(key *keys.KeyState, concurrent int) Decision {
 //
 // The user aggregate is the authority, not the per-key counter: a subscription
 // grants its traffic to the user, and a user with several keys must not get the
-// whole allowance once per key. The key's own counter is read only when the user
-// has no aggregate at all, which happens when a key has no owner (the
-// single-tenant path) and when the process started after the usage was
-// persisted but before the aggregate was restored.
+// whole allowance once per key. The key's own counter is read only when the
+// process started after usage was persisted but before the aggregate was
+// restored, or for a key without an owner in an internal migration fixture.
 //
 // Whether the aggregate exists is the question, not whether it is non-zero. A
 // period rollover sets it back to zero while deliberately leaving the per-key
@@ -139,6 +142,9 @@ func (l *Limiter) usedBytes(key *keys.KeyState) int64 {
 		return 0
 	}
 	if key.UserID != "" {
+		if !l.counters.SeedReady() {
+			return math.MaxInt64
+		}
 		if total, ok := l.counters.UserBytesPresent(key.UserID); ok {
 			return total
 		}
@@ -174,6 +180,14 @@ func (l *Limiter) Exceeded(key *keys.KeyState, gracePercent int) bool {
 	limit := key.Plan.TrafficBytes
 	grace := limit / 100 * int64(gracePercent)
 	used := l.usedBytes(key)
+	// Admission includes pending reservations, but stopping an existing stream
+	// must depend on delivered bytes. Otherwise the sweep can cancel the write
+	// that reserved the final allowance before that write has completed.
+	if l != nil && l.counters != nil && l.counters.SeedReady() && key.UserID != "" {
+		if settled, ok := l.counters.settledUserBytes(key.UserID); ok {
+			used = settled
+		}
+	}
 	if used < limit {
 		return false
 	}
@@ -186,6 +200,8 @@ func (l *Limiter) SetNow(now func() int64) {
 	if l == nil || now == nil {
 		return
 	}
+	l.nowMu.Lock()
+	defer l.nowMu.Unlock()
 	l.now = now
 }
 

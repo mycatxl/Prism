@@ -744,6 +744,9 @@ func (e *stepExecutor) viaNodeStep(ctx context.Context, jobID, nodeHash string) 
 	if len(skippedSources) > 0 {
 		summary["via_node_skipped"] = skippedSources
 	}
+	if failed > 0 || evidenceFailed > 0 {
+		return jobs.StepResult{ErrorCode: "VIA_NODE_PROVIDER_FAILED", ContinueAfterRetries: true, Summary: summary}
+	}
 	if !deferUntil.IsZero() {
 		return jobs.StepResult{DeferUntilNs: deferUntil.UnixNano(), Summary: summary}
 	}

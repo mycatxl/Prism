@@ -79,10 +79,13 @@ func HardenDBFiles(path string) error {
 // silently stop firing and a second writer would fail with SQLITE_BUSY instead
 // of waiting. journal_mode is deliberately absent from the list: it is recorded
 // in the database file itself, so setting it once is enough.
-const sqliteConnectionPragmas = "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(1)"
+// Reserve the writer before any transactional reads. A deferred transaction
+// cannot upgrade an obsolete WAL snapshot, even with busy_timeout enabled.
+// Keeping _txlock in the DSN also covers recycled pool connections.
+const sqliteConnectionPragmas = "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(2)&_txlock=immediate"
 
 // OpenDB opens (or creates) a SQLite database at path with recommended pragmas:
-// WAL journal mode, synchronous=NORMAL, foreign_keys=ON, busy_timeout=5000.
+// WAL journal mode, synchronous=FULL, foreign_keys=ON, busy_timeout=5000.
 // Every connection the pool opens carries them, not just the first one (see
 // sqliteConnectionPragmas).
 //

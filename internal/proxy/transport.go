@@ -8,7 +8,7 @@ import (
 
 	"github.com/puzpuzpuz/xsync/v4"
 	"github.com/sagernet/sing-box/adapter"
-	M "github.com/sagernet/sing/common/metadata"
+	"prism/internal/netutil"
 	"prism/internal/node"
 )
 
@@ -123,6 +123,10 @@ func (p *OutboundTransportPool) newReusableOutboundTransport(ob adapter.Outbound
 	dialTimeout := p.config.DialTimeout
 	return &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			destination, err := netutil.ParseDestination(addr)
+			if err != nil {
+				return nil, err
+			}
 			// The node outbound owns its own dial path, so the deadline is
 			// applied to the context it is handed: a node that accepts the
 			// request and never completes the dial must not hold the slot.
@@ -131,7 +135,7 @@ func (p *OutboundTransportPool) newReusableOutboundTransport(ob adapter.Outbound
 				ctx, cancel = context.WithTimeout(ctx, dialTimeout)
 				defer cancel()
 			}
-			conn, err := ob.DialContext(ctx, network, M.ParseSocksaddr(addr))
+			conn, err := ob.DialContext(ctx, network, destination)
 			if err != nil {
 				return nil, err
 			}

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -21,8 +20,8 @@ type inheritLeaseRequest struct {
 //
 // It is the same contract the data plane uses: an unknown, disabled or expired
 // key answers nil, and so does a credential that is not key-shaped at all. The
-// caller keeps the global-token comparison for the second case, which is what
-// lets both credentials coexist while access keys are rolled out.
+// The caller rejects every credential that is not a valid AccessKey. Keeping
+// this resolver separate makes the key store and client-address policy explicit.
 type TokenActionKeyResolver interface {
 	// VerifyCredential returns the key the credential names, or nil.
 	//
@@ -40,12 +39,31 @@ type TokenActionKeyResolver interface {
 // the audit middleware so the audit payload peek reads a body that is already
 // bounded by apiMaxBodyBytes.
 //
-// The token position accepts either an access key or the transitional global
-// proxy token. keys may be nil, in which case only the token is accepted.
+// The token position accepts only a valid proxy AccessKey. keys may be nil, in
+// which case every token-path request is rejected.
 // clientIP names the request's client address for the per-key IP allowlist;
 // cmd/prism passes proxy.ProxyClientIP, and a nil one reads the peer address
 // only.
+//
+// proxyToken remains in the signature for callers that still load the legacy
+// configuration field; it is deliberately ignored by authentication.
 func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver, cp *service.ControlPlaneService, apiMaxBodyBytes int64, clientIP func(*http.Request) string) http.Handler {
+	return NewTokenActionHandlerWithAuthFailureRecorder(proxyToken, keyResolver, cp, apiMaxBodyBytes, clientIP, nil)
+}
+
+// NewTokenActionHandlerWithAuthFailureRecorder is the token-action constructor
+// used by the endpoint mux when proxy-entry authentication failures are rate
+// limited. The recorder is called only after a key-shaped credential fails
+// verification; malformed or otherwise unrelated API requests are not charged
+// to the proxy-auth limiter.
+func NewTokenActionHandlerWithAuthFailureRecorder(
+	proxyToken string,
+	keyResolver TokenActionKeyResolver,
+	cp *service.ControlPlaneService,
+	apiMaxBodyBytes int64,
+	clientIP func(*http.Request) string,
+	recordAuthFailure func(*http.Request),
+) http.Handler {
 	if cp == nil {
 		return http.NotFoundHandler()
 	}
@@ -55,6 +73,9 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 		token := PathParam(r, "token")
 		identity, ok := resolveTokenActionIdentity(r, token, proxyToken, keyResolver, clientIP)
 		if !ok {
+			if keys.IsCredentialShape(token) && recordAuthFailure != nil {
+				recordAuthFailure(r)
+			}
 			http.NotFound(w, r)
 			return
 		}
@@ -69,19 +90,17 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 		// state for one, so the same restriction the data plane enforces
 		// applies here. Without it a key restricted to one platform could
 		// rewrite another platform's leases.
-		if identity.Key != nil {
-			platformID, found := platformIDByName(cp, platformName)
-			if !found {
-				writeServiceError(w, &service.ServiceError{Code: "NOT_FOUND", Message: "platform not found"})
-				return
-			}
-			if !identity.Key.AllowsPlatform(platformID) {
-				writeServiceError(w, &service.ServiceError{
-					Code:    "FORBIDDEN",
-					Message: "access key is not allowed to use this platform",
-				})
-				return
-			}
+		platformID, found := platformIDByName(cp, platformName)
+		if !found {
+			writeServiceError(w, &service.ServiceError{Code: "NOT_FOUND", Message: "platform not found"})
+			return
+		}
+		if !identity.Key.AllowsPlatform(platformID) {
+			writeServiceError(w, &service.ServiceError{
+				Code:    "FORBIDDEN",
+				Message: "access key is not allowed to use this platform",
+			})
+			return
 		}
 
 		var req inheritLeaseRequest
@@ -89,8 +108,13 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 			writeDecodeBodyError(w, err)
 			return
 		}
+		fresh, ok := resolveTokenActionIdentity(r, token, proxyToken, keyResolver, clientIP)
+		if !ok || fresh.Key.UserID != identity.Key.UserID || fresh.Key.SessionEpoch != identity.Key.SessionEpoch || !fresh.Key.AllowsPlatform(platformID) {
+			http.NotFound(w, r)
+			return
+		}
 
-		if err := cp.InheritLeaseByPlatformName(platformName, req.ParentAccount, req.NewAccount); err != nil {
+		if err := cp.InheritLeaseByPlatformNameForUser(identity.Key.UserID, platformName, req.ParentAccount, req.NewAccount); err != nil {
 			writeServiceError(w, err)
 			return
 		}
@@ -98,10 +122,7 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 		// The audit row names the credential that actually acted. It is set
 		// before the response is written, so the middleware reads it after the
 		// handler returns and records the key rather than the admin token.
-		setAuditActor(r, CredentialActor(identity.Credential), "")
-		if identity.Key != nil {
-			setAuditActor(r, CredentialActor(identity.Credential), identity.Key.UserID)
-		}
+		setAuditActor(r, CredentialActor(identity.Credential), identity.Key.UserID)
 
 		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	}))
@@ -125,46 +146,35 @@ func NewTokenActionHandler(proxyToken string, keyResolver TokenActionKeyResolver
 // never written to a log or a database row.
 type tokenActionIdentity struct {
 	Credential string
-	// Key is nil for the transitional global-token path, which carries no
-	// per-key restriction.
+	// Key is always populated for a successful token-path authentication.
 	Key *keys.KeyState
 }
 
 // resolveTokenActionIdentity resolves the token position of a token-path route.
 //
-// A key-shaped credential is resolved against the key store and never falls
-// back to the token comparison, so a revoked key cannot act by presenting
-// itself where a token is expected. Anything else is compared with the global
-// token, and an empty configured token accepts everything, which is the
-// upstream behaviour.
+// The token must be key-shaped and must resolve to a proxy-scoped key. There is
+// no global-token or empty-token fallback.
 func resolveTokenActionIdentity(
 	r *http.Request,
 	token string,
-	proxyToken string,
+	_ string,
 	keyResolver TokenActionKeyResolver,
 	clientIP func(*http.Request) string,
 ) (tokenActionIdentity, bool) {
-	if keys.IsCredentialShape(token) {
-		if keyResolver == nil {
-			return tokenActionIdentity{}, false
-		}
-		state := keyResolver.VerifyCredential(token, requestClientAddr(r, clientIP))
-		if state == nil {
-			return tokenActionIdentity{}, false
-		}
-		// This route is a data-plane action, so an admin-scoped key must not
-		// reach it. The data-plane verifier already refuses that scope, but the
-		// check is repeated here so the rule holds for any resolver.
-		if state.Scope != model.KeyScopeProxy {
-			return tokenActionIdentity{}, false
-		}
-		return tokenActionIdentity{Credential: token, Key: state}, true
-	}
-
-	if proxyToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(proxyToken)) != 1 {
+	if !keys.IsCredentialShape(token) || keyResolver == nil {
 		return tokenActionIdentity{}, false
 	}
-	return tokenActionIdentity{Credential: token}, true
+	state := keyResolver.VerifyCredential(token, requestClientAddr(r, clientIP))
+	if state == nil {
+		return tokenActionIdentity{}, false
+	}
+	// This route is a data-plane action, so an admin-scoped key must not reach
+	// it. The data-plane verifier already refuses that scope, but the check is
+	// repeated here so the rule holds for any resolver.
+	if state.Scope != model.KeyScopeProxy {
+		return tokenActionIdentity{}, false
+	}
+	return tokenActionIdentity{Credential: token, Key: state}, true
 }
 
 // platformIDByName resolves a platform name to its ID through the pool.

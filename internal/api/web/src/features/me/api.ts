@@ -13,10 +13,15 @@ import type {
   SelfOverview,
   SessionsResponse,
   SubscriptionView,
+  UsageDay,
 } from "./types";
 
 export async function getOverview(): Promise<SelfOverview> {
   return apiRequest<SelfOverview>("/api/v1/me/overview");
+}
+
+export async function getUsage(days = 30): Promise<{ items: UsageDay[] }> {
+  return apiRequest<{ items: UsageDay[] }>(`/api/v1/me/usage?days=${encodeURIComponent(days)}`);
 }
 
 /**
@@ -129,13 +134,25 @@ export async function getDepositInfo(): Promise<DepositInfo> {
   return apiRequest<DepositInfo>("/api/v1/me/deposit");
 }
 
-export async function openDeposit(amountMicro: number): Promise<DepositIntent> {
+export async function openDeposit(amountMicro: number, currency: "usdt" | "trx" = "usdt"): Promise<DepositIntent> {
   return apiRequest<DepositIntent>("/api/v1/me/deposits", {
     method: "POST",
-    body: { amount_micro: amountMicro },
+    body: { amount_micro: amountMicro, currency },
   });
 }
 
 export async function getDepositIntents(): Promise<DepositIntentsResponse> {
   return apiRequest<DepositIntentsResponse>("/api/v1/me/deposits");
 }
+
+export async function getLDCInfo(): Promise<import("./types").LDCInfo> {
+  return apiRequest<import("./types").LDCInfo>("/api/v1/me/ldc/info");
+}
+
+export async function createLDCPay(points: number): Promise<import("./types").LDCPayResponse> {
+  return apiRequest<import("./types").LDCPayResponse>("/api/v1/me/ldc/pay", {
+    method: "POST",
+    body: { points },
+  });
+}
+

@@ -25,8 +25,32 @@ export function nodeStatus(node: NodeSummary): { label: string; tone: NodeTone }
   if (node.circuit_open_since) return { label: "降级", tone: "warn" };
   return { label: "健康", tone: "signal" };
 }
-export function nodeName(node: NodeSummary): string {
-  return node.display_tag || node.tags[0]?.tag || node.node_hash.slice(0, 12);
+// The API's display tag is <subscription>/<node tag>. Business surfaces show
+// the node tag; retain any slashes inside the node's own name.
+export function nodeTagFromSubscription(tag: string, subscriptionName?: string): string {
+  const name = tag.trim();
+  const prefix = subscriptionName ? `${subscriptionName}/` : "";
+  return prefix && name.startsWith(prefix) ? name.slice(prefix.length).trim() : name;
+}
+
+export function nodeTagLabel(tag: string | undefined): string {
+  const value = tag?.trim() || "";
+  const separator = value.indexOf("/");
+  return separator < 0 ? value : value.slice(separator + 1).trim();
+}
+
+export function nodeName(node: Pick<NodeSummary, "node_hash" | "display_tag"> & {
+  tags?: NodeSummary["tags"];
+  subscription_names?: readonly string[];
+}): string {
+  const display = node.display_tag?.trim() || "";
+  const tags = node.tags ?? [];
+  const tag = tags.find((item) => item.tag.trim() && display === `${item.subscription_name}/${item.tag}`)
+    ?? tags.find((item) => item.tag.trim());
+  if (tag) return tag.tag.trim();
+  const source = [...(node.subscription_names ?? [])].sort((a, b) => b.length - a.length)
+    .find((name) => display.startsWith(`${name}/`));
+  return (source ? display.slice(source.length + 1).trim() : nodeTagLabel(display)) || node.node_hash.slice(0, 12);
 }
 
 /** Protocol ids are lowercase tokens; the labels are the names the vendors use. */

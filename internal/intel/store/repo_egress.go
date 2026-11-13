@@ -28,6 +28,9 @@ type EgressObservation struct {
 // for every address that changed. It returns the stored row and whether an
 // address changed, so callers can react to IP churn.
 func (s *Store) RecordEgress(ctx context.Context, obs EgressObservation) (NodeEgress, bool, error) {
+	if s.PrivacyDeleted(ctx, obs.NodeHash) {
+		return NodeEgress{}, false, fmt.Errorf("node privacy deleted")
+	}
 	var row NodeEgress
 	db, err := s.conn()
 	if err != nil {

@@ -1,3 +1,5 @@
+import { NodeEvidenceFacts } from "./NodeEvidenceFacts";
+import { NodePrivacyFacts } from "./NodePrivacyFacts";
 import { Badge } from "../../../components/ui/Badge";
 import { WorkspaceCard } from "../../../components/control-plane";
 import { ErrorState } from "../../../components/ui/QueryState";
@@ -26,7 +28,7 @@ export function NodeOverviewPanel({
 }) {
   const { t } = useI18n();
   const state = nodeStatus(node);
-  const band = purityScore === null ? undefined : purityBands.find((entry) => purityScore >= entry.min && purityScore <= entry.max);
+  const band = purityScore === null ? undefined : purityBands.find((entry) => entry.id === node.intel?.purity_band);
   const regionName = node.region ? getRegionName(node.region.toUpperCase()) : undefined;
 
   return (
@@ -90,6 +92,8 @@ export function NodeOverviewPanel({
           <Stat label={t("创建时间")} value={formatDateTime(node.created_at)} />
         </StatStrip>
 
+        <NodePrivacyFacts node={node} />
+        <NodeEvidenceFacts intel={node.intel} />
         {node.last_error && <ErrorState message={node.last_error} />}
       </div>
     </WorkspaceCard>

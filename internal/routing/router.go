@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v4"
@@ -31,6 +33,7 @@ type PoolAccessor interface {
 
 // Router handles route selection and lease management.
 type Router struct {
+	privacyMu       *sync.RWMutex
 	pool            PoolAccessor
 	states          *xsync.Map[string, *PlatformRoutingState]
 	authorities     func() []string
@@ -56,6 +59,7 @@ type RouterConfig struct {
 
 func NewRouter(cfg RouterConfig) *Router {
 	return &Router{
+		privacyMu:          &sync.RWMutex{},
 		pool:               cfg.Pool,
 		states:             xsync.NewMap[string, *PlatformRoutingState](),
 		authorities:        cfg.Authorities,
@@ -64,6 +68,13 @@ func NewRouter(cfg RouterConfig) *Router {
 		nodeTagResolver:    cfg.NodeTagResolver,
 		rotationTombstones: newRotationTombstoneCache(rotationTombstoneMaxEntries),
 	}
+}
+
+// PrivacyPolicyEnabled also prevents configured direct bypass from exposing
+// the operator host while node privacy protection is active.
+func (r *Router) PrivacyPolicyEnabled() bool {
+	p, ok := r.pool.(interface{ PrivacyPolicyEnabled() bool })
+	return ok && p.PrivacyPolicyEnabled()
 }
 
 type RouteResult struct {
@@ -93,14 +104,44 @@ const (
 )
 
 func (r *Router) RouteRequest(platName, userID, account, target string) (RouteResult, error) {
+	return r.RouteRequestWithIPTiers(platName, userID, account, target, nil)
+}
+
+// RouteRequestWithIPTiers applies tenant entitlements to every node lookup:
+// random selection, existing sticky leases and same-IP replacements alike.
+func (r *Router) RouteRequestWithIPTiers(platName, userID, account, target string, tiers []string) (RouteResult, error) {
 	plat, err := r.resolvePlatform(platName)
 	if err != nil {
 		return RouteResult{}, err
 	}
+	return r.routeRequestForPlatform(plat, userID, account, target, tiers)
+}
+
+// RouteRequestForPlatform routes the authorized platform ID without resolving
+// its mutable name again. A concurrent rename must not change the entitlement
+// checked by the caller or create a lease on another platform.
+func (r *Router) RouteRequestForPlatform(platformID, userID, account, target string, tiers []string) (RouteResult, error) {
+	if r == nil {
+		return RouteResult{}, ErrPlatformNotFound
+	}
+	plat, ok := r.pool.GetPlatform(platformID)
+	if !ok {
+		return RouteResult{}, ErrPlatformNotFound
+	}
+	return r.routeRequestForPlatform(plat, userID, account, target, tiers)
+}
+
+func (r *Router) routeRequestForPlatform(plat *platform.Platform, userID, account, target string, tiers []string) (RouteResult, error) {
+	r.privacyMu.RLock()
+	defer r.privacyMu.RUnlock()
+	constrained := *r
+	constrained.pool = &tierRestrictedPool{PoolAccessor: r.pool, platform: plat, tiers: tiers}
+	r = &constrained
 
 	targetDomain := netutil.ExtractDomain(target)
 	state := r.ensurePlatformState(plat.ID)
 	var result RouteResult
+	var err error
 	if account == "" {
 		result, err = r.routeRandom(plat, state, targetDomain)
 	} else {
@@ -116,10 +157,39 @@ func (r *Router) RouteRequest(platName, userID, account, target string) (RouteRe
 	return result, nil
 }
 
+type tierRestrictedPool struct {
+	PoolAccessor
+	platform *platform.Platform
+	tiers    []string
+}
+
+func (p *tierRestrictedPool) GetEntry(hash node.Hash) (*node.NodeEntry, bool) {
+	entry, ok := p.PoolAccessor.GetEntry(hash)
+	if !ok || !p.platform.AllowsCurrentQuality(entry) || !p.platform.AllowsIPTiers(entry, p.tiers) {
+		return nil, false
+	}
+	return entry, true
+}
+
 func withPlatformContext(plat *platform.Platform, res RouteResult) RouteResult {
 	res.PlatformID = plat.ID
 	res.PlatformName = plat.Name
 	return res
+}
+
+// RouteStillValid closes the selection-to-outbound handoff for changed exits,
+// expired evidence and privacy deletion, without database or network reads.
+func (r *Router) RouteStillValid(result RouteResult, tiers []string) bool {
+	if r == nil {
+		return false
+	}
+	plat, ok := r.pool.GetPlatform(result.PlatformID)
+	if !ok {
+		return false
+	}
+	entry, ok := r.pool.GetEntry(result.NodeHash)
+	return ok && entry.PrivacyAllowed() && entry.GetEgressIP() == result.EgressIP &&
+		plat.View().Contains(result.NodeHash) && plat.AllowsCurrentQuality(entry) && plat.AllowsIPTiers(entry, tiers)
 }
 
 // ResolvePlatformID resolves a platform name to its ID without routing.
@@ -199,8 +269,13 @@ func (r *Router) routeSticky(
 	var result RouteResult
 	var routeErr error
 
+	// Publish lease state before notifying persistence. A flush triggered by a
+	// callback must read the renewed deadline, never the previous value.
+	var events []LeaseEvent
+	decisionRouter := *r
+	decisionRouter.onLeaseEvent = func(e LeaseEvent) { events = append(events, e) }
 	_, _ = state.Leases.leases.Compute(owner(userID, account), func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
-		newLease, op, routeResult, err := r.decideStickyLease(
+		newLease, op, routeResult, err := decisionRouter.decideStickyLease(
 			plat,
 			state,
 			userID,
@@ -219,6 +294,9 @@ func (r *Router) routeSticky(
 		return newLease, op
 	})
 
+	for _, event := range events {
+		r.emitLeaseEvent(event)
+	}
 	return result, routeErr
 }
 
@@ -305,12 +383,11 @@ func (r *Router) tryLeaseHit(
 	nowNs int64,
 ) (Lease, RouteResult, bool) {
 	entry, ok := r.pool.GetEntry(current.NodeHash)
-	if !ok || !plat.View().Contains(current.NodeHash) || entry.GetEgressIP() != current.EgressIP {
+	if !ok || !entry.PrivacyAllowed() || !plat.View().Contains(current.NodeHash) || entry.GetEgressIP() != current.EgressIP {
 		return Lease{}, RouteResult{}, false
 	}
 
-	newLease := current
-	newLease.LastAccessedNs = nowNs
+	newLease := renewStickyLease(current, nowNs, plat.StickyTTLNs)
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseTouch,
 		PlatformID: plat.ID,
@@ -346,9 +423,8 @@ func (r *Router) tryLeaseSameIPRotation(
 		return Lease{}, RouteResult{}, false
 	}
 
-	newLease := current
+	newLease := renewStickyLease(current, nowNs, plat.StickyTTLNs)
 	newLease.NodeHash = bestHash
-	newLease.LastAccessedNs = nowNs
 	r.emitLeaseEvent(LeaseEvent{
 		Type:       LeaseReplace,
 		PlatformID: plat.ID,
@@ -380,10 +456,7 @@ func (r *Router) createLease(
 	if err != nil {
 		return Lease{}, RouteResult{}, err
 	}
-	ttl := plat.StickyTTLNs
-	if ttl <= 0 {
-		ttl = int64(24 * time.Hour) // Default safeguard
-	}
+	ttl := stickyIdleTTL(plat.StickyTTLNs)
 
 	lease := Lease{
 		NodeHash:       h,
@@ -469,10 +542,23 @@ func (r *Router) selectLiveRandomRoute(
 		}
 		fallbackSameIP = fallbackSameIP || fallback
 		entry, ok := r.pool.GetEntry(h)
-		if ok {
+		if ok && entry.PrivacyAllowed() {
 			return h, entry, fallbackSameIP, nil
 		}
 		lastMissing = h
+	}
+	// If cached candidates expired, find a currently measured member.
+	rng := randomRouteRNGPool.Get().(*rand.Rand)
+	defer randomRouteRNGPool.Put(rng)
+	h, found := randomPickExcludingEgressIP(plat.View(), rng, r.pool, avoidIP)
+	if !found && avoidIP.IsValid() {
+		h, found = randomPickExcludingEgressIP(plat.View(), rng, r.pool, netip.Addr{})
+		fallbackSameIP = found
+	}
+	if found {
+		if entry, ok := r.pool.GetEntry(h); ok && entry.PrivacyAllowed() {
+			return h, entry, fallbackSameIP, nil
+		}
 	}
 	if lastMissing != node.Zero {
 		return node.Zero, nil, false, fmt.Errorf("%w: selected node %s no longer in pool", ErrNoAvailableNodes, lastMissing.Hex())
@@ -494,7 +580,7 @@ func chooseSameIPRotationCandidate(
 
 	plat.View().Range(func(h node.Hash) bool {
 		entry, ok := pool.GetEntry(h)
-		if !ok || entry.GetEgressIP() != targetIP {
+		if !ok || !entry.PrivacyAllowed() || entry.GetEgressIP() != targetIP {
 			return true
 		}
 		if fallbackHash == node.Zero {
@@ -552,7 +638,7 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 		NodeHash:       lease.NodeHash.Hex(),
 		EgressIP:       lease.EgressIP.String(),
 		CreatedAtNs:    lease.CreatedAtNs,
-		ExpiryNs:       lease.ExpiryNs,
+		ExpiryNs:       lease.expiryNs(),
 		LastAccessedNs: lease.LastAccessedNs,
 	}
 }
@@ -560,6 +646,8 @@ func (r *Router) ReadLease(key model.LeaseKey) *model.Lease {
 // UpsertLease writes or replaces a lease for (platform_id, user_id, account).
 // It updates per-IP lease counters and emits LeaseCreate/LeaseReplace events.
 func (r *Router) UpsertLease(ml model.Lease) error {
+	r.privacyMu.RLock()
+	defer r.privacyMu.RUnlock()
 	platformID := strings.TrimSpace(ml.PlatformID)
 	if platformID == "" {
 		return errors.New("platform_id is required")
@@ -581,6 +669,12 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 	if err != nil {
 		return fmt.Errorf("parse egress_ip: %w", err)
 	}
+	if r.PrivacyPolicyEnabled() {
+		entry, ok := r.pool.GetEntry(h)
+		if !ok || !entry.PrivacyAllowed() || entry.GetEgressIP().Unmap() != ip.Unmap() {
+			return fmt.Errorf("%w: lease node fails privacy admission", ErrNoAvailableNodes)
+		}
+	}
 
 	state := r.ensurePlatformState(platformID)
 	lease := Lease{
@@ -590,6 +684,7 @@ func (r *Router) UpsertLease(ml model.Lease) error {
 		ExpiryNs:       ml.ExpiryNs,
 		LastAccessedNs: ml.LastAccessedNs,
 	}
+	lease.ExpiryNs = lease.expiryNs()
 
 	eventType := LeaseCreate
 	_, _ = state.Leases.leases.Compute(owner(userID, account), func(current Lease, loaded bool) (Lease, xsync.ComputeOp) {
@@ -624,9 +719,14 @@ func (r *Router) SnapshotIPLoad(platformID string) map[netip.Addr]int64 {
 
 // RestoreLeases restores leases from persistence during bootstrap.
 func (r *Router) RestoreLeases(leases []model.Lease) {
+	r.privacyMu.RLock()
+	defer r.privacyMu.RUnlock()
 	for _, ml := range leases {
 		h, err := node.ParseHex(ml.NodeHash)
 		if err != nil {
+			continue
+		}
+		if p, ok := r.pool.(interface{ PrivacyDeleted(node.Hash) bool }); ok && p.PrivacyDeleted(h) {
 			continue
 		}
 		ip, err := netip.ParseAddr(ml.EgressIP)
@@ -645,6 +745,7 @@ func (r *Router) RestoreLeases(leases []model.Lease) {
 			ExpiryNs:       ml.ExpiryNs,
 			LastAccessedNs: ml.LastAccessedNs,
 		}
+		l.ExpiryNs = l.expiryNs()
 		// Directly insert into table and stats
 		state.Leases.CreateLease(ml.UserID, ml.Account, l)
 	}
@@ -764,6 +865,7 @@ func (r *Router) DeleteAllLeases(platformID string) int {
 			r.emitLeaseEvent(LeaseEvent{
 				Type:        LeaseRemove,
 				PlatformID:  platformID,
+				UserID:      o.UserID,
 				Account:     o.Account,
 				NodeHash:    removed.NodeHash,
 				EgressIP:    removed.EgressIP,
@@ -801,6 +903,7 @@ func (r *Router) PurgePlatformState(platformID string) int {
 			r.emitLeaseEvent(LeaseEvent{
 				Type:        LeaseRemove,
 				PlatformID:  platformID,
+				UserID:      o.UserID,
 				Account:     o.Account,
 				NodeHash:    removed.NodeHash,
 				EgressIP:    removed.EgressIP,

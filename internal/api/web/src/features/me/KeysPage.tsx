@@ -108,7 +108,7 @@ export function KeysPage() {
   return (
     <WorkspacePage
       eyebrow="Self Service / access"
-      title={t("我的密钥")}
+      title={t("访问密钥")}
       description={t("管理用于访问各平台代理服务的凭据密钥，支持平台授权与 IP 白名单控制。")}
       meta={<StatusMark tone={keysQuery.isError && !keysQuery.data ? "warn" : keysQuery.data ? "live" : "neutral"} label={keysQuery.isError && !keysQuery.data ? t("读取失败") : keysQuery.data ? t("数据已同步") : t("等待数据")} />}
       actions={
@@ -126,19 +126,19 @@ export function KeysPage() {
       {normalizedSearch ? <div className="workspace-active-filters"><FilterChip label={`${t("关键词")}: ${search.trim()}`} onRemove={clearSearch} /></div> : null}
       {limitReached ? <QueryBadge label={t("配额已满")} tone="warn" /> : null}
 
-      <WorkspaceCard headerless
+      <WorkspaceCard headerless className="key-registry"
         eyebrow="Credential registry"
         title={t("全部凭据密钥")}
         description={t("每个密钥均包含独立平台访问策略与调用凭据，可随业务随时撤销。")}
         meta={keysQuery.data ? t("共 {{count}} 个密钥", { count: rawKeys.length }) : t("未加载")}
       >
         {keysQuery.isError && !keysQuery.data ? (
-          <EmptyWorkState title={t("读取失败")} detail={formatApiErrorMessage(keysQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void keysQuery.refetch()}>{t("重试")}</ControlButton>} />
+          <EmptyWorkState embedded title={t("读取失败")} detail={formatApiErrorMessage(keysQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void keysQuery.refetch()}>{t("重试")}</ControlButton>} />
         ) : null}
         {keysQuery.isLoading && !keysQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载密钥列表...")}</div> : null}
-        {!keysQuery.isLoading && !keysQuery.isError && filteredKeys.length === 0 ? <EmptyWorkState title={t("暂无访问密钥")} detail={rawKeys.length === 0 ? t("点击右上角“创建密钥”生成首个代理凭据。") : t("未找到匹配的密钥记录。")} action={rawKeys.length === 0 ? <ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("创建密钥")}</ControlButton> : undefined} /> : null}
+        {!keysQuery.isLoading && !keysQuery.isError && filteredKeys.length === 0 ? <EmptyWorkState embedded title={t("暂无访问密钥")} detail={rawKeys.length === 0 ? t("点击右上角“创建密钥”生成首个代理凭据。") : t("未找到匹配的密钥记录。")} action={rawKeys.length === 0 ? <ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("创建密钥")}</ControlButton> : undefined} /> : null}
         {filteredKeys.length > 0 ? (
-          <ObjectList>
+          <ObjectList className="key-card-grid">
             {filteredKeys.map((key) => (
               <ObjectRow
                 key={key.id}
@@ -184,7 +184,7 @@ export function KeysPage() {
       <CreateKeyDrawer
         open={createOpen}
         onOpenChange={setCreateOpen}
-        platforms={overview?.platforms ?? []}
+        platforms={overview?.key_platforms ?? []}
         onSuccess={(created) => {
           setCreateOpen(false);
           setCreatedSecret(created);
@@ -238,10 +238,12 @@ function CreateKeyDrawer({
     setErrorMsg("");
   };
   const createMutation = useMutation({
+    gcTime: 0,
     mutationFn: (input: AccessKeyInput) => createKey(input),
     onSuccess: (data) => {
       resetForm();
       onSuccess(data);
+      createMutation.reset();
     },
     onError: (error) => setErrorMsg(formatApiErrorMessage(error, t)),
   });
@@ -276,7 +278,7 @@ function CreateKeyDrawer({
         <ControlInput id={nameId} label={`${t("密钥名称")} *`} value={name} onChange={(event) => setName(event.target.value)} placeholder={t("例如: 生产环境客户端")} />
         <div className="workspace-field">
           <span className="workspace-field__label">{t("授权平台（可选，不选则允许套餐下所有平台）")}</span>
-          {platforms.length === 0 ? <p className="workspace-muted">{t("当前套餐未限定特定平台，密钥默认可用所有平台。")}</p> : <div className="grid gap-2 border border-rule bg-paper-inset p-3">{platforms.map((platform) => <ControlCheckbox key={platform.platform_id} isSelected={selectedPlatforms.includes(platform.platform_id)} onChange={() => togglePlatform(platform.platform_id)} label={platform.platform_name || platform.platform_id} hint={platform.platform_id} />)}</div>}
+          {platforms.length === 0 ? <p className="workspace-muted">{t("暂无可选平台；创建权限以当前有效套餐为准。")}</p> : <div className="grid gap-2 border border-rule bg-paper-inset p-4">{platforms.map((platform) => <ControlCheckbox key={platform.platform_id} isSelected={selectedPlatforms.includes(platform.platform_id)} onChange={() => togglePlatform(platform.platform_id)} label={platform.platform_name || platform.platform_id} hint={platform.platform_id} />)}</div>}
         </div>
         <ControlTextarea id={ipId} label={t("IP 白名单 (可选，多个逗号或换行分隔)")} value={ipRaw} onChange={(event) => setIpRaw(event.target.value)} placeholder={t("留空不限制，或填: 1.2.3.4, 5.6.7.8/24")} rows={4} />
         <ControlInput id={expiresId} label={t("有效天数 (可选)")} type="number" min="1" value={expiresInDays} onChange={(event) => setExpiresInDays(event.target.value)} placeholder={t("留空则永不过期")} />

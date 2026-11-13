@@ -195,8 +195,8 @@ func TestTransfersSinceAdvancesPastAPageOfForeignTransfers(t *testing.T) {
 	}
 }
 
-// The amount is scaled by the token's own decimals, never assumed to be USDT's.
-func TestTransfersSinceScalesAmountsByTokenDecimals(t *testing.T) {
+// Only explicit six-decimal metadata may enter the USDT ledger.
+func TestTransfersSinceRejectsNonUSDTDecimals(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -223,15 +223,11 @@ func TestTransfersSinceScalesAmountsByTokenDecimals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TransfersSince: %v", err)
 	}
-	if len(page.Transfers) != 2 {
-		t.Fatalf("transfers: got %d, want 2 (the sub-micro row cannot be credited exactly): %+v",
-			len(page.Transfers), page.Transfers)
+	if len(page.Transfers) != 1 {
+		t.Fatalf("transfers: got %+v, want only the six-decimal token", page.Transfers)
 	}
-	if got := page.Transfers[0]; got.TxID != "tx-18-decimals" || got.AmountMicro != 100_000_000 {
-		t.Fatalf("18-decimal amount: got %q %d, want tx-18-decimals 100000000", got.TxID, got.AmountMicro)
-	}
-	if got := page.Transfers[1]; got.TxID != "tx-whole" || got.AmountMicro != 25_000_000 {
-		t.Fatalf("6-decimal amount: got %q %d, want tx-whole 25000000", got.TxID, got.AmountMicro)
+	if got := page.Transfers[0]; got.TxID != "tx-whole" || got.AmountMicro != 25_000_000 {
+		t.Fatalf("6-decimal amount: got %+v", got)
 	}
 	// The dropped row still belongs to the page: the watermark must clear it.
 	if page.NewestRawMs != 1700000003000 {

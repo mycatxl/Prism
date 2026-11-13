@@ -8,12 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"prism/internal/intel"
 	"prism/internal/node"
 	"prism/internal/platform"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 )
 
 type routerTestPool struct {
+	quality     *intel.Snapshot
 	mu          sync.RWMutex
 	entries     map[node.Hash]*node.NodeEntry
 	platsByID   map[string]*platform.Platform
@@ -22,6 +25,7 @@ type routerTestPool struct {
 
 func newRouterTestPool() *routerTestPool {
 	return &routerTestPool{
+		quality:     intel.NewSnapshot(),
 		entries:     make(map[node.Hash]*node.NodeEntry),
 		platsByID:   make(map[string]*platform.Platform),
 		platsByName: make(map[string]*platform.Platform),
@@ -31,6 +35,7 @@ func newRouterTestPool() *routerTestPool {
 func (p *routerTestPool) addPlatform(plat *platform.Platform) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	plat.SetQualitySnapshot(p.quality)
 	p.platsByID[plat.ID] = plat
 	p.platsByName[plat.Name] = plat
 }
@@ -39,6 +44,8 @@ func (p *routerTestPool) addEntry(h node.Hash, entry *node.NodeEntry) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.entries[h] = entry
+	sample, _ := measurement.Snapshot(entry.GetEgressIP()).Assessment(entry.GetEgressIP())
+	p.quality.SetAssessment(entry.GetEgressIP(), sample)
 }
 
 func (p *routerTestPool) removeEntry(h node.Hash) {
@@ -218,6 +225,7 @@ func TestRouteRequest_SameIPRotationPrefersTargetLatencySample(t *testing.T) {
 	})
 
 	originalLease := Lease{
+		CreatedAtNs:    time.Now().Add(-time.Minute).UnixNano(),
 		NodeHash:       currentHash,
 		EgressIP:       currentEntry.GetEgressIP(),
 		ExpiryNs:       time.Now().Add(time.Hour).UnixNano(),
@@ -243,8 +251,8 @@ func TestRouteRequest_SameIPRotationPrefersTargetLatencySample(t *testing.T) {
 	if updatedLease.NodeHash != preferredHash {
 		t.Fatalf("lease node hash = %s, want %s", updatedLease.NodeHash.Hex(), preferredHash.Hex())
 	}
-	if updatedLease.ExpiryNs != originalLease.ExpiryNs {
-		t.Fatalf("same-ip rotation must not change expiry: got %d want %d", updatedLease.ExpiryNs, originalLease.ExpiryNs)
+	if updatedLease.ExpiryNs <= originalLease.ExpiryNs || updatedLease.CreatedAtNs != originalLease.CreatedAtNs || state.IPLoadStats.Get(originalLease.EgressIP) != 1 {
+		t.Fatalf("same-IP replacement must renew within the original lifetime and retain one slot: %+v", updatedLease)
 	}
 }
 

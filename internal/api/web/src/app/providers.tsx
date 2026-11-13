@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { ToastProvider } from "@heroui/react";
-import { MotionConfig } from "framer-motion";
+import { TooltipProvider } from "@radix-ui/react-tooltip";
+import { ToastViewport } from "../components/ui/Toast";
 import { queryClient } from "../lib/query-client";
-import { appToastQueue } from "../lib/toast-queue";
 
 type AppProvidersProps = {
   children: ReactNode;
@@ -12,12 +11,10 @@ type AppProvidersProps = {
 export function AppProviders({ children }: AppProvidersProps) {
   return (
     <QueryClientProvider client={queryClient}>
-      <MotionConfig reducedMotion="user">
-        <>
-          {children}
-          <ToastProvider queue={appToastQueue} />
-        </>
-      </MotionConfig>
+      <TooltipProvider delayDuration={350} skipDelayDuration={100}>
+        {children}
+        <ToastViewport />
+      </TooltipProvider>
     </QueryClientProvider>
   );
 }

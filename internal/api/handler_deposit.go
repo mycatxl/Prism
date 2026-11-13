@@ -38,14 +38,18 @@ func HandleMeDeposits(cp *service.ControlPlaneService) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
+			if !requireSessionActor(w, actor) {
+				return
+			}
 			var in struct {
-				AmountMicro int64 `json:"amount_micro"`
+				AmountMicro int64  `json:"amount_micro"`
+				Currency    string `json:"currency"`
 			}
 			if err := DecodeBody(r, &in); err != nil {
 				writeDecodeBodyError(w, err)
 				return
 			}
-			view, err := cp.SelfDeposit(actor.UserID, in.AmountMicro, adminNowNs())
+			view, err := cp.SelfDeposit(actor.UserID, in.AmountMicro, adminNowNs(), in.Currency)
 			if err != nil {
 				writeServiceError(w, err)
 				return
@@ -56,6 +60,10 @@ func HandleMeDeposits(cp *service.ControlPlaneService) http.HandlerFunc {
 		page, err := ParsePagination(r)
 		if err != nil {
 			writeInvalidArgument(w, err.Error())
+			return
+		}
+		if page.Offset != 0 {
+			writeInvalidArgument(w, "offset: not supported for deposit intents")
 			return
 		}
 		intents, err := cp.SelfDeposits(actor.UserID, page.Limit)

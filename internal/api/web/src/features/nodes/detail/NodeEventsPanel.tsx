@@ -3,7 +3,7 @@ import { ControlButton, WorkspaceCard } from "../../../components/control-plane"
 import { useI18n } from "../../../i18n";
 import { cn } from "../../../lib/cn";
 import { formatDateTime } from "../../../lib/time";
-import { outcomeLabels } from "../quality/presentation";
+import { checkOutcomeLabel } from "../../intel/checkPresentation";
 import type { IntelNodeDetail } from "./api";
 import type { NodeSummary } from "../types";
 
@@ -75,7 +75,7 @@ function buildNodeEvents(
       level: OUTCOME_LEVEL[check.outcome] ?? "neutral",
       text: translate("检测 {{check}}：{{outcome}}", {
         check: check.check_id,
-        outcome: translate(outcomeLabels[check.outcome] || check.outcome),
+        outcome: translate(checkOutcomeLabel(check.check_id, check.outcome)),
       }),
     });
   }

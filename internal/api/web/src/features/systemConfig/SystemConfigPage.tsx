@@ -8,6 +8,7 @@ import {
   ControlButton,
   ControlInput,
   ControlSwitch,
+  ControlTabs,
   ControlTextarea,
   EmptyWorkState,
   ObjectList,
@@ -21,7 +22,8 @@ import { Tooltip } from "../../components/ui/Tooltip";
 import { ToastContainer } from "../../components/control-plane";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
-import { formatApiErrorMessage } from "../../lib/error-message";
+import { UserFacingError, formatApiErrorMessage } from "../../lib/error-message";
+import { formatPaymentRate, parsePaymentRate } from "../../lib/money";
 import {
   getDefaultSystemConfig,
   getEnvConfig,
@@ -33,9 +35,24 @@ import {
   SYSTEM_ENV_CONFIG_QUERY_KEY,
   SYSTEM_ENV_STALE_MS,
 } from "./api";
-import type { EnvConfig, RuntimeConfig, RuntimeConfigPatch } from "./types";
+import type { EnvConfig, RuntimeConfig, RuntimeConfigPatch, SystemConfigView } from "./types";
 
 type RuntimeConfigForm = {
+  ldc_enabled: boolean;
+  ldc_gateway_url: string;
+  ldc_pid: string;
+  ldc_key: string;
+  ldc_rate: string;
+  ldc_notify_url: string;
+  ldc_return_url: string;
+  tron_deposit_enabled: boolean;
+  tron_address: string;
+  tron_api_key: string;
+  tron_usdt_contract: string;
+  tron_trx_enabled: boolean;
+  tron_trx_ratio: string;
+  tron_window_minutes: string;
+
   request_log_enabled: boolean;
   reverse_proxy_log_detail_enabled: boolean;
   reverse_proxy_log_req_headers_max_bytes: string;
@@ -60,6 +77,21 @@ type Translator = (text: string, values?: Record<string, unknown>) => string;
 type StaticRow = { label: string; value?: string; status?: { tone: "signal" | "warn" | "neutral"; text: string } };
 
 const EDITABLE_FIELDS: readonly (keyof RuntimeConfig)[] = [
+  "ldc_enabled",
+  "ldc_gateway_url",
+  "ldc_pid",
+  "ldc_key",
+  "ldc_rate",
+  "ldc_notify_url",
+  "ldc_return_url",
+  "tron_deposit_enabled",
+  "tron_address",
+  "tron_api_key",
+  "tron_usdt_contract",
+  "tron_trx_enabled",
+  "tron_trx_ratio",
+  "tron_window_minutes",
+
   "request_log_enabled",
   "reverse_proxy_log_detail_enabled",
   "reverse_proxy_log_req_headers_max_bytes",
@@ -79,6 +111,21 @@ const EDITABLE_FIELDS: readonly (keyof RuntimeConfig)[] = [
 ];
 
 const FIELD_LABELS: Record<RuntimeField, string> = {
+  ldc_enabled: "启用 LinuxDO Credit",
+  ldc_gateway_url: "EasyPay 网关 URL",
+  ldc_pid: "商户 ID",
+  ldc_key: "商户密钥",
+  ldc_rate: "每积分兑换余额",
+  ldc_notify_url: "付款通知 URL（可选）",
+  ldc_return_url: "付款返回 URL（可选）",
+  tron_deposit_enabled: "启用 TRON 充值",
+  tron_address: "TRON 收款地址",
+  tron_api_key: "TronGrid API Key",
+  tron_usdt_contract: "TRC20 USDT 合约",
+  tron_trx_enabled: "启用原生 TRX 充值",
+  tron_trx_ratio: "每 TRX 兑换余额",
+  tron_window_minutes: "订单有效分钟数",
+
   request_log_enabled: "启用请求日志",
   reverse_proxy_log_detail_enabled: "记录详细反代日志",
   reverse_proxy_log_req_headers_max_bytes: "请求头最大字节数",
@@ -98,6 +145,7 @@ const FIELD_LABELS: Record<RuntimeField, string> = {
 };
 
 const CATEGORIES: readonly Category[] = [
+ { id:"payments", title:"支付网关", description:"LinuxDO 积分和 TRON 链上充值，保存后即时生效", fields:["ldc_enabled","ldc_gateway_url","ldc_pid","ldc_key","ldc_rate","ldc_notify_url","ldc_return_url","tron_deposit_enabled","tron_address","tron_api_key","tron_usdt_contract","tron_trx_enabled","tron_trx_ratio","tron_window_minutes"], staticCount:0 },
   { id: "health", title: "探测与路由", description: "健康阈值、出口探测和线路选择", fields: ["max_consecutive_failures", "latency_test_url", "max_latency_test_interval", "max_authority_latency_test_interval", "max_egress_test_interval", "p2c_latency_window", "latency_decay_window", "latency_authorities_raw"], staticCount: 0 },
   { id: "logs", title: "请求日志", description: "记录内容、大小上限和日志落库", fields: ["request_log_enabled", "reverse_proxy_log_detail_enabled", "reverse_proxy_log_req_headers_max_bytes", "reverse_proxy_log_req_body_max_bytes", "reverse_proxy_log_resp_headers_max_bytes", "reverse_proxy_log_resp_body_max_bytes"], staticCount: 5 },
   { id: "storage", title: "缓存与持久化", description: "运行状态的刷盘频率和批量阈值", fields: ["cache_flush_interval", "cache_flush_dirty_threshold"], staticCount: 0 },
@@ -107,8 +155,23 @@ const CATEGORIES: readonly Category[] = [
   { id: "deployment", title: "服务与部署", description: "数据目录、监听端口和鉴权状态", fields: [], staticCount: 7 },
 ];
 
-function configToForm(config: RuntimeConfig): RuntimeConfigForm {
+function configToForm(config: SystemConfigView): RuntimeConfigForm {
   return {
+    ldc_enabled: config.ldc_enabled,
+    ldc_gateway_url: config.ldc_gateway_url,
+    ldc_pid: config.ldc_pid,
+    ldc_key: config.ldc_key_set ? "********" : "",
+    ldc_rate: formatPaymentRate(config.ldc_rate),
+    ldc_notify_url: config.ldc_notify_url,
+    ldc_return_url: config.ldc_return_url,
+    tron_deposit_enabled: config.tron_deposit_enabled,
+    tron_address: config.tron_address,
+    tron_api_key: config.tron_api_key_set ? "********" : "",
+    tron_usdt_contract: config.tron_usdt_contract,
+    tron_trx_enabled: config.tron_trx_enabled,
+    tron_trx_ratio: formatPaymentRate(config.tron_trx_ratio),
+    tron_window_minutes: String(config.tron_window_minutes),
+
     request_log_enabled: config.request_log_enabled,
     reverse_proxy_log_detail_enabled: config.reverse_proxy_log_detail_enabled,
     reverse_proxy_log_req_headers_max_bytes: String(config.reverse_proxy_log_req_headers_max_bytes),
@@ -130,15 +193,15 @@ function configToForm(config: RuntimeConfig): RuntimeConfigForm {
 
 function parseNonNegativeInt(field: string, raw: string, t: Translator): number {
   const value = raw.trim();
-  if (!value) throw new Error(t("{{field}} 不能为空", { field: t(field) }));
+  if (!value) throw new UserFacingError(t("{{field}} 不能为空", { field: t(field) }));
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(t("{{field}} 必须是非负整数", { field: t(field) }));
+  if (value.length > 16 || !/^\d+$/.test(value) || !Number.isSafeInteger(parsed) || parsed < 0) throw new UserFacingError(t("{{field}} 必须是非负整数", { field: t(field) }));
   return parsed;
 }
 
 function parseDurationField(field: string, raw: string, t: Translator): string {
   const value = raw.trim();
-  if (!value) throw new Error(t("{{field}} 不能为空", { field: t(field) }));
+  if (!value) throw new UserFacingError(t("{{field}} 不能为空", { field: t(field) }));
   return value;
 }
 
@@ -146,11 +209,34 @@ function parseAuthorities(raw: string): string[] {
   return Array.from(new Set(raw.split(/[\n,]/).map((item) => item.trim()).filter(Boolean)));
 }
 
+function parsePositiveRate(raw: string, t: Translator): number {
+ const value = parsePaymentRate(raw);
+ if (value === null) throw new UserFacingError(t("兑换比率须为大于零且不超过 1000000 的普通十进制数，不支持科学计数法。"));
+ return value;
+}
+
 function parseForm(form: RuntimeConfigForm, t: Translator): RuntimeConfig {
   const latencyURL = form.latency_test_url.trim();
-  if (!latencyURL) throw new Error(t("延迟测试目标 URL 不能为空"));
-  if (!latencyURL.startsWith("http://") && !latencyURL.startsWith("https://")) throw new Error(t("延迟测试目标 URL 必须是 http/https 地址"));
+  if (!latencyURL) throw new UserFacingError(t("延迟测试目标 URL 不能为空"));
+  if (!latencyURL.startsWith("http://") && !latencyURL.startsWith("https://")) throw new UserFacingError(t("延迟测试目标 URL 必须是 http/https 地址"));
+  const windowMinutes = parseNonNegativeInt("订单有效分钟数", form.tron_window_minutes, t);
+  if (windowMinutes < 1 || windowMinutes > 1440) throw new UserFacingError(t("订单有效分钟数必须为 1 至 1440 的整数。"));
   return {
+    ldc_enabled: form.ldc_enabled,
+    ldc_gateway_url: form.ldc_gateway_url,
+    ldc_pid: form.ldc_pid,
+    ldc_key: form.ldc_key,
+    ldc_rate: parsePositiveRate(form.ldc_rate, t),
+    ldc_notify_url: form.ldc_notify_url,
+    ldc_return_url: form.ldc_return_url,
+    tron_deposit_enabled: form.tron_deposit_enabled,
+    tron_address: form.tron_address,
+    tron_api_key: form.tron_api_key,
+    tron_usdt_contract: form.tron_usdt_contract,
+    tron_trx_enabled: form.tron_trx_enabled,
+    tron_trx_ratio: parsePositiveRate(form.tron_trx_ratio, t),
+    tron_window_minutes: windowMinutes,
+
     request_log_enabled: form.request_log_enabled,
     reverse_proxy_log_detail_enabled: form.reverse_proxy_log_detail_enabled,
     reverse_proxy_log_req_headers_max_bytes: parseNonNegativeInt("请求头最大字节数", form.reverse_proxy_log_req_headers_max_bytes, t),
@@ -180,6 +266,10 @@ function buildPatch(current: RuntimeConfig, next: RuntimeConfig): RuntimeConfigP
   for (const field of EDITABLE_FIELDS) {
     const currentValue = current[field];
     const nextValue = next[field];
+    if (field === "ldc_key" || field === "tron_api_key") {
+      if (nextValue !== "********" && (nextValue !== "" || (current as SystemConfigView)[`${field}_set`])) mutable[field]=nextValue;
+      continue;
+    }
     if (Array.isArray(currentValue) && Array.isArray(nextValue)) {
       if (!arrayEquals(currentValue, nextValue)) mutable[field] = nextValue;
     } else if (currentValue !== nextValue) {
@@ -262,20 +352,22 @@ function RuntimeFieldEditor({ field, form, defaultForm, pending, setField, resto
   const label = t(FIELD_LABELS[field]);
   const defaultValue = defaultForm ? String(field === "latency_authorities_raw" ? defaultForm.latency_authorities_raw : defaultForm[field]) : "";
   const restoreButton = <RestoreButton label={t("恢复为默认值")} value={defaultValue} disabled={pending || !defaultForm} onPress={() => restore(field)} />;
-  if (field === "request_log_enabled" || field === "reverse_proxy_log_detail_enabled") {
-    return <div className="workspace-inset-stack"><ControlSwitch label={label} hint={field === "request_log_enabled" ? t("记录代理请求的结构化日志。"): t("记录更详细的反向代理诊断字段。")} isSelected={Boolean(form[field])} isDisabled={pending} onChange={(value) => setField(field, value)} /><span className="workspace-drawer-actions">{restoreButton}</span></div>;
+  if (typeof form[field] === "boolean") {
+    return <div className="workspace-inset-stack"><ControlSwitch label={label} hint={field === "request_log_enabled" ? t("记录代理请求的结构化日志。"): field === "reverse_proxy_log_detail_enabled" ? t("记录更详细的反向代理诊断字段。") : t("保存后即时生效")} isSelected={Boolean(form[field])} isDisabled={pending} onChange={(value) => setField(field, value)} /><span className="workspace-drawer-actions">{restoreButton}</span></div>;
   }
   if (field === "latency_authorities_raw") {
-    return <div className="workspace-field-with-action"><ControlTextarea label={label} hint={t("每行一个域名，也支持逗号分隔。")} rows={5} value={form[field]} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
+    return <div className="workspace-field-with-action"><ControlTextarea label={label} hint={t("每行一个域名，也支持逗号分隔。")} rows={5} value={String(form[field])} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
   }
-  const numeric = field.includes("bytes") || field === "max_consecutive_failures" || field === "cache_flush_dirty_threshold";
-  return <div className="workspace-field-with-action"><ControlInput label={label} type={numeric ? "number" : "text"} min={numeric ? "0" : undefined} value={form[field]} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
+  const secret = field === "ldc_key" || field === "tron_api_key";
+  const numeric = field === "ldc_rate" || field === "tron_trx_ratio" || field === "tron_window_minutes" || field.includes("bytes") || field === "max_consecutive_failures" || field === "cache_flush_dirty_threshold";
+  return <div className="workspace-field-with-action"><ControlInput label={label} type={secret ? "password" : "text"} inputMode={numeric ? "decimal" : undefined} autoComplete={secret ? "new-password" : undefined} hint={secret ? t("已保存的密钥以圆点显示；修改以替换，清空以删除。") : undefined} value={String(form[field])} disabled={pending} onChange={(event) => setField(field, event.target.value)} />{restoreButton}</div>;
 }
 
 export function SystemConfigPage() {
   const { t } = useI18n();
   const [params, setParams] = useSearchParams();
   const [categorySearch, setCategorySearch] = useState("");
+  const [paymentTab, setPaymentTab] = useState("ldc");
   const category = CATEGORIES.find((item) => item.id === params.get("category"));
   const [draftForm, setDraftForm] = useState<RuntimeConfigForm | null>(null);
   const [customPatchText, setCustomPatchText] = useState<string | null>(null);
@@ -328,10 +420,10 @@ export function SystemConfigPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      if (!baseline || !form) throw new Error(t("配置尚未加载完成"));
-      if (customPatchText !== null) throw new Error(t("请先将 JSON 应用到草稿"));
+      if (!baseline || !form) throw new UserFacingError(t("配置尚未加载完成"));
+      if (customPatchText !== null) throw new UserFacingError(t("请先将 JSON 应用到草稿"));
       const patch = buildPatch(baseline, parseForm(form, t));
-      if (!Object.keys(patch).length) throw new Error(t("没有可提交的变更"));
+      if (!Object.keys(patch).length) throw new UserFacingError(t("没有可提交的变更"));
       return { updated: await patchSystemConfig(patch), changedCount: Object.keys(patch).length };
     },
     onSuccess: ({ updated, changedCount }) => {
@@ -368,17 +460,17 @@ export function SystemConfigPage() {
     if (!form || !baseline || customPatchText === null) return;
     try {
       const patch: unknown = JSON.parse(customPatchText);
-      if (!patch || Array.isArray(patch) || typeof patch !== "object") throw new Error(t("JSON 必须是配置对象"));
+      if (!patch || Array.isArray(patch) || typeof patch !== "object") throw new UserFacingError(t("JSON 必须是配置对象"));
       const candidate = { ...form } as RuntimeConfigForm;
       const mutable = candidate as unknown as Record<string, string | boolean>;
       for (const [key, value] of Object.entries(patch)) {
-        if (!EDITABLE_FIELDS.includes(key as keyof RuntimeConfig)) throw new Error(`${t("JSON 包含不支持的配置项")}: ${key}`);
+        if (!EDITABLE_FIELDS.includes(key as keyof RuntimeConfig)) throw new UserFacingError(`${t("JSON 包含不支持的配置项")}: ${key}`);
         const current = baseline[key as keyof RuntimeConfig];
         if (Array.isArray(current)) {
-          if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new Error(`${t("JSON 配置项类型不正确")}: ${key}`);
+          if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new UserFacingError(`${t("JSON 配置项类型不正确")}: ${key}`);
           mutable.latency_authorities_raw = value.join("\n");
         } else {
-          if (typeof value !== typeof current) throw new Error(`${t("JSON 配置项类型不正确")}: ${key}`);
+          if (typeof value !== typeof current) throw new UserFacingError(`${t("JSON 配置项类型不正确")}: ${key}`);
           mutable[key] = typeof value === "boolean" ? value : String(value);
         }
       }
@@ -387,12 +479,12 @@ export function SystemConfigPage() {
       setCustomPatchText(null);
       showToast("success", t("JSON 已应用到草稿，保存后生效"));
     } catch (error) {
-      showToast("error", formatApiErrorMessage(error, t));
+      showToast("error", error instanceof SyntaxError ? t("JSON 格式错误，请检查后重试") : formatApiErrorMessage(error, t));
     }
   };
 
   const visibleCategories = CATEGORIES.filter((item) => [t(item.title), t(item.description), ...item.fields.map((field) => t(FIELD_LABELS[field]))].join(" ").toLowerCase().includes(categorySearch.trim().toLowerCase()));
-  const displayedPatchText = customPatchText ?? JSON.stringify(patchPreview, null, 2);
+  const displayedPatchText = customPatchText ?? JSON.stringify(Object.fromEntries(Object.entries(patchPreview).filter(([key]) => key !== "ldc_key" && key !== "tron_api_key")), null, 2);
   const isSaveDisabled = saveMutation.isPending || customPatchText !== null || Boolean(parsedResult.error) || changedKeys.length === 0;
   const selectCategory = (id?: string) => {
     setParams((previous) => {
@@ -416,19 +508,20 @@ export function SystemConfigPage() {
         <span className="workspace-command__actions"><Search size={14} aria-hidden /><QueryBadge label={t("{{count}} 个分类", { count: visibleCategories.length })} /></span>
       </CommandSurface>
 
-      {!form ? <WorkspaceCard title={t("配置状态")}><EmptyWorkState title={configQuery.isError ? t("配置读取失败") : t("正在加载配置") } detail={configQuery.isError ? formatApiErrorMessage(configQuery.error, t) : t("运行时配置和部署值正在读取。")} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard> : null}
+      {!form ? <WorkspaceCard title={t("配置状态")}><EmptyWorkState embedded title={configQuery.isError ? t("配置读取失败") : t("正在加载配置") } detail={configQuery.isError ? formatApiErrorMessage(configQuery.error, t) : t("运行时配置和部署值正在读取。")} action={<ControlButton variant="secondary" size="sm" onPress={() => void configQuery.refetch()}>{t("重试")}</ControlButton>} /></WorkspaceCard> : null}
 
       {form && !category ? <WorkspaceCard headerless eyebrow="Governance / directory" title={t("配置目录")} description={t("按领域管理可编辑配置，或查看部署级只读信息。")}>
         {visibleCategories.length ? <ObjectList>{visibleCategories.map((item) => {
           const dirty = changedKeys.filter((field) => (item.fields as readonly string[]).includes(field)).length;
           return <ObjectRow key={item.id} onClick={() => selectCategory(item.id)} leading={<span className="workspace-platform-row__mark" aria-hidden>{item.id.slice(0, 3).toUpperCase()}</span>} title={t(item.title)} subtitle={t(item.description)} facts={<span>{t("{{count}} 个配置项", { count: item.fields.length + item.staticCount })}</span>} status={dirty ? <StatusMark tone="warn" label={t("{{count}} 项待保存", { count: dirty })} /> : <QueryBadge label={t("未修改")} />} action={<ArrowRight size={14} aria-hidden />} />;
-        })}</ObjectList> : <EmptyWorkState title={t("没有匹配的配置分类")} detail={t("搜索配置分类或参数")} />}
+        })}</ObjectList> : <EmptyWorkState embedded title={t("没有匹配的配置分类")} detail={t("搜索配置分类或参数")} />}
       </WorkspaceCard> : null}
 
       {form && category ? <>
         <WorkspaceCard eyebrow={`Governance / ${category.id}`} title={t(category.title)} description={t(category.description)} meta={t("{{count}} 个配置项", { count: category.fields.length + category.staticCount })} actions={<ControlButton variant="secondary" size="sm" onPress={() => void reloadFromServer()} isDisabled={reloadPending || saveMutation.isPending} loading={reloadPending}><RefreshCw size={14} aria-hidden />{t("重新加载")}</ControlButton>}>
-          {category.fields.length ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><PencilLine size={14} aria-hidden />{t("可编辑配置")}</span><QueryBadge label={t("运行时变更，保存后生效")} /></div><div className="workspace-form-grid">{category.fields.map((field) => <RuntimeFieldEditor key={field} field={field} form={form} defaultForm={defaultBaseline ? configToForm(defaultBaseline) : null} pending={saveMutation.isPending} setField={setFormField} restore={restoreField} />)}</div></div> : null}
-          {category.staticCount > 0 ? envBaseline ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><LockKeyhole size={14} aria-hidden />{t("部署只读信息")}</span><QueryBadge label={t("来自部署环境，修改需重启")} /></div>{staticRows(category.id, envBaseline, t).map((group) => <StaticGroup key={group.title} title={group.title} rows={group.rows} />)}</div> : <EmptyWorkState title={t("静态配置加载失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+          {category.id === "payments" ? <ControlTabs items={[{id:"ldc",label:t("Linux.do 积分 (EasyPay)")},{id:"tron",label:t("TRON (USDT & TRX)")}]} selectedKey={paymentTab} onSelectionChange={setPaymentTab} label={t("支付网关")} /> : null}
+          {category.fields.length ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><PencilLine size={14} aria-hidden />{t("可编辑配置")}</span><QueryBadge label={t("运行时变更，保存后生效")} /></div><div className="workspace-form-grid">{category.fields.filter((field) => category.id !== "payments" || field.startsWith(paymentTab === "ldc" ? "ldc_" : "tron_")).map((field) => <RuntimeFieldEditor key={field} field={field} form={form} defaultForm={defaultBaseline ? configToForm(defaultBaseline) : null} pending={saveMutation.isPending} setField={setFormField} restore={restoreField} />)}</div></div> : null}
+          {category.staticCount > 0 ? envBaseline ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><LockKeyhole size={14} aria-hidden />{t("部署只读信息")}</span><QueryBadge label={t("来自部署环境，修改需重启")} /></div>{staticRows(category.id, envBaseline, t).map((group) => <StaticGroup key={group.title} title={group.title} rows={group.rows} />)}</div> : <EmptyWorkState embedded title={t("静态配置加载失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
         </WorkspaceCard>
 
         <WorkspaceCard eyebrow="Governance / draft" title={t("配置草稿")} meta={changedKeys.length ? t("{{count}} 项待保存", { count: changedKeys.length }) : t("当前无未保存改动")} description={t(customPatchText !== null ? "请先将 JSON 应用到草稿" : "保存会提交所有分类的草稿更改。") }>

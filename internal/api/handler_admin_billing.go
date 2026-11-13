@@ -23,6 +23,9 @@ func intQuery(r *http.Request, key string, fallback int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%s: must be an integer", key)
 	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s: must be a non-negative integer", key)
+	}
 	return n, nil
 }
 
@@ -190,6 +193,10 @@ func HandleAdminDeleteSubscription(cp *service.ControlPlaneService) http.Handler
 func HandleAdminListInvites(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
 		pagination, err := ParsePagination(r)
 		if err != nil {
 			writeInvalidArgument(w, err.Error())
@@ -199,6 +206,14 @@ func HandleAdminListInvites(cp *service.ControlPlaneService) http.HandlerFunc {
 		if err != nil {
 			writeServiceError(w, err)
 			return
+		}
+		if !actor.ViaSession {
+			// The invite code is itself a credential that can create a durable
+			// account and session. Automation may reconcile invite metadata, but
+			// a bearer key must never be able to harvest a usable code.
+			for i := range views {
+				views[i].Code = ""
+			}
 		}
 		writeTenantPage(w, views, total, pagination)
 	}

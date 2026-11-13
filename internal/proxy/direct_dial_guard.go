@@ -38,7 +38,9 @@ import (
 //
 //  1. CheckTarget refuses the request when the target port is blocked or any
 //     resolved address is in the denied set. A name that cannot be resolved is
-//     refused too: a guard that fails open is not a guard.
+//     refused too: a guard that fails open is not a guard. The lookup is
+//     bounded by the local dial timeout so a resolver stall cannot pin an
+//     admission goroutine indefinitely.
 //  2. dialer() returns a net.Dialer whose ControlContext hook re-checks the
 //     port and the address the socket is about to be connected to. A resolver
 //     that answers differently between the two calls (DNS rebinding) therefore
@@ -52,14 +54,19 @@ type DirectDialGuard struct {
 	blockedPorts map[int]bool
 	// lookup resolves a hostname to every address it currently maps to. It is a
 	// field so tests can pin resolution without touching the system resolver.
-	lookup func(ctx context.Context, host string) ([]netip.Addr, error)
+	lookup        func(ctx context.Context, host string) ([]netip.Addr, error)
+	lookupTimeout time.Duration
 }
 
 // NewDirectDialGuard returns the local dial policy for one address switch
 // value. It refuses no destination port; the port list is carried by
 // WithBlockedDestinationPorts, which keeps this constructor's signature stable.
 func NewDirectDialGuard(enabled bool) DirectDialGuard {
-	return DirectDialGuard{enabled: enabled, lookup: defaultDirectLookup}
+	return DirectDialGuard{
+		enabled:       enabled,
+		lookup:        defaultDirectLookup,
+		lookupTimeout: defaultDirectDialTimeout,
+	}
 }
 
 // Enabled reports whether the policy refuses addresses.
@@ -85,6 +92,18 @@ func (g DirectDialGuard) WithBlockedDestinationPorts(ports []int) DirectDialGuar
 // withLookup returns a copy of the policy using a pinned resolver. Tests only.
 func (g DirectDialGuard) withLookup(lookup func(context.Context, string) ([]netip.Addr, error)) DirectDialGuard {
 	g.lookup = lookup
+	return g
+}
+
+// withLookupTimeout returns a copy whose pre-dial DNS classification has the
+// same bound as the dial it protects. It is also used by tests with a short
+// timeout so a stalled resolver can be checked without waiting for production
+// deadlines.
+func (g DirectDialGuard) withLookupTimeout(timeout time.Duration) DirectDialGuard {
+	if timeout <= 0 {
+		timeout = defaultDirectDialTimeout
+	}
+	g.lookupTimeout = timeout
 	return g
 }
 
@@ -151,7 +170,13 @@ func (g DirectDialGuard) CheckTarget(ctx context.Context, host string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	addrs, err := lookup(ctx, hostname)
+	lookupTimeout := g.lookupTimeout
+	if lookupTimeout <= 0 {
+		lookupTimeout = defaultDirectDialTimeout
+	}
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, lookupTimeout)
+	defer cancelLookup()
+	addrs, err := lookup(lookupCtx, hostname)
 	if err != nil {
 		return fmt.Errorf("%w: %s: %w", errDirectDialUnresolvable, hostname, err)
 	}

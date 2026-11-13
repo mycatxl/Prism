@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"prism/internal/model"
 )
@@ -74,6 +75,9 @@ func (r *StateRepo) PurchasePlanWithBalance(sub model.UserSubscription, entry mo
 	if err != nil {
 		return PurchaseResult{}, err
 	}
+	if err := activePlanTx(tx, sub.PlanID); err != nil {
+		return PurchaseResult{}, err
+	}
 	if _, err := tx.Exec(`
 		UPDATE user_subscriptions SET status = ?
 		WHERE user_id = ? AND status = ?
@@ -136,6 +140,24 @@ func (r *StateRepo) PurchasePlanWithBalance(sub model.UserSubscription, entry mo
 // for a subscription whose period_start_ns was still the purchase date could be
 // up to a full period away.
 func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, expectedPeriodIndex int, entry model.BalanceEntry) (PurchaseResult, error) {
+	return r.renewSubscriptionWithBalance(sub, expectedPeriodIndex, sub.PlanSnapshotJSON, entry, false)
+}
+
+// RenewAutoSubscriptionWithBalance is the sweep variant of renewal. The
+// auto_renew predicate is evaluated in the same transaction as the charge, so
+// opting out after the sweep listed a row cannot still debit the account.
+func (r *StateRepo) RenewAutoSubscriptionWithBalance(sub model.UserSubscription, expectedPeriodIndex int, entry model.BalanceEntry) (PurchaseResult, error) {
+	return r.renewSubscriptionWithBalance(sub, expectedPeriodIndex, sub.PlanSnapshotJSON, entry, true)
+}
+
+// RenewSubscriptionWithBalanceExpectedSnapshot is the renewal entry point for
+// the legacy-price path, which rewrites the snapshot while still needing to
+// compare the snapshot that the caller actually read.
+func (r *StateRepo) RenewSubscriptionWithBalanceExpectedSnapshot(sub model.UserSubscription, expectedPeriodIndex int, expectedSnapshot string, entry model.BalanceEntry, requireAutoRenew bool) (PurchaseResult, error) {
+	return r.renewSubscriptionWithBalance(sub, expectedPeriodIndex, expectedSnapshot, entry, requireAutoRenew)
+}
+
+func (r *StateRepo) renewSubscriptionWithBalance(sub model.UserSubscription, expectedPeriodIndex int, expectedSnapshot string, entry model.BalanceEntry, requireAutoRenew bool) (PurchaseResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -163,12 +185,19 @@ func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, exp
 	if err != nil {
 		return PurchaseResult{}, err
 	}
+	if err := activePlanTx(tx, sub.PlanID); err != nil {
+		return PurchaseResult{}, err
+	}
 
 	snapshot := sub.PlanSnapshotJSON
 	if snapshot == "" {
 		snapshot = "{}"
 	}
-	result, err := tx.Exec(`
+	expectedSnapshot = strings.TrimSpace(expectedSnapshot)
+	if expectedSnapshot == "" {
+		expectedSnapshot = "{}"
+	}
+	query := `
 		UPDATE user_subscriptions SET
 			plan_snapshot_json = ?,
 			expires_at_ns      = ?,
@@ -176,9 +205,13 @@ func (r *StateRepo) RenewSubscriptionWithBalance(sub model.UserSubscription, exp
 			period_start_ns    = ?,
 			period_used_bytes  = 0,
 			status             = ?
-		WHERE id = ? AND period_index = ?
-	`, snapshot, sub.ExpiresAtNs, sub.PeriodIndex, sub.PeriodStartNs,
-		model.SubscriptionStatusActive, sub.ID, expectedPeriodIndex)
+		WHERE id = ? AND period_index = ? AND status = ? AND plan_snapshot_json = ?`
+	args := []any{snapshot, sub.ExpiresAtNs, sub.PeriodIndex, sub.PeriodStartNs,
+		model.SubscriptionStatusActive, sub.ID, expectedPeriodIndex, model.SubscriptionStatusActive, expectedSnapshot}
+	if requireAutoRenew {
+		query += " AND auto_renew = 1"
+	}
+	result, err := tx.Exec(query, args...)
 	if err != nil {
 		return PurchaseResult{}, fmt.Errorf("extend subscription: %w", err)
 	}
@@ -220,6 +253,26 @@ func (r *StateRepo) SetSubscriptionAutoRenew(id string, autoRenew bool) error {
 	return nil
 }
 
+// activePlanTx rejects a settlement after an operator has disabled or deleted
+// the plan. The service's initial plan read is necessarily outside the balance
+// transaction; this re-check closes that TOCTOU window.
+func activePlanTx(tx *sql.Tx, planID string) error {
+	if planID == "" {
+		return nil
+	}
+	var status string
+	if err := tx.QueryRow("SELECT status FROM plans WHERE id = ?", planID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: the plan is no longer available", ErrConflict)
+		}
+		return fmt.Errorf("read plan status: %w", err)
+	}
+	if status != "active" {
+		return fmt.Errorf("%w: the plan is disabled", ErrConflict)
+	}
+	return nil
+}
+
 // ListRenewableSubscriptions returns the subscriptions a sweep should look at:
 // active, opted in, and inside the lead time before their expiry.
 //
@@ -256,9 +309,9 @@ func chargeInTx(tx *sql.Tx, entry model.BalanceEntry) (model.BalanceEntry, error
 	if err != nil {
 		return model.BalanceEntry{}, err
 	}
-	after := current + entry.DeltaMicro
-	if after < 0 {
-		return model.BalanceEntry{}, ErrInsufficientBalance
+	after, err := checkedBalanceAfter(current, entry.DeltaMicro)
+	if err != nil {
+		return model.BalanceEntry{}, err
 	}
 	if _, err := tx.Exec(`
 		INSERT INTO user_balance (user_id, balance_micro, updated_at_ns)

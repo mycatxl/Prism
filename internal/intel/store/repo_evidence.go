@@ -5,12 +5,23 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 )
 
 // UpsertEvidence inserts or replaces the evidence of one (ip, provider) pair.
 // The normalised blob is capped at 8 KiB and the raw response at 32 KiB.
 func (s *Store) UpsertEvidence(ctx context.Context, e Evidence) error {
+	if s == nil {
+		return ErrClosed
+	}
+	if ip, err := netip.ParseAddr(e.IP); err == nil {
+		e.IP = ip.Unmap().String()
+	}
+	return s.WithEvidenceLock(e.IP, func() error { return s.upsertEvidence(ctx, e) })
+}
+
+func (s *Store) upsertEvidence(ctx context.Context, e Evidence) error {
 	db, err := s.conn()
 	if err != nil {
 		return err
@@ -22,7 +33,12 @@ func (s *Store) UpsertEvidence(ctx context.Context, e Evidence) error {
 	if raw.Valid {
 		raw = truncateRaw(raw.String, MaxRawJSONBytes)
 	}
-	_, err = db.ExecContext(ctx, `
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO evidence (ip, provider, profile, via_node_hash, status, observed_at_ns,
 			valid_until_ns, normalized_json, raw_json, error_code)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -34,10 +50,41 @@ func (s *Store) UpsertEvidence(ctx context.Context, e Evidence) error {
 			valid_until_ns  = excluded.valid_until_ns,
 			normalized_json = excluded.normalized_json,
 			raw_json        = excluded.raw_json,
-			error_code      = excluded.error_code`,
+			error_code      = excluded.error_code
+		WHERE excluded.observed_at_ns >= evidence.observed_at_ns`,
 		e.IP, e.Provider, e.Profile, e.ViaNodeHash, e.Status, e.ObservedAtNs,
 		e.ValidUntilNs, truncateJSON(e.NormalizedJSON, MaxNormalizedJSONBytes), raw, e.ErrorCode)
-	return err
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed > 0 && e.Provider == "ippure" {
+		// Evidence and revocation commit together. If publication is interrupted,
+		// startup's foreign-profile rebuild must recompute from the latest row.
+		_, err = tx.ExecContext(ctx, `UPDATE ip_assessment SET profile='', state='pending',
+			purity_score=NULL, purity_band='unknown', verdict='pending',
+			reasons_json='["CURRENT_EXIT_UNASSESSED"]',
+			components_json='{}' WHERE ip=?`, e.IP)
+		if err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if changed == 0 {
+		return nil
+	}
+	s.mu.RLock()
+	hook := s.evidenceCommitted
+	s.mu.RUnlock()
+	if hook != nil {
+		return hook(ctx, e.IP)
+	}
+	return nil
 }
 
 // GetEvidence returns one (ip, provider) row.

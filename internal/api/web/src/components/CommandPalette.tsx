@@ -1,9 +1,11 @@
-import { Kbd, ListBox, Modal as HeroModal, SearchField, useOverlayState } from "@heroui/react";
-import { CornerDownLeft } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { CornerDownLeft, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import type { NavigationItem } from "../lib/navigation";
 import { ACCOUNT } from "../lib/paths";
 import { useTheme } from "../lib/theme";
@@ -21,12 +23,9 @@ import { useI18n } from "../i18n";
  * to hold would answer a question nobody asked with data that is already stale.
  * A palette that invents results is worse than no palette.
  *
- * The rows are HeroUI listbox options and the field is HeroUI's search field, so
- * the surface is the same overlay, input and list primitive as the rest of the
- * panel. Focus stays in the field while the arrow keys move the highlighted row,
- * which is why the row highlight is driven by `selectedKeys` rather than by the
- * listbox's own focus: a palette is one keystroke away from every page, so typing
- * must never fight the list for the caret.
+ * Focus stays in the field while the arrow keys move the highlighted row. A
+ * palette is one keystroke away from every page, so typing never competes with
+ * the result list for the caret.
  */
 export function CommandPalette({
   open,
@@ -57,22 +56,15 @@ export function CommandPalette({
     onOpenChange(false);
   };
 
-  const overlay = useOverlayState({
-    isOpen: open,
-    onOpenChange: (next: boolean) => {
-      if (!next) {
-        setQuery("");
-        setActiveKey(null);
-      }
-      onOpenChange(next);
-    },
-  });
+  const changeOpen = (next: boolean) => {
+    if (!next) {
+      setQuery("");
+      setActiveKey(null);
+    }
+    onOpenChange(next);
+  };
 
-  /*
-   * HeroUI's modal parks focus on the dialog element itself and leaves it there,
-   * so a palette opened this way would swallow the first keystroke — the one
-   * thing the surface exists for. The field is focused once the overlay exists.
-   */
+  /* The field is focused as soon as the Radix dialog opens. */
   const searchRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     if (!open) return;
@@ -141,59 +133,68 @@ export function CommandPalette({
     }
   };
 
-  const row =
-    "flex cursor-pointer items-center gap-2 rounded-control px-2.5 py-2 text-sm text-ink-soft data-[selected=true]:bg-accent-wash data-[selected=true]:text-accent";
-
   return (
-    <HeroModal state={overlay}>
-      <HeroModal.Backdrop>
-        <HeroModal.Container>
-          <HeroModal.Dialog className="w-full max-w-[34rem] overflow-hidden">
-            <div onKeyDown={handleKeyDown}>
-              <SearchField
+    <Dialog.Root open={open} onOpenChange={changeOpen}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="command-palette__overlay" />
+        <Dialog.Content
+          className="command-palette"
+          aria-describedby={undefined}
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            searchRef.current?.focus();
+          }}
+        >
+          <Dialog.Title className="sr-only">{t("命令面板")}</Dialog.Title>
+          <div onKeyDown={handleKeyDown}>
+            <div className="command-palette__search">
+              <Search size={17} aria-hidden />
+              <Input
+                ref={searchRef}
+                type="search"
+                autoFocus
                 aria-label={t("搜索页面或操作")}
                 value={query}
-                onChange={setQuery}
-                className="border-b border-rule"
-              >
-                <SearchField.Group>
-                  <SearchField.SearchIcon />
-                  <SearchField.Input ref={searchRef} autoFocus placeholder={t("搜索页面或操作")} />
-                  <SearchField.ClearButton />
-                </SearchField.Group>
-              </SearchField>
-
-              {matches.length === 0 ? (
-                <p className="px-3 py-6 text-center text-xs text-ink-faint">{t("没有匹配的目的地或操作")}</p>
-              ) : (
-                <ListBox
-                  aria-label={t("命令面板")}
-                  selectionMode="single"
-                  selectedKeys={highlighted ? [highlighted] : []}
-                  onAction={(key) => {
-                    const entry = matches.find((candidate) => candidate.key === String(key));
-                    if (entry) run(entry.run);
-                  }}
-                  className="max-h-[min(56vh,24rem)] overflow-y-auto p-1.5"
-                >
-                  {matches.map((entry) => (
-                    <ListBox.Item key={entry.key} id={entry.key} textValue={entry.label} className={row}>
-                      <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-                      {entry.hint && <span className="micro shrink-0">{entry.hint}</span>}
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              )}
-
-              <div className="flex items-center gap-1.5 border-t border-rule px-3.5 py-2 text-2xs text-ink-faint">
-                <Kbd>↵</Kbd>
-                <CornerDownLeft size={14} aria-hidden />
-                <span>{t("用方向键移动，回车打开")}</span>
-              </div>
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("搜索页面或操作")}
+              />
+              {query ? (
+                <Button type="button" size="icon" variant="ghost" onClick={() => setQuery("")} aria-label={t("清除筛选")}>
+                  <X size={15} aria-hidden />
+                </Button>
+              ) : null}
             </div>
-          </HeroModal.Dialog>
-        </HeroModal.Container>
-      </HeroModal.Backdrop>
-    </HeroModal>
+
+            {matches.length === 0 ? (
+              <p className="command-palette__empty">{t("没有匹配的目的地或操作")}</p>
+            ) : (
+              <div className="command-palette__list" role="listbox" aria-label={t("命令面板")}>
+                {matches.map((entry) => (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    role="option"
+                    aria-selected={entry.key === highlighted}
+                    key={entry.key}
+                    className="command-palette__item"
+                    onMouseMove={() => setActiveKey(entry.key)}
+                    onClick={() => run(entry.run)}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+                    {entry.hint && <span className="micro shrink-0">{entry.hint}</span>}
+                  </Button>
+                ))}
+              </div>
+            )}
+
+            <div className="command-palette__footer">
+              <kbd>↵</kbd>
+              <CornerDownLeft size={14} aria-hidden />
+              <span>{t("用方向键移动，回车打开")}</span>
+            </div>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }

@@ -9,18 +9,17 @@ import (
 
 // reachablePlatforms must answer with the union of what the user's active keys
 // allow, using the same rule the data plane applies in
-// keys.KeyState.AllowsPlatform: a key's own list when it has one, otherwise the
-// plan's, and an empty effective list allows every known platform.
+// keys.KeyState.AllowsPlatform: the union of each key/plan intersection; empty lists impose no restriction.
 func TestReachablePlatformsUnionsTheActiveKeys(t *testing.T) {
 	cp := newSelfPlatformFixture(t, "alpha", "bravo", "charlie")
 
-	plan := model.Plan{Platforms: []string{"alpha"}}
+	plan := model.Plan{Platforms: []string{"bravo", "charlie"}}
 	keys := []model.AccessKey{
 		{Status: model.KeyStatusActive, Platforms: []string{"bravo"}},
 		{Status: model.KeyStatusActive, Platforms: []string{"charlie"}},
 	}
 
-	got, err := cp.reachablePlatforms(keys, plan)
+	got, err := cp.reachablePlatforms(keys, plan, 1)
 	if err != nil {
 		t.Fatalf("reachablePlatforms: %v", err)
 	}
@@ -41,7 +40,7 @@ func TestReachablePlatformsInheritsThePlanAndSkipsRevokedKeys(t *testing.T) {
 		{Status: "revoked", Platforms: []string{"bravo"}},
 	}
 
-	got, err := cp.reachablePlatforms(keys, plan)
+	got, err := cp.reachablePlatforms(keys, plan, 1)
 	if err != nil {
 		t.Fatalf("reachablePlatforms: %v", err)
 	}
@@ -56,7 +55,7 @@ func TestReachablePlatformsInheritsThePlanAndSkipsRevokedKeys(t *testing.T) {
 func TestReachablePlatformsFallsBackToEveryKnownPlatform(t *testing.T) {
 	cp := newSelfPlatformFixture(t, "alpha", "bravo")
 
-	got, err := cp.reachablePlatforms([]model.AccessKey{{Status: model.KeyStatusActive}}, model.Plan{})
+	got, err := cp.reachablePlatforms([]model.AccessKey{{Status: model.KeyStatusActive}}, model.Plan{}, 1)
 	if err != nil {
 		t.Fatalf("reachablePlatforms: %v", err)
 	}
@@ -70,7 +69,7 @@ func TestReachablePlatformsFallsBackToEveryKnownPlatform(t *testing.T) {
 func TestReachablePlatformsIsEmptyWithoutAnActiveKey(t *testing.T) {
 	cp := newSelfPlatformFixture(t, "alpha")
 
-	got, err := cp.reachablePlatforms([]model.AccessKey{{Status: "revoked"}}, model.Plan{Platforms: []string{"alpha"}})
+	got, err := cp.reachablePlatforms([]model.AccessKey{{Status: "revoked"}}, model.Plan{Platforms: []string{"alpha"}}, 1)
 	if err != nil {
 		t.Fatalf("reachablePlatforms: %v", err)
 	}

@@ -1,4 +1,3 @@
-import { Card as HeroCard } from "@heroui/react";
 import { Check, Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -127,19 +126,19 @@ export function RegisterPage() {
           <p className="access-brief__footnote">{t("账号创建后即可登录控制台。")}</p>
         </section>
 
-        <HeroCard className="access-card" variant="default">
-          <HeroCard.Header className="access-card__header">
+        <section className="access-card">
+          <header className="access-card__header">
             <div className="access-card__utility">
               <span className="access-card__utility-label">{t("账户入口")}</span>
               <LanguageSwitcher />
             </div>
-            <HeroCard.Title>{t("注册账号")}</HeroCard.Title>
-            <HeroCard.Description>
+            <h2>{t("注册账号")}</h2>
+            <p>
               {open ? t("填写下面的信息创建你的账号。") : t("本部署未开放自助注册，请联系运营方开通账号。")}
-            </HeroCard.Description>
-          </HeroCard.Header>
+            </p>
+          </header>
 
-          <HeroCard.Content>
+          <div className="access-card__content">
             {open ? (
               <form className="access-form" onSubmit={onSubmit} noValidate>
                 {needsInvite ? (
@@ -209,15 +208,15 @@ export function RegisterPage() {
                 <p>{t("本部署未开放自助注册，请联系运营方开通账号。")}</p>
               </div>
             )}
-          </HeroCard.Content>
+          </div>
 
-          <HeroCard.Footer className="access-card__footer">
+          <footer className="access-card__footer">
             <p>
               {t("已有账号？")}
               <Link to="/login">{t("去登录")}</Link>
             </p>
-          </HeroCard.Footer>
-        </HeroCard>
+          </footer>
+        </section>
       </div>
     </main>
   );

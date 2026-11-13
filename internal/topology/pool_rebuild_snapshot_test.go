@@ -73,6 +73,7 @@ func TestRebuildPlatform_InstallsTheProjectionBeforeEvaluating(t *testing.T) {
 	// not publish an empty view.
 	pool.SetQualitySnapshot(fakeSnapshot{assessments: map[netip.Addr]intel.AssessmentLite{
 		netip.MustParseAddr("1.1.1.1"): {
+			State: intel.StateValid, Score: 90,
 			Band:       intel.BandCode("clean"),
 			IPType:     intel.IPTypeCode("residential"),
 			Verdict:    intel.VerdictCode("favorable"),
@@ -124,6 +125,7 @@ func qualityPlatformFixture(t *testing.T, criteria platform.NodeCriteria) (*Glob
 func residentialCleanSnapshot() fakeSnapshot {
 	return fakeSnapshot{assessments: map[netip.Addr]intel.AssessmentLite{
 		netip.MustParseAddr("1.1.1.1"): {
+			State: intel.StateValid, Score: 90,
 			Band:       intel.BandCode("clean"),
 			IPType:     intel.IPTypeCode("residential"),
 			Verdict:    intel.VerdictCode("favorable"),

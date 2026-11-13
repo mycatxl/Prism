@@ -1,6 +1,8 @@
 import { ApiError } from "./api-client";
 import { ERROR_CODE_MESSAGES, GENERIC_ERROR_MESSAGE } from "../i18n/errors";
 
+export class UserFacingError extends Error {}
+
 type TranslateFn = (text: string, options?: Record<string, unknown>) => string;
 
 /** Anything CJK: a message that already reads as Chinese needs no lookup. */
@@ -26,6 +28,7 @@ const CJK = /[\u3400-\u9fff]/;
  * names even when the message has been translated.
  */
 export function formatApiErrorMessage(error: unknown, t: TranslateFn): string {
+  if (error instanceof UserFacingError) return error.message;
   if (error instanceof ApiError) {
     const message = messageFor(error.code, error.message, t);
     return error.code ? `${error.code}: ${message}` : message;

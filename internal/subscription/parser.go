@@ -186,6 +186,18 @@ func parseJSONSubscription(data []byte, report *parseReport) ([]ParsedNode, bool
 	var obj map[string]json.RawMessage
 	objErr := json.Unmarshal(data, &obj)
 	if objErr == nil {
+		if raw, ok := obj["prism_nodes"]; ok {
+			var nodes []ParsedNode
+			if err := json.Unmarshal(raw, &nodes); err != nil {
+				return nil, true, err
+			}
+			for _, n := range nodes {
+				if _, err := node.ParseNodeDoc(n.RawOptions); err != nil {
+					return nil, true, err
+				}
+			}
+			return nodes, true, nil
+		}
 		if nodes, recognized, err := parseOpenVPNBundleJSON(obj, report); recognized {
 			return nodes, true, err
 		}

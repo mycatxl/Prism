@@ -10,6 +10,8 @@ import (
 	"prism/internal/service"
 )
 
+const testMuxAccessKey = "pk_0123456789abcdef0123456789abcdef_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
 func newInboundMux(proxyToken string, forward, reverse, apiHandler, tokenActionHandler http.Handler) http.Handler {
 	return newInboundMuxWithGuard(proxyToken, forward, reverse, apiHandler, tokenActionHandler, nil)
 }
@@ -82,7 +84,7 @@ func TestInboundMux_RoutesTokenAPINamespaceToTokenActionHandler(t *testing.T) {
 		tagHandler("token-action", http.StatusOK),
 	)
 
-	for _, path := range []string{"/tok/api", "/tok/api/v1/platforms"} {
+	for _, path := range []string{"/" + testMuxAccessKey + "/api", "/" + testMuxAccessKey + "/api/v1/platforms"} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			rec := httptest.NewRecorder()
@@ -135,8 +137,8 @@ func TestInboundMux_RoutesReverseForNonControlPlanePaths(t *testing.T) {
 	)
 
 	cases := []string{
-		"/tok/plat:acct/https/example.com/path",
-		"/tok/plat/https/example.com/path",
+		"/" + testMuxAccessKey + "/plat:acct/https/example.com/path",
+		"/" + testMuxAccessKey + "/plat/https/example.com/path",
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
@@ -183,7 +185,7 @@ func TestInboundMux_RejectsReverseWhenTokenMissingOrWrong(t *testing.T) {
 	}
 }
 
-func TestInboundMux_EmptyProxyToken_AllowsDummyTokenForTokenAction(t *testing.T) {
+func TestInboundMux_RejectsLegacyTokenForTokenAction(t *testing.T) {
 	mux := newInboundMux(
 		"",
 		tagHandler("forward", http.StatusOK),
@@ -196,12 +198,12 @@ func TestInboundMux_EmptyProxyToken_AllowsDummyTokenForTokenAction(t *testing.T)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Header().Get("X-Route") != "token-action" {
-		t.Fatalf("expected token-action route when proxy token empty, got %q", rec.Header().Get("X-Route"))
+	if rec.Header().Get("X-Route") != "" || rec.Code != http.StatusForbidden {
+		t.Fatalf("legacy token route = %q status=%d, want refusal", rec.Header().Get("X-Route"), rec.Code)
 	}
 }
 
-func TestInboundMux_EmptyProxyToken_AllowsEmptyTokenSegmentForTokenAction(t *testing.T) {
+func TestInboundMux_RejectsEmptyTokenSegmentForTokenAction(t *testing.T) {
 	mux := newInboundMux(
 		"",
 		tagHandler("forward", http.StatusOK),
@@ -214,12 +216,12 @@ func TestInboundMux_EmptyProxyToken_AllowsEmptyTokenSegmentForTokenAction(t *tes
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Header().Get("X-Route") != "token-action" {
-		t.Fatalf("expected token-action route with empty token segment, got %q", rec.Header().Get("X-Route"))
+	if rec.Header().Get("X-Route") != "" || rec.Code != http.StatusForbidden {
+		t.Fatalf("empty token route = %q status=%d, want refusal", rec.Header().Get("X-Route"), rec.Code)
 	}
 }
 
-func TestInboundMux_EmptyProxyToken_RoutesNonActionTokenNamespaceToTokenAction(t *testing.T) {
+func TestInboundMux_RejectsNonKeyTokenNamespace(t *testing.T) {
 	mux := newInboundMux(
 		"",
 		tagHandler("forward", http.StatusOK),
@@ -232,8 +234,8 @@ func TestInboundMux_EmptyProxyToken_RoutesNonActionTokenNamespaceToTokenAction(t
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
-	if rec.Header().Get("X-Route") != "token-action" {
-		t.Fatalf("expected token-action route for non-action token namespace, got %q", rec.Header().Get("X-Route"))
+	if rec.Header().Get("X-Route") != "" || rec.Code != http.StatusForbidden {
+		t.Fatalf("legacy namespace route = %q status=%d, want refusal", rec.Header().Get("X-Route"), rec.Code)
 	}
 }
 
@@ -246,7 +248,7 @@ func TestInboundMux_RoutesTokenInheritLeaseAction(t *testing.T) {
 		tagHandler("token-action", http.StatusOK),
 	)
 
-	req := httptest.NewRequest(http.MethodPost, "/tok/api/v1/Default/actions/inherit-lease", nil)
+	req := httptest.NewRequest(http.MethodPost, "/"+testMuxAccessKey+"/api/v1/Default/actions/inherit-lease", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -297,7 +299,7 @@ func TestEndpointInboundMux_AppliesCapabilities(t *testing.T) {
 
 	t.Run("reverse is forbidden", func(t *testing.T) {
 		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dummy/Default/https/example.com", nil))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+testMuxAccessKey+"/Default/https/example.com", nil))
 		if rec.Code != http.StatusForbidden || rec.Header().Get("X-Prism-Error") != "ENDPOINT_CAPABILITY_DISABLED" {
 			t.Fatalf("status/header = %d/%q", rec.Code, rec.Header().Get("X-Prism-Error"))
 		}
@@ -313,7 +315,7 @@ func TestEndpointInboundMux_AppliesCapabilities(t *testing.T) {
 		}
 
 		rec = httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/dummy/Default/https/example.com", nil))
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+testMuxAccessKey+"/Default/https/example.com", nil))
 		if rec.Header().Get("X-Route") != "reverse" {
 			t.Fatalf("reverse route = %q, want reverse", rec.Header().Get("X-Route"))
 		}

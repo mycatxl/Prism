@@ -51,13 +51,17 @@ func (k Kind) MarshalJSON() ([]byte, error) { return []byte(`"` + k.String() + `
 
 // Error codes of ProviderError.
 const (
-	CodeLimit        = "PROVIDER_LIMIT"
-	CodeAuth         = "PROVIDER_AUTH"
-	CodeUnavailable  = "PROVIDER_UNAVAILABLE"
-	CodeResponse     = "PROVIDER_RESPONSE"
-	CodeUnsupported  = "UNSUPPORTED_IP"
-	CodeEgressMismat = "EGRESS_MISMATCH"
-	CodeRequest      = "PROVIDER_REQUEST"
+	CodeLimit               = "PROVIDER_LIMIT"
+	CodeAuth                = "PROVIDER_AUTH"
+	CodeUnavailable         = "PROVIDER_UNAVAILABLE"
+	CodeTimeout             = "PROVIDER_TIMEOUT"
+	CodeResponse            = "PROVIDER_RESPONSE"
+	CodeUnsupported         = "UNSUPPORTED_IP"
+	CodeEgressMismat        = "EGRESS_MISMATCH"
+	CodeRequest             = "PROVIDER_REQUEST"
+	CodeTorNotListed        = "TOR_PUBLIC_RELAY_NOT_LISTED"
+	CodeRegistryUnavailable = "REGISTRY_UNAVAILABLE"
+	CodeRegistryExpired     = "REGISTRY_EXPIRED"
 )
 
 // MaxRawBytes bounds the stored raw provider response.

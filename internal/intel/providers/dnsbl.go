@@ -182,10 +182,6 @@ func (p *DNSBL) lookupOne(ctx context.Context, ip netip.Addr) Result {
 		DNSBLListed: listed, DNSBLChecked: checked,
 		ObservedAt: now, ValidUntil: now.Add(p.ttl),
 	}
-	if len(listed) > 0 {
-		yes := true
-		evidence.Signals.Anonymous = &yes
-	}
 	return Result{Evidence: evidence}
 }
 

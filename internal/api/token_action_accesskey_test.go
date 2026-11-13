@@ -52,6 +52,7 @@ func seedTokenActionParentLease(t *testing.T, cp *service.ControlPlaneService, p
 	nowNs := time.Now().UnixNano()
 	parent := model.Lease{
 		PlatformID:     platformID,
+		UserID:         "user-1",
 		Account:        "parent-account",
 		NodeHash:       node.HashFromRawOptions([]byte(`{"id":"token-key-parent-node"}`)).Hex(),
 		EgressIP:       "203.0.113.10",
@@ -64,8 +65,7 @@ func seedTokenActionParentLease(t *testing.T, cp *service.ControlPlaneService, p
 	}
 }
 
-// The transitional contract on the token-path route: the credential position
-// accepts an access key as well as the global proxy token.
+// The token-path route accepts only a verified proxy AccessKey.
 func TestTokenAction_AcceptsAnAccessKey(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)
 	platformName := "token-key-target"
@@ -84,7 +84,39 @@ func TestTokenAction_AcceptsAnAccessKey(t *testing.T) {
 	}
 }
 
-func TestTokenAction_StillAcceptsTheGlobalToken(t *testing.T) {
+func TestTokenAction_CannotUseAnotherUsersLease(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+	platformName := "token-key-owner-bound"
+	platformID := mustCreatePlatform(t, srv, platformName)
+	nowNs := time.Now().UnixNano()
+	parent := model.Lease{
+		PlatformID:     platformID,
+		UserID:         "different-user",
+		Account:        "parent-account",
+		NodeHash:       node.HashFromRawOptions([]byte(`{"id":"different-user-parent"}`)).Hex(),
+		EgressIP:       "203.0.113.11",
+		CreatedAtNs:    nowNs - int64(10*time.Minute),
+		ExpiryNs:       nowNs + int64(30*time.Minute),
+		LastAccessedNs: nowNs - int64(time.Minute),
+	}
+	if err := cp.Router.UpsertLease(parent); err != nil {
+		t.Fatalf("seed parent lease: %v", err)
+	}
+
+	verifier, credential := tokenActionKeyFixture(t, "user-1", []string{platformID})
+	handler := NewTokenActionHandler("tok", verifier, cp, 1<<20, nil)
+	rec := doTokenJSONRequest(t, handler, http.MethodPost,
+		"/"+credential+"/api/v1/"+platformName+"/actions/inherit-lease",
+		map[string]any{"parent_account": "parent-account", "new_account": "new-account"})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body=%s", rec.Code, rec.Body.String())
+	}
+	if child := cp.Router.ReadLease(model.LeaseKey{PlatformID: platformID, UserID: "user-1", Account: "new-account"}); child != nil {
+		t.Fatal("token action created a lease under the wrong owner")
+	}
+}
+
+func TestTokenAction_RejectsTheGlobalToken(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)
 	platformName := "token-plain-target"
 	platformID := mustCreatePlatform(t, srv, platformName)
@@ -97,8 +129,8 @@ func TestTokenAction_StillAcceptsTheGlobalToken(t *testing.T) {
 		"/tok/api/v1/"+platformName+"/actions/inherit-lease",
 		map[string]any{"parent_account": "parent-account", "new_account": "new-account"})
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404, body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -124,6 +156,49 @@ func TestTokenAction_RejectsARevokedKeyRatherThanFallingBack(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestTokenAction_RecordsOnlyKeyShapedVerificationFailures(t *testing.T) {
+	srv, cp, _ := newControlPlaneTestServer(t)
+	platformName := "token-auth-failure-target"
+	_ = mustCreatePlatform(t, srv, platformName)
+	verifier, validCredential := tokenActionKeyFixture(t, "user-1", nil)
+
+	failures := 0
+	handler := NewTokenActionHandlerWithAuthFailureRecorder(
+		"legacy-token",
+		verifier,
+		cp,
+		1<<20,
+		nil,
+		func(*http.Request) { failures++ },
+	)
+	body := map[string]any{"parent_account": "parent", "new_account": "child"}
+	actionPath := "/api/v1/" + platformName + "/actions/inherit-lease"
+
+	unknownID, unknownSecret, err := keys.GenerateCredential()
+	if err != nil {
+		t.Fatalf("keys.GenerateCredential: %v", err)
+	}
+	unknownCredential := keys.FormatCredential(unknownID, unknownSecret)
+	if rec := doTokenJSONRequest(t, handler, http.MethodPost, "/"+unknownCredential+actionPath, body); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown key status = %d, want 404", rec.Code)
+	}
+	if failures != 1 {
+		t.Fatalf("recorded failures = %d, want 1", failures)
+	}
+
+	if rec := doTokenJSONRequest(t, handler, http.MethodPost, "/legacy-token"+actionPath, body); rec.Code != http.StatusNotFound {
+		t.Fatalf("legacy token status = %d, want 404", rec.Code)
+	}
+	if failures != 1 {
+		t.Fatalf("non-key token changed recorded failures to %d", failures)
+	}
+
+	_ = doTokenJSONRequest(t, handler, http.MethodPost, "/"+validCredential+actionPath, body)
+	if failures != 1 {
+		t.Fatalf("valid credential changed recorded failures to %d", failures)
 	}
 }
 

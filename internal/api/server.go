@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/metrics"
 	"prism/internal/requestlog"
@@ -94,8 +95,12 @@ func NewServer(
 	panelEgress PanelEgressProvider,
 	authDeps *AuthDeps,
 ) *Server {
+	listenAddress := "127.0.0.1"
+	if envCfg != nil && envCfg.ListenAddress != "" {
+		listenAddress = envCfg.ListenAddress
+	}
 	return NewServerWithAddress(
-		"",
+		listenAddress,
 		port,
 		systemInfo,
 		runtimeCfg,
@@ -154,6 +159,15 @@ func NewServerWithAddress(
 	authed.Handle("GET /api/v1/system/capabilities", HandleSystemCapabilities())
 
 	if cp != nil {
+		// Linux.do Credit notifications are provider callbacks, so they live on
+		// the public mux and bypass session, role, and CSRF middleware. Keep the
+		// same body bounds as authenticated API writes.
+		ldcNotify := http.Handler(HandlePublicLDCCallback(cp))
+		ldcNotify = RequestBodyLimitMiddleware(apiMaxBodyBytes, ldcNotify)
+		ldcNotify = RequestBodyDeadlineMiddleware(RequestBodyTimeout, ldcNotify)
+		mux.Handle("GET /api/v1/public/ldc/notify", ldcNotify)
+		mux.Handle("POST /api/v1/public/ldc/notify", ldcNotify)
+
 		// System config mutations.
 		authed.Handle("PATCH /api/v1/system/config", HandlePatchSystemConfig(cp))
 
@@ -304,6 +318,8 @@ func NewServerWithAddress(
 		// actor like everything else under /me.
 		authed.Handle("GET /api/v1/me/balance", HandleMeBalance(cp))
 		authed.Handle("POST /api/v1/me/redeem", HandleMeRedeem(cp))
+		authed.Handle("GET /api/v1/me/ldc/info", HandleMeLDCInfo(cp))
+		authed.Handle("POST /api/v1/me/ldc/pay", HandleMeLDCPay(cp))
 
 		// Buying and renewing. The price is the snapshot's, the charge and the
 		// subscription commit together, and the switch is the customer's own.
@@ -367,16 +383,10 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/audit-logs", HandleListAuditLogs(cp.Engine))
 		authedHandler = AuditMiddleware(cp.Engine, apiMaxBodyBytes, authed)
 	}
-	authedHandler = RequestBodyLimitMiddleware(apiMaxBodyBytes, authedHandler)
-	// The body phase gets its own bound: ReadHeaderTimeout stops at the end of
-	// the header block, and ReadTimeout has to stay unset for the SSE stream.
-	authedHandler = RequestBodyDeadlineMiddleware(RequestBodyTimeout, authedHandler)
-
 	// The role gate sits inside the identity middleware, which is what makes
 	// its 403 mean "the credential is fine, the role is not". It wraps the
-	// audit and body handling as well, so a request from a user-role session
-	// never reaches the management handlers and is not recorded as a
-	// management write.
+	// audit handler so a request from a user-role session never reaches the
+	// management handlers and is not recorded as a management write.
 	authedHandler = requireAdmin(authedHandler)
 
 	// Login failure limiting. Only failed authentications count and
@@ -414,6 +424,13 @@ func NewServerWithAddress(
 		// whether a request is HTTPS for the end user: behind the proxy that
 		// terminates TLS, the connection itself never says so.
 		handlers.SecureTransport = authLimiter.IsSecureRequest
+		configuredListen := listenAddress
+		if configuredListen == "" && envCfg != nil {
+			configuredListen = envCfg.ListenAddress
+		}
+		handlers.AllowPlainHTTP = func(*http.Request) bool {
+			return auth.PlainHTTPAllowed(configuredListen)
+		}
 		if cp != nil && cp.Engine != nil {
 			// A refused login is the one management write the audit middleware
 			// never records, because it records only the successful ones.
@@ -435,18 +452,28 @@ func NewServerWithAddress(
 	if authDeps != nil && authDeps.Identity != nil {
 		authDeps.Identity.FailureLimiter = authLimiter
 	}
+	var apiHandler http.Handler
 	if authDeps != nil && authDeps.Identity != nil {
 		// The identity middleware authenticates both console sessions and admin
 		// access keys, while this limiter blocks addresses with repeated failures.
 		authedHandler = limiterMiddleware(authLimiter, authedHandler)
-		mux.Handle("/api/", authDeps.Identity.Middleware(authedHandler))
+		apiHandler = authDeps.Identity.Middleware(authedHandler)
 	} else {
 		// No identity is a safe failure mode: the management surface must never
 		// silently fall back to a shared credential.
-		mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
-		}))
+		})
 	}
+	// Apply body bounds outside authentication and the role gate. Anonymous and
+	// tenant-role requests are rejected before reaching the route, but their
+	// bodies still arrive on the connection and must not bypass the size or
+	// delivery-time limits while net/http drains them.
+	apiHandler = RequestBodyLimitMiddleware(apiMaxBodyBytes, apiHandler)
+	// The body phase gets its own bound: ReadHeaderTimeout stops at the end of
+	// the header block, and ReadTimeout has to stay unset for the SSE stream.
+	apiHandler = RequestBodyDeadlineMiddleware(RequestBodyTimeout, apiHandler)
+	mux.Handle("/api/", apiHandler)
 
 	// Connection hygiene belongs to the listener, not to this value: cmd/prism
 	// builds every served http.Server through NewListenerServer, which is the
@@ -456,5 +483,7 @@ func NewServerWithAddress(
 
 // Handler returns the underlying http.Handler for testing.
 func (s *Server) Handler() http.Handler {
-	return PanicRecoveryMiddleware(s.mux)
+	// Public health/UI routes can also carry a stalled body. Bound their
+	// post-handler drain as well as the API's explicit body reads.
+	return RequestBodyDeadlineMiddleware(RequestBodyTimeout, PanicRecoveryMiddleware(s.mux))
 }

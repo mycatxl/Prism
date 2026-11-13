@@ -539,6 +539,69 @@ func TestMultiTenantAdmin_E2E_TenantLifecycle(t *testing.T) {
 	tenantAssertStatus(t, rec, http.StatusOK)
 }
 
+// TestSelfService_DoesNotCrossTenantBoundaries drives path/body identifiers
+// belonging to a second tenant through the real HTTP stack. Every refusal is a
+// 404, the same answer as an unknown resource, so an id learned elsewhere
+// cannot be used as an existence oracle or an update handle.
+func TestSelfService_DoesNotCrossTenantBoundaries(t *testing.T) {
+	env := newTenantE2EEnv(t, config.RegistrationOff)
+	admin := env.session()
+	admin.mustLogin(tenantE2EAdminUser, tenantE2EAdminPassword)
+	planID := tenantCreatePlan(t, admin, 2)
+
+	create := func(username string) (userID, subID string) {
+		t.Helper()
+		rec := admin.do(http.MethodPost, "/api/v1/admin/users", map[string]any{
+			"username": username, "password": username + "-password", "role": "user",
+			"plan_id": planID, "duration_days": 30,
+		})
+		tenantAssertStatus(t, rec, http.StatusCreated)
+		body := decodeJSONMap(t, rec)
+		return tenantField(t, body, "id"), tenantField(t, tenantNested(t, body, "subscription"), "id")
+	}
+	create("tenant-one-idor")
+	userTwoID, userTwoSubID := create("tenant-two-idor")
+
+	rec := admin.do(http.MethodPost, "/api/v1/admin/users/"+userTwoID+"/keys", map[string]any{"name": "other-owner-key"})
+	// This key belongs to user two; the first session below must not be able
+	// to delete it even though it knows the identifier.
+	tenantAssertStatus(t, rec, http.StatusCreated)
+	keyID := tenantField(t, tenantNested(t, decodeJSONMap(t, rec), "key"), "id")
+
+	one := env.session()
+	one.mustLogin("tenant-one-idor", "tenant-one-idor-password")
+	if rec := one.do(http.MethodDelete, "/api/v1/me/keys/"+keyID, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant key delete: status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+	if rec := one.do(http.MethodPatch, "/api/v1/me/subscription", map[string]any{
+		"subscription_id": userTwoSubID, "auto_renew": true,
+	}); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant auto-renew: status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+	if rec := one.do(http.MethodPost, "/api/v1/me/renewals", map[string]any{
+		"subscription_id": userTwoSubID, "request_id": "idor-renew",
+	}); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant renewal: status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+
+	// Deposits are also bound by the actor id, including path reads.
+	env.cp.EnvCfg.USDTAddress = "TQn9Y2khEsLJW1ChVWFMSMeRDow5KcbLSE"
+	two := env.session()
+	two.mustLogin("tenant-two-idor", "tenant-two-idor-password")
+	rec = two.do(http.MethodPost, "/api/v1/me/deposits", map[string]any{"amount_micro": int64(1_000_000)})
+	tenantAssertStatus(t, rec, http.StatusCreated)
+	depositID := tenantField(t, decodeJSONMap(t, rec), "id")
+	if rec := one.do(http.MethodGet, "/api/v1/me/deposits/"+depositID, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-tenant deposit read: status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+
+	// Node exports contain node configuration and credentials; the role gate
+	// keeps a tenant from reaching the admin-only export handler at all.
+	if rec := one.do(http.MethodGet, "/api/v1/nodes/export?format=json", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("tenant node export: status=%d body=%s, want 404", rec.Code, rec.Body.String())
+	}
+}
+
 // TestMultiTenantRegister_E2E_InviteCode walks the invite door end to end: the
 // operator mints a code, sign-up refuses a code-less attempt, the code admits
 // exactly one account and grants the plan the code carried, and a spent code is

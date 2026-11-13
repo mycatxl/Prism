@@ -10,8 +10,7 @@ import (
 
 // The dispatcher recognizes an access key by its shape, not by comparing it with
 // the configured token: the key store lives in the handler, and the mux stays a
-// pure dispatch layer. These tests pin the shape rule and the transitional
-// behaviour that goes with it.
+// pure dispatch layer. These tests pin the strict shape rule.
 
 func TestInboundMuxRoutesAKeyShapedTokenToTokenAction(t *testing.T) {
 	credential := testAccessKeyCredential(t)
@@ -78,8 +77,36 @@ func TestInboundMuxStillRejectsAForeignFirstSegment(t *testing.T) {
 	}
 }
 
-// The shape rule itself: a key is a candidate, a token that merely starts with
-// the prefix is not, and the configured token is always a candidate.
+func TestInboundMuxRejectsAmbiguousPathsBeforeDispatch(t *testing.T) {
+	mux := newInboundMux(
+		"tok",
+		tagHandler("forward", http.StatusOK),
+		tagHandler("reverse", http.StatusOK),
+		tagHandler("api", http.StatusOK),
+		tagHandler("token-action", http.StatusOK),
+	)
+
+	paths := []string{
+		"/" + testMuxAccessKey + "/api/../api/v1/action",
+		"/" + testMuxAccessKey + "/api//v1/action",
+		"/" + testMuxAccessKey + "/%2e/https/example.com/path",
+		"/api/../" + testMuxAccessKey + "/api/v1/action",
+	}
+	for _, requestPath := range paths {
+		t.Run(requestPath, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, requestPath, nil))
+			if rec.Code != http.StatusForbidden || rec.Header().Get("X-Prism-Error") != "AUTH_FAILED" {
+				t.Fatalf("status/header = %d/%q, want 403/AUTH_FAILED", rec.Code, rec.Header().Get("X-Prism-Error"))
+			}
+			if route := rec.Header().Get("X-Route"); route != "" {
+				t.Fatalf("ambiguous path reached %q", route)
+			}
+		})
+	}
+}
+
+// The shape rule itself: only a complete AccessKey credential is a candidate.
 func TestTokenPositionCandidate(t *testing.T) {
 	credential := testAccessKeyCredential(t)
 
@@ -97,10 +124,10 @@ func TestTokenPositionCandidate(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			name:    "the configured token is a candidate",
+			name:    "the configured token is not a candidate",
 			segment: "tok",
 			token:   "tok",
-			wantOK:  true,
+			wantOK:  false,
 		},
 		{
 			name:    "a foreign value is not a candidate",
@@ -110,18 +137,17 @@ func TestTokenPositionCandidate(t *testing.T) {
 		},
 		{
 			// The prefix alone must not open the gate: the shape test also
-			// checks the two hex halves, so an ordinary token that happens to
-			// start with "pk_" is compared as a token.
+			// checks the two hex halves.
 			name:    "a token that merely starts with the prefix is not a key",
 			segment: "pk_admin-token-value",
 			token:   "tok",
 			wantOK:  false,
 		},
 		{
-			name:    "with no token configured anything is a candidate",
+			name:    "with no token configured a foreign value is still rejected",
 			segment: "anything",
 			token:   "",
-			wantOK:  true,
+			wantOK:  false,
 		},
 	}
 

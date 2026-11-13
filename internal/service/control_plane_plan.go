@@ -310,7 +310,7 @@ func (s *ControlPlaneService) applyPlanToExisting(plan model.Plan) (int, error) 
 		}
 		updated := sub
 		updated.PlanSnapshotJSON = snapshot
-		if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+		if err := s.Engine.UpdateUserSubscriptionTerms(updated, sub); err != nil {
 			return affected, mapSubscriptionWriteError("update subscription snapshot", err)
 		}
 		if err := s.republishUserKeys(updated.UserID); err != nil {
@@ -348,7 +348,7 @@ func (s *ControlPlaneService) stopSubscriptionsOnPlan(plan model.Plan) (int, err
 		}
 		updated := sub
 		updated.PlanSnapshotJSON = snapshot
-		if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+		if err := s.Engine.UpdateUserSubscriptionTerms(updated, sub); err != nil {
 			return stopped, mapSubscriptionWriteError("stop subscription", err)
 		}
 		if err := s.republishUserKeys(updated.UserID); err != nil {

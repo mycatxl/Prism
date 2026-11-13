@@ -1,55 +1,19 @@
-import { Tabs as HeroTabs } from "@heroui/react";
-import type { ComponentProps, ReactNode } from "react";
+import * as RadixTabs from "@radix-ui/react-tabs";
+import type { ComponentProps } from "react";
 import { cn } from "../../lib/cn";
 
-type TabsRootProps = Omit<
-  ComponentProps<typeof HeroTabs>,
-  "children" | "selectedKey" | "defaultSelectedKey" | "onSelectionChange"
-> & {
-  children: ReactNode;
-  value?: string;
-  defaultValue?: string;
-  onValueChange?: (value: string) => void;
-};
-
-export function Tabs({
-  value,
-  defaultValue,
-  onValueChange,
-  className,
-  children,
-  ...rest
-}: TabsRootProps) {
-  return (
-    <HeroTabs
-      {...rest}
-      selectedKey={value}
-      defaultSelectedKey={defaultValue}
-      onSelectionChange={(key) => onValueChange?.(String(key))}
-      variant="primary"
-      className={cn("workspace-tabs", className)}
-    >
-      {children}
-    </HeroTabs>
-  );
+export function Tabs({ className, ...props }: ComponentProps<typeof RadixTabs.Root>) {
+  return <RadixTabs.Root {...props} className={cn("workspace-tabs", className)} />;
 }
 
-export function TabsList({ className, ...rest }: ComponentProps<typeof HeroTabs.List>) {
-  return <HeroTabs.List {...rest} className={cn("workspace-tabs__list", className)} />;
+export function TabsList({ className, ...props }: ComponentProps<typeof RadixTabs.List>) {
+  return <RadixTabs.List {...props} className={cn("workspace-tabs__list", className)} />;
 }
 
-export function TabsTrigger({ value, className, children, ...rest }: ComponentProps<typeof HeroTabs.Tab> & { value: string }) {
-  return (
-    <HeroTabs.Tab {...rest} id={value} className={cn("workspace-tabs__tab", className)}>
-      {children}
-    </HeroTabs.Tab>
-  );
+export function TabsTrigger({ value, className, ...props }: ComponentProps<typeof RadixTabs.Trigger>) {
+  return <RadixTabs.Trigger {...props} value={value} className={cn("workspace-tabs__tab", className)} />;
 }
 
-export function TabsContent({ value, className, children, ...rest }: ComponentProps<typeof HeroTabs.Panel> & { value: string }) {
-  return (
-    <HeroTabs.Panel {...rest} id={value} className={cn("outline-none", className)}>
-      {children}
-    </HeroTabs.Panel>
-  );
+export function TabsContent({ value, className, ...props }: ComponentProps<typeof RadixTabs.Content>) {
+  return <RadixTabs.Content {...props} value={value} className={cn("outline-none", className)} />;
 }

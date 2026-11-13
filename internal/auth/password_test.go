@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -20,6 +22,24 @@ func TestHashPassword_VerifyRoundTrip(t *testing.T) {
 	err = VerifyPassword(encoded, "wrong password")
 	if !errors.Is(err, ErrMismatch) {
 		t.Fatalf("VerifyPassword with a wrong password: got %v, want ErrMismatch", err)
+	}
+}
+
+func TestVerifyPassword_RejectsUnsafePHCParametersBeforeArgon2(t *testing.T) {
+	salt := base64.RawStdEncoding.EncodeToString(make([]byte, argonSaltLength))
+	key := base64.RawStdEncoding.EncodeToString(make([]byte, argonKeyLength))
+	shortKey := base64.RawStdEncoding.EncodeToString([]byte{0})
+	cases := []string{
+		fmt.Sprintf("$argon2id$v=19$m=%d,t=1,p=1$%s$%s", argonMaxMemoryKiB+1, salt, key),
+		fmt.Sprintf("$argon2id$v=19$m=8192,t=%d,p=1$%s$%s", argonMaxTime+1, salt, key),
+		fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1,extra$%s$%s", salt, key),
+		fmt.Sprintf("$argon2id$v=19x$m=8192,t=1,p=1$%s$%s", salt, key),
+		fmt.Sprintf("$argon2id$v=19$m=8192,t=1,p=1$%s$%s", salt, shortKey),
+	}
+	for _, encoded := range cases {
+		if err := VerifyPassword(encoded, "wrong"); !errors.Is(err, ErrInvalidHash) {
+			t.Fatalf("VerifyPassword(%q) = %v, want ErrInvalidHash", encoded, err)
+		}
 	}
 }
 

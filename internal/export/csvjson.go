@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"prism/internal/node"
 	"prism/internal/quality"
@@ -36,37 +37,56 @@ var exportColumns = []string{
 	"verdict",
 	"flags",
 	"checks",
+	"risk_reasons",
+	"proxy", "vpn", "tor",
 	"latency_ms",
 	"healthy",
 	"assessed_at",
+	"field_evidence",
+	"transport_warnings",
+	"purity_reason", "purity_explanation", "purity_action", "purity_provider", "purity_error_code", "purity_observed_at", "purity_valid_until", "fraud_score",
 }
 
 // exportRow is one analysis row.
 type exportRow struct {
-	Name           string `json:"name"`
-	NodeHash       string `json:"node_hash"`
-	Engine         string `json:"engine"`
-	Protocol       string `json:"protocol"`
-	ProtocolDetail string `json:"protocol_detail"`
-	Subscription   string `json:"subscription"`
-	EgressIPv4     string `json:"egress_ipv4"`
-	EgressIPv6     string `json:"egress_ipv6"`
-	Colo           string `json:"colo"`
-	Country        string `json:"country"`
-	City           string `json:"city"`
-	ASN            string `json:"asn"`
-	ASOrg          string `json:"as_org"`
-	IPType         string `json:"ip_type"`
-	Native         string `json:"native"`
-	PurityScore    string `json:"purity_score"`
-	PurityBand     string `json:"purity_band"`
-	Confidence     string `json:"confidence"`
-	Verdict        string `json:"verdict"`
-	Flags          string `json:"flags"`
-	Checks         string `json:"checks"`
-	LatencyMs      string `json:"latency_ms"`
-	Healthy        string `json:"healthy"`
-	AssessedAt     string `json:"assessed_at"`
+	PurityReason      string `json:"purity_reason"`
+	PurityExplanation string `json:"purity_explanation"`
+	PurityAction      string `json:"purity_action"`
+	PurityProvider    string `json:"purity_provider"`
+	PurityErrorCode   string `json:"purity_error_code"`
+	PurityObservedAt  string `json:"purity_observed_at"`
+	PurityValidUntil  string `json:"purity_valid_until"`
+	FraudScore        string `json:"fraud_score"`
+	TransportWarnings string `json:"transport_warnings"`
+	FieldEvidence     string `json:"field_evidence"`
+	Name              string `json:"name"`
+	NodeHash          string `json:"node_hash"`
+	Engine            string `json:"engine"`
+	Protocol          string `json:"protocol"`
+	ProtocolDetail    string `json:"protocol_detail"`
+	Subscription      string `json:"subscription"`
+	EgressIPv4        string `json:"egress_ipv4"`
+	EgressIPv6        string `json:"egress_ipv6"`
+	Colo              string `json:"colo"`
+	Country           string `json:"country"`
+	City              string `json:"city"`
+	ASN               string `json:"asn"`
+	ASOrg             string `json:"as_org"`
+	IPType            string `json:"ip_type"`
+	Native            string `json:"native"`
+	PurityScore       string `json:"purity_score"`
+	PurityBand        string `json:"purity_band"`
+	Confidence        string `json:"confidence"`
+	Verdict           string `json:"verdict"`
+	Flags             string `json:"flags"`
+	Checks            string `json:"checks"`
+	RiskReasons       string `json:"risk_reasons"`
+	Proxy             string `json:"proxy"`
+	VPN               string `json:"vpn"`
+	Tor               string `json:"tor"`
+	LatencyMs         string `json:"latency_ms"`
+	Healthy           string `json:"healthy"`
+	AssessedAt        string `json:"assessed_at"`
 }
 
 func (r exportRow) values() []string {
@@ -74,7 +94,35 @@ func (r exportRow) values() []string {
 		r.Name, r.NodeHash, r.Engine, r.Protocol, r.ProtocolDetail, r.Subscription,
 		r.EgressIPv4, r.EgressIPv6, r.Colo, r.Country, r.City, r.ASN, r.ASOrg,
 		r.IPType, r.Native, r.PurityScore, r.PurityBand, r.Confidence, r.Verdict,
-		r.Flags, r.Checks, r.LatencyMs, r.Healthy, r.AssessedAt,
+		r.Flags, r.Checks, r.RiskReasons, r.Proxy, r.VPN, r.Tor, r.LatencyMs, r.Healthy, r.AssessedAt, r.FieldEvidence, r.TransportWarnings,
+		r.PurityReason, r.PurityExplanation, r.PurityAction, r.PurityProvider, r.PurityErrorCode, r.PurityObservedAt, r.PurityValidUntil, r.FraudScore,
+	}
+}
+
+// JSON uses null for unscored values; CSV keeps an empty cell. Existing scored
+// string values remain compatible with saved analysis consumers.
+func (r exportRow) MarshalJSON() ([]byte, error) {
+	type plain exportRow
+	var score any
+	if r.PurityScore != "" {
+		score = r.PurityScore
+	}
+	return json.Marshal(struct {
+		PurityScore any `json:"purity_score"`
+		*plain
+	}{score, (*plain)(&r)})
+}
+
+func (r *exportRow) purityDiagnostic(f quality.Fact) {
+	r.PurityReason, r.PurityExplanation, r.PurityAction, r.PurityProvider, r.PurityErrorCode = f.Cause, f.Explanation, f.Action, f.Provider, f.ErrorCode
+	if f.ObservedAt != nil {
+		r.PurityObservedAt = f.ObservedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if f.ValidUntil != nil {
+		r.PurityValidUntil = f.ValidUntil.UTC().Format(time.RFC3339Nano)
+	}
+	if f.FraudScore != nil {
+		r.FraudScore = strconv.Itoa(*f.FraudScore)
 	}
 }
 
@@ -86,7 +134,11 @@ func exportCSV(items []preparedItem, opt Options) ([]byte, int) {
 		return []byte{}, 0
 	}
 	for _, item := range items {
-		if err := writer.Write(rowFor(item, opt).values()); err != nil {
+		values := rowFor(item, opt).values()
+		for i := range values {
+			values[i] = safeCSVCell(values[i])
+		}
+		if err := writer.Write(values); err != nil {
 			return []byte{}, 0
 		}
 	}
@@ -95,6 +147,21 @@ func exportCSV(items []preparedItem, opt Options) ([]byte, int) {
 		return []byte{}, 0
 	}
 	return []byte(builder.String()), len(items)
+}
+
+// safeCSVCell prevents spreadsheet software from interpreting untrusted node,
+// subscription or provider text as a formula when an operator opens the file.
+func safeCSVCell(value string) string {
+	trimmed := strings.TrimLeft(value, "\t\r\n ")
+	if trimmed == "" {
+		return value
+	}
+	switch trimmed[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 // exportJSON writes the analysis rows plus the export report in the body, as
@@ -126,18 +193,64 @@ func exportJSON(items []preparedItem, opt Options, report *Report) []byte {
 // rowFor renders one analysis row. These formats describe the node itself
 // rather than a client configuration, so every node produces a row.
 func rowFor(item preparedItem, opt Options) exportRow {
+	// Static transport warnings are always disclosed, even without intel opt-in.
+	_, warnings := node.ClassifyPrivacy(item.RawOptions)
 	row := exportRow{
-		Name:           item.Name,
-		NodeHash:       item.Hash,
-		Engine:         item.Doc.Engine,
-		Protocol:       normalizeExportProtocol(item.Doc.Engine, item.Doc.Type),
-		ProtocolDetail: protocolDetail(item),
-		Subscription:   item.Subscription,
-		Colo:           strings.ToUpper(strings.TrimSpace(item.Region)),
-		LatencyMs:      latencyString(item.LatencyMs),
-		Healthy:        boolString(item.Healthy),
+		TransportWarnings: strings.Join(warnings, "|"),
+		Name:              item.Name,
+		NodeHash:          item.Hash,
+		Engine:            item.Doc.Engine,
+		Protocol:          normalizeExportProtocol(item.Doc.Engine, item.Doc.Type),
+		ProtocolDetail:    protocolDetail(item),
+		Subscription:      item.Subscription,
+		Country:           strings.ToUpper(strings.TrimSpace(item.Region)),
+		LatencyMs:         latencyString(item.LatencyMs),
+		Healthy:           boolString(item.Healthy),
 	}
 
+	if f := item.Analysis; opt.IncludeIntel && f != nil {
+		row.purityDiagnostic(f.Facts["purity"])
+		row.EgressIPv4 = f.EgressIPv4
+		row.EgressIPv6 = f.EgressIPv6
+		row.Colo = f.Colo
+		row.Country = f.Country
+		row.City = f.City
+		row.ASOrg = f.ASOrg
+		if f.ASN > 0 {
+			row.ASN = strconv.Itoa(f.ASN)
+		}
+		row.IPType = f.IPType
+		row.PurityBand = f.PurityBand
+		row.Verdict = f.Verdict
+		row.Confidence = f.Confidence
+		if f.Native != nil {
+			row.Native = strconv.FormatBool(*f.Native)
+		}
+		if f.PurityScore != nil {
+			row.PurityScore = strconv.Itoa(*f.PurityScore)
+		}
+		if f.Signals.Proxy != nil {
+			row.Proxy = strconv.FormatBool(*f.Signals.Proxy)
+		}
+		if f.Signals.VPN != nil {
+			row.VPN = strconv.FormatBool(*f.Signals.VPN)
+		}
+		if f.Signals.Tor != nil {
+			row.Tor = strconv.FormatBool(*f.Signals.Tor)
+		}
+		row.Flags = strings.Join(f.Flags, "|")
+		row.RiskReasons = strings.Join(f.Reasons, "|")
+		if len(f.Checks) > 0 {
+			b, _ := json.Marshal(f.Checks)
+			row.Checks = string(b)
+		}
+		row.AssessedAt = f.AssessedAt
+		if len(f.Facts) > 0 {
+			b, _ := json.Marshal(f.Facts)
+			row.FieldEvidence = string(b)
+		}
+		return row
+	}
 	intel := item.Intel
 	if !opt.IncludeIntel || intel == nil {
 		return row
@@ -161,6 +274,9 @@ func rowFor(item preparedItem, opt Options) exportRow {
 		row.ASOrg = strings.TrimSpace(evidence.Organization)
 	}
 	row.IPType, row.Native, row.PurityScore, row.PurityBand, row.Verdict, row.Confidence, row.Flags = intelCSVValues(item.Item, opt)
+	if intel.Assessment != nil {
+		row.purityDiagnostic(intel.Assessment.Facts["purity"])
+	}
 	row.Checks = renderChecks(intel)
 	row.AssessedAt = renderAssessedAt(intel)
 	return row

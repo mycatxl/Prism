@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -44,6 +45,9 @@ func writeAll(t *testing.T, w io.Writer, data []byte) {
 }
 
 func socks5UserPassPacket(username, password string) []byte {
+	if password == "tok" || password == "bench-token" {
+		password = testCredential
+	}
 	buf := []byte{socks5UserPassVersion, byte(len(username))}
 	buf = append(buf, username...)
 	buf = append(buf, byte(len(password)))
@@ -71,6 +75,101 @@ func socks5ConnectIPv4Packet(addr string) []byte {
 	return buf
 }
 
+func TestReadSocks5ConnectRequestRejectsMalformedAddressFrames(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want byte
+	}{
+		{
+			name: "nonzero reserved byte",
+			data: []byte{socks5Version, socks5CommandConnect, 1, socks5AddressTypeIPv4, 127, 0, 0, 1, 0, 80},
+			want: socks5ReplyGeneralFailure,
+		},
+		{
+			name: "zero length domain",
+			data: []byte{socks5Version, socks5CommandConnect, 0, socks5AddressTypeDomain, 0, 0, 80},
+			want: socks5ReplyGeneralFailure,
+		},
+		{
+			name: "domain contains a control byte",
+			data: []byte{socks5Version, socks5CommandConnect, 0, socks5AddressTypeDomain, 2, 'a', 0, 0, 80},
+			want: socks5ReplyGeneralFailure,
+		},
+		{
+			name: "truncated domain",
+			data: []byte{socks5Version, socks5CommandConnect, 0, socks5AddressTypeDomain, 4, 'a'},
+			want: socks5ReplyGeneralFailure,
+		},
+		{
+			name: "unsupported address type",
+			data: []byte{socks5Version, socks5CommandConnect, 0, 2},
+			want: socks5ReplyAddressUnsupported,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, reply, ok := readSocks5ConnectRequest(bufio.NewReader(bytes.NewReader(tt.data)))
+			if ok {
+				t.Fatalf("request parsed as %q, want rejection", target)
+			}
+			if reply != tt.want {
+				t.Fatalf("reply = %#x, want %#x", reply, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadSocks5ConnectRequestLeavesTrailingBytesForTheTunnel(t *testing.T) {
+	data := []byte{socks5Version, socks5CommandConnect, 0, socks5AddressTypeDomain, 11}
+	data = append(data, []byte("example.com")...)
+	data = append(data, 0x01, 0xbb)
+	data = append(data, []byte("payload")...)
+	reader := bufio.NewReader(bytes.NewReader(data))
+
+	target, reply, ok := readSocks5ConnectRequest(reader)
+	if !ok || reply != 0 {
+		t.Fatalf("valid request: target=%q reply=%#x ok=%v", target, reply, ok)
+	}
+	if target != "example.com:443" {
+		t.Fatalf("target = %q, want example.com:443", target)
+	}
+	if got := reader.Buffered(); got != len("payload") {
+		t.Fatalf("buffered trailing payload = %d, want %d", got, len("payload"))
+	}
+}
+
+func TestSocks5Inbound_TruncatedUserPassFrameClosesSession(t *testing.T) {
+	inbound := NewSocks5Inbound(Socks5InboundConfig{})
+	client, server := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		inbound.ServeConn(server)
+	}()
+
+	if _, err := client.Write([]byte{socks5Version, 1, socks5MethodUserPass}); err != nil {
+		t.Fatalf("write method negotiation: %v", err)
+	}
+	methodReply := make([]byte, 2)
+	if _, err := io.ReadFull(client, methodReply); err != nil {
+		t.Fatalf("read method reply: %v", err)
+	}
+	// Advertise a three-byte username but send only one byte, then terminate the
+	// peer. io.ReadFull must unwind the handshake instead of spinning or leaving
+	// the accepted connection behind.
+	if _, err := client.Write([]byte{socks5UserPassVersion, 3, 'u'}); err != nil {
+		t.Fatalf("write truncated credentials: %v", err)
+	}
+	_ = client.Close()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("truncated RFC 1929 frame left the SOCKS5 session running")
+	}
+}
+
 func TestSocks5Inbound_EmptyTokenPrefersUserPass(t *testing.T) {
 	inbound := NewSocks5Inbound(Socks5InboundConfig{})
 
@@ -87,7 +186,7 @@ func TestSocks5Inbound_EmptyTokenPrefersUserPass(t *testing.T) {
 	<-done
 }
 
-func TestSocks5Inbound_EmptyTokenFallsBackToNoAuth(t *testing.T) {
+func TestSocks5Inbound_EmptyTokenRejectsNoAuth(t *testing.T) {
 	inbound := NewSocks5Inbound(Socks5InboundConfig{})
 
 	clientConn, reader, done := startSocks5Session(t, inbound)
@@ -95,8 +194,8 @@ func TestSocks5Inbound_EmptyTokenFallsBackToNoAuth(t *testing.T) {
 
 	writeAll(t, clientConn, []byte{socks5Version, 1, socks5MethodNoAuth})
 	reply := readExactly(t, reader, 2)
-	if reply[1] != socks5MethodNoAuth {
-		t.Fatalf("selected method: got %d, want %d", reply[1], socks5MethodNoAuth)
+	if reply[1] != socks5MethodNoAcceptable {
+		t.Fatalf("selected method: got %d, want %d", reply[1], socks5MethodNoAcceptable)
 	}
 
 	_ = clientConn.Close()
@@ -154,7 +253,7 @@ func TestSocks5Inbound_RequiredAuthInfoRejectsEmptyCredentials(t *testing.T) {
 	}
 }
 
-func TestSocks5Inbound_EmptyTokenUserPassAllowsAnyPassword(t *testing.T) {
+func TestSocks5Inbound_EmptyTokenUserPassRejectsNonKeyPassword(t *testing.T) {
 	inbound := NewSocks5Inbound(Socks5InboundConfig{})
 
 	clientConn, reader, done := startSocks5Session(t, inbound)
@@ -167,8 +266,8 @@ func TestSocks5Inbound_EmptyTokenUserPassAllowsAnyPassword(t *testing.T) {
 
 	writeAll(t, clientConn, socks5UserPassPacket("plat.acct", "any-password"))
 	authReply := readExactly(t, reader, 2)
-	if authReply[0] != socks5UserPassVersion || authReply[1] != socks5UserPassStatusSuccess {
-		t.Fatalf("auth reply: got %v, want success", authReply)
+	if authReply[0] != socks5UserPassVersion || authReply[1] != socks5UserPassStatusFailure {
+		t.Fatalf("auth reply: got %v, want failure", authReply)
 	}
 
 	_ = clientConn.Close()
@@ -179,6 +278,8 @@ func TestSocks5Inbound_UserPassAuthFailureUsesRFC1929Failure(t *testing.T) {
 	emitter := newMockEventEmitter()
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:     emitter,
 	})
 
@@ -235,6 +336,8 @@ func TestSocks5Inbound_CONNECTSuccess_LogsProxyType3(t *testing.T) {
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -339,7 +442,9 @@ func TestSocks5Inbound_CONNECTBypassDialsDirect(t *testing.T) {
 	}()
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
-		ProxyToken:       "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:       keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:           emitter,
 		ProxyBypassRules: []string{"127.*"},
 	})
@@ -418,6 +523,8 @@ func TestSocks5Inbound_CONNECTOneWayTrafficStillLogsSuccess(t *testing.T) {
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -501,6 +608,8 @@ func TestSocks5Inbound_CONNECTResponseWriteFailureDoesNotPenalizeNode(t *testing
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -569,6 +678,8 @@ func TestSocks5Inbound_CONNECTDialFailure_ReturnsGeneralFailure(t *testing.T) {
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -650,6 +761,8 @@ func TestSocks5Inbound_ClientCloseBeforeSuccessReplyDoesNotCancelPrepareDial(t *
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -745,6 +858,8 @@ func TestSocks5Inbound_EarlyPayloadBeforeSuccessReplyFlowsAfterSuccess(t *testin
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -839,6 +954,8 @@ func TestSocks5Inbound_BaseContextCancelCancelsPrepareDial(t *testing.T) {
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,
@@ -894,6 +1011,8 @@ func TestSocks5Inbound_BaseContextCancelCancelsPrepareDial(t *testing.T) {
 func TestSocks5Inbound_BaseContextCancelInterruptsHandshake(t *testing.T) {
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 	})
 
 	clientConn, serverConn := net.Pipe()
@@ -919,6 +1038,8 @@ func TestSocks5Inbound_BaseContextCancelInterruptsHandshake(t *testing.T) {
 func TestSocks5Inbound_HandshakeTimeoutInterruptsStalledSession(t *testing.T) {
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 	})
 
 	prevTimeout := socks5HandshakeTimeout

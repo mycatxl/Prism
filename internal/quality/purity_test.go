@@ -2,30 +2,17 @@ package quality
 
 import "testing"
 
-func TestPurityDisplayBoundariesAndUnknown(t *testing.T) {
-	for _, test := range []struct {
-		risk, score int
-		band        string
-	}{
-		{0, 100, "excellent"}, {5, 95, "excellent"}, {6, 94, "clean"}, {10, 90, "clean"},
-		{11, 89, "fair"}, {20, 80, "fair"}, {21, 79, "mixed"}, {40, 60, "mixed"},
-		{41, 59, "poor"}, {100, 0, "poor"},
-	} {
-		score := PurityScore(&test.risk)
-		if score == nil || *score != test.score || PurityBand(score) != test.band {
-			t.Errorf("risk %d did not produce %d/%s", test.risk, test.score, test.band)
+func TestPurityBandsRequireAnAuthoritativeScore(t *testing.T) {
+	for _, tc := range []struct {
+		score int
+		band  string
+	}{{100, "excellent"}, {95, "excellent"}, {94, "clean"}, {90, "clean"}, {89, "fair"}, {80, "fair"}, {79, "mixed"}, {60, "mixed"}, {59, "poor"}, {0, "poor"}, {-1, "unknown"}, {101, "unknown"}} {
+		if got := DefaultBands().Name(&tc.score); got != tc.band {
+			t.Fatalf("%d: %s", tc.score, got)
 		}
 	}
-	negative, tooHigh := -1, 101
-	for _, risk := range []*int{nil, &negative, &tooHigh} {
-		if PurityScore(risk) != nil || PurityBand(PurityScore(risk)) != "unknown" {
-			t.Fatal("invalid risk became a purity score")
-		}
-	}
-	risk := 0
-	summary := Summary{State: "valid", Evidence: &Evidence{RiskScore: &risk}}
-	if EffectivePurityBand(summary) != "unknown" {
-		t.Fatal("ProxyCheck risk was substituted for an IPPure primary score")
+	if DefaultBands().Name(nil) != "unknown" {
+		t.Fatal("missing score got a band")
 	}
 }
 

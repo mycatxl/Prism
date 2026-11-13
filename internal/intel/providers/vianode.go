@@ -62,6 +62,10 @@ func fetchViaNode(ctx context.Context, ob adapter.Outbound, target string, heade
 	}
 	resp, err := client.Do(req)
 	if err != nil {
+		var timeout net.Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout() {
+			return viaNodeResponse{}, Failure(CodeTimeout, "the via-node request timed out")
+		}
 		if ctx.Err() != nil {
 			return viaNodeResponse{}, Failure(CodeUnavailable, "the via-node request was canceled")
 		}
@@ -377,6 +381,8 @@ func DecodeIPAPI(body []byte, expect netip.Addr, now time.Time, ttl time.Duratio
 	signals := quality.Signals{Proxy: payload.Proxy, Hosting: payload.Hosting}
 	ipType := "unknown"
 	switch {
+	case payload.Hosting != nil && *payload.Hosting && payload.Mobile != nil && *payload.Mobile:
+		ipType = "conflicting"
 	case payload.Hosting != nil && *payload.Hosting:
 		ipType = "datacenter"
 	case payload.Mobile != nil && *payload.Mobile:
@@ -598,7 +604,8 @@ func NewIPAPIISViaNodeProvider(opts IPAPIISViaNodeOptions) *IPAPIISViaNode {
 		spec: Spec{
 			ID: "ipapi_is_node", Name: "ipapi.is (via node)",
 			Website: "https://ipapi.is/",
-			Terms: "Anonymous use is limited to roughly 1,000 requests per day and is not " +
+			Terms: "Disabled by default pending a verified successful response. Enable only for a bounded diagnostic run. " +
+				"Anonymous use is limited to roughly 1,000 requests per day and is not " +
 				"licensed for commercial use without a plan or a self-hosted database. Because " +
 				"the query leaves through the node and names that same node, the quota is spent " +
 				"per node - which is what makes a large inventory affordable without a key. " +
@@ -606,7 +613,7 @@ func NewIPAPIISViaNodeProvider(opts IPAPIISViaNodeOptions) *IPAPIISViaNode {
 				"recorded against the one node that hit it. A key is never sent through a node: " +
 				"enter it on the host-side ipapi.is source instead. See https://ipapi.is/.",
 			Kind: KindViaNode, Profile: IPAPIISNodeProfile,
-			RequiresKey: false, DefaultEnabled: true,
+			RequiresKey: false, DefaultEnabled: false,
 			DefaultDailyLimit: 0, DefaultQPS: 0, BatchSize: 1,
 			DefaultTTL: ttl, SupportsIPv6: true,
 		},

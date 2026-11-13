@@ -258,21 +258,6 @@ function attribution(finding) {
       : null;
   }
 
-  /* HeroUI v3 ships these rules in the bundled stylesheet. Attribute only the
-   * exact selectors that prove the finding came from the vendor layer. */
-  if (finding.rule === "side-tab" && /\.typography-prose blockquote\{[^}]*border-inline-start-width:4px/.test(readBundle())) {
-    return "HeroUI v3 typography blockquote border in the bundled vendor stylesheet";
-  }
-  if (finding.rule === "layout-transition" && /\.tabs__indicator\{[^}]*transition-property:translate,width,height/.test(readBundle())) {
-    return "HeroUI v3 tabs indicator transition in the bundled vendor stylesheet";
-  }
-  if (finding.rule === "marquee" && /\.skeleton--shimmer|\.progress-bar:not\(\[aria-valuenow\]\)/.test(readBundle())) {
-    return "HeroUI v3 skeleton/progress animation in the bundled vendor stylesheet";
-  }
-  if (finding.rule === "repeating-stripes-gradient" && /\.color-(?:slider|swatch)[^}]*repeating-conic-gradient/.test(readBundle())) {
-    return "HeroUI v3 color control checkerboard in the bundled vendor stylesheet";
-  }
-
   /*
    * There used to be a `radial-halo` excuse here: the reference board's hero band
    * was drawn with a handful of soft radial stops, the detector read that wash as

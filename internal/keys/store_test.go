@@ -121,7 +121,7 @@ func TestStore_LoadCopiesSlices(t *testing.T) {
 	key := testKey("k-1", "u-1")
 	key.Platforms = []string{"plat-a"}
 	plan := PlanSnapshot{
-		Platforms: []string{"plat-plan"},
+		Platforms: []string{"plat-a", "plat-plan"},
 		IPTiers:   []string{"residential:excellent"},
 		Status:    model.SubscriptionStatusActive,
 	}
@@ -137,7 +137,7 @@ func TestStore_LoadCopiesSlices(t *testing.T) {
 	if state.Platforms[0] != "plat-a" {
 		t.Errorf("key platforms aliased the source row: %v", state.Platforms)
 	}
-	if state.Plan.Platforms[0] != "plat-plan" {
+	if state.Plan.Platforms[0] != "plat-a" {
 		t.Errorf("plan platforms aliased the source row: %v", state.Plan.Platforms)
 	}
 	if state.Plan.IPTiers[0] != "residential:excellent" {
@@ -180,6 +180,28 @@ func TestStore_UpsertAndDelete(t *testing.T) {
 	store.Delete("missing")
 }
 
+func TestStore_DoesNotExposeMutableKeyState(t *testing.T) {
+	store := NewStore()
+	state := newKeyState(testKey("k-1", "u-1"), testUser("u-1"), PlanSnapshot{Platforms: []string{"plat-a"}})
+	state.SecretHash = []byte{1, 2, 3}
+	store.Upsert(state)
+
+	state.Status = model.KeyStatusDisabled
+	state.SecretHash[0] = 9
+	first, ok := store.Get("k-1")
+	if !ok {
+		t.Fatal("published key is missing")
+	}
+	first.Status = model.KeyStatusDisabled
+	first.SecretHash[0] = 8
+	first.Plan.Platforms[0] = "mutated"
+
+	again, _ := store.Get("k-1")
+	if again.Status != model.KeyStatusActive || again.SecretHash[0] != 1 || again.Plan.Platforms[0] != "plat-a" {
+		t.Fatalf("stored key was mutated through an external pointer: %+v", again)
+	}
+}
+
 // --- eligibility ---
 
 func TestKeyState_Usable(t *testing.T) {
@@ -203,10 +225,12 @@ func TestKeyState_Usable(t *testing.T) {
 	}{
 		{"disabled key", func(s *KeyState) { s.Status = model.KeyStatusDisabled }},
 		{"expired key", func(s *KeyState) { s.ExpiresAtNs = now - 1 }},
+		{"negative key expiry", func(s *KeyState) { s.ExpiresAtNs = -1 }},
 		{"key expiring now", func(s *KeyState) { s.ExpiresAtNs = now }},
 		{"disabled user", func(s *KeyState) { s.UserStatus = model.UserStatusDisabled }},
 		{"suspended plan", func(s *KeyState) { s.Plan.Status = model.SubscriptionStatusSuspended }},
 		{"expired plan", func(s *KeyState) { s.Plan.ExpiresAtNs = now - 1 }},
+		{"negative plan expiry", func(s *KeyState) { s.Plan.ExpiresAtNs = -1 }},
 	}
 	for _, tc := range cases {
 		state := base()
@@ -278,6 +302,36 @@ func TestKeyState_AllowsPlatform(t *testing.T) {
 	}
 	if nilState.EffectivePlatforms() != nil {
 		t.Error("a nil key state has no effective platforms")
+	}
+}
+
+func TestKeyState_IntersectsAnOutOfPlanPlatformList(t *testing.T) {
+	state := newKeyState(testKey("k-intersection", "u-1"), testUser("u-1"), PlanSnapshot{
+		Platforms: []string{"plat-plan", "plat-shared"},
+	})
+	state.Platforms = []string{"plat-shared", "plat-outside"}
+	// Rebuild through the same publication path used by Store.Publish; the
+	// resulting state must keep only the intersection even for a legacy row.
+	state = newKeyState(model.AccessKey{
+		ID: "k-intersection", UserID: "u-1", Scope: model.KeyScopeProxy,
+		Status: model.KeyStatusActive, Platforms: []string{"plat-shared", "plat-outside"},
+	}, testUser("u-1"), PlanSnapshot{Platforms: []string{"plat-plan", "plat-shared"}})
+	if !state.AllowsPlatform("plat-shared") {
+		t.Fatal("the intersection platform was refused")
+	}
+	if state.AllowsPlatform("plat-outside") || state.AllowsPlatform("plat-plan") {
+		t.Fatal("the key escaped the plan intersection")
+	}
+	if len(state.EffectivePlatforms()) != 1 || state.EffectivePlatforms()[0] != "plat-shared" {
+		t.Fatalf("effective platforms = %v, want [plat-shared]", state.EffectivePlatforms())
+	}
+
+	noOverlap := newKeyState(model.AccessKey{
+		ID: "k-no-overlap", UserID: "u-1", Scope: model.KeyScopeProxy,
+		Status: model.KeyStatusActive, Platforms: []string{"plat-outside"},
+	}, testUser("u-1"), PlanSnapshot{Platforms: []string{"plat-plan"}})
+	if noOverlap.Usable(time.Now().UnixNano()) {
+		t.Fatal("a key with no plan-platform intersection remained usable")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"prism/internal/model"
 )
@@ -18,7 +19,7 @@ import (
 // the pool a little with every abandoned intent.
 
 const depositIntentColumns = `id, user_id, amount_micro, status, tx_id,
-	created_at_ns, expires_at_ns, hold_until_ns, paid_at_ns`
+	created_at_ns, expires_at_ns, hold_until_ns, paid_at_ns, currency, address, contract, rate, credit_micro`
 
 // InsertDepositIntent allocates an amount and opens an intent in one
 // transaction.
@@ -46,21 +47,24 @@ func (r *StateRepo) InsertDepositIntent(intent model.DepositIntent, candidates [
 	}
 
 	for _, amount := range candidates {
-		row := model.DepositIntent{
-			ID:          intent.ID,
-			UserID:      intent.UserID,
-			AmountMicro: amount,
-			Status:      model.DepositStatusPending,
-			CreatedAtNs: intent.CreatedAtNs,
-			ExpiresAtNs: intent.ExpiresAtNs,
-			HoldUntilNs: intent.HoldUntilNs,
+		row := intent
+		row.AmountMicro, row.Status = amount, model.DepositStatusPending
+		if row.Currency == "" {
+			row.Currency = "usdt"
+		}
+		if row.Rate == 0 {
+			row.Rate = 1
+		}
+		row.CreditMicro, err = model.ConvertPaymentMicro(amount, row.Rate)
+		if err != nil {
+			return model.DepositIntent{}, err
 		}
 		result, err := tx.Exec(`
 			INSERT INTO deposit_intents (`+depositIntentColumns+`)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT DO NOTHING
 		`, row.ID, row.UserID, row.AmountMicro, row.Status, row.TxID,
-			row.CreatedAtNs, row.ExpiresAtNs, row.HoldUntilNs, row.PaidAtNs)
+			row.CreatedAtNs, row.ExpiresAtNs, row.HoldUntilNs, row.PaidAtNs, row.Currency, row.Address, row.Contract, row.Rate, row.CreditMicro)
 		if err != nil {
 			return model.DepositIntent{}, fmt.Errorf("allocate deposit amount: %w", err)
 		}
@@ -171,9 +175,16 @@ func (r *StateRepo) SweepDeposits(nowNs int64) (released int, err error) {
 // transaction. Advancing the cursor first would lose a transfer for good if the
 // process died in between; sharing the transaction means a crash replays both,
 // and the (reason, ref_id) unique index makes the replay harmless.
-func (r *StateRepo) CreditDeposit(txID string, amountMicro, blockTSNs, nowNs int64, cursorName string, watermarkMs int64, entry model.BalanceEntry) (model.DepositIntent, error) {
+func (r *StateRepo) CreditDeposit(txID string, amountMicro, blockTSNs, nowNs int64, cursorName string, watermarkMs int64, entry model.BalanceEntry, targets ...model.DepositTarget) (model.DepositIntent, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	txID = strings.ToLower(strings.TrimSpace(txID))
+	if txID == "" {
+		return model.DepositIntent{}, fmt.Errorf("%w: deposit transaction id is required", ErrConflict)
+	}
+	if amountMicro <= 0 {
+		return model.DepositIntent{}, fmt.Errorf("%w: deposit amount must be positive", ErrConflict)
+	}
 
 	tx, err := r.db.Begin()
 	if err != nil {
@@ -194,7 +205,11 @@ func (r *StateRepo) CreditDeposit(txID string, amountMicro, blockTSNs, nowNs int
 		return model.DepositIntent{}, fmt.Errorf("check deposit replay: %w", err)
 	}
 
-	intent, err := depositIntentForTransferTx(tx, amountMicro, blockTSNs)
+	target := model.DepositTarget{Currency: "usdt"}
+	if len(targets) > 0 {
+		target = targets[0]
+	}
+	intent, err := depositIntentForTransferTx(tx, amountMicro, blockTSNs, target)
 	if err != nil {
 		return model.DepositIntent{}, err
 	}
@@ -204,10 +219,13 @@ func (r *StateRepo) CreditDeposit(txID string, amountMicro, blockTSNs, nowNs int
 		return model.DepositIntent{}, err
 	}
 	entry.UserID = intent.UserID
-	entry.DeltaMicro = intent.AmountMicro
+	entry.DeltaMicro = intent.CreditMicro
 	entry.Reason = model.BalanceReasonDeposit
 	entry.RefID = txID
-	entry.BalanceAfterMicro = current + intent.AmountMicro
+	entry.BalanceAfterMicro, err = checkedBalanceAfter(current, intent.CreditMicro)
+	if err != nil {
+		return model.DepositIntent{}, err
+	}
 	entry.CreatedAtNs = nowNs
 	if _, err := tx.Exec(`
 		INSERT INTO user_balance (user_id, balance_micro, updated_at_ns)
@@ -311,13 +329,15 @@ func releaseExpiredDepositsTx(tx *sql.Tx, nowNs int64) error {
 // clock. Transfers older than the intent's creation are refused outright: that
 // is what lets an amount be reused, because a straggler for an expired intent
 // necessarily predates the intent that holds the amount now.
-func depositIntentForTransferTx(tx *sql.Tx, amountMicro, blockTSNs int64) (model.DepositIntent, error) {
+func depositIntentForTransferTx(tx *sql.Tx, amountMicro, blockTSNs int64, target model.DepositTarget) (model.DepositIntent, error) {
 	row := tx.QueryRow(`
 		SELECT `+depositIntentColumns+` FROM deposit_intents
 		WHERE amount_micro = ? AND status <> ?
 		  AND created_at_ns <= ? AND hold_until_ns > ?
+		  AND currency = ? AND address = ? AND contract = ?
+		  AND EXISTS (SELECT 1 FROM users WHERE users.id = deposit_intents.user_id)
 		ORDER BY created_at_ns DESC LIMIT 1
-	`, amountMicro, model.DepositStatusPaid, blockTSNs, blockTSNs)
+	`, amountMicro, model.DepositStatusPaid, blockTSNs, blockTSNs, target.Currency, target.Address, target.Contract)
 	intent, err := scanDepositIntent(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.DepositIntent{}, ErrNotFound
@@ -339,6 +359,70 @@ func scanDepositIntent(row interface{ Scan(...any) error }) (model.DepositIntent
 	var intent model.DepositIntent
 	err := row.Scan(&intent.ID, &intent.UserID, &intent.AmountMicro, &intent.Status,
 		&intent.TxID, &intent.CreatedAtNs, &intent.ExpiresAtNs, &intent.HoldUntilNs,
-		&intent.PaidAtNs)
+		&intent.PaidAtNs, &intent.Currency, &intent.Address, &intent.Contract, &intent.Rate, &intent.CreditMicro)
 	return intent, err
+}
+
+// BindLegacyDepositTargets pins destinations missing from pre-upgrade orders.
+func (r *StateRepo) BindLegacyDepositTargets(address, contract string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec(`UPDATE deposit_intents SET address=?, contract=? WHERE address='' AND currency='usdt'`, address, contract)
+	return err
+}
+
+// DepositScanTargets includes unreconciled released orders: a payment discovered
+// after downtime still belongs to its original block-time window. A completed
+// scan retires closed windows after the additional indexing allowance.
+func (r *StateRepo) DepositScanTargets() ([]model.DepositTarget, error) {
+	rows, err := r.db.Query(`SELECT currency,address,contract,min(created_at_ns) FROM deposit_intents
+ WHERE status <> 'paid' AND reconciled_at_ns=0 AND address <> '' AND EXISTS(SELECT 1 FROM users WHERE users.id=deposit_intents.user_id)
+ GROUP BY currency,address,contract`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.DepositTarget
+	for rows.Next() {
+		var t model.DepositTarget
+		if err := rows.Scan(&t.Currency, &t.Address, &t.Contract, &t.SinceNs); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// ChainScan stores pagination separately from the receipt watermark. The query
+// bounds remain fixed across restarts and pages, including equal timestamps.
+func (r *StateRepo) ChainScan(name string) (since, until int64, fingerprint string, err error) {
+	err = r.db.QueryRow(`SELECT since_ms,until_ms,fingerprint FROM chain_scan_state WHERE name=?`, name).Scan(&since, &until, &fingerprint)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	return
+}
+func (r *StateRepo) SaveChainScan(name string, since, until int64, fingerprint string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, err := r.db.Exec(`INSERT INTO chain_scan_state(name,since_ms,until_ms,fingerprint) VALUES(?,?,?,?) ON CONFLICT(name) DO UPDATE SET since_ms=excluded.since_ms,until_ms=excluded.until_ms,fingerprint=excluded.fingerprint`, name, since, until, fingerprint)
+	return err
+}
+func (r *StateRepo) CompleteChainScan(name string, target model.DepositTarget, since, until, nowNs int64) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Reconcile closed windows only after a further 15-minute indexing allowance.
+	_, err = tx.Exec(`UPDATE deposit_intents SET reconciled_at_ns=? WHERE currency=? AND address=? AND contract=? AND created_at_ns>=? AND hold_until_ns<=? AND hold_until_ns<=?`, nowNs, target.Currency, target.Address, target.Contract, since*1_000_000, until*1_000_000, min(nowNs-int64(15*60*1_000_000_000), until*1_000_000-int64(16*60*1_000_000_000)))
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM chain_scan_state WHERE name=?`, name); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

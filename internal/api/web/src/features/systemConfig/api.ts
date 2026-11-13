@@ -35,6 +35,21 @@ export const SYSTEM_CONFIG_STALE_MS = 30_000;
 export const SYSTEM_ENV_STALE_MS = 60_000;
 
 const DEFAULT_CONFIG: RuntimeConfig = {
+  ldc_enabled: false,
+  ldc_gateway_url: "https://credit.linux.do/epay",
+  ldc_pid: "",
+  ldc_key: "",
+  ldc_rate: 1,
+  ldc_notify_url: "",
+  ldc_return_url: "",
+  tron_deposit_enabled: false,
+  tron_address: "",
+  tron_api_key: "",
+  tron_usdt_contract: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+  tron_trx_enabled: false,
+  tron_trx_ratio: 1,
+  tron_window_minutes: 15,
+
   request_log_enabled: true,
   reverse_proxy_log_detail_enabled: false,
   reverse_proxy_log_req_headers_max_bytes: 0,
@@ -92,6 +107,22 @@ function normalizeSystemConfig(raw: Partial<SystemConfigView> | null | undefined
   }
 
   return {
+    ldc_enabled: Boolean(raw.ldc_enabled),
+    ldc_gateway_url: asString(raw.ldc_gateway_url, DEFAULT_CONFIG.ldc_gateway_url),
+    ldc_pid: asString(raw.ldc_pid, DEFAULT_CONFIG.ldc_pid),
+    ldc_key: asString(raw.ldc_key, DEFAULT_CONFIG.ldc_key),
+    ldc_rate: asNumber(raw.ldc_rate, DEFAULT_CONFIG.ldc_rate),
+    ldc_notify_url: asString(raw.ldc_notify_url, DEFAULT_CONFIG.ldc_notify_url),
+    ldc_return_url: asString(raw.ldc_return_url, DEFAULT_CONFIG.ldc_return_url),
+    tron_deposit_enabled: Boolean(raw.tron_deposit_enabled),
+    tron_address: asString(raw.tron_address, DEFAULT_CONFIG.tron_address),
+    tron_api_key: asString(raw.tron_api_key, DEFAULT_CONFIG.tron_api_key),
+    tron_usdt_contract: asString(raw.tron_usdt_contract, DEFAULT_CONFIG.tron_usdt_contract),
+    tron_trx_enabled: Boolean(raw.tron_trx_enabled),
+    tron_trx_ratio: asNumber(raw.tron_trx_ratio, DEFAULT_CONFIG.tron_trx_ratio),
+    tron_window_minutes: asNumber(raw.tron_window_minutes, DEFAULT_CONFIG.tron_window_minutes),
+    ldc_key_set: Boolean(raw.ldc_key_set),
+    tron_api_key_set: Boolean(raw.tron_api_key_set),
     request_log_enabled: Boolean(raw.request_log_enabled),
     reverse_proxy_log_detail_enabled: Boolean(raw.reverse_proxy_log_detail_enabled),
     reverse_proxy_log_req_headers_max_bytes: asNumber(
@@ -129,6 +160,7 @@ function normalizeSystemConfig(raw: Partial<SystemConfigView> | null | undefined
       DEFAULT_CONFIG.cache_flush_dirty_threshold,
     ),
     // The policy slice, passed through untouched.
+    node_privacy: raw.node_privacy,
     audit_retention_days: asOptionalNumber(raw.audit_retention_days),
     usage_retention_days: asOptionalNumber(raw.usage_retention_days),
     purity_bands: asPurityBands(raw.purity_bands),

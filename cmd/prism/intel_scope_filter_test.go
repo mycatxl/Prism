@@ -40,8 +40,10 @@ func markScopeFilterEntryHealthy(entry *node.NodeEntry) {
 // setScopeFilterAssessment projects one assessment of the shape into
 // the in-memory snapshot the purity keys read.
 func setScopeFilterAssessment(snap *intel.Snapshot, ip, band, verdict, ipType string) {
+	// A fixture must obey the same score/band contract as production.
+	score := map[string]int8{"excellent": 95, "clean": 90, "fair": 80, "mixed": 60, "poor": 20, "unknown": -1}[band]
 	snap.SetAssessment(netip.MustParseAddr(ip), intel.AssessmentLite{
-		Score:      90,
+		Score:      score,
 		Band:       intel.BandCode(band),
 		Verdict:    intel.VerdictCode(verdict),
 		IPType:     intel.IPTypeCode(ipType),

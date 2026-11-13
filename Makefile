@@ -26,7 +26,7 @@ LDFLAGS := -s -w \
   -X prism/internal/buildinfo.BuildTime=$(BUILD_TIME) \
   -X prism/internal/buildinfo.Tags=$(subst $(space),$(comma),$(BUILD_TAGS))
 
-.PHONY: build web web-deps backend test test-race test-web test-slop test-ui capacity lint lint-go protocol-matrix coverage coverage-gate verify smoke init start clean
+.PHONY: build web web-deps backend test test-race test-web test-live test-slop test-ui capacity lint lint-go protocol-matrix coverage coverage-gate verify smoke init start clean
 
 # The Go binary embeds the console bundle (internal/api/webui.go is
 # //go:embed all:web/dist), so the frontend has to exist before ./cmd/prism is
@@ -109,14 +109,19 @@ capacity:
 	# the normal verify target stays fast.
 	$(GO) test -tags '$(BUILD_TAGS)' -run 'Capacity' -count=1 -v ./internal/platform/... ./internal/routing/... ./internal/topology/...
 
-verify: lint test test-race protocol-matrix coverage-gate test-web
+verify: lint test test-race protocol-matrix coverage-gate test-web test-live
+
+# No external network or existing installation: adversarial acceptance-client
+# checks. The real-binary integration runs inside the disposable smoke fixture.
+test-live:
+	python3 -B -m unittest discover -s scripts -p test_live_acceptance.py -v
 
 # End-to-end smoke test: boots the built binary against a throw-away
 # environment (temporary state/cache/log directories, a generated admin account
-# and proxy token, a loopback egress probe) and exercises health, the UI, API
+# and tenant AccessKey, a loopback TLS/provider fixture) and exercises health, the UI, API
 # auth, the management listener, HTTP and SOCKS5 forwarding, the reverse-proxy
-# path, online backup, check-config and restart persistence. 25 checks, about two
-# seconds, and it never reaches the network. It needs bin/prism, so it runs
+# path, online backup, check-config and restart persistence. This is an offline
+# fixture, not independent-egress acceptance. It needs bin/prism, so it runs
 # after `make backend`; CI runs it as its own step rather than folding it into
 # `verify`, which stays free of build artifacts.
 smoke:

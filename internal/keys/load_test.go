@@ -354,8 +354,11 @@ func TestLoadFromStateSkipsAnUnreadableSnapshot(t *testing.T) {
 	if !ok {
 		t.Fatal("the key must still be published: it is not the broken subscription")
 	}
-	if state.Plan.Status != "" {
-		t.Fatalf("a broken snapshot was carried: %+v", state.Plan)
+	if state.Plan.Status != model.SubscriptionStatusSuspended {
+		t.Fatalf("a broken snapshot did not fail closed: %+v", state.Plan)
+	}
+	if state.Usable(time.Now().UnixNano()) {
+		t.Fatal("a key with an unreadable subscription snapshot remained usable")
 	}
 	if len(logged) == 0 {
 		t.Fatal("the skipped subscription was not reported")

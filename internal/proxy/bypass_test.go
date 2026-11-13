@@ -45,3 +45,15 @@ func TestTargetBypassMatcher_EmptyRulesDoesNotMatch(t *testing.T) {
 		t.Fatal("empty rules should return nil matcher")
 	}
 }
+
+func TestTargetBypassMatcher_CanonicalizesTrailingDNSDot(t *testing.T) {
+	matcher := NewTargetBypassMatcher([]string{"internal.example.com", "*.corp.example"})
+	for _, target := range []string{
+		"internal.example.com.:443",
+		"api.corp.example.:8443",
+	} {
+		if !matcher.ShouldBypass(target) {
+			t.Fatalf("ShouldBypass(%q) = false; a trailing DNS root label bypassed the rule", target)
+		}
+	}
+}

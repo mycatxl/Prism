@@ -18,6 +18,8 @@ import (
 
 // NodeFilters holds query filters for listing nodes.
 type NodeFilters struct {
+	PurityState    *string
+	PurityReason   *string
 	IPType         *string
 	QualityState   *string
 	RiskGrade      *string
@@ -172,25 +174,64 @@ func (s *ControlPlaneService) RangeFilteredNodeEntriesContext(
 	allIPs := newBoundedStringSet(nodeListUniqueIPLimit)
 	healthyIPs := newBoundedStringSet(nodeListUniqueIPLimit)
 	var scanErr error
+	baseFilters := filters
+	baseFilters.PurityReason = nil
+	var pending []*node.NodeEntry
+	stopped := false
+	emit := func(entry *node.NodeEntry) bool {
+		stats.Total++
+		if ip := entry.GetEgressIP(); ip.IsValid() {
+			allIPs.Add(ip.String())
+			if !s.Pool.IsNodeDisabled(entry.Hash) && entry.HasOutbound() && entry.CircuitOpenSince.Load() <= 0 {
+				healthyIPs.Add(ip.String())
+			}
+		}
+		if !visit(entry.Hash, entry) {
+			stopped = true
+			return false
+		}
+		return true
+	}
+	flush := func() bool {
+		if len(pending) == 0 || stopped {
+			return !stopped
+		}
+		rows := make([]NodeSummary, len(pending))
+		for i, e := range pending {
+			rows[i] = s.nodeEntryToSummary(e.Hash, e)
+		}
+		s.FillNodeIntelEgress(ctx, rows)
+		s.FillNodeQualityEvidence(ctx, rows)
+		for i, n := range rows {
+			if n.Intel.PurityScore == nil && n.Intel.Facts["purity"].Cause == *filters.PurityReason {
+				if !emit(pending[i]) {
+					pending = nil
+					return false
+				}
+			}
+		}
+		pending = nil
+		return true
+	}
 	visitHash := func(h node.Hash) bool {
 		if err := ctx.Err(); err != nil {
 			scanErr = err
+			stopped = true
 			return false
 		}
 		stats.Scanned++
 		entry, ok := s.Pool.GetEntry(h)
-		if !ok || !s.nodeEntryMatchesFilters(entry, filters, subLookup) {
+		if !ok || !s.nodeEntryMatchesFilters(entry, baseFilters, subLookup) {
 			return true
 		}
-		stats.Total++
-		if ip := entry.GetEgressIP(); ip.IsValid() {
-			ipString := ip.String()
-			allIPs.Add(ipString)
-			if !s.Pool.IsNodeDisabled(h) && entry.HasOutbound() && entry.CircuitOpenSince.Load() <= 0 {
-				healthyIPs.Add(ipString)
+		if filters.PurityReason != nil {
+			pending = append(pending, entry)
+			if len(pending) >= 400 {
+				return flush()
 			}
+			return true
 		}
-		return visit(h, entry)
+		return emit(entry)
 	}
 
 	switch {
@@ -224,6 +265,9 @@ func (s *ControlPlaneService) RangeFilteredNodeEntriesContext(
 		s.Pool.Range(func(h node.Hash, _ *node.NodeEntry) bool { return visitHash(h) })
 	}
 
+	if !stopped && filters.PurityReason != nil {
+		flush()
+	}
 	if scanErr != nil {
 		return stats, scanErr
 	}
@@ -253,7 +297,8 @@ func (s *ControlPlaneService) NodeListSortKey(hash node.Hash, entry *node.NodeEn
 	case "purity_score", "assessed_at":
 		ip := entry.GetEgressIP()
 		if ip.IsValid() && s.Intel != nil {
-			if lite, ok := s.Intel.Snapshot().Assessment(ip); ok {
+			if lite, ok := s.Intel.Snapshot().NodeAssessment(hash.Hex(), ip); ok {
+				lite = lite.Current(time.Now().UTC())
 				if sortBy == "purity_score" {
 					if score := lite.ScoreValue(); score != nil {
 						key.Integer = int64(*score)
@@ -310,7 +355,7 @@ func (s *ControlPlaneService) nodeEntryMatchesFilters(
 	// inspection summary, exactly as before.
 	if filters.QualityState != nil || filters.RiskGrade != nil {
 		state := "unobserved"
-		summary := s.nodeQuality(entry.GetEgressIP())
+		summary := s.nodeQuality(entry.GetEgressIP(), entry.Hash.Hex())
 		grade := quality.EffectiveRiskGrade(summary)
 		if summary.Assessment != nil {
 			state = summary.Assessment.State

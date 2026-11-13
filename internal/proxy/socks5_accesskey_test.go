@@ -33,8 +33,8 @@ func socks5AuthOutcome(t *testing.T, inbound *Socks5Inbound, username, password 
 	return reply[1] == socks5UserPassStatusSuccess
 }
 
-// The transitional contract on the SOCKS5 inbound: a key in the password field
-// authenticates, and the username still carries the identity.
+// A key in the password field authenticates, and the username still carries
+// the identity.
 func TestSocks5Inbound_AcceptsAnAccessKey(t *testing.T) {
 	fx := newKeyFixture(t)
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
@@ -47,15 +47,15 @@ func TestSocks5Inbound_AcceptsAnAccessKey(t *testing.T) {
 	}
 }
 
-func TestSocks5Inbound_StillAcceptsTheGlobalToken(t *testing.T) {
+func TestSocks5Inbound_RejectsTheGlobalToken(t *testing.T) {
 	fx := newKeyFixture(t)
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		ProxyToken: "global-token",
 		AccessKeys: NewAccessKeyVerifier(fx.store, fx.pepper),
 	})
 
-	if !socks5AuthOutcome(t, inbound, "plat.acct", "global-token") {
-		t.Fatal("the global token was refused")
+	if socks5AuthOutcome(t, inbound, "plat.acct", "global-token") {
+		t.Fatal("the global token authenticated")
 	}
 }
 
@@ -106,9 +106,9 @@ func TestSocks5Inbound_RejectsBothWhenNeitherMatches(t *testing.T) {
 	}
 }
 
-// With authentication disabled the password may be anything, and a key must
-// still be resolved rather than ignored.
-func TestSocks5Inbound_AcceptsAKeyWhenAuthenticationIsDisabled(t *testing.T) {
+// A valid AccessKey is required even when the endpoint policy does not require
+// extra authentication metadata.
+func TestSocks5Inbound_AcceptsAKeyWithoutEndpointPolicy(t *testing.T) {
 	fx := newKeyFixture(t)
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
 		AccessKeys: NewAccessKeyVerifier(fx.store, fx.pepper),

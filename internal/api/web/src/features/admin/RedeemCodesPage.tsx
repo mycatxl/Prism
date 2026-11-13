@@ -154,10 +154,10 @@ export function RedeemCodesPage() {
       </div> : null}
 
       <WorkspaceCard headerless eyebrow="Customer objects" title={t("兑换码列表")} meta={codesQuery.data ? (filtersActive ? t("本页匹配 {{matched}} / 已加载 {{loaded}} 条 · 服务端共 {{total}} 条", { matched: matchedCount, loaded: loadedCount, total }) : t("共 {{count}} 条", { count: total })) : t("未加载")} description={t("已生成的兑换码只显示末四位，用于辨认与作废。") }>
-        {codesQuery.isError && !codesQuery.data ? <EmptyWorkState title={t("兑换码目录读取失败")} detail={formatApiErrorMessage(codesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void codesQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+        {codesQuery.isError && !codesQuery.data ? <EmptyWorkState embedded title={t("兑换码目录读取失败")} detail={formatApiErrorMessage(codesQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void codesQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
         {codesQuery.isLoading && !codesQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载兑换码")}</div> : null}
-        {!codesQuery.isLoading && !codesQuery.isError && codes.length === 0 ? <EmptyWorkState title={t("暂无兑换码")} detail={t("生成兑换码后，可在这里查看使用情况与作废。") } action={<ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("生成兑换码")}</ControlButton>} /> : null}
-        {!codesQuery.isLoading && !codesQuery.isError && codes.length > 0 && filtered.length === 0 ? <EmptyWorkState title={t("当前页没有匹配的兑换码")} detail={t("搜索与状态筛选只作用于当前页；可翻到下一页继续查找，或清除筛选。") } action={<>{hasNextPage ? <ControlButton variant="secondary" size="sm" onPress={() => setPage(page + 1)}>{t("下一页")}</ControlButton> : null}<ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton></>} /> : null}
+        {!codesQuery.isLoading && !codesQuery.isError && codes.length === 0 ? <EmptyWorkState embedded title={t("暂无兑换码")} detail={t("生成兑换码后，可在这里查看使用情况与作废。") } action={<ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("生成兑换码")}</ControlButton>} /> : null}
+        {!codesQuery.isLoading && !codesQuery.isError && codes.length > 0 && filtered.length === 0 ? <EmptyWorkState embedded title={t("当前页没有匹配的兑换码")} detail={t("搜索与状态筛选只作用于当前页；可翻到下一页继续查找，或清除筛选。") } action={<>{hasNextPage ? <ControlButton variant="secondary" size="sm" onPress={() => setPage(page + 1)}>{t("下一页")}</ControlButton> : null}<ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton></>} /> : null}
         {filtered.length > 0 ? <ObjectList>
           {filtered.map((code) => <ObjectRow
             key={code.id}

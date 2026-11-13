@@ -85,8 +85,8 @@ function RegisterState({
 }) {
   const { t } = useI18n();
   if (loading) return <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden /> <span>{t("正在加载")}</span></div>;
-  if (error) return <EmptyWorkState title={error} action={retry ? <ControlButton size="sm" variant="secondary" onPress={retry}>{t("重试")}</ControlButton> : undefined} />;
-  if (empty) return <EmptyWorkState title={empty} />;
+  if (error) return <EmptyWorkState embedded title={error} action={retry ? <ControlButton size="sm" variant="secondary" onPress={retry}>{t("重试")}</ControlButton> : undefined} />;
+  if (empty) return <EmptyWorkState embedded title={empty} />;
   return null;
 }
 
@@ -233,22 +233,22 @@ export function WorkbenchPage() {
       eyebrow="Control / runtime"
       title={t("控制平面")}
       description={t("围绕交付、资产、客户和治理证据处理实例状态，不把未知数据包装成健康。")}
-      meta={<State tone={hasAnyError ? "warn" : allSourcesLoaded ? "live" : "neutral"}>{hasAnyError ? t("部分数据不可用") : allSourcesLoaded ? t("数据已同步") : workbenchReady ? t("部分来源尚未加载") : t("等待数据")}</State>}
+      meta={<State tone={hasAnyError ? "warn" : allSourcesLoaded ? "live" : "neutral"}>{hasAnyError ? t("部分数据不可用") : allSourcesLoaded ? t("数据已同步") : workbenchReady ? t("部分数据尚未加载") : t("等待数据")}</State>}
       actions={<ControlButton variant="secondary" size="sm" loading={refreshing} onPress={() => void refreshAll()}><RefreshCw size={14} aria-hidden />{t("刷新工作区")}</ControlButton>}
     >
       <div className="workspace-data-grid" aria-label={t("实例状态") }>
         <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("健康独立出口 IP")}</span><strong className="workspace-data-grid__value">{pool ? formatCount(pool.healthy_egress_ip_count) : PLACEHOLDER}</strong><span className="workspace-data-grid__hint">{snapshot.isSuccess ? t("快照已返回") : t("未加载")}</span></div>
         <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("可路由节点")}</span><strong className="workspace-data-grid__value">{pool ? formatCount(pool.healthy_nodes) : PLACEHOLDER}</strong><span className="workspace-data-grid__hint">{pool ? t("全池节点 {{count}} 个", { count: pool.total_nodes }) : t("未加载")}</span></div>
         <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("客户与平台")}</span><strong className="workspace-data-grid__value">{`${usage.data ? formatCount(usage.data.active_users) : PLACEHOLDER} / ${platforms.data ? formatCount(platforms.data.total) : PLACEHOLDER}`}</strong><span className="workspace-data-grid__hint">{t("活跃用户 / 平台总数")}</span></div>
-        <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("需要处理")}</span><strong className={cn("workspace-data-grid__value", attention.length > 0 && "text-alert")}>{attentionLoaded ? formatCount(attention.length) : PLACEHOLDER}</strong><span className="workspace-data-grid__hint">{attention.length > 0 ? t("已知事项，来自已加载的采样来源") : attentionAnyError ? t("读取失败") : attentionAnyMissing ? t("部分来源尚未加载") : t("已加载来源中未见事项")}</span></div>
+        <div className="workspace-data-grid__cell"><span className="workspace-data-grid__label">{t("需要处理")}</span><strong className={cn("workspace-data-grid__value", attention.length > 0 && "text-alert")}>{attentionLoaded ? formatCount(attention.length) : PLACEHOLDER}</strong><span className="workspace-data-grid__hint">{attention.length > 0 ? t("已有待处理事项") : attentionAnyError ? t("读取失败") : attentionAnyMissing ? t("部分数据尚未加载") : t("暂无待处理事项")}</span></div>
       </div>
 
       <div className="workspace-split">
         <div className="workspace-stack">
-          <WorkspaceCard eyebrow="Signal queue" title={t("需要处理")} meta={attentionLoaded ? t("已加载 {{count}} 项采样证据（非全站总数）", { count: attention.length }) : t("未加载")} description={t("只列出已有证据支持的异常、风险和待补数据。") } actions={<ControlButton variant="ghost" size="sm" onPress={() => navigate(opsPaths.nodes)}><ArrowUpRight size={14} aria-hidden />{t("打开节点工作台")}</ControlButton>}>
-            {attentionAnyError ? <div className="workspace-notice workspace-notice--warn"><span>{t("部分来源读取失败，事项列表可能不完整。")}</span><ControlButton variant="ghost" size="sm" onPress={() => void refetchAttentionSources()}>{t("重试")}</ControlButton></div> : null}
+          <WorkspaceCard eyebrow="Signal queue" title={t("需要处理")} meta={attentionLoaded ? t("当前列表 {{count}} 项待处理事项", { count: attention.length }) : t("未加载")} description={t("只列出已有证据支持的异常、风险和待补数据。") } actions={<ControlButton variant="ghost" size="sm" onPress={() => navigate(opsPaths.nodes)}><ArrowUpRight size={14} aria-hidden />{t("打开节点工作台")}</ControlButton>}>
+            {attentionAnyError ? <div className="workspace-notice workspace-notice--warn"><span>{t("部分数据读取失败，事项列表可能不完整。")}</span><ControlButton variant="ghost" size="sm" onPress={() => void refetchAttentionSources()}>{t("重试")}</ControlButton></div> : null}
             {attention.length === 0 && attentionLoading ? <RegisterState loading /> : null}
-            {attention.length === 0 && !attentionLoading && !attentionAnyError && !attentionAnyMissing ? <RegisterState empty={t("已加载来源中没有需要处理的事项")} /> : null}
+            {attention.length === 0 && !attentionLoading && !attentionAnyError && !attentionAnyMissing ? <RegisterState empty={t("暂无需要处理的事项")} /> : null}
             <ObjectList>
               {attention.slice(0, 8).map((item) => (
                 <ObjectRow

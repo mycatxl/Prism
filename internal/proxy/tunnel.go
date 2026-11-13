@@ -8,11 +8,9 @@ import (
 	"io"
 	"log"
 	"net"
-	"runtime/debug"
 	"sync"
 	"time"
 
-	M "github.com/sagernet/sing/common/metadata"
 	"prism/internal/keys"
 	"prism/internal/netutil"
 	"prism/internal/outbound"
@@ -30,7 +28,7 @@ type tunnelDeps struct {
 	metering    MeteringSink
 	bypass      *TargetBypassMatcher
 	directGuard DirectDialGuard
-	// dialTimeout bounds the local direct dial (PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT).
+	// dialTimeout bounds direct and routed dials (PRISM_PROXY_TRANSPORT_DIAL_TIMEOUT).
 	// Zero falls back to the guard default.
 	dialTimeout time.Duration
 }
@@ -64,15 +62,28 @@ type tunnelRelayResult struct {
 
 type tunnelPumpOptions struct {
 	onFirstIngressByte func()
+	// liveIngressReport and liveEgressReport are used by HTTP upgrade
+	// streams, whose bytes are copied by this relay but belong to a request
+	// lifecycle rather than to a counted per-session connection. CONNECT and
+	// SOCKS5 leave them nil because their connection wrappers report directly.
+	liveIngressReport func(int64)
+	liveEgressReport  func(int64)
 	// quotaGate, quotaKey and quotaGracePercent enable the mid-stream
 	// allowance check: a tunnel that carries more than the key may move is
 	// closed by both ends rather than allowed to finish. A nil gate, or a
 	// session with no key, leaves the relay unenforced, exactly as it was
 	// before quotas existed.
+	quotaPlatformID   string
 	quotaGate         QuotaGate
 	quotaKey          *keys.KeyState
 	quotaGracePercent int
 }
+
+// tunnelHalfCloseTimeout bounds how long a relay keeps the other direction
+// alive after a clean half-close. Half-close is needed for request/response
+// protocols, but an upstream that never answers must not leave a copy goroutine
+// and two sockets open forever. Tests may shorten this package variable.
+var tunnelHalfCloseTimeout = 30 * time.Second
 
 type firstByteReader struct {
 	reader      io.Reader
@@ -96,7 +107,14 @@ func prepareConnectTunnel(
 	target string,
 	key *keys.KeyState,
 ) tunnelPrepareResult {
+	destination, err := netutil.ParseDestination(target)
+	if err != nil {
+		return tunnelPrepareResult{proxyErr: ErrInvalidHost}
+	}
 	if deps.bypass != nil && deps.bypass.ShouldBypass(target) {
+		if platformErr := authorizeBypassPlatform(deps.router, platformName, key); platformErr != nil {
+			return tunnelPrepareResult{proxyErr: platformErr}
+		}
 		// PRISM_DIRECT_DENY_PRIVATE governs this local dial path too: the
 		// CONNECT tunnel and the SOCKS5 inbound share it.
 		if err := deps.directGuard.CheckTarget(ctx, target); err != nil {
@@ -121,7 +139,13 @@ func prepareConnectTunnel(
 		})
 	}
 
-	rawConn, err := routed.Outbound.DialContext(ctx, "tcp", M.ParseSocksaddr(target))
+	dialTimeout := deps.dialTimeout
+	if dialTimeout <= 0 {
+		dialTimeout = defaultTransportDialTimeout
+	}
+	dialCtx, cancelDial := context.WithTimeout(ctx, dialTimeout)
+	defer cancelDial()
+	rawConn, err := routed.Outbound.DialContext(dialCtx, "tcp", destination)
 	if err != nil {
 		proxyErr := classifyConnectError(err)
 		if proxyErr == nil {
@@ -183,10 +207,8 @@ func prepareConnectTunnel(
 
 // attributionFor builds the metering identity of one tunnel.
 //
-// It answers nil when there is nothing to attribute to: no metering sink, or a
-// request that carried no key (the transitional global-token path). A nil
-// result leaves the connection reporting only to the global metrics sink,
-// which is exactly the behaviour before access keys existed.
+// It answers nil when there is no metering sink or usable key state. A nil
+// result leaves the connection reporting only to the global metrics sink.
 func attributionFor(metering MeteringSink, key *keys.KeyState, platformID string) *keyAttribution {
 	if metering == nil || key == nil || key.KeyID == "" {
 		return nil
@@ -267,7 +289,20 @@ func pumpPreparedTunnelReader(
 	opts tunnelPumpOptions,
 ) tunnelRelayResult {
 	if clientConn == nil || clientToUpstream == nil || session == nil || session.upstreamConn == nil {
-		return tunnelRelayResult{}
+		// Callers normally provide all three values, but keeping the defensive
+		// path closed is important: a partially prepared tunnel must not leave
+		// the other socket or a reservation-owned connection behind.
+		if clientConn != nil {
+			_ = clientConn.Close()
+		}
+		if session != nil && session.upstreamConn != nil {
+			_ = session.upstreamConn.Close()
+		}
+		return tunnelRelayResult{
+			proxyErr:      ErrUpstreamRequestFailed,
+			upstreamStage: "connect_tunnel_invalid_state",
+			upstreamErr:   fmt.Errorf("incomplete tunnel endpoints"),
+		}
 	}
 
 	type copyResult struct {
@@ -281,6 +316,28 @@ func pumpPreparedTunnelReader(
 			_ = session.upstreamConn.Close()
 		})
 	}
+	var halfCloseMu sync.Mutex
+	var halfCloseTimer *time.Timer
+	startHalfCloseTimer := func() {
+		timeout := tunnelHalfCloseTimeout
+		if timeout <= 0 {
+			closeBoth()
+			return
+		}
+		halfCloseMu.Lock()
+		if halfCloseTimer == nil {
+			halfCloseTimer = time.AfterFunc(timeout, closeBoth)
+		}
+		halfCloseMu.Unlock()
+	}
+	stopHalfCloseTimer := func() {
+		halfCloseMu.Lock()
+		if halfCloseTimer != nil {
+			halfCloseTimer.Stop()
+			halfCloseTimer = nil
+		}
+		halfCloseMu.Unlock()
+	}
 	// relay runs one direction of the copy on its own goroutine and always
 	// reports a result. A panic ends that direction, closes both ends so the
 	// peer is not left waiting, and is reported as a copy error: the relay below
@@ -292,10 +349,10 @@ func pumpPreparedTunnelReader(
 			var err error
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					log.Printf("proxy: recovered a panic relaying a tunnel: %v\n%s", recovered, debug.Stack())
+					log.Printf("proxy: recovered a panic relaying a tunnel")
 					closeBoth()
 					if err == nil {
-						err = fmt.Errorf("relay panicked: %v", recovered)
+						err = fmt.Errorf("relay panicked")
 					}
 				}
 				results <- copyResult{n: n, err: err}
@@ -308,6 +365,23 @@ func pumpPreparedTunnelReader(
 	// and the abort closes both ends - a cut that left one of them open would
 	// leave the peer waiting on a socket nobody reads.
 	quota := newStreamQuota(opts.quotaGate, opts.quotaKey, opts.quotaGracePercent, closeBoth)
+	if quota != nil {
+		quota.withLiveReports(opts.liveIngressReport, opts.liveEgressReport)
+		quota.platformID = opts.quotaPlatformID
+		if quota.atomicAccounting() {
+			base := session.upstreamConn
+			if latency, ok := base.(*tlsLatencyConn); ok {
+				base = latency.Conn
+			}
+			if counted, ok := base.(*countingConn); ok && counted.attribution != nil {
+				quota.platformID = counted.attribution.platformID
+				// The reservation now accounts these bytes; keep only global
+				// connection metrics on the socket to avoid billing twice.
+				counted.attribution = nil
+			}
+		}
+	}
+	defer quota.flushReports()
 
 	ingressBytesCh := make(chan copyResult, 1)
 	egressBytesCh := make(chan copyResult, 1)
@@ -316,34 +390,44 @@ func pumpPreparedTunnelReader(
 	// below waits on these two channels for the byte counts, so a goroutine that
 	// died without sending would leave the tunnel parked forever as well.
 	relay(egressBytesCh, func() (int64, error) {
-		clientReader := io.Reader(clientToUpstream)
+		upstreamWriter := io.Writer(session.upstreamConn)
 		if quota != nil {
-			clientReader = &quotaReader{reader: clientToUpstream, quota: quota}
+			upstreamWriter = &quotaWriter{writer: upstreamWriter, quota: quota}
 		}
-		n, copyErr := io.Copy(session.upstreamConn, clientReader)
-		if !isBenignTunnelCopyError(copyErr) || !closeWriteConn(session.upstreamConn) {
+		n, copyErr := io.Copy(upstreamWriter, clientToUpstream)
+		if !isBenignTunnelCopyError(copyErr) {
 			closeBoth()
+		} else if !closeWriteConn(session.upstreamConn) {
+			closeBoth()
+		} else {
+			startHalfCloseTimer()
 		}
 		return n, copyErr
 	})
 	relay(ingressBytesCh, func() (int64, error) {
 		var upstreamReader io.Reader = session.upstreamConn
+		clientWriter := io.Writer(clientConn)
 		if quota != nil {
-			upstreamReader = &quotaReader{reader: upstreamReader, quota: quota, ingress: true}
+			clientWriter = &quotaWriter{writer: clientWriter, quota: quota, ingress: true}
 		}
 		if opts.onFirstIngressByte != nil {
 			// 隧道首字耗时以目标站点返回的第一批字节为准，而不是 CONNECT/SOCKS 握手完成。
 			upstreamReader = &firstByteReader{reader: upstreamReader, onFirstByte: opts.onFirstIngressByte}
 		}
-		n, copyErr := io.Copy(clientConn, upstreamReader)
-		if !isBenignTunnelCopyError(copyErr) || !closeWriteConn(clientConn) {
+		n, copyErr := io.Copy(clientWriter, upstreamReader)
+		if !isBenignTunnelCopyError(copyErr) {
 			closeBoth()
+		} else if !closeWriteConn(clientConn) {
+			closeBoth()
+		} else {
+			startHalfCloseTimer()
 		}
 		return n, copyErr
 	})
 
 	ingressResult := <-ingressBytesCh
 	egressResult := <-egressBytesCh
+	stopHalfCloseTimer()
 	closeBoth()
 
 	// A relay cut for the key's allowance is not a network failure: the tunnel

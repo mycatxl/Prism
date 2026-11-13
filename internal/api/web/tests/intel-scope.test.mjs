@@ -38,6 +38,17 @@ const { buildBulkIntelScope, hasUnsupportedFilters } = await loadIntelScope();
 /** Convenience: build a URLSearchParams from a plain object. */
 const params = (query = {}) => new URLSearchParams(query);
 
+test("bulk intel refuses purity filters that its job scope cannot apply", () => {
+  assert.equal(hasUnsupportedFilters(params({ purity_state: "unrated" })), true);
+  assert.equal(hasUnsupportedFilters(params({ purity_reason: "IPPURE_TIMEOUT" })), true);
+});
+
+test("bulk intel refuses a list intersection that the job would turn into a union", () => {
+  assert.equal(hasUnsupportedFilters(params({ platform_id: "platform", subscription_id: "source" })), true);
+  assert.equal(hasUnsupportedFilters(params({ platform_id: "platform" })), false);
+  assert.equal(hasUnsupportedFilters(params({ subscription_id: "source" })), false);
+});
+
 test("empty URL selects everything and still carries healthy", () => {
   const scope = buildBulkIntelScope(params());
   assert.deepEqual(scope, { filter: { healthy: "true" }, all: true });
@@ -128,19 +139,15 @@ test("unsupported filters are reported so the UI can warn", () => {
   }
 });
 
-test("supported filters are not reported as unsupported", () => {
-  assert.equal(
-    hasUnsupportedFilters(
-      params({ protocol: "vless", region: "JP", subscription_id: "s", platform_id: "p" }),
-    ),
-    false,
-  );
+test("supported filters with a single source selector remain supported", () => {
+  for (const source of [{ subscription_id: "s" }, { platform_id: "p" }]) {
+    assert.equal(hasUnsupportedFilters(params({ protocol: "vless", region: "JP", ...source })), false);
+  }
   assert.equal(hasUnsupportedFilters(params()), false);
 });
 
 test("an unsupported filter still produces a usable scope", () => {
-  // The scope itself stays valid; the warning is what tells the operator the job
-  // covers more nodes than the visible list.
+  // The payload is structurally valid, but the UI must block this wider scope.
   const query = params({ tag_keyword: "tokyo", protocol: "vless" });
   assert.equal(hasUnsupportedFilters(query), true);
   assert.deepEqual(buildBulkIntelScope(query), {

@@ -3,23 +3,24 @@ package proxy
 import (
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"prism/internal/keys"
+	"prism/internal/usage"
 )
 
-// DefaultStreamGracePercent is the tolerance a live stream gets before it is cut
-// for running past its allowance.
-//
-// It matches usage.DefaultGracePercent for the same reason the enforcer's sweep
-// has one: a transfer that crossed the line has its last bytes in flight, and
-// severing it exactly at the limit turns every large download that reaches the
-// allowance into a truncated one. The proxy layer keeps its own copy rather than
-// importing the accounting package, which would make the data plane depend on
-// the persistence side of it.
-const DefaultStreamGracePercent = 1
+// DefaultStreamGracePercent keeps live streams within their purchased allowance.
+const DefaultStreamGracePercent = 0
+
+// trafficReserver atomically reserves and accounts traffic across every key of
+// a tenant. Completion refunds bytes that the I/O did not transfer.
+type trafficReserver interface {
+	ReserveTraffic(key *keys.KeyState, platformID string, ingress bool, requested int64) (int64, func(int64))
+}
 
 // streamQuotaCheckInterval is how many bytes may flow between two allowance
 // checks on a live stream, and how many bytes a stream batches before it reports
@@ -50,6 +51,7 @@ var errStreamQuotaExceeded = errors.New("proxy: stream stopped: traffic allowanc
 // A nil *streamQuota allows everything, so a request with no key and a
 // deployment with no gate both behave exactly as they did before quotas existed.
 type streamQuota struct {
+	platformID   string
 	gate         QuotaGate
 	key          *keys.KeyState
 	gracePercent int
@@ -123,15 +125,39 @@ func (q *streamQuota) account(n int64) {
 	if q == nil || n <= 0 {
 		return
 	}
-	total := q.bytes.Add(n)
-	if total < q.next.Load() {
-		return
+	total := addStreamBytes(&q.bytes, n)
+	for {
+		next := q.next.Load()
+		if total < next {
+			return
+		}
+		// Reserve the next check window with CAS. A Store could move the
+		// schedule backwards when ingress and egress cross the boundary at the
+		// same instant, delaying the next check by an entire batch.
+		nextCheck := total + q.interval
+		if total > math.MaxInt64-q.interval {
+			nextCheck = math.MaxInt64
+		}
+		if q.next.CompareAndSwap(next, nextCheck) {
+			q.check()
+			return
+		}
 	}
-	// Reserve the next check window before checking, so a burst is not checked
-	// once per byte. Two concurrent directions may reserve the same window;
-	// the check is idempotent.
-	q.next.Store(total + q.interval)
-	q.check()
+}
+
+func addStreamBytes(value *atomic.Int64, delta int64) int64 {
+	for {
+		old := value.Load()
+		if old == math.MaxInt64 || delta > math.MaxInt64-old {
+			if old == math.MaxInt64 || value.CompareAndSwap(old, math.MaxInt64) {
+				return math.MaxInt64
+			}
+			continue
+		}
+		if value.CompareAndSwap(old, old+delta) {
+			return old + delta
+		}
+	}
 }
 
 // ingressBytes records n bytes moving towards the client.
@@ -139,13 +165,10 @@ func (q *streamQuota) ingressBytes(n int64) {
 	if q == nil || n <= 0 {
 		return
 	}
-	q.account(n)
-	if q.reportIngress == nil {
-		return
-	}
-	if q.pendingIngress.Add(n) >= q.interval {
+	if q.reportIngress != nil && q.pendingIngress.Add(n) >= q.interval {
 		q.reportIngress(q.pendingIngress.Swap(0))
 	}
+	q.account(n)
 }
 
 // egressBytes records n bytes moving towards the upstream.
@@ -153,13 +176,10 @@ func (q *streamQuota) egressBytes(n int64) {
 	if q == nil || n <= 0 {
 		return
 	}
-	q.account(n)
-	if q.reportEgress == nil {
-		return
-	}
-	if q.pendingEgress.Add(n) >= q.interval {
+	if q.reportEgress != nil && q.pendingEgress.Add(n) >= q.interval {
 		q.reportEgress(q.pendingEgress.Swap(0))
 	}
+	q.account(n)
 }
 
 // flushReports hands the bytes of a partial step to the sink.
@@ -220,16 +240,109 @@ type quotaReader struct {
 }
 
 func (r *quotaReader) Read(p []byte) (int, error) {
-	n, err := r.reader.Read(p)
-	if n > 0 {
-		if r.ingress {
-			r.quota.ingressBytes(int64(n))
-		} else {
-			r.quota.egressBytes(int64(n))
+	if r.quota.Exceeded() || (r.quota.atomicAccounting() && r.quota.gate.Exceeded(r.quota.key, 0)) {
+		if r.quota != nil {
+			r.quota.limited.Store(true)
 		}
+		return 0, errStreamQuotaExceeded
+	}
+	n, err := r.reader.Read(p)
+	if r.quota.atomicAccounting() {
+		allowed, finish := r.quota.reserve(int64(n), r.ingress)
+		finish(allowed)
+		if allowed < int64(n) || (n > 0 && r.quota.gate.Exceeded(r.quota.key, 0)) {
+			// Return the permitted prefix before the copy loop closes its peers.
+			r.quota.limited.Store(true)
+			return int(allowed), errStreamQuotaExceeded
+		}
+		return n, err
+	}
+	if r.ingress {
+		r.quota.ingressBytes(int64(n))
+	} else {
+		r.quota.egressBytes(int64(n))
 	}
 	if err == nil && r.quota.Exceeded() {
 		return n, errStreamQuotaExceeded
+	}
+	return n, err
+}
+
+func (q *streamQuota) atomicAccounting() bool {
+	if q == nil {
+		return false
+	}
+	_, ok := q.gate.(trafficReserver)
+	return ok
+}
+
+func (q *streamQuota) reserve(n int64, ingress bool) (int64, func(int64)) {
+	if n <= 0 {
+		return 0, func(int64) {}
+	}
+	return q.gate.(trafficReserver).ReserveTraffic(q.key, q.platformID, ingress, n)
+}
+
+// reserveHeader requires the entire header budget before committing a response
+// or contacting upstream. The caller settles it when transmission is known.
+func (q *streamQuota) reserveHeader(n int64, ingress bool) (func(int64), bool) {
+	if !q.atomicAccounting() {
+		return func(int64) {}, true
+	}
+	allowed, finish := q.reserve(n, ingress)
+	if allowed < n {
+		finish(0)
+		q.limited.Store(true)
+		return func(int64) {}, false
+	}
+	return finish, true
+}
+
+func (q *streamQuota) write(p []byte, ingress bool, write func([]byte) (int, error)) (int, error) {
+	if q.Exceeded() {
+		return 0, errStreamQuotaExceeded
+	}
+	if q.atomicAccounting() {
+		allowed, finish := q.reserve(int64(len(p)), ingress)
+		defer finish(usage.UnknownTrafficBytes) // panic leaves an unknown outcome
+		if allowed == 0 && len(p) > 0 {
+			finish(0) // Write was never called
+			q.limited.Store(true)
+			return 0, errStreamQuotaExceeded
+		}
+		n, err := write(p[:int(allowed)])
+		finish(int64(n))
+		if allowed < int64(len(p)) || (n > 0 && q.gate.Exceeded(q.key, 0)) {
+			q.limited.Store(true)
+			return n, errStreamQuotaExceeded
+		}
+		return n, err
+	}
+	n, err := write(p)
+	if ingress {
+		q.ingressBytes(int64(n))
+	} else {
+		q.egressBytes(int64(n))
+	}
+	if err == nil && q.Exceeded() {
+		return n, errStreamQuotaExceeded
+	}
+	return n, err
+}
+
+// quotaWriter settles reservations using the bytes the destination accepted.
+// It deliberately hides ReaderFrom so io.Copy cannot bypass quota enforcement.
+type quotaWriter struct {
+	writer      io.Writer
+	quota       *streamQuota
+	ingress     bool
+	transferred *atomic.Int64
+}
+
+func (w *quotaWriter) Write(p []byte) (int, error) {
+	n, err := w.quota.write(p, w.ingress, w.writer.Write)
+	if w.transferred != nil {
+		w.transferred.Add(int64(n))
 	}
 	return n, err
 }
@@ -263,7 +376,7 @@ func (c *quotaReadCloser) Close() error {
 	// The close is the last moment this reader sees: the transport closes a
 	// request body when it has finished with it, and the last partial step
 	// would otherwise never reach the sink.
-	c.quota.flushReports()
+	defer c.quota.flushReports()
 	return c.closer.Close()
 }
 
@@ -277,16 +390,12 @@ func (c *quotaReadCloser) Close() error {
 type quotaResponseWriter struct {
 	http.ResponseWriter
 	quota *streamQuota
+	total int64
 }
 
 func (w *quotaResponseWriter) Write(p []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(p)
-	if n > 0 {
-		w.quota.ingressBytes(int64(n))
-	}
-	if err == nil && w.quota.Exceeded() {
-		return n, errStreamQuotaExceeded
-	}
+	n, err := w.quota.write(p, true, w.ResponseWriter.Write)
+	w.total += int64(n)
 	return n, err
 }
 
@@ -313,8 +422,13 @@ func (w *quotaResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWr
 // context, which is what closes the backend through the goroutine httputil
 // starts for exactly that.
 type quotaReadWriteCloser struct {
-	rwc   io.ReadWriteCloser
-	quota *streamQuota
+	rwc          io.ReadWriteCloser
+	quota        *streamQuota
+	ingressBytes atomic.Int64
+	mu           sync.Mutex
+	peer         io.Closer
+	timer        *time.Timer
+	closed       bool
 }
 
 func newQuotaReadWriteCloser(rwc io.ReadWriteCloser, quota *streamQuota) *quotaReadWriteCloser {
@@ -322,28 +436,56 @@ func newQuotaReadWriteCloser(rwc io.ReadWriteCloser, quota *streamQuota) *quotaR
 }
 
 func (c *quotaReadWriteCloser) Read(p []byte) (int, error) {
-	n, err := c.rwc.Read(p)
-	if n > 0 {
-		c.quota.ingressBytes(int64(n))
-	}
-	if err == nil && c.quota.Exceeded() {
-		return n, errStreamQuotaExceeded
-	}
-	return n, err
+	return (&quotaReader{reader: c.rwc, quota: c.quota, ingress: true}).Read(p)
 }
 
 func (c *quotaReadWriteCloser) Write(p []byte) (int, error) {
-	n, err := c.rwc.Write(p)
-	if n > 0 {
-		c.quota.egressBytes(int64(n))
+	return c.quota.write(p, false, c.rwc.Write)
+}
+
+// WriteTo lets httputil's ingress copy settle at the client writer, where a
+// short write is observable. Charging on the backend Read would bill read-ahead.
+func (c *quotaReadWriteCloser) WriteTo(dst io.Writer) (int64, error) {
+	c.mu.Lock()
+	peer, _ := dst.(io.Closer)
+	if c.closed {
+		c.mu.Unlock()
+		if peer != nil {
+			_ = peer.Close()
+		}
+		return 0, io.ErrClosedPipe
 	}
-	if err == nil && c.quota.Exceeded() {
-		return n, errStreamQuotaExceeded
-	}
+	c.peer = peer
+	c.mu.Unlock()
+	n, err := io.Copy(&quotaWriter{writer: dst, quota: c.quota, ingress: true, transferred: &c.ingressBytes}, c.rwc)
+	c.startHalfCloseTimer()
 	return n, err
 }
 
+func (c *quotaReadWriteCloser) startHalfCloseTimer() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.closed && c.timer == nil {
+		c.timer = time.AfterFunc(tunnelHalfCloseTimeout, func() { _ = c.Close() })
+	}
+}
+
 func (c *quotaReadWriteCloser) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	peer := c.peer
+	c.mu.Unlock()
+	if peer != nil {
+		_ = peer.Close()
+	}
+	defer c.quota.flushReports()
 	return c.rwc.Close()
 }
 
@@ -356,6 +498,7 @@ func (c *quotaReadWriteCloser) CloseWrite() error {
 	if c == nil {
 		return nil
 	}
+	c.startHalfCloseTimer()
 	return closeWriteIfSupported(c.rwc)
 }
 
@@ -378,4 +521,27 @@ func normalizeQuotaGracePercent(configured int) int {
 	default:
 		return configured
 	}
+}
+
+// quotaTransport reserves request headers before the upstream sees them.
+type quotaTransport struct {
+	base      http.RoundTripper
+	quota     *streamQuota
+	committed func() bool
+}
+
+func (t quotaTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	n := headerWireLen(r.Header)
+	finish, ok := t.quota.reserveHeader(n, false)
+	if !ok {
+		return nil, errStreamQuotaExceeded
+	}
+	defer finish(usage.UnknownTrafficBytes)
+	resp, err := t.base.RoundTrip(r)
+	if t.committed() {
+		finish(n)
+	} else {
+		finish(0)
+	}
+	return resp, err
 }

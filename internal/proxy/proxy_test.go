@@ -120,6 +120,9 @@ func (m *mockOutbound) Type() string { return "mock" }
 // --- Helper ---
 
 func basicAuth(user, pass string) string {
+	if pass == "tok" || pass == "bench-token" {
+		pass = testCredential
+	}
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
 }
 
@@ -151,7 +154,7 @@ func TestRecordPassiveResultAsync_UsesPlatformAwareRecorder(t *testing.T) {
 }
 
 func TestForwardProxy_AuthRequired(t *testing.T) {
-	fp := &ForwardProxy{token: "tok", events: NoOpEventEmitter{}}
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	w := httptest.NewRecorder()
 	fp.ServeHTTP(w, req)
@@ -171,7 +174,7 @@ func TestForwardProxy_AuthRequired(t *testing.T) {
 
 func TestForwardProxy_AuthRequired_EmitsNoEvents(t *testing.T) {
 	emitter := newMockEventEmitter()
-	fp := &ForwardProxy{token: "tok", events: emitter}
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: emitter}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	w := httptest.NewRecorder()
 
@@ -195,7 +198,7 @@ func TestForwardProxy_AuthRequired_EmitsNoEvents(t *testing.T) {
 }
 
 func TestForwardProxy_AuthFailed(t *testing.T) {
-	fp := &ForwardProxy{token: "correct-token", events: NoOpEventEmitter{}}
+	fp := &ForwardProxy{token: "correct-token", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("plat.acct", "wrong-token"))
 	w := httptest.NewRecorder()
@@ -211,7 +214,7 @@ func TestForwardProxy_AuthFailed(t *testing.T) {
 
 func TestForwardProxy_AuthFailed_EmitsNoEvents(t *testing.T) {
 	emitter := newMockEventEmitter()
-	fp := &ForwardProxy{token: "tok", events: emitter}
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: emitter}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("plat.acct", "wrong-token"))
 	w := httptest.NewRecorder()
@@ -237,7 +240,7 @@ func TestForwardProxy_AuthFailed_EmitsNoEvents(t *testing.T) {
 
 func TestForwardProxy_CONNECT_AuthRequired_EmitsNoEvents(t *testing.T) {
 	emitter := newMockEventEmitter()
-	fp := &ForwardProxy{token: "tok", events: emitter}
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: emitter}
 	req := httptest.NewRequest(http.MethodConnect, "http://example.com:443", nil)
 	req.Host = "example.com:443"
 	w := httptest.NewRecorder()
@@ -261,16 +264,18 @@ func TestForwardProxy_CONNECT_AuthRequired_EmitsNoEvents(t *testing.T) {
 	}
 }
 
-func TestForwardProxy_Authentication_DisabledWhenProxyTokenEmpty(t *testing.T) {
-	fp := &ForwardProxy{token: "", events: NoOpEventEmitter{}}
+func TestForwardProxy_AuthenticationRequiresAnAccessKeyWhenProxyTokenEmpty(t *testing.T) {
+	fp := &ForwardProxy{token: "", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 
 	tests := []struct {
 		name string
 		auth string
+		want *ProxyError
 	}{
-		{name: "missing"},
-		{name: "invalid_scheme", auth: "Digest abc"},
-		{name: "invalid_base64", auth: "Basic %%%"},
+		{name: "missing", want: ErrAuthRequired},
+		{name: "invalid_scheme", auth: "Digest abc", want: ErrAuthRequired},
+		{name: "invalid_base64", auth: "Basic %%%", want: ErrAuthRequired},
+		{name: "legacy_token", auth: basicAuth("plat", "legacy-token"), want: ErrAuthFailed},
 	}
 
 	for _, tt := range tests {
@@ -280,12 +285,11 @@ func TestForwardProxy_Authentication_DisabledWhenProxyTokenEmpty(t *testing.T) {
 				req.Header.Set("Proxy-Authorization", tt.auth)
 			}
 			identity, err := fp.authenticate(req)
-			plat, acct := identity.PlatformName, identity.Account
-			if err != nil {
-				t.Fatalf("unexpected auth error: %v", err)
+			if err != tt.want {
+				t.Fatalf("authenticate error = %v, want %v", err, tt.want)
 			}
-			if plat != "" || acct != "" {
-				t.Fatalf("expected empty identity, got plat=%q acct=%q", plat, acct)
+			if identity.Key != nil {
+				t.Fatal("a rejected credential returned a key")
 			}
 		})
 	}
@@ -296,7 +300,7 @@ func TestForwardProxy_Authentication_RequiredInfoWithEmptyToken(t *testing.T) {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(raw))
 	}
 
-	fp := &ForwardProxy{token: "", events: NoOpEventEmitter{}}
+	fp := &ForwardProxy{token: "", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	tests := []struct {
 		name    string
 		auth    string
@@ -304,8 +308,8 @@ func TestForwardProxy_Authentication_RequiredInfoWithEmptyToken(t *testing.T) {
 	}{
 		{name: "missing", wantErr: ErrAuthRequired},
 		{name: "malformed", auth: "Basic %%%", wantErr: ErrAuthRequired},
-		{name: "empty", auth: rawCredential(":"), wantErr: ErrAuthRequired},
-		{name: "identity", auth: rawCredential("platform:account")},
+		{name: "empty", auth: rawCredential(":"), wantErr: ErrAuthFailed},
+		{name: "identity", auth: rawCredential("platform:account"), wantErr: ErrAuthFailed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -322,24 +326,19 @@ func TestForwardProxy_Authentication_RequiredInfoWithEmptyToken(t *testing.T) {
 	}
 }
 
-func TestForwardProxy_Authentication_Disabled_AllowsTwoFieldIdentity(t *testing.T) {
-	fp := &ForwardProxy{token: "", events: NoOpEventEmitter{}}
+func TestForwardProxy_Authentication_DisabledRejectsTwoFieldIdentity(t *testing.T) {
+	fp := &ForwardProxy{token: "", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("plat", "acct"))
 
-	identity, err := fp.authenticate(req)
-	plat, acct := identity.PlatformName, identity.Account
-	if err != nil {
-		t.Fatalf("unexpected auth error: %v", err)
-	}
-	if plat != "plat" || acct != "acct" {
-		t.Fatalf("got plat=%q acct=%q, want plat=%q acct=%q", plat, acct, "plat", "acct")
+	if _, err := fp.authenticate(req); err != ErrAuthFailed {
+		t.Fatalf("authenticate error = %v, want ErrAuthFailed", err)
 	}
 }
 
 func TestForwardProxy_Authentication_BasicSchemeCaseInsensitive(t *testing.T) {
-	fp := &ForwardProxy{token: "tok", events: NoOpEventEmitter{}}
-	credential := base64.StdEncoding.EncodeToString([]byte("plat.acct:tok"))
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	credential := base64.StdEncoding.EncodeToString([]byte("plat.acct:" + testCredential))
 
 	tests := []string{
 		"basic " + credential,
@@ -367,9 +366,9 @@ func TestForwardProxy_Authentication_V1(t *testing.T) {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(raw))
 	}
 
-	fp := &ForwardProxy{token: "tok", events: NoOpEventEmitter{}}
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
-	req.Header.Set("Proxy-Authorization", rawCredential("plat.user:tok"))
+	req.Header.Set("Proxy-Authorization", rawCredential("plat.user:"+testCredential))
 
 	identity, err := fp.authenticate(req)
 	plat, acct := identity.PlatformName, identity.Account
@@ -382,7 +381,7 @@ func TestForwardProxy_Authentication_V1(t *testing.T) {
 }
 
 func TestForwardProxy_Authentication_V1RejectsTokenFirstCredentialShape(t *testing.T) {
-	fp := &ForwardProxy{token: "tok", events: NoOpEventEmitter{}}
+	fp := &ForwardProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("tok", "plat:acct"))
 
@@ -392,22 +391,17 @@ func TestForwardProxy_Authentication_V1RejectsTokenFirstCredentialShape(t *testi
 	}
 }
 
-func TestForwardProxy_Authentication_V1_NoProxyTokenStillAllowsOptionalIdentity(t *testing.T) {
+func TestForwardProxy_Authentication_V1_RejectsNonKeyWithoutProxyToken(t *testing.T) {
 	rawCredential := func(raw string) string {
 		return "Basic " + base64.StdEncoding.EncodeToString([]byte(raw))
 	}
 
-	fp := &ForwardProxy{token: "", events: NoOpEventEmitter{}}
+	fp := &ForwardProxy{token: "", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", rawCredential("my-platform.account-a:any-token"))
 
-	identity, err := fp.authenticate(req)
-	plat, acct := identity.PlatformName, identity.Account
-	if err != nil {
-		t.Fatalf("unexpected auth error: %v", err)
-	}
-	if plat != "my-platform" || acct != "account-a" {
-		t.Fatalf("got plat=%q acct=%q, want plat=%q acct=%q", plat, acct, "my-platform", "account-a")
+	if _, err := fp.authenticate(req); err != ErrAuthFailed {
+		t.Fatalf("authenticate error = %v, want ErrAuthFailed", err)
 	}
 }
 
@@ -510,10 +504,12 @@ func TestForwardProxy_AuthAndSetup(t *testing.T) {
 
 	// Test authentication parsing and dependency wiring (not full ServeHTTP).
 	fp := &ForwardProxy{
-		token:  "tok",
-		pool:   pool,
-		health: health,
-		events: NoOpEventEmitter{},
+		token: "tok",
+
+		accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
+		pool:       pool,
+		health:     health,
+		events:     NoOpEventEmitter{},
 	}
 
 	req := httptest.NewRequest("GET", upstream.URL, nil)
@@ -575,16 +571,24 @@ func TestIsValidHost(t *testing.T) {
 	}{
 		{"example.com", true},
 		{"example.com:443", true},
+		{"example.com:0", true},
+		{"example.com:", false},
+		{"example.com:65536", false},
+		{"example.com:99999", false},
 		{"192.168.1.1", true},
 		{"192.168.1.1:8080", true},
 		{"[::1]", true},
 		{"[::1]:443", true},
+		{"[::1]:", false},
+		{"[::1]:65536", false},
 		{"", false},
 		{"host with spaces", false},
 		{":443", false},
 		{"host/path", false},
 		{"user@example.com", false},
 		{"2001:db8::1", false},
+		{".", false},
+		{"..", false},
 	}
 	for _, tt := range tests {
 		got := isValidHost(tt.host)
@@ -595,8 +599,8 @@ func TestIsValidHost(t *testing.T) {
 }
 
 func TestReverseParsePath_InvalidHostUserinfo(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	_, err := rp.parsePath("/tok/plat:acct/https/user@example.com/path", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	_, err := rp.parsePath("/"+testCredential+"/plat:acct/https/user@example.com/path", netip.Addr{})
 	if err != ErrInvalidHost {
 		t.Fatalf("expected INVALID_HOST for userinfo host, got %v", err)
 	}
@@ -651,9 +655,9 @@ func TestMapRouteError(t *testing.T) {
 // --- Reverse proxy path parsing tests ---
 
 func TestReverseParsePath_Valid(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 
-	parsed, err := rp.parsePath("/tok/myplat:acct/https/example.com/path/to/resource", netip.Addr{})
+	parsed, err := rp.parsePath("/"+testCredential+"/myplat:acct/https/example.com/path/to/resource", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -675,71 +679,94 @@ func TestReverseParsePath_Valid(t *testing.T) {
 }
 
 func TestReverseParsePath_TokenMismatch(t *testing.T) {
-	rp := &ReverseProxy{token: "correct", events: NoOpEventEmitter{}}
+	rp := &ReverseProxy{token: "correct", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	_, err := rp.parsePath("/wrong/plat:acct/https/example.com/", netip.Addr{})
 	if err != ErrAuthFailed {
 		t.Fatalf("expected AUTH_FAILED, got %v", err)
 	}
 }
 
-func TestReverseParsePath_TokenIgnoredWhenProxyTokenEmpty(t *testing.T) {
-	rp := &ReverseProxy{token: "", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/any-value/plat:acct/https/example.com/path", netip.Addr{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if parsed.PlatformName != "plat" || parsed.Account != "acct" {
-		t.Fatalf("unexpected parsed identity: plat=%q acct=%q", parsed.PlatformName, parsed.Account)
+func TestReverseParsePath_RejectsNonKeyWhenProxyTokenEmpty(t *testing.T) {
+	rp := &ReverseProxy{token: "", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	if _, err := rp.parsePath("/any-value/plat:acct/https/example.com/path", netip.Addr{}); err != ErrAuthFailed {
+		t.Fatalf("got %v, want ErrAuthFailed", err)
 	}
 }
 
-func TestReverseParsePath_EmptyAuthSegmentAllowedWhenProxyTokenEmpty(t *testing.T) {
-	rp := &ReverseProxy{token: "", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("//plat:acct/https/example.com/path", netip.Addr{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if parsed.PlatformName != "plat" || parsed.Account != "acct" {
-		t.Fatalf("unexpected parsed identity: plat=%q acct=%q", parsed.PlatformName, parsed.Account)
+func TestReverseParsePath_RejectsEmptyAuthSegmentWhenProxyTokenEmpty(t *testing.T) {
+	rp := &ReverseProxy{token: "", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	if _, err := rp.parsePath("//plat:acct/https/example.com/path", netip.Addr{}); err != ErrAuthFailed {
+		t.Fatalf("got %v, want ErrAuthFailed", err)
 	}
 }
 
 func TestReverseParsePath_TooFewSegments(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	_, err := rp.parsePath("/tok/plat", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	_, err := rp.parsePath("/"+testCredential+"/plat", netip.Addr{})
 	if err != ErrURLParseError {
 		t.Fatalf("expected URL_PARSE_ERROR, got %v", err)
 	}
 }
 
 func TestReverseParsePath_InvalidProtocol(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	_, err := rp.parsePath("/tok/plat:acct/ftp/example.com/", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	_, err := rp.parsePath("/"+testCredential+"/plat:acct/ftp/example.com/", netip.Addr{})
 	if err != ErrInvalidProtocol {
 		t.Fatalf("expected INVALID_PROTOCOL, got %v", err)
 	}
 }
 
 func TestReverseParsePath_InvalidHost(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	var err *ProxyError
 
 	// Host with spaces.
-	_, err = rp.parsePath("/tok/plat:acct/https/host with space/path", netip.Addr{})
+	_, err = rp.parsePath("/"+testCredential+"/plat:acct/https/host with space/path", netip.Addr{})
 	if err != ErrInvalidHost {
 		t.Fatalf("expected INVALID_HOST for host with space, got %v", err)
 	}
 
 	// Percent-encoded host spaces are decoded before host validation.
-	_, err = rp.parsePath("/tok/plat:acct/https/host%20with%20space/path", netip.Addr{})
+	_, err = rp.parsePath("/"+testCredential+"/plat:acct/https/host%20with%20space/path", netip.Addr{})
 	if err != ErrInvalidHost {
 		t.Fatalf("expected INVALID_HOST for escaped host with space, got %v", err)
 	}
 }
 
+func TestReverseParsePath_RejectsAmbiguousRouteSyntax(t *testing.T) {
+	rp := &ReverseProxy{accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "empty identity from double slash", path: "/" + testCredential + "//https/example.com/path"},
+		{name: "literal dot identity", path: "/" + testCredential + "/./https/example.com/path"},
+		{name: "encoded dot dot identity", path: "/" + testCredential + "/%2e%2e/https/example.com/path"},
+		{name: "dot segment in upstream path", path: "/" + testCredential + "/plat:acct/https/example.com/a/../b"},
+		{name: "encoded dot segment in upstream path", path: "/" + testCredential + "/plat:acct/https/example.com/a/%2e%2e/b"},
+		{name: "double slash in upstream path", path: "/" + testCredential + "/plat:acct/https/example.com/a//b"},
+		{name: "encoded nul in upstream path", path: "/" + testCredential + "/plat:acct/https/example.com/a%00b"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := rp.parsePath(tt.path, netip.Addr{}); err != ErrURLParseError {
+				t.Fatalf("parsePath(%q) error = %v, want ErrURLParseError", tt.path, err)
+			}
+		})
+	}
+}
+
+func TestBuildReverseTargetURL_RejectsFragmentLikeRawQuery(t *testing.T) {
+	parsed := &parsedPath{Protocol: "https", Host: "example.com", Path: "resource"}
+	if _, err := buildReverseTargetURL(parsed, "visible=1#hidden=2"); err != ErrURLParseError {
+		t.Fatalf("error = %v, want ErrURLParseError", err)
+	}
+}
+
 func TestReverseParsePath_EmptyPlatform(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/tok/:acct/https/example.com/path", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	parsed, err := rp.parsePath("/"+testCredential+"/:acct/https/example.com/path", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -750,8 +777,8 @@ func TestReverseParsePath_EmptyPlatform(t *testing.T) {
 }
 
 func TestReverseParsePath_NoAccount(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/tok/myplat:/https/example.com/path", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	parsed, err := rp.parsePath("/"+testCredential+"/myplat:/https/example.com/path", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -761,8 +788,8 @@ func TestReverseParsePath_NoAccount(t *testing.T) {
 }
 
 func TestReverseParsePath_V1_AcceptsIdentityWithoutColon(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/tok/myplat/https/example.com/path", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	parsed, err := rp.parsePath("/"+testCredential+"/myplat/https/example.com/path", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -772,8 +799,8 @@ func TestReverseParsePath_V1_AcceptsIdentityWithoutColon(t *testing.T) {
 }
 
 func TestReverseParsePath_PreservesEscapedPathForUpstream(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/tok/myplat:acct/https/example.com/v1/users/team%2Fa/profile", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	parsed, err := rp.parsePath("/"+testCredential+"/myplat:acct/https/example.com/v1/users/team%2Fa/profile", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -805,6 +832,8 @@ func TestResolveDefaultPlatform(t *testing.T) {
 
 	rp := &ReverseProxy{
 		token: "tok",
+
+		accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		platLook: &mockPlatformLookup{
 			platforms: map[string]*platform.Platform{
 				platform.DefaultPlatformID: defaultPlat,
@@ -1072,6 +1101,8 @@ func TestReverseProxy_AccountRejection_EmptyPlatform(t *testing.T) {
 
 	rp := &ReverseProxy{
 		token: "tok",
+
+		accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		platLook: &mockPlatformLookup{
 			platforms: map[string]*platform.Platform{
 				platform.DefaultPlatformID: defaultPlat,
@@ -1082,7 +1113,7 @@ func TestReverseProxy_AccountRejection_EmptyPlatform(t *testing.T) {
 	}
 
 	// Path: /tok/:/https/example.com/path — empty platform, no account.
-	req := httptest.NewRequest("GET", "/tok/:/https/example.com/path", nil)
+	req := httptest.NewRequest("GET", "/"+testCredential+"/:/https/example.com/path", nil)
 	w := httptest.NewRecorder()
 	rp.ServeHTTP(w, req)
 
@@ -1095,24 +1126,24 @@ func TestReverseProxy_AccountRejection_EmptyPlatform(t *testing.T) {
 }
 
 func TestReverseProxy_HostValidation(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 
 	// Test via parsePath directly — host with invalid characters.
-	_, err := rp.parsePath("/tok/plat:acct/https/host with space/path", netip.Addr{})
+	_, err := rp.parsePath("/"+testCredential+"/plat:acct/https/host with space/path", netip.Addr{})
 	if err != ErrInvalidHost {
 		t.Fatalf("expected INVALID_HOST for host with space, got %v", err)
 	}
 
 	// Empty host in port-only form.
-	_, err = rp.parsePath("/tok/plat:acct/https/:443/path", netip.Addr{})
+	_, err = rp.parsePath("/"+testCredential+"/plat:acct/https/:443/path", netip.Addr{})
 	if err != ErrInvalidHost {
 		t.Fatalf("expected INVALID_HOST for :443, got %v", err)
 	}
 }
 
 func TestReverseProxy_FullPath_HostWithPort(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/tok/plat:acct/https/example.com:8443/api/v1", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	parsed, err := rp.parsePath("/"+testCredential+"/plat:acct/https/example.com:8443/api/v1", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1134,8 +1165,8 @@ func TestRouteResult_EgressIP(t *testing.T) {
 }
 
 func TestReverseParsePath_ProtocolCaseInsensitive(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	parsed, err := rp.parsePath("/tok/plat:acct/HTTPS/example.com/path", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	parsed, err := rp.parsePath("/"+testCredential+"/plat:acct/HTTPS/example.com/path", netip.Addr{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1173,6 +1204,8 @@ func TestAccountExtraction_InReverseProxy(t *testing.T) {
 	// to extract accounts from headers.
 	rp := &ReverseProxy{
 		token: "tok",
+
+		accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		platLook: &mockPlatformLookup{
 			platformNames: map[string]*platform.Platform{
 				"plat": {ID: "p1", Name: "plat", ReverseProxyMissAction: "TREAT_AS_EMPTY"},
@@ -1305,7 +1338,7 @@ func TestReverseProxy_AccountExtraction_WithMatcher(t *testing.T) {
 }
 
 func TestReverseParsePath_EmptyPath(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
 	_, err := rp.parsePath("", netip.Addr{})
 	if err != ErrAuthFailed {
 		t.Fatalf("expected AUTH_FAILED for empty path, got %v", err)
@@ -1313,8 +1346,8 @@ func TestReverseParsePath_EmptyPath(t *testing.T) {
 }
 
 func TestReverseParsePath_OnlyToken(t *testing.T) {
-	rp := &ReverseProxy{token: "tok", events: NoOpEventEmitter{}}
-	_, err := rp.parsePath("/tok", netip.Addr{})
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: NoOpEventEmitter{}}
+	_, err := rp.parsePath("/"+testCredential, netip.Addr{})
 	if err != ErrURLParseError {
 		t.Fatalf("expected URL_PARSE_ERROR for path with only token, got %v", err)
 	}
@@ -1324,13 +1357,15 @@ func TestReverseProxy_ParseError_EmitsNoEvents(t *testing.T) {
 	emitter := newMockEventEmitter()
 	rp := &ReverseProxy{
 		token: "tok",
+
+		accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		events: ConfigAwareEventEmitter{
 			Base:                         emitter,
 			RequestLogEnabled:            func() bool { return true },
 			ReverseProxyLogDetailEnabled: func() bool { return true },
 		},
 	}
-	req := httptest.NewRequest("GET", "/tok", nil)
+	req := httptest.NewRequest("GET", "/"+testCredential, nil)
 	req.Header.Set("X-Req", "capture-me")
 	w := httptest.NewRecorder()
 
@@ -1355,8 +1390,8 @@ func TestReverseProxy_ParseError_EmitsNoEvents(t *testing.T) {
 
 func TestReverseProxy_ParseError_DefaultNoEvents(t *testing.T) {
 	emitter := newMockEventEmitter()
-	rp := &ReverseProxy{token: "tok", events: emitter}
-	req := httptest.NewRequest("GET", "/tok", nil)
+	rp := &ReverseProxy{token: "tok", accessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()}, events: emitter}
+	req := httptest.NewRequest("GET", "/"+testCredential, nil)
 	req.Header.Set("X-Req", "should-not-capture")
 	w := httptest.NewRecorder()
 

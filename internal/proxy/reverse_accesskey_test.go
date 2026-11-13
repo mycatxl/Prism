@@ -6,8 +6,7 @@ import (
 	"prism/internal/keys"
 )
 
-// The transitional contract on the reverse proxy: the first path segment
-// carries either an access key or the global proxy token.
+// The first path segment must carry a verified AccessKey.
 func TestReverseParsePath_AcceptsAnAccessKey(t *testing.T) {
 	fx := newKeyFixture(t)
 	rp := &ReverseProxy{
@@ -31,7 +30,7 @@ func TestReverseParsePath_AcceptsAnAccessKey(t *testing.T) {
 	}
 }
 
-func TestReverseParsePath_StillAcceptsTheGlobalToken(t *testing.T) {
+func TestReverseParsePath_RejectsTheGlobalToken(t *testing.T) {
 	fx := newKeyFixture(t)
 	rp := &ReverseProxy{
 		token:      "global-token",
@@ -39,15 +38,8 @@ func TestReverseParsePath_StillAcceptsTheGlobalToken(t *testing.T) {
 		events:     NoOpEventEmitter{},
 	}
 
-	parsed, err := rp.parsePath("/global-token/myplat:acct/https/example.com/path", testClientAddr)
-	if err != nil {
-		t.Fatalf("the global token was refused: %v", err)
-	}
-	if parsed.Key != nil {
-		t.Fatal("the global-token path must not carry a key")
-	}
-	if parsed.PlatformName != "myplat" || parsed.Account != "acct" {
-		t.Fatalf("got plat=%q acct=%q", parsed.PlatformName, parsed.Account)
+	if _, err := rp.parsePath("/global-token/myplat:acct/https/example.com/path", testClientAddr); err != ErrAuthFailed {
+		t.Fatalf("the global token produced %v, want ErrAuthFailed", err)
 	}
 }
 
@@ -99,9 +91,8 @@ func TestReverseParsePath_RejectsBothWhenNeitherMatches(t *testing.T) {
 	}
 }
 
-// With authentication disabled the first segment is ignored, and a key in it is
-// still resolved rather than skipped.
-func TestReverseParsePath_AcceptsAKeyWhenAuthenticationIsDisabled(t *testing.T) {
+// A valid AccessKey is required even when no endpoint policy is supplied.
+func TestReverseParsePath_AcceptsAKeyWithoutEndpointPolicy(t *testing.T) {
 	fx := newKeyFixture(t)
 	rp := &ReverseProxy{
 		token:      "",

@@ -102,8 +102,29 @@ func (s *ControlPlaneService) GetLease(platformID, userID, account string) (*Lea
 	return &resp, nil
 }
 
-// InheritLeaseByPlatformName copies a valid parent lease onto newAccount.
+// InheritLeaseByPlatformName copies a valid single-tenant parent lease onto
+// newAccount. It is retained for the administrator/transitional path, where an
+// empty owner means the global lease. Tenant credentials must use
+// InheritLeaseByPlatformNameForUser so a key cannot read or overwrite another
+// user's lease with the same account name.
 func (s *ControlPlaneService) InheritLeaseByPlatformName(platformName, parentAccount, newAccount string) error {
+	return s.inheritLeaseByPlatformName("", platformName, parentAccount, newAccount)
+}
+
+// InheritLeaseByPlatformNameForUser copies a valid parent lease belonging to
+// userID onto newAccount under that same owner. A token action authenticates a
+// proxy access key, so both the lookup and the write must carry the key owner;
+// otherwise every tenant key could act on the legacy global lease (or collide
+// with another tenant that uses the same account name).
+func (s *ControlPlaneService) InheritLeaseByPlatformNameForUser(userID, platformName, parentAccount, newAccount string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return invalidArg("user_id: must be non-empty")
+	}
+	return s.inheritLeaseByPlatformName(userID, platformName, parentAccount, newAccount)
+}
+
+func (s *ControlPlaneService) inheritLeaseByPlatformName(userID, platformName, parentAccount, newAccount string) error {
 	platformName = strings.TrimSpace(platformName)
 	if platformName == "" {
 		return invalidArg("platform: must be non-empty")
@@ -127,6 +148,7 @@ func (s *ControlPlaneService) InheritLeaseByPlatformName(platformName, parentAcc
 
 	parentLease := s.Router.ReadLease(model.LeaseKey{
 		PlatformID: plat.ID,
+		UserID:     userID,
 		Account:    parentAccount,
 	})
 	nowNs := time.Now().UnixNano()
@@ -135,6 +157,7 @@ func (s *ControlPlaneService) InheritLeaseByPlatformName(platformName, parentAcc
 	}
 
 	next := *parentLease
+	next.UserID = userID
 	next.Account = newAccount
 	if err := s.Router.UpsertLease(next); err != nil {
 		return internal("inherit lease", err)

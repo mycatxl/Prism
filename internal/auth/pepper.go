@@ -61,6 +61,9 @@ func NewPepper(raw []byte) (*Pepper, error) {
 	if len(raw) == 0 {
 		return nil, ErrPepperMissing
 	}
+	if len(raw) != pepperLength {
+		return nil, fmt.Errorf("auth: key pepper must be exactly %d bytes", pepperLength)
+	}
 	keyHMAC, err := deriveSubkey(raw, hkdfInfoKeyHMAC)
 	if err != nil {
 		return nil, err
@@ -99,10 +102,15 @@ func (p *Pepper) HashSecret(secret string) []byte {
 
 // VerifySecret compares secret against a stored hash in constant time.
 func (p *Pepper) VerifySecret(stored []byte, secret string) bool {
-	if p == nil || len(stored) == 0 {
+	if p == nil {
 		return false
 	}
-	return subtle.ConstantTimeCompare(p.HashSecret(secret), stored) == 1
+	got := p.HashSecret(secret)
+	var want [sha256.Size]byte
+	copy(want[:], stored)
+	lengthOK := subtle.ConstantTimeEq(int32(len(stored)), sha256.Size)
+	secretOK := subtle.ConstantTimeEq(int32(len(secret)), 0) ^ 1
+	return lengthOK&secretOK&subtle.ConstantTimeCompare(got, want[:]) == 1
 }
 
 // TOTPKey returns the subkey used to encrypt TOTP secrets. It is a copy: the
@@ -129,18 +137,32 @@ func (p *Pepper) Raw() []byte {
 // A missing pepper is reported as ErrPepperMissing so the caller can tell it
 // apart from a read failure.
 func LoadPepper(stateDir string) (*Pepper, error) {
-	if raw := strings.TrimSpace(os.Getenv(PepperEnvVar)); raw != "" {
-		return NewPepper([]byte(raw))
+	if value := strings.TrimSpace(os.Getenv(PepperEnvVar)); value != "" {
+		raw, err := decodePepper(value)
+		if err != nil {
+			return nil, err
+		}
+		return NewPepper(raw)
 	}
 	if strings.TrimSpace(stateDir) == "" {
 		return nil, ErrPepperMissing
 	}
 
 	path := filepath.Join(stateDir, PepperFileName)
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrPepperMissing
 	}
+	if err != nil {
+		return nil, fmt.Errorf("auth: inspect pepper file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("auth: pepper file must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return nil, fmt.Errorf("auth: pepper file permissions must not grant group or other access")
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("auth: read pepper file: %w", err)
 	}
@@ -162,8 +184,8 @@ func WritePepperFile(stateDir string, raw []byte) (string, error) {
 	if strings.TrimSpace(stateDir) == "" {
 		return "", errors.New("auth: state directory must not be empty")
 	}
-	if len(raw) == 0 {
-		return "", errors.New("auth: pepper must not be empty")
+	if len(raw) != pepperLength {
+		return "", fmt.Errorf("auth: pepper must be exactly %d bytes", pepperLength)
 	}
 	path := filepath.Join(stateDir, PepperFileName)
 
@@ -191,17 +213,29 @@ func WritePepperFile(stateDir string, raw []byte) (string, error) {
 
 // encodePepper renders the pepper as base64 text.
 func encodePepper(raw []byte) string {
-	return base64.RawStdEncoding.EncodeToString(raw)
+	return "base64:" + base64.RawStdEncoding.EncodeToString(raw)
 }
 
-// decodePepper accepts either a base64 pepper or a plain-text one.
+// decodePepper accepts the explicit base64 format written by Prism, a legacy
+// unprefixed base64 value that decodes to the generated size, or exactly 32 raw
+// bytes. The same parser is used for files and the environment so moving a
+// value between secret providers cannot silently change the effective key.
 func decodePepper(value string) ([]byte, error) {
 	if value == "" {
 		return nil, ErrPepperMissing
 	}
-	if raw, err := base64.RawStdEncoding.DecodeString(value); err == nil && len(raw) > 0 {
+	if strings.HasPrefix(value, "base64:") {
+		raw, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(value, "base64:"))
+		if err != nil || len(raw) != pepperLength {
+			return nil, fmt.Errorf("auth: invalid base64 key pepper")
+		}
 		return raw, nil
 	}
-	// Not base64: treat the file content as the pepper itself.
-	return []byte(value), nil
+	if len(value) == pepperLength {
+		return []byte(value), nil
+	}
+	if raw, err := base64.RawStdEncoding.DecodeString(value); err == nil && len(raw) == pepperLength {
+		return raw, nil
+	}
+	return nil, fmt.Errorf("auth: key pepper must be exactly %d bytes or base64-encoded", pepperLength)
 }

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 
 	"prism/internal/model"
 )
@@ -44,13 +45,26 @@ func (r *StateRepo) ApplyBalanceDelta(entry model.BalanceEntry) (model.BalanceEn
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	entry, err = applyBalanceDeltaTx(tx, entry)
+	if err != nil {
+		return model.BalanceEntry{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return model.BalanceEntry{}, fmt.Errorf("commit balance change: %w", err)
+	}
+	return entry, nil
+}
+
+// applyBalanceDeltaTx lets payment settlement share the ledger transaction.
+func applyBalanceDeltaTx(tx *sql.Tx, entry model.BalanceEntry) (model.BalanceEntry, error) {
 	current, err := balanceForUpdate(tx, entry.UserID)
 	if err != nil {
 		return model.BalanceEntry{}, err
 	}
-	after := current + entry.DeltaMicro
-	if after < 0 {
-		return model.BalanceEntry{}, ErrInsufficientBalance
+	after, err := checkedBalanceAfter(current, entry.DeltaMicro)
+	if err != nil {
+		return model.BalanceEntry{}, err
 	}
 
 	if _, err := tx.Exec(`
@@ -77,9 +91,6 @@ func (r *StateRepo) ApplyBalanceDelta(entry model.BalanceEntry) (model.BalanceEn
 		return model.BalanceEntry{}, fmt.Errorf("write ledger: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return model.BalanceEntry{}, fmt.Errorf("commit balance change: %w", err)
-	}
 	return entry, nil
 }
 
@@ -164,6 +175,26 @@ func balanceForUpdate(tx *sql.Tx, userID string) (int64, error) {
 		return 0, fmt.Errorf("read balance for update: %w", err)
 	}
 	return balance, nil
+}
+
+// checkedBalanceAfter computes a balance movement without allowing signed
+// arithmetic to wrap. A debit that exceeds the current balance is the normal
+// insufficient-funds result; a positive credit that cannot fit is a distinct
+// integrity failure.
+func checkedBalanceAfter(current, delta int64) (int64, error) {
+	if current < 0 {
+		return 0, ErrInsufficientBalance
+	}
+	if delta < 0 {
+		if delta == math.MinInt64 || current < -delta {
+			return 0, ErrInsufficientBalance
+		}
+		return current + delta, nil
+	}
+	if delta > math.MaxInt64-current {
+		return 0, ErrBalanceOverflow
+	}
+	return current + delta, nil
 }
 
 func scanBalanceEntry(row interface{ Scan(...any) error }) (model.BalanceEntry, error) {

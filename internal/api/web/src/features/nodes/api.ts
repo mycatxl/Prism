@@ -1,4 +1,5 @@
 import { ApiError, apiRequest, type ApiErrorBody } from "../../lib/api-client";
+import { nodeTagFromSubscription } from "./detail/nodeMeta";
 import type {
   EgressProbeResult,
   LatencyProbeResult,
@@ -78,7 +79,8 @@ function normalizeNode(raw: ApiNodeSummary): NodeSummary {
     ...rest,
     enabled: raw.enabled !== false,
     display_tag: raw.display_tag || "",
-    tags: Array.isArray(raw.tags) ? raw.tags : [],
+    tags: Array.isArray(raw.tags) ? raw.tags.filter((tag) => tag && typeof tag.tag === "string")
+      .map((tag) => ({ ...tag, tag: nodeTagFromSubscription(tag.tag, tag.subscription_name) })) : [],
     last_error: raw.last_error || "",
     circuit_open_since: raw.circuit_open_since || "",
     egress_ip: raw.egress_ip || "",
@@ -129,12 +131,15 @@ function appendNodeFilters(query: URLSearchParams, filters: NodeListQuery): void
   appendIfNotEmpty("quality_state", filters.quality_state);
   appendIfNotEmpty("risk_grade", filters.risk_grade);
   appendIfNotEmpty("purity_band", filters.purity_band);
+  appendIfNotEmpty("purity_state", filters.purity_state);
+  appendIfNotEmpty("purity_reason", filters.purity_reason);
   appendIfNotEmpty("protocol", filters.protocol);
   appendIfNotEmpty("subscription_id", filters.subscription_id);
   appendIfNotEmpty("tag_keyword", filters.tag_keyword);
   appendIfNotEmpty("region", filters.region?.toLowerCase());
   appendIfNotEmpty("egress_ip", filters.egress_ip);
-  appendIfNotEmpty("probed_since", filters.probed_since);
+  // datetime-local carries browser-local time; the API requires an instant.
+  if (filters.probed_since) query.set("probed_since", new Date(filters.probed_since).toISOString());
 
  // intel filters.
   if (filters.purity_min !== undefined) {

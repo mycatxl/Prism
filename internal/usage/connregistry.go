@@ -176,7 +176,7 @@ func (r *ConnRegistry) Keys() []string {
 	if r == nil {
 		return nil
 	}
-	keys := make([]string, 0, r.conns.Size())
+	keys := make([]string, 0, max(0, r.conns.Size()))
 	r.conns.Range(func(keyID string, _ *connSet) bool {
 		keys = append(keys, keyID)
 		return true

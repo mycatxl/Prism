@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -40,12 +41,23 @@ func TestLimiter_AllowsAKeyWithinItsLimits(t *testing.T) {
 	}
 }
 
-// The transitional path has no plan and therefore no quota: refusing it would
-// break every deployment that has not been migrated to keys yet.
-func TestLimiter_AllowsTheKeylessPath(t *testing.T) {
+// A request without an AccessKey is never admitted, even when it bypasses
+// quota construction. This is the defense-in-depth boundary for unkeyed
+// callers.
+func TestLimiter_RefusesTheKeylessPath(t *testing.T) {
 	limiter := NewLimiter(NewCounters())
-	if got := limiter.Check(nil, 1000); !got.Allowed {
-		t.Fatalf("the keyless path was refused: %+v", got)
+	if got := limiter.Check(nil, 1000); got.Allowed || got.Reason != ReasonDisabled {
+		t.Fatalf("the keyless path decision = %+v, want disabled refusal", got)
+	}
+}
+
+func TestGate_RefusesTheKeylessPathEvenWithoutALimiter(t *testing.T) {
+	var gate *Gate
+	if allowed, reason := gate.Check(nil, 0); allowed || reason != ReasonDisabled {
+		t.Fatalf("nil gate decision = allowed=%v reason=%q, want disabled refusal", allowed, reason)
+	}
+	if allowed, reason := (&Gate{}).Check(nil, 0); allowed || reason != ReasonDisabled {
+		t.Fatalf("gate without limiter decision = allowed=%v reason=%q, want disabled refusal", allowed, reason)
 	}
 }
 
@@ -139,6 +151,23 @@ func TestLimiter_RolloverDoesNotReadThePreviousPeriodsBytes(t *testing.T) {
 	counters.Add(CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}, Delta{IngressBytes: 1000})
 	if got := limiter.Check(key, 0); got.Allowed {
 		t.Fatal("traffic moved in the new period did not count towards its limit")
+	}
+}
+
+func TestLimiter_FailsClosedUntilPersistedUsageIsSeeded(t *testing.T) {
+	counters := NewCounters()
+	counters.RequireSeed()
+	limiter := NewLimiter(counters)
+	key := quotaKey(t, "u-1", keys.PlanSnapshot{
+		TrafficBytes: 1000,
+		Status:       model.SubscriptionStatusActive,
+	})
+	if got := limiter.Check(key, 0); got.Allowed || got.Reason != ReasonTraffic {
+		t.Fatalf("unseeded finite quota decision = %+v, want traffic refusal", got)
+	}
+	counters.MarkSeedReady()
+	if got := limiter.Check(key, 0); !got.Allowed {
+		t.Fatalf("seeded empty quota decision = %+v, want allowed", got)
 	}
 }
 
@@ -339,6 +368,33 @@ func TestLimiter_ExpiryUsesTheInjectedClock(t *testing.T) {
 	if got.Reason != ReasonDisabled {
 		t.Fatalf("reason = %q, want %q", got.Reason, ReasonDisabled)
 	}
+}
+
+func TestLimiter_CheckAndSetNowAreConcurrentSafe(t *testing.T) {
+	limiter := NewLimiter(NewCounters())
+	key := quotaKey(t, "u-1", keys.PlanSnapshot{Status: model.SubscriptionStatusActive})
+
+	const workers = 16
+	const rounds = 500
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(seed int) {
+			defer wg.Done()
+			<-start
+			for j := 0; j < rounds; j++ {
+				if (seed+j)%3 == 0 {
+					now := int64(seed*rounds + j + 1)
+					limiter.SetNow(func() int64 { return now })
+					continue
+				}
+				_ = limiter.Check(key, 0)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
 }
 
 // A nil limiter or a nil counter set must not panic: the data plane holds one

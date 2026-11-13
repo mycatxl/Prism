@@ -62,9 +62,7 @@ test("the kit declares the control height it uses", () => {
    * hard-codes a step instead is the per-page decision the rule exists to
    * prevent, and it is invisible to every other gate.
    *
-   * `Select` used to be listed here. It is HeroUI's field now, sized from the
-   * same token in `design.css` (`.workspace-select__trigger`), so the source
-   * that used to carry the declaration no longer exists to assert against.
+   * Select is a Radix primitive sized from the same token in design.css.
    */
   for (const file of ["Button", "Input"]) {
     const source = read(`../src/components/ui/${file}.tsx`);
@@ -120,9 +118,7 @@ test("the pill shape is reserved for Badge", () => {
    * because this one fails with a message that says *why*, and it runs in the same
    * suite as the rest of the kit's invariants.
    *
-   * Stated over every component rather than over the one switch this used to
-   * guard: the switch is HeroUI's now, so the rule has to hold where the shapes
-   * are actually written.
+   * Stated over every component so the rule holds where shapes are written.
    */
   const offenders = tsxSources()
     .filter((path) => !path.endsWith("/ui/Badge.tsx"))
@@ -131,35 +127,33 @@ test("the pill shape is reserved for Badge", () => {
   assert.deepEqual(offenders, [], `only Badge may round fully, found: ${offenders.join(", ")}`);
 });
 
-test("HeroUI drawer content is owned by its backdrop overlay", () => {
+test("drawers use Radix Dialog portals with an overlay and content", () => {
   for (const relative of [
     "../src/components/control-plane/Primitives.tsx",
     "../src/components/ui/Sheet.tsx",
   ]) {
     const source = read(relative);
-    assert.doesNotMatch(source, /<HeroDrawer\.Backdrop[^>]*\/>/, `${relative}: an empty backdrop creates a second overlay that can outlive the drawer`);
-    assert.match(
-      source,
-      /<HeroDrawer\.Backdrop[^>]*>[\s\S]*?<HeroDrawer\.Content[\s\S]*?<\/HeroDrawer\.Content>[\s\S]*?<\/HeroDrawer\.Backdrop>/,
-      `${relative}: Drawer.Content must be nested inside Drawer.Backdrop`,
-    );
+    assert.match(source, /@radix-ui\/react-dialog/, `${relative}: must import Radix Dialog`);
+    assert.match(source, /<Dialog\.Portal>/, `${relative}: overlay and content must render in a portal`);
+    assert.match(source, /<Dialog\.Overlay\b/, `${relative}: dialog must render a backdrop`);
+    assert.match(source, /<Dialog\.Content\b/, `${relative}: dialog must render focus-managed content`);
   }
 });
 
-test("Sheet restores the opener through HeroUI overlay state and becomes a full-screen mobile work surface", () => {
+test("Sheet restores its opener around the Radix focus lifecycle and becomes a full-screen mobile work surface", () => {
   const source = read("../src/components/ui/Sheet.tsx");
   const styles = read("../src/styles/design.css");
 
   assert.match(source, /useRef<HTMLElement \| null>\(null\)/, "Sheet must retain the opener element");
-  assert.match(source, /const handleOpenAutoFocus = useCallback/, "Sheet must capture focus before opening");
-  assert.match(source, /const handleCloseAutoFocus = useCallback/, "Sheet must own focus restoration");
-  assert.match(source, /useEffect\(\(\) => \{[\s\S]*?handleOpenAutoFocus\(\);[\s\S]*?handleCloseAutoFocus\(\);/, "Sheet must restore focus when its open state changes");
+  assert.match(source, /onOpenAutoFocus=/, "Sheet must capture focus before Radix moves it");
+  assert.match(source, /onCloseAutoFocus=/, "Sheet must own controlled-dialog focus restoration");
   assert.match(source, /target\.focus\(\{ preventScroll: true \}\)/, "focus restoration must not jump the page");
-  assert.match(source, /<HeroDrawer state=\{state\}>/, "Sheet must use HeroUI drawer state");
+  assert.match(source, /<Dialog\.Root open=\{open\} onOpenChange=\{onOpenChange\}>/, "Sheet must give Radix control of the open state");
+  assert.match(source, /<Dialog\.Close\b/, "Sheet must expose a Radix close control");
   assert.doesNotMatch(source, /truncate text-base font-semibold/, "sheet titles must be allowed to wrap");
   assert.match(
     styles,
-    /@media \(max-width: 639\.98px\)[\s\S]*?\.workspace-sheet \{[\s\S]*?width: 100%;[\s\S]*?border-radius: 0;/,
+    /@media \(max-width: 760px\)[\s\S]*?\.workspace-sheet[\s\S]*?width: 100%;[\s\S]*?border-radius: 0;/,
     "small screens must use a full-screen sheet",
   );
 });

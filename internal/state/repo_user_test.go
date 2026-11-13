@@ -710,6 +710,54 @@ func TestStateRepo_UpsertUsageHourlySums(t *testing.T) {
 	}
 }
 
+func TestStateRepo_FlushUsageHourlyAndChargeIsAtomic(t *testing.T) {
+	repo := newTestStateRepo(t)
+	mustInsertUser(t, repo, "u-usage", "usage-user")
+	sub := model.UserSubscription{
+		ID: "s-usage", UserID: "u-usage", PlanSnapshotJSON: `{}`,
+		StartsAtNs: 1, ExpiresAtNs: 0, PeriodStartNs: 10,
+		PeriodUsedBytes: 4, Status: model.SubscriptionStatusActive,
+	}
+	if err := repo.UpsertUserSubscription(sub); err != nil {
+		t.Fatalf("UpsertUserSubscription: %v", err)
+	}
+	rows := []model.UsageRow{{KeyID: "k-usage", UserID: "u-usage", PlatformID: "p-1", TSNs: 20, IngressBytes: 100}}
+	results, err := repo.FlushUsageHourlyAndCharge(rows, []model.UsageCharge{{
+		Key: "u-usage-key", UserID: "u-usage", SubscriptionID: sub.ID,
+		PeriodStartNs: sub.PeriodStartNs, Bytes: 100,
+	}})
+	if err != nil {
+		t.Fatalf("FlushUsageHourlyAndCharge: %v", err)
+	}
+	if !results["u-usage-key"].Charged {
+		t.Fatalf("charge result = %+v, want charged", results["u-usage-key"])
+	}
+	var used int64
+	if err := repo.db.QueryRow("SELECT period_used_bytes FROM user_subscriptions WHERE id = ?", sub.ID).Scan(&used); err != nil {
+		t.Fatalf("read period usage: %v", err)
+	}
+	if used != 104 {
+		t.Fatalf("period usage = %d, want 104", used)
+	}
+
+	// An integer overflow in the period update must roll back the hourly row as
+	// well; otherwise a retry would see durable usage with an undercharged quota.
+	badRows := []model.UsageRow{{KeyID: "k-rollback", UserID: "u-usage", PlatformID: "p-1", TSNs: 21, IngressBytes: 7}}
+	if _, err := repo.FlushUsageHourlyAndCharge(badRows, []model.UsageCharge{{
+		Key: "rollback", UserID: "u-usage", SubscriptionID: sub.ID,
+		PeriodStartNs: sub.PeriodStartNs, Bytes: int64(^uint64(0) >> 1),
+	}}); err == nil {
+		t.Fatal("an overflowing period charge committed")
+	}
+	var rowsAfter int
+	if err := repo.db.QueryRow("SELECT COUNT(*) FROM usage_hourly WHERE key_id = 'k-rollback'").Scan(&rowsAfter); err != nil {
+		t.Fatalf("count rolled-back hourly rows: %v", err)
+	}
+	if rowsAfter != 0 {
+		t.Fatalf("atomic failure left %d hourly rows, want 0", rowsAfter)
+	}
+}
+
 func TestStateRepo_ListUsageByUserReadsBothTables(t *testing.T) {
 	repo := newTestStateRepo(t)
 	const day = int64(24 * time.Hour)
@@ -805,8 +853,8 @@ func TestStateRepo_SessionRoundTrip(t *testing.T) {
 	if _, err := repo.GetSession("hash-1"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetSession after delete: got %v, want ErrNotFound", err)
 	}
-	if err := repo.DeleteSession("hash-1"); !errors.Is(err, ErrNotFound) {
-		t.Errorf("DeleteSession twice: got %v, want ErrNotFound", err)
+	if err := repo.DeleteSession("hash-1"); err != nil {
+		t.Errorf("DeleteSession twice: got %v, want nil", err)
 	}
 }
 
@@ -968,7 +1016,7 @@ func TestStateRepo_UpdateUserSubscriptionTermsKeepsUsageCounters(t *testing.T) {
 
 	terms := sub
 	terms.Status = model.SubscriptionStatusSuspended
-	if err := repo.UpdateUserSubscriptionTerms(terms); err != nil {
+	if err := repo.UpdateUserSubscriptionTerms(terms, sub); err != nil {
 		t.Fatalf("UpdateUserSubscriptionTerms: %v", err)
 	}
 
@@ -986,7 +1034,7 @@ func TestStateRepo_UpdateUserSubscriptionTermsKeepsUsageCounters(t *testing.T) {
 		t.Errorf("period_start_ns: got %d, want %d", got.PeriodStartNs, periodStart)
 	}
 
-	if err := repo.UpdateUserSubscriptionTerms(model.UserSubscription{ID: "missing"}); !errors.Is(err, ErrNotFound) {
+	if err := repo.UpdateUserSubscriptionTerms(model.UserSubscription{ID: "missing"}, model.UserSubscription{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("terms of a missing subscription: got %v, want ErrNotFound", err)
 	}
 }
@@ -1021,7 +1069,7 @@ func TestStateRepo_UpdateUserSubscriptionTermsDoesNotClobberIncrement(t *testing
 	}
 
 	stale.Status = model.SubscriptionStatusExpired
-	if err := repo.UpdateUserSubscriptionTerms(stale); err != nil {
+	if err := repo.UpdateUserSubscriptionTerms(stale, sub); err != nil {
 		t.Fatalf("UpdateUserSubscriptionTerms: %v", err)
 	}
 

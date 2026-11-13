@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"net/netip"
 	"strings"
 
@@ -28,7 +29,12 @@ func (s *ControlPlaneService) ExportItem(summary NodeSummary) (export.Item, bool
 		return export.Item{}, false
 	}
 
+	filled := []NodeSummary{summary}
+	s.FillNodeIntelEgress(context.Background(), filled)
+	s.FillNodeQualityEvidence(context.Background(), filled)
+	facts := filled[0].Intel
 	item := export.Item{
+		Analysis:     &export.AnalysisFacts{Facts: facts.Facts, Signals: facts.Signals, EgressIPv4: facts.EgressIPv4, EgressIPv6: facts.EgressIPv6, Colo: facts.Colo, Country: facts.Country, City: facts.City, ASOrg: facts.ASOrg, ASN: facts.ASN, IPType: facts.IPType, Native: facts.Native, PurityScore: facts.PurityScore, PurityBand: facts.PurityBand, Confidence: facts.Confidence, Verdict: facts.Verdict, Flags: facts.Flags, Reasons: facts.Reasons, Checks: facts.Checks, AssessedAt: facts.AssessedAt},
 		Name:         s.exportDisplayName(summary),
 		Hash:         summary.NodeHash,
 		Subscription: s.ExportSubscriptionName(hash),

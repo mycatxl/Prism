@@ -7,6 +7,42 @@ import (
 	"prism/internal/model"
 )
 
+func TestSubscriptionReactivationIsAtomicWithStaleTerms(t *testing.T) {
+	repo := newTestStateRepo(t)
+	mustInsertUser(t, repo, "reactivate", "reactivate")
+	a := model.UserSubscription{ID: "a", UserID: "reactivate", PlanSnapshotJSON: "{}", Status: model.SubscriptionStatusActive}
+	b := model.UserSubscription{ID: "b", UserID: "reactivate", PlanSnapshotJSON: "{}", Status: model.SubscriptionStatusSuspended}
+	for _, sub := range []model.UserSubscription{a, b} {
+		if err := repo.UpsertUserSubscription(sub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	activeB := b
+	activeB.Status = model.SubscriptionStatusActive
+	if err := repo.ReactivateUserSubscription(activeB, b); err != nil {
+		t.Fatalf("reactivation must replace the active subscription atomically: %v", err)
+	}
+	// A second writer retained B's pre-activation terms. Its failed CAS must
+	// not expire B or leave the user without a subscription.
+	if err := repo.ReactivateUserSubscription(activeB, b); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale update: %v", err)
+	}
+	active, err := repo.GetActiveUserSubscription(a.UserID)
+	if err != nil || active.ID != b.ID {
+		t.Fatal("failed reactivation removed the active subscription")
+	}
+	// Nor may a stale update of a different row expire the current one.
+	staleA := a
+	staleA.Status = model.SubscriptionStatusSuspended
+	if err := repo.ReactivateUserSubscription(a, staleA); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale activation: %v", err)
+	}
+	active, err = repo.GetActiveUserSubscription(a.UserID)
+	if err != nil || active.ID != b.ID {
+		t.Fatal("failed activation expired another subscription")
+	}
+}
+
 // --- RevokeUserSubscription ---
 
 // A revoked subscription stays on the account. Deleting it was what made an
@@ -207,8 +243,9 @@ func TestUpsertUserSubscription_SecondActiveRowIsAConflict(t *testing.T) {
 	}
 
 	// Promoting it is a terms write, and it meets the same index.
+	expected := second
 	second.Status = model.SubscriptionStatusActive
-	if err := repo.UpdateUserSubscriptionTerms(second); !errors.Is(err, ErrConflict) {
+	if err := repo.UpdateUserSubscriptionTerms(second, expected); !errors.Is(err, ErrConflict) {
 		t.Fatalf("promoting a second row to active: got %v, want ErrConflict", err)
 	}
 }

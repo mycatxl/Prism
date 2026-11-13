@@ -181,6 +181,24 @@ func TestDirectDialGuard_CheckTarget(t *testing.T) {
 	})
 }
 
+func TestDirectDialGuard_CheckTargetBoundsStalledResolution(t *testing.T) {
+	guard := NewDirectDialGuard(true).
+		withLookupTimeout(25 * time.Millisecond).
+		withLookup(func(ctx context.Context, _ string) ([]netip.Addr, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+
+	started := time.Now()
+	err := guard.CheckTarget(context.Background(), "stalled.example:443")
+	if !errors.Is(err, errDirectDialUnresolvable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want fail-closed resolution deadline", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stalled resolution took %s, want a bounded return", elapsed)
+	}
+}
+
 // TestDirectDialGuard_DialTimeControlRefusesReboundAddress pins the dial-time
 // half of the policy: whatever the pre-dial check saw, the address that is
 // about to be connected to is validated again.
@@ -265,7 +283,9 @@ func TestForwardProxy_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fp := NewForwardProxy(ForwardProxyConfig{
-				ProxyToken:        "tok",
+				ProxyToken: "tok",
+
+				AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 				Events:            NoOpEventEmitter{},
 				ProxyBypassRules:  []string{"127.*"},
 				DirectDenyPrivate: tc.deny,
@@ -305,7 +325,9 @@ func TestForwardProxy_DirectDenyPrivateFailClosed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fp := NewForwardProxy(ForwardProxyConfig{
-				ProxyToken:        "tok",
+				ProxyToken: "tok",
+
+				AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 				Events:            NoOpEventEmitter{},
 				ProxyBypassRules:  []string{"bypass.test"},
 				DirectDenyPrivate: true,
@@ -331,7 +353,9 @@ func TestForwardProxy_DirectDenyPrivateFailClosed(t *testing.T) {
 // tunnel entrypoint.
 func TestForwardProxyConnect_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 	fp := NewForwardProxy(ForwardProxyConfig{
-		ProxyToken:        "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:            NoOpEventEmitter{},
 		ProxyBypassRules:  []string{"127.*"},
 		DirectDenyPrivate: true,
@@ -357,7 +381,9 @@ func TestForwardProxyConnect_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 // behaviour: with the switch off the tunnel is dialled, not refused.
 func TestForwardProxyConnect_DirectDenyPrivateControlsDisabled(t *testing.T) {
 	fp := NewForwardProxy(ForwardProxyConfig{
-		ProxyToken:       "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:       keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:           NoOpEventEmitter{},
 		ProxyBypassRules: []string{"127.*"},
 	})
@@ -382,7 +408,9 @@ func TestForwardProxyConnect_DirectDenyPrivateControlsDisabled(t *testing.T) {
 // entrypoint: the refusal is the RFC 1928 "not allowed by ruleset" reply.
 func TestSocks5Inbound_DirectDenyPrivateBlocksLocalDial(t *testing.T) {
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
-		ProxyToken:        "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:            NoOpEventEmitter{},
 		ProxyBypassRules:  []string{"127.*"},
 		DirectDenyPrivate: true,
@@ -430,7 +458,9 @@ func TestSocks5Inbound_DirectDenyPrivateDisabledDialsTarget(t *testing.T) {
 	}()
 
 	inbound := NewSocks5Inbound(Socks5InboundConfig{
-		ProxyToken:       "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:       keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:           NoOpEventEmitter{},
 		ProxyBypassRules: []string{"127.*"},
 	})
@@ -474,13 +504,15 @@ func TestReverseProxy_DirectDenyPrivateAddressClasses(t *testing.T) {
 	} {
 		t.Run(host, func(t *testing.T) {
 			rp := NewReverseProxy(ReverseProxyConfig{
-				ProxyToken:        "tok",
+				ProxyToken: "tok",
+
+				AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 				Events:            NoOpEventEmitter{},
 				ProxyBypassRules:  []string{"<local>", "*"},
 				DirectDenyPrivate: true,
 			})
 
-			path := fmt.Sprintf("/tok/plat:acct/http/%s/api/meta", host)
+			path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/meta", host)
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			w := httptest.NewRecorder()
 			rp.ServeHTTP(w, req)
@@ -500,14 +532,16 @@ func TestReverseProxy_DirectDenyPrivateAddressClasses(t *testing.T) {
 // of being handed to the transport, which would resolve it again.
 func TestReverseProxy_DirectDenyPrivateFailClosedOnResolution(t *testing.T) {
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:        "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Events:            NoOpEventEmitter{},
 		ProxyBypassRules:  []string{"rebind.test"},
 		DirectDenyPrivate: true,
 	})
 	rp.directGuard = rp.directGuard.withLookup(failingDirectLookup(&net.DNSError{Err: "no such host"}))
 
-	req := httptest.NewRequest(http.MethodGet, "/tok/plat:acct/http/rebind.test/api/meta", nil)
+	req := httptest.NewRequest(http.MethodGet, "/"+testCredential+"/plat:acct/http/rebind.test/api/meta", nil)
 	w := httptest.NewRecorder()
 	rp.ServeHTTP(w, req)
 

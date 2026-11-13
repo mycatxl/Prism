@@ -75,8 +75,11 @@ type Service struct {
 	// atomic because it is meant to be reported while the service is running.
 	dropped atomic.Uint64
 
-	stopCh chan struct{}
-	wg     sync.WaitGroup
+	stopCh    chan struct{}
+	loopDone  chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
+	wg        sync.WaitGroup
 }
 
 // ServiceConfig configures the request log service.
@@ -116,34 +119,46 @@ func NewService(cfg ServiceConfig) *Service {
 		retryBackoffMax:  defaultRetryBackoffMax,
 		maxFlushAttempts: defaultMaxFlushAttempts,
 		stopCh:           make(chan struct{}),
+		loopDone:         make(chan struct{}),
 	}
 }
 
 // Start launches the background flush goroutine.
 func (s *Service) Start() {
-	if s.repo != nil {
-		s.repo.setReadBarrier(s.FlushNow)
-	}
-	s.wg.Add(1)
-	// flushLoop owns its wg.Done; the wrapper only adds the panic boundary.
-	safego.Go("the request log flush loop", s.flushLoop)
+	s.startOnce.Do(func() {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+		}
+		if s.repo != nil {
+			s.repo.setReadBarrier(s.FlushNow)
+		}
+		s.wg.Add(1)
+		// flushLoop owns its wg.Done; the wrapper only adds the panic boundary.
+		safego.Go("the request log flush loop", s.flushLoop)
+	})
 }
 
 // Stop signals the flush loop to stop, drains remaining entries, and returns.
 func (s *Service) Stop() {
-	if s.repo != nil {
-		s.repo.setReadBarrier(nil)
-	}
-	close(s.stopCh)
+	s.stopOnce.Do(func() {
+		if s.repo != nil {
+			s.repo.setReadBarrier(nil)
+		}
+		close(s.stopCh)
+	})
 	s.wg.Wait()
 }
 
 // EmitRequestLog enqueues a log entry. Non-blocking; drops on overflow.
 func (s *Service) EmitRequestLog(entry proxy.RequestLogEntry) {
+	entry = proxy.SanitizeRequestLogEntry(entry)
 	select {
 	case s.queue <- entry:
 	default:
 		// Queue full — drop entry to avoid blocking hot path.
+		s.dropped.Add(1)
 	}
 }
 
@@ -155,10 +170,13 @@ func (s *Service) FlushNow() {
 	case s.flushReq <- done:
 	case <-s.stopCh:
 		return
+	case <-s.loopDone:
+		return
 	}
 	select {
 	case <-done:
 	case <-s.stopCh:
+	case <-s.loopDone:
 	}
 }
 
@@ -166,6 +184,7 @@ func (s *Service) FlushNow() {
 // retrying a batch whose write failed once its backoff has expired.
 func (s *Service) flushLoop() {
 	defer s.wg.Done()
+	defer close(s.loopDone)
 
 	batch := make([]proxy.RequestLogEntry, 0, s.batchSize)
 	ticker := time.NewTicker(s.interval)
@@ -351,6 +370,7 @@ func (s *Service) drainAndFlush(batch []proxy.RequestLogEntry) {
 			// The last write of the process is also the last chance the entries
 			// of an earlier failure get, so it is attempted even when the queue
 			// drained into nothing.
+			s.retryAt = time.Time{}
 			s.flush(batch)
 			if len(s.retry) > 0 {
 				// Nothing will attempt these again: the loop is returning and
@@ -377,10 +397,15 @@ func (s *Service) drainAndFlush(batch []proxy.RequestLogEntry) {
 // database receives the backlog and the new batch in one ordered transaction.
 func (s *Service) flush(entries []proxy.RequestLogEntry) {
 	if s.insert == nil {
+		s.dropped.Add(uint64(len(entries)))
 		return
 	}
 	pending := entries
 	if len(s.retry) > 0 {
+		if time.Now().Before(s.retryAt) {
+			s.holdUntilRetry(entries)
+			return
+		}
 		// The requeued entries are older, so they go first: the request log is
 		// read as a sequence, and a retry that restored the newest records ahead
 		// of the ones they followed would be visible as scrambled time.
@@ -404,6 +429,28 @@ func (s *Service) flush(entries []proxy.RequestLogEntry) {
 	s.requeue(pending, err)
 }
 
+// holdUntilRetry merges new entries behind an outage backlog without consuming
+// another attempt before retryAt. New traffic and read barriers used to bypass
+// the backoff by calling flush, exhausting the retry budget in seconds.
+func (s *Service) holdUntilRetry(entries []proxy.RequestLogEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	combined := make([]proxy.RequestLogEntry, 0, len(s.retry)+len(entries))
+	combined = append(combined, s.retry...)
+	combined = append(combined, entries...)
+	if bound := s.retryBufferLimit(); bound > 0 && len(combined) > bound {
+		dropped := len(combined) - bound
+		s.dropped.Add(uint64(dropped))
+		// Preserve the oldest evidence already waiting for its retry; discard the
+		// newest arrivals once the bounded buffer is full.
+		combined = combined[:bound]
+		log.Printf("[requestlog] retry buffer full: dropping %d new entries (%d dropped in total)",
+			dropped, s.dropped.Load())
+	}
+	s.retry = combined
+}
+
 // requeue holds a failed batch for a later attempt, with the backoff, the
 // attempt ceiling and the memory bound of the retry policy.
 func (s *Service) requeue(entries []proxy.RequestLogEntry, err error) {
@@ -419,30 +466,29 @@ func (s *Service) requeue(entries []proxy.RequestLogEntry, err error) {
 		s.giveUp(entries, err)
 		return
 	}
-	// The buffer is bounded: past the limit the oldest entries go, because the
-	// newest are the ones an operator is about to look for, and a queue that
-	// grows with an outage would eventually take memory the accounting side
-	// needs. What goes is counted, never silently forgotten.
+	// The buffer is bounded. Preserve the oldest evidence that first observed the
+	// outage and discard later arrivals once the buffer is full; otherwise a
+	// client can flood new traffic to evict the event an operator is looking for.
 	if bound := s.retryBufferLimit(); bound > 0 && len(entries) > bound {
 		overflow := len(entries) - bound
 		s.dropped.Add(uint64(overflow))
-		log.Printf("[requestlog] retry buffer full: dropping the %d oldest of %d entries (%d dropped in total)",
+		log.Printf("[requestlog] retry buffer full: dropping the %d newest of %d entries (%d dropped in total)",
 			overflow, len(entries), s.dropped.Load())
-		entries = entries[overflow:]
+		entries = entries[:bound]
 	}
 	s.retry = append(s.retry[:0], entries...)
 	backoff := s.retryBackoff()
 	s.retryAt = time.Now().Add(backoff)
-	log.Printf("[requestlog] flush of %d entries failed (attempt %d/%d), retrying in %v: %v",
-		len(entries), s.retryAttempts, limit, backoff, err)
+	log.Printf("[requestlog] flush of %d entries failed (attempt %d/%d), retrying in %v",
+		len(entries), s.retryAttempts, limit, backoff)
 }
 
 // giveUp drops a batch whose attempts ran out. The count is both logged and
 // kept, so a metric can carry it out and no reader has to search the log for it.
 func (s *Service) giveUp(entries []proxy.RequestLogEntry, err error) {
 	s.dropped.Add(uint64(len(entries)))
-	log.Printf("[requestlog] giving up on %d entries after %d failed flushes (%d dropped in total): %v",
-		len(entries), s.maxFlushAttempts, s.dropped.Load(), err)
+	log.Printf("[requestlog] giving up on %d entries after %d failed flushes (%d dropped in total)",
+		len(entries), s.maxFlushAttempts, s.dropped.Load())
 	s.clearRetry()
 }
 

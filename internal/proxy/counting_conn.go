@@ -112,6 +112,7 @@ func (c *countingConn) Write(b []byte) (int, error) {
 
 func (c *countingConn) armDeferredFlush() {
 	if c.closed.Load() {
+		c.flushPendingTraffic()
 		return
 	}
 	if !c.flushArmed.CompareAndSwap(false, true) {

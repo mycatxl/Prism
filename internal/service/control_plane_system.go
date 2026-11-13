@@ -2,9 +2,11 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -17,7 +19,9 @@ import (
 	"prism/internal/intel"
 	"prism/internal/intel/jobs"
 	"prism/internal/keys"
+	"prism/internal/ldc"
 	"prism/internal/netutil"
+	"prism/internal/node"
 	"prism/internal/proxy"
 	"prism/internal/routing"
 	"prism/internal/state"
@@ -106,9 +110,13 @@ type ControlPlaneService struct {
 	// when no receiving address is configured, which is a supported state:
 	// on-chain deposits are then simply off.
 	Tron *tron.Client
+	// LDC builds Linux.do Credit EasyPay checkouts and verifies their callbacks.
+	// It is nil unless both EasyPay credentials are configured.
+	LDC *ldc.Client
 	// Logf records events a response cannot report. It is optional: nil means
 	// stay quiet, and every caller has to work without it.
 	Logf          func(string, ...any)
+	depositScanMu sync.Mutex
 	configMu      sync.Mutex
 	configVersion int
 	endpointMu    sync.RWMutex
@@ -176,12 +184,38 @@ func (s *ControlPlaneService) hashPassword(password string) (string, error) {
 	return auth.HashPassword(password)
 }
 
+// InitializeLDC configures the Linux.do Credit client from the service's
+// environment settings. Missing either credential is a supported disabled
+// state, represented by a nil client.
+func (s *ControlPlaneService) InitializeLDC() {
+	if s == nil {
+		return
+	}
+	s.LDC = nil
+	if s.EnvCfg == nil {
+		return
+	}
+	pid := strings.TrimSpace(s.EnvCfg.LDCPID)
+	key := strings.TrimSpace(s.EnvCfg.LDCKey)
+	if pid == "" || key == "" {
+		return
+	}
+	s.LDC = ldc.NewClient(ldc.Config{
+		PID:        pid,
+		Key:        key,
+		GatewayURL: strings.TrimSpace(s.EnvCfg.LDCGatewayURL),
+		NotifyURL:  strings.TrimSpace(s.EnvCfg.LDCNotifyURL),
+		ReturnURL:  strings.TrimSpace(s.EnvCfg.LDCReturnURL),
+	})
+}
+
 // ------------------------------------------------------------------
 // System Config
 // ------------------------------------------------------------------
 
 // runtimeConfigAllowedFields is the set of JSON field names that can be patched.
 var runtimeConfigAllowedFields = map[string]bool{
+	"node_privacy":                             true,
 	"request_log_enabled":                      true,
 	"reverse_proxy_log_detail_enabled":         true,
 	"reverse_proxy_log_req_headers_max_bytes":  true,
@@ -212,6 +246,11 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"alert_window_minutes":                     true,
 	"alert_retention_days":                     true,
 	"registration_mode":                        true,
+	"ldc_enabled":                              true, "ldc_gateway_url": true, "ldc_pid": true, "ldc_key": true,
+	"ldc_rate": true, "ldc_notify_url": true, "ldc_return_url": true,
+	"tron_deposit_enabled": true, "tron_address": true, "tron_api_key": true,
+	"tron_usdt_contract": true, "tron_trx_enabled": true, "tron_trx_ratio": true,
+	"tron_window_minutes": true,
 }
 
 var platformPatchAllowedFields = map[string]bool{
@@ -262,6 +301,23 @@ func parseRuntimeConfigPatch(patchJSON json.RawMessage, out *config.RuntimeConfi
 		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
 			return invalidArg(fmt.Sprintf("null value not allowed for field: %q", key))
 		}
+		if key == "node_privacy" {
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) != nil {
+				return invalidArg("node_privacy: expected object")
+			}
+			for name, value := range fields {
+				if name != "own_cidrs" && name != "detected_ips" && name != "manual_quarantine" && name != "self_probe_url" && name != "echo_url" && name != "echo_enabled" {
+					return invalidArg("node_privacy: unknown or read-only field")
+				}
+				if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+					return invalidArg("node_privacy: null is not allowed")
+				}
+			}
+		}
+		if (key == "ldc_rate" || key == "tron_trx_ratio") && !exactPaymentRateJSON(raw) {
+			return invalidArg(key + ": must be a positive decimal up to 1000000 that retains its exact value when stored")
+		}
 	}
 
 	dec := json.NewDecoder(bytes.NewReader(patchJSON))
@@ -278,6 +334,7 @@ func copyRuntimeConfig(cfg *config.RuntimeConfig) *config.RuntimeConfig {
 		return config.NewDefaultRuntimeConfig()
 	}
 	out := *cfg
+	out.NodePrivacy = cfg.NodePrivacy.Clone()
 	out.LatencyAuthorities = append([]string(nil), cfg.LatencyAuthorities...)
 	return &out
 }
@@ -287,18 +344,43 @@ func copyRuntimeConfig(cfg *config.RuntimeConfig) *config.RuntimeConfig {
 // null values are rejected.
 // Pipeline: validate → persist → atomic swap.
 func (s *ControlPlaneService) PatchRuntimeConfig(patchJSON json.RawMessage) (*config.RuntimeConfig, error) {
+	if s == nil || s.Engine == nil {
+		return nil, internal("no state engine", nil)
+	}
 	s.configMu.Lock()
 	defer s.configMu.Unlock()
 
 	// 3. Deep-copy current config → apply patch.
-	newCfg := copyRuntimeConfig(s.RuntimeCfg.Load())
+	var currentCfg *config.RuntimeConfig
+	if s.RuntimeCfg != nil {
+		currentCfg = s.RuntimeCfg.Load()
+	}
+	newCfg := copyRuntimeConfig(currentCfg)
+	newCfg.SeedPaymentConfig(s.EnvCfg)
 	if verr := parseRuntimeConfigPatch(patchJSON, newCfg); verr != nil {
 		return nil, verr
 	}
 
-	// 4. Additional validation.
+	for _, ip := range newCfg.NodePrivacy.ActiveIPs {
+		if !slices.Contains(newCfg.NodePrivacy.DetectedIPs, ip) {
+			return nil, invalidArg("node_privacy: cannot remove a currently observed own address")
+		}
+	}
 	if err := validateRuntimeConfig(newCfg); err != nil {
 		return nil, err
+	}
+
+	// Bind pre-upgrade orders to their original destination before any rotation.
+	previous := s.paymentConfig()
+	if previous.TronAddress != "" {
+		if err := s.Engine.BindLegacyDepositTargets(previous.TronAddress, previous.TronUSDTContract); err != nil {
+			return nil, internal("bind legacy deposits", err)
+		}
+	}
+	if previous.LDCKey != "" {
+		if err := s.Engine.BindLegacyLDCCredentials(previous.LDCPID, previous.LDCKey); err != nil {
+			return nil, internal("bind legacy checkout credentials", err)
+		}
 	}
 
 	// On process start, initialize local configVersion from persisted state
@@ -320,8 +402,38 @@ func (s *ControlPlaneService) PatchRuntimeConfig(patchJSON json.RawMessage) (*co
 	}
 
 	// 6. Atomic swap.
+	if s.RuntimeCfg == nil {
+		s.RuntimeCfg = &atomic.Pointer[config.RuntimeConfig]{}
+	}
 	s.RuntimeCfg.Store(newCfg)
 	s.configVersion = newVersion
+	if s.Pool != nil && (currentCfg == nil || currentCfg.PurityBands != newCfg.PurityBands) {
+		s.Pool.RebuildAllPlatforms()
+	}
+	if s.Pool != nil && s.Pool.PrivacyPolicyEnabled() {
+		policy, _ := node.NewPrivacyPolicy(newCfg.NodePrivacy) // validated before persistence
+		s.Pool.SetPrivacyPolicy(policy)
+		// The primary cache address may be IPv4 while intel already observed an
+		// owned IPv6 exit. A policy edit must apply to both stored families now.
+		if s.Intel != nil && s.Intel.Store() != nil {
+			rows, err := s.Intel.Store().ListNodeEgress(context.Background())
+			if err != nil {
+				return nil, internal("apply privacy policy to measured exits", err)
+			}
+			for _, row := range rows {
+				for _, raw := range []string{row.IPv4, row.IPv6} {
+					ip, _ := netip.ParseAddr(raw)
+					if policy.Denies(ip) {
+						h, err := node.ParseHex(row.NodeHash)
+						if err == nil {
+							s.Pool.DeletePrivacyNode(h, node.PrivacyOwnAsset, "")
+						}
+						break
+					}
+				}
+			}
+		}
+	}
 
 	return newCfg, nil
 }
@@ -339,10 +451,22 @@ func (s *ControlPlaneService) PatchRuntimeConfig(patchJSON json.RawMessage) (*co
 const requestLogCaptureMaxBytes = 1 << 20
 
 func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
+	if _, err := node.NewPrivacyPolicy(cfg.NodePrivacy); err != nil {
+		return invalidArg(err.Error())
+	}
+	if err := config.ValidateSelfProbeURL(cfg.NodePrivacy.SelfProbeURL); err != nil {
+		return invalidArg(err.Error())
+	}
+	if err := validatePaymentConfig(cfg); err != nil {
+		return err
+	}
 	latencyURL := strings.TrimSpace(cfg.LatencyTestURL)
 	u, verr := parseHTTPAbsoluteURL("latency_test_url", latencyURL)
 	if verr != nil {
 		return verr
+	}
+	if u.Scheme != "https" {
+		return invalidArg("latency_test_url: HTTPS is required to measure the origin TLS handshake; HTTP cannot produce a routing latency sample")
 	}
 	latencyDomain := strings.ToLower(netutil.ExtractDomain(u.Host))
 	// egress_trace_url is a single URL with no authority list to cross-check: it

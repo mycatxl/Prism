@@ -52,7 +52,14 @@ func (r adminKeyResolver) VerifyAdminKey(credential string, clientAddr netip.Add
 	if !state.AllowsIP(clientAddr) {
 		return api.AdminKeyIdentity{}, false
 	}
-	if !state.Usable(time.Now().UnixNano()) {
+	// Management authority comes from the admin scope and the owner's role,
+	// not from a tenant subscription. Keep the key and owner revocation checks,
+	// but do not let an expired proxy plan disable an otherwise valid
+	// management credential.
+	nowNs := time.Now().UnixNano()
+	if state.Status != model.KeyStatusActive ||
+		(state.ExpiresAtNs > 0 && nowNs >= state.ExpiresAtNs) ||
+		state.UserStatus != model.UserStatusActive {
 		return api.AdminKeyIdentity{}, false
 	}
 	return api.AdminKeyIdentity{

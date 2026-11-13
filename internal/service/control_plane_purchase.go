@@ -41,14 +41,18 @@ const (
 
 // PurchasablePlan is a plan a customer can buy without an operator.
 type PurchasablePlan struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Platforms    []string `json:"platforms"`
-	IPTiers      []string `json:"ip_tiers"`
-	TrafficBytes int64    `json:"traffic_bytes"`
-	Period       string   `json:"period"`
-	DurationDays int      `json:"duration_days"`
-	PriceMicro   int64    `json:"price_micro"`
+	MaxRPS          int      `json:"max_rps"`
+	MaxBandwidthBps int64    `json:"max_bandwidth_bps"`
+	MaxConcurrent   int      `json:"max_concurrent"`
+	MaxKeys         int      `json:"max_keys"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Platforms       []string `json:"platforms"`
+	IPTiers         []string `json:"ip_tiers"`
+	TrafficBytes    int64    `json:"traffic_bytes"`
+	Period          string   `json:"period"`
+	DurationDays    int      `json:"duration_days"`
+	PriceMicro      int64    `json:"price_micro"`
 }
 
 // PurchaseInput is the accepted body of a self-service purchase.
@@ -116,6 +120,7 @@ func (s *ControlPlaneService) SelfPlans() ([]PurchasablePlan, error) {
 			continue
 		}
 		result = append(result, PurchasablePlan{
+			MaxRPS: plan.MaxRPS, MaxBandwidthBps: plan.MaxBandwidthBps, MaxConcurrent: plan.MaxConcurrent, MaxKeys: plan.MaxKeys,
 			ID:           plan.ID,
 			Name:         plan.Name,
 			Platforms:    plan.Platforms,
@@ -194,6 +199,7 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 		PeriodStartNs:    nowNs,
 		Status:           model.SubscriptionStatusActive,
 	}
+	periodTransition := s.Usage.BeginUserPeriodTransition(userID)
 	result, err := s.Engine.PurchasePlanWithBalance(row, model.BalanceEntry{
 		ID:          entryID,
 		UserID:      userID,
@@ -204,12 +210,15 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 		CreatedAtNs: nowNs,
 	}, nowNs)
 	if errors.Is(err, state.ErrInsufficientBalance) {
+		periodTransition.Cancel()
 		return PurchaseResultView{}, invalidArg("balance: not enough to buy this plan")
 	}
 	if errors.Is(err, state.ErrConflict) {
+		periodTransition.Cancel()
 		return PurchaseResultView{}, conflict("that purchase could not be settled; retry with a new request_id")
 	}
 	if err != nil {
+		periodTransition.Cancel()
 		return PurchaseResultView{}, internal("purchase plan", err)
 	}
 
@@ -222,11 +231,11 @@ func (s *ControlPlaneService) SelfPurchase(userID string, in PurchaseInput, nowN
 		// The running aggregate belongs to the subscription that just ended. A
 		// new window starts at zero bytes on disk, so the in-memory total has
 		// to follow or the quota would refuse a user who has used nothing.
-		if s.Usage != nil {
-			s.Usage.ResetUser(userID)
-		}
+		periodTransition.CommitSubscription(result.Subscription)
 		// The new plan is in force from the next request rather than the next
 		// restart.
+	} else {
+		periodTransition.Cancel()
 	}
 	// The publish runs on a replay too, and a failure is logged rather than
 	// returned: the charge is committed by now, so an error here would tell the
@@ -417,7 +426,7 @@ func (s *ControlPlaneService) RenewDueSubscriptions(nowNs int64) (RenewalView, e
 			// inside the sweep's outer query window, not its own.
 			continue
 		}
-		_, renewed, err := s.renewOneWithPlan(sub, plan, price, nowNs, renewalRequestID(sub))
+		_, renewed, err := s.renewOneWithPlan(sub, plan, price, nowNs, renewalRequestID(sub), true)
 		switch {
 		case err == nil && renewed:
 			result.Renewed++
@@ -444,12 +453,12 @@ func (s *ControlPlaneService) renewOne(sub model.UserSubscription, nowNs int64, 
 	if err != nil {
 		return state.PurchaseResult{}, false, err
 	}
-	return s.renewOneWithPlan(sub, plan, snapshotPrice, nowNs, requestID)
+	return s.renewOneWithPlan(sub, plan, snapshotPrice, nowNs, requestID, false)
 }
 
 // renewOneWithPlan is renewOne once the plan has been resolved, so a caller
 // that had to read the plan anyway does not read it a second time.
-func (s *ControlPlaneService) renewOneWithPlan(sub model.UserSubscription, plan model.Plan, snapshotPrice int64, nowNs int64, requestID string) (state.PurchaseResult, bool, error) {
+func (s *ControlPlaneService) renewOneWithPlan(sub model.UserSubscription, plan model.Plan, snapshotPrice int64, nowNs int64, requestID string, requireAutoRenew bool) (state.PurchaseResult, bool, error) {
 	if plan.DurationDays <= 0 {
 		return state.PurchaseResult{}, false, nil
 	}
@@ -477,7 +486,7 @@ func (s *ControlPlaneService) renewOneWithPlan(sub model.UserSubscription, plan 
 		updated.PlanSnapshotJSON = snapshot
 	}
 
-	result, err := s.Engine.RenewSubscriptionWithBalance(updated, sub.PeriodIndex, model.BalanceEntry{
+	entry := model.BalanceEntry{
 		ID:          entryID,
 		UserID:      sub.UserID,
 		DeltaMicro:  -plan.PriceMicro,
@@ -485,16 +494,24 @@ func (s *ControlPlaneService) renewOneWithPlan(sub model.UserSubscription, plan 
 		RefID:       sub.ID,
 		RequestID:   requestID,
 		CreatedAtNs: nowNs,
-	})
+	}
+	periodTransition := s.Usage.BeginUserPeriodTransition(sub.UserID)
+	var result state.PurchaseResult
+	if requireAutoRenew {
+		result, err = s.Engine.RenewSubscriptionWithBalanceExpectedSnapshot(updated, sub.PeriodIndex, sub.PlanSnapshotJSON, entry, true)
+	} else {
+		result, err = s.Engine.RenewSubscriptionWithBalanceExpectedSnapshot(updated, sub.PeriodIndex, sub.PlanSnapshotJSON, entry, false)
+	}
 	if err != nil {
+		periodTransition.Cancel()
 		return state.PurchaseResult{}, false, err
 	}
 	// A replay charged nothing and changed nothing, so resetting the running
 	// aggregate would throw away the bytes this period has actually used.
 	if !result.Replayed {
-		if s.Usage != nil {
-			s.Usage.ResetUser(sub.UserID)
-		}
+		periodTransition.CommitSubscription(result.Subscription)
+	} else {
+		periodTransition.Cancel()
 	}
 	// The renewal is charged by this point, so a publish failure is logged and
 	// the renewal stands - the same reasoning as the purchase path - and the

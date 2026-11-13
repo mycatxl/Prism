@@ -2,12 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/netip"
+	"time"
 
 	"prism/internal/intel"
 	"prism/internal/intel/jobs"
 	"prism/internal/intel/store"
+	"prism/internal/quality"
 )
 
 // IntelJobRequest is the POST /api/v1/intel/jobs body.
@@ -313,7 +316,7 @@ func (s *ControlPlaneService) IntelNodeReport(ctx context.Context, nodeHash stri
 	detail := IntelNodeDetail{NodeHash: nodeHash}
 	egress, ok, err := st.GetNodeEgress(ctx, nodeHash)
 	if err != nil {
-		return IntelNodeDetail{}, internal("read node egress", err)
+		return IntelNodeDetail{}, qualityStorageError("EGRESS_READ_FAILED", err)
 	}
 	if ok {
 		detail.Egress = egress
@@ -331,14 +334,38 @@ func (s *ControlPlaneService) IntelNodeReport(ctx context.Context, nodeHash stri
 		return IntelNodeDetail{}, err
 	}
 	if detail.IPv4 != nil {
-		lite := intel.AssessmentLiteFromRow(*detail.IPv4)
+		lite := s.nodeReportAssessment(svc, nodeHash, detail.IPv4)
 		detail.V4Projected = &lite
 	}
 	if detail.IPv6 != nil {
-		lite := intel.AssessmentLiteFromRow(*detail.IPv6)
+		lite := s.nodeReportAssessment(svc, nodeHash, detail.IPv6)
 		detail.V6Projected = &lite
 	}
 	return detail, nil
+}
+
+func (s *ControlPlaneService) nodeReportAssessment(svc *intel.Service, hash string, row *store.Assessment) intel.AssessmentLite {
+	ip, err := netip.ParseAddr(row.IP)
+	lite := intel.AssessmentLiteFromRow(*row, s.qualityBands()).Current(time.Now().UTC())
+	if err == nil {
+		if scoped, ok := svc.Snapshot().NodeAssessment(hash, ip); ok && scoped.ScoreValue() == nil {
+			lite = scoped
+			row.PurityScore.Valid = false
+			row.PurityBand = "unknown"
+			row.State = lite.StateName()
+			row.Verdict = intel.VerdictName(lite.Verdict)
+			row.ReasonsJSON = lite.ReasonsJSON
+			var detail map[string]any
+			_ = json.Unmarshal([]byte(row.ComponentsJSON), &detail)
+			if detail == nil {
+				detail = map[string]any{}
+			}
+			detail["facts"] = lite.FactValues()
+			body, _ := json.Marshal(detail)
+			row.ComponentsJSON = string(body)
+		}
+	}
+	return lite
 }
 
 // IntelIPReport assembles GET /api/v1/intel/ip/{ip}.
@@ -356,13 +383,13 @@ func (s *ControlPlaneService) IntelIPReport(ctx context.Context, ip string) (Int
 
 	detail := IntelIPDetail{IP: ip}
 	if detail.Evidence, err = st.ListEvidenceByIP(ctx, ip); err != nil {
-		return IntelIPDetail{}, internal("read evidence", err)
+		return IntelIPDetail{}, qualityStorageError("EVIDENCE_READ_FAILED", err)
 	}
 	if detail.Assessment, err = s.intelAssessment(ctx, svc, ip); err != nil {
 		return IntelIPDetail{}, err
 	}
 	if detail.Assessment != nil {
-		lite := intel.AssessmentLiteFromRow(*detail.Assessment)
+		lite := intel.AssessmentLiteFromRow(*detail.Assessment, s.qualityBands())
 		detail.Projection = &lite
 	}
 	if detail.Nodes, err = st.ListNodesByIP(ctx, ip, maxIntelIPNodes); err != nil {
@@ -377,11 +404,52 @@ func (s *ControlPlaneService) intelAssessment(ctx context.Context, svc *intel.Se
 	}
 	row, ok, err := svc.Store().GetAssessment(ctx, ip)
 	if err != nil {
-		return nil, internal("read assessment", err)
+		return nil, qualityStorageError("EVIDENCE_READ_FAILED", err)
 	}
 	if !ok {
 		return nil, nil
 	}
+	lite := intel.AssessmentLiteFromRow(row, s.qualityBands()).Current(time.Now().UTC())
+	evidence, readErr := svc.Store().ListEvidenceByIP(ctx, ip)
+	if readErr != nil {
+		return nil, qualityStorageError("EVIDENCE_READ_FAILED", readErr)
+	}
+	diagnostic := assessmentDiagnostics(ip, evidence, time.Now().UTC())
+	if lite.ScoreValue() != nil && (diagnostic.PurityScore == nil || *diagnostic.PurityScore != *lite.ScoreValue()) {
+		lite.Score = -1
+		facts := lite.FactValues()
+		fact := diagnostic.Facts["purity"]
+		if diagnostic.PurityScore != nil {
+			fact = quality.PurityDiagnostic("CURRENT_EXIT_UNASSESSED")
+		}
+		facts["purity"] = fact
+		reasonsJSON, _ := json.Marshal(append(lite.ReasonValues(), fact.Cause))
+		lite.ReasonsJSON = string(reasonsJSON)
+		var blob map[string]any
+		_ = json.Unmarshal([]byte(row.ComponentsJSON), &blob)
+		if blob == nil {
+			blob = map[string]any{}
+		}
+		blob["facts"] = facts
+		blobJSON, _ := json.Marshal(blob)
+		row.ComponentsJSON = string(blobJSON)
+	}
+	if lite.ScoreValue() == nil {
+		row.PurityScore.Valid = false
+		if row.Verdict == "favorable" {
+			row.Verdict = "pending"
+		}
+	}
+	row.ReasonsJSON = lite.ReasonsJSON
+	row.State = lite.StateName()
+	row.IPType = intel.IPTypeName(lite.IPType)
+	row.Flags = int64(lite.Flags)
+	row.ASN.Valid = lite.ASN > 0
+	row.ASN.Int64 = int64(lite.ASN)
+	row.Native.Valid = lite.Native >= 0
+	row.Native.Int64 = int64(lite.Native)
+	row.Country, row.City, row.ASOrg = lite.Country, lite.City, lite.ASOrg
+	row.PurityBand = s.qualityBands().Name(qualityScorePtr(row.ScoreOrNil()))
 	return &row, nil
 }
 

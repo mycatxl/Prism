@@ -128,8 +128,8 @@ func (s *ControlPlaneService) CreateAccount(username, password, role string, now
 		return Account{}, errors.New("service: no state engine")
 	}
 	username = strings.TrimSpace(username)
-	if username == "" {
-		return Account{}, ErrUsernameRequired
+	if svcErr := validateTenantUsername(username); svcErr != nil {
+		return Account{}, svcErr
 	}
 	if role != model.UserRoleAdmin && role != model.UserRoleUser {
 		return Account{}, fmt.Errorf("%w %q", ErrUnknownRole, role)
@@ -163,10 +163,8 @@ func (s *ControlPlaneService) CreateAccount(username, password, role string, now
 // ChangeAccountPassword replaces an account's password after checking the
 // current one.
 //
-// The account's existing sessions are the caller's business: this changes the
-// credential, and the caller revokes what it needs to. Splitting those two would
-// make it possible to change a password and forget the revocation, so the API
-// handler does both and this stays a single, testable operation.
+// The credential and browser-session revocation commit atomically. Proxy
+// snapshots are then invalidated and live connections closed before returning.
 //
 // The read, the check against the hash it carries and the write are one locked
 // operation (userWriteMu): a status or role change landing in between would
@@ -277,7 +275,10 @@ func (s *ControlPlaneService) setPassword(user *model.User, newPassword string, 
 	if err != nil {
 		return err
 	}
-	return s.Engine.UpdateUserPassword(user.ID, hash, nowNs)
+	if err := s.Engine.UpdateVerifiedPassword(*user, hash, nowNs); err != nil {
+		return err
+	}
+	return s.republishUserKeysLocked(user.ID)
 }
 
 // SetAccountStatus enables or disables an account.
@@ -317,7 +318,10 @@ func (s *ControlPlaneService) setAccountStatusLocked(id, status string, nowNs in
 	}
 	// A single column: a status change must not write back the password hash,
 	// the role or the second factor the caller read alongside it.
-	return s.Engine.UpdateUserStatus(id, status, nowNs)
+	if err := s.Engine.UpdateUserStatus(id, status, nowNs); err != nil {
+		return err
+	}
+	return s.republishUserKeysLocked(id)
 }
 
 // SetAccountRole changes an account's role.
@@ -355,7 +359,10 @@ func (s *ControlPlaneService) setAccountRoleLocked(id, role string, nowNs int64)
 	}
 	// A single column: a role change must not write back the password hash,
 	// the status or the second factor the caller read alongside it.
-	return s.Engine.UpdateUserRole(id, role, nowNs)
+	if err := s.Engine.UpdateUserRole(id, role, nowNs); err != nil {
+		return err
+	}
+	return s.republishUserKeysLocked(id)
 }
 
 // refuseIfLastAdmin reports ErrLastAdmin when user is the only active
@@ -451,23 +458,23 @@ func (s *ControlPlaneService) ConfirmTOTPEnrolment(id, secret, code string, nowN
 	if len(user.TOTPSecretEnc) > 0 {
 		return ErrTOTPAlreadyEnrolled
 	}
+	if err := auth.ValidateTOTPEnrollmentSecret(secret); err != nil {
+		return ErrTOTPCodeInvalid
+	}
 	// The code is checked against the secret before anything is written, so a
 	// secret the user's app does not actually hold never becomes the one they
 	// must present at the next login.
 	if !auth.VerifyTOTP(secret, code, time.Unix(0, nowNs)) {
 		return ErrTOTPCodeInvalid
 	}
-	sealed, err := auth.EncryptTOTPSecret(s.Pepper, secret)
+	sealed, err := auth.EncryptTOTPSecretForUser(s.Pepper, id, secret)
 	if err != nil {
 		return err
 	}
-	// Two writes, the secret first: clearing the ledger before the new secret
-	// is in place would let the old one spend a step twice, so the reset only
-	// ever follows the rotation it belongs to.
-	if err := s.Engine.UpdateUserTOTPSecret(id, sealed, nowNs); err != nil {
+	if err := s.Engine.UpdateVerifiedTOTP(*user, sealed, nowNs); err != nil {
 		return err
 	}
-	return s.Engine.ResetTOTPLastUsed(id)
+	return s.republishUserKeysLocked(id)
 }
 
 // DisableTOTP removes an account's second factor.
@@ -478,6 +485,16 @@ func (s *ControlPlaneService) ConfirmTOTPEnrolment(id, secret, code string, nowN
 // is monotone, so without the reset that genuinely fresh code would be refused
 // as a replay until the next step came round.
 func (s *ControlPlaneService) DisableTOTP(id string, nowNs int64) error {
+	return s.disableTOTP(id, nil, nowNs)
+}
+
+// DisableTOTPWithPassword keeps reauthentication and mutation under the same
+// account lock, then verifies the credential snapshot again inside SQLite.
+func (s *ControlPlaneService) DisableTOTPWithPassword(id, password string, nowNs int64) error {
+	return s.disableTOTP(id, &password, nowNs)
+}
+
+func (s *ControlPlaneService) disableTOTP(id string, password *string, nowNs int64) error {
 	if s == nil || s.Engine == nil {
 		return errors.New("service: no state engine")
 	}
@@ -488,17 +505,19 @@ func (s *ControlPlaneService) DisableTOTP(id string, nowNs int64) error {
 	if err != nil || user == nil {
 		return ErrAccountNotFound
 	}
+	if password != nil {
+		err := auth.VerifyPassword(user.PasswordHash, *password)
+		if err != nil {
+			return ErrCurrentPasswordWrong
+		}
+	}
 	if len(user.TOTPSecretEnc) == 0 {
 		return ErrTOTPNotEnrolled
 	}
-	// Two writes, and the order matters: the secret goes first. Clearing the
-	// ledger while the old secret is still in force would let a code computed
-	// from that secret spend a step twice, so the reset only ever follows the
-	// removal it belongs to.
-	if err := s.Engine.UpdateUserTOTPSecret(id, nil, nowNs); err != nil {
+	if err := s.Engine.UpdateVerifiedTOTP(*user, nil, nowNs); err != nil {
 		return err
 	}
-	return s.Engine.ResetTOTPLastUsed(id)
+	return s.republishUserKeysLocked(id)
 }
 
 // checkPasswordPolicy enforces the console's password rule.

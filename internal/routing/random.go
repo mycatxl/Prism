@@ -142,7 +142,7 @@ func randomPickExcludingEgressIP(
 		seen   uint64
 	)
 	view.Range(func(h node.Hash) bool {
-		if entry, ok := pool.GetEntry(h); ok && entry.GetEgressIP() == avoidIP {
+		if entry, ok := pool.GetEntry(h); !ok || !entry.PrivacyAllowed() || avoidIP.IsValid() && entry.GetEgressIP() == avoidIP {
 			return true
 		}
 		seen++

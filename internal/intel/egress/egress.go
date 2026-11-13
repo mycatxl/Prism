@@ -33,9 +33,10 @@ const DefaultTimeout = 15 * time.Second
 // maxTraceBytes bounds the trace response body.
 const maxTraceBytes = 8 * 1024
 
-// ErrNoIPv4 is returned when the IPv4 trace request failed: the node has no
-// usable egress and the item must be retried.
-var ErrNoIPv4 = errors.New("egress probe: no IPv4 address")
+// ErrNoIPv4 retains the legacy error symbol for an unusable primary trace.
+// A successful primary IPv6 response is accepted.
+var ErrNoIPv4 = errors.New("egress probe: no usable address")
+var ErrPrivacyRejected = errors.New("egress probe: privacy rejected")
 
 // Fetcher mirrors outbound.Manager.FetchWithOptions.
 type Fetcher interface {
@@ -83,6 +84,9 @@ type Probe struct {
 	// ProbeEgressSync keeps Resin's cache.db egress_ip semantics (step 1).
 	// It is optional: when nil the probe only writes intel.db.
 	ProbeEgressSync func(ctx context.Context, hash node.Hash) error
+	// ObserveSample publishes each measured address before another request.
+	// False stops this run's remaining network work (for example deletion).
+	ObserveSample func(hash node.Hash, ip netip.Addr, loc string) bool
 	// URLs override the default trace endpoints.
 	URLv4 string
 	URLv6 string
@@ -128,8 +132,7 @@ type Result struct {
 	V6Failed  bool
 }
 
-// Run probes the node and persists the observation. An IPv4 failure is fatal
-// (the item is retried); a missing IPv6 is a normal outcome.
+// Run accepts either address family and never publishes a rejected sample.
 func (p *Probe) Run(ctx context.Context, hash node.Hash) (Result, error) {
 	if p.Store == nil {
 		return Result{}, errors.New("egress probe: store is required")
@@ -162,28 +165,38 @@ func (p *Probe) Run(ctx context.Context, hash node.Hash) (Result, error) {
 	}
 	obs.Colo = trace.Colo
 	obs.Loc = trace.Loc
+	continueProbe := p.ObserveSample == nil || p.ObserveSample(hash, trace.IP, trace.Loc)
+	if !continueProbe {
+		return Result{}, ErrPrivacyRejected
+	}
 
 	// The IPv6 attempt is recorded even when it fails.
-	v6ctx, v6cancel := context.WithTimeout(ctx, p.timeout())
-	obs.V6Checked = true
-	if v6Body, _, err := p.Fetcher.FetchWithOptions(v6ctx, hash, p.urlv6(), netutil.OutboundHTTPOptions{
-		MaxBodyBytes: maxTraceBytes,
-	}); err != nil {
-		obs.IPv6 = netip.Addr{}
-	} else if v6Trace, err := ParseTrace(v6Body); err != nil || !v6Trace.IP.Is6() {
-		obs.IPv6 = netip.Addr{}
-	} else {
-		obs.IPv6 = v6Trace.IP
-		if obs.Colo == "" {
-			obs.Colo = v6Trace.Colo
+	if continueProbe {
+		v6ctx, v6cancel := context.WithTimeout(ctx, p.timeout())
+		obs.V6Checked = true
+		if v6Body, _, err := p.Fetcher.FetchWithOptions(v6ctx, hash, p.urlv6(), netutil.OutboundHTTPOptions{
+			MaxBodyBytes: maxTraceBytes,
+		}); err != nil {
+			// Preserve an earlier successful IPv6 sample.
+		} else if v6Trace, err := ParseTrace(v6Body); err != nil || !v6Trace.IP.Is6() {
+			// Preserve an earlier successful IPv6 sample.
+		} else {
+			obs.IPv6 = v6Trace.IP
+			if obs.Colo == "" {
+				obs.Colo = v6Trace.Colo
+			}
+			if obs.Loc == "" {
+				obs.Loc = v6Trace.Loc
+			}
+			continueProbe = p.ObserveSample == nil || p.ObserveSample(hash, v6Trace.IP, v6Trace.Loc)
 		}
-		if obs.Loc == "" {
-			obs.Loc = v6Trace.Loc
-		}
+		v6cancel()
 	}
-	v6cancel()
 
-	if !obs.IPv4.IsValid() {
+	if !continueProbe {
+		return Result{}, ErrPrivacyRejected
+	}
+	if !obs.IPv4.IsValid() && !obs.IPv6.IsValid() {
 		return Result{}, ErrNoIPv4
 	}
 
@@ -194,7 +207,7 @@ func (p *Probe) Run(ctx context.Context, hash node.Hash) (Result, error) {
 	}
 
 	// Keep Resin's egress_ip (cache.db) semantics unchanged.
-	if p.ProbeEgressSync != nil {
+	if continueProbe && p.ProbeEgressSync != nil {
 		if err := p.ProbeEgressSync(ctx, hash); err != nil {
 			// A cache.db failure must not fail the intel.db write.
 			return Result{Row: row, Changed: changed, V6Checked: obs.V6Checked, V6Failed: !obs.IPv6.IsValid()}, nil

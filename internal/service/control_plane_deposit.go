@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
-	"strings"
+	"fmt"
+	"math"
+	"prism/internal/config"
+	"prism/internal/tron"
 	"sync"
 	"time"
 
@@ -67,51 +71,37 @@ const (
 
 // DepositIntentView is what the deposit page shows.
 type DepositIntentView struct {
-	ID          string `json:"id"`
-	AmountMicro int64  `json:"amount_micro"`
-	Status      string `json:"status"`
-	Address     string `json:"address"`
-	TxID        string `json:"tx_id"`
-	CreatedAtNs int64  `json:"created_at_ns"`
-	ExpiresAtNs int64  `json:"expires_at_ns"`
-	HoldUntilNs int64  `json:"hold_until_ns"`
-	PaidAtNs    int64  `json:"paid_at_ns"`
+	Currency    string  `json:"currency"`
+	CreditMicro int64   `json:"credit_micro"`
+	Rate        float64 `json:"rate"`
+	Contract    string  `json:"contract"`
+	ID          string  `json:"id"`
+	AmountMicro int64   `json:"amount_micro"`
+	Status      string  `json:"status"`
+	Address     string  `json:"address"`
+	TxID        string  `json:"tx_id"`
+	CreatedAtNs int64   `json:"created_at_ns"`
+	ExpiresAtNs int64   `json:"expires_at_ns"`
+	HoldUntilNs int64   `json:"hold_until_ns"`
+	PaidAtNs    int64   `json:"paid_at_ns"`
 }
 
 // DepositInfo describes whether deposits are available and on what terms.
 type DepositInfo struct {
-	Enabled    bool   `json:"enabled"`
-	Address    string `json:"address"`
-	Contract   string `json:"contract"`
-	MinMicro   int64  `json:"min_micro"`
-	MaxMicro   int64  `json:"max_micro"`
-	WindowSecs int64  `json:"window_secs"`
+	TRXEnabled bool    `json:"trx_enabled"`
+	TRXRatio   float64 `json:"trx_ratio"`
+	Enabled    bool    `json:"enabled"`
+	Address    string  `json:"address"`
+	Contract   string  `json:"contract"`
+	MinMicro   int64   `json:"min_micro"`
+	MaxMicro   int64   `json:"max_micro"`
+	WindowSecs int64   `json:"window_secs"`
 }
 
-func (s *ControlPlaneService) depositAddress() string {
-	if s.EnvCfg == nil {
-		return ""
-	}
-	return strings.TrimSpace(s.EnvCfg.USDTAddress)
-}
-
-// SelfDepositInfo reports the terms of a deposit, or that the feature is off.
-//
-// An unconfigured receiving address is not an error: an operator who has not set
-// one up simply has no on-chain deposits, and everything else keeps working.
 func (s *ControlPlaneService) SelfDepositInfo() DepositInfo {
-	address := s.depositAddress()
-	info := DepositInfo{
-		Enabled:    address != "",
-		Address:    address,
-		MinMicro:   depositMinMicro,
-		MaxMicro:   depositMaxMicro,
-		WindowSecs: depositWindowNs / 1_000_000_000,
-	}
-	if s.EnvCfg != nil {
-		info.Contract = s.EnvCfg.USDTContract
-	}
-	return info
+	c := s.paymentConfig()
+	return DepositInfo{Enabled: c.TronDepositEnabled && c.TronAddress != "", Address: c.TronAddress, Contract: c.TronUSDTContract,
+		MinMicro: depositMinMicro, MaxMicro: depositMaxMicro, WindowSecs: int64(c.TronWindowMinutes) * 60, TRXEnabled: c.TronTRXEnabled, TRXRatio: c.TronTRXRatio}
 }
 
 // SelfDeposit opens an intent for wantMicro and returns the amount to pay.
@@ -120,15 +110,26 @@ func (s *ControlPlaneService) SelfDepositInfo() DepositInfo {
 // nobody else is holding. Whole amounts are never handed out: a round number is
 // the one most likely to collide with an unrelated transfer, which is exactly
 // what the unique amount exists to avoid.
-func (s *ControlPlaneService) SelfDeposit(userID string, wantMicro int64, nowNs int64) (DepositIntentView, error) {
-	if s.depositAddress() == "" {
+func (s *ControlPlaneService) SelfDeposit(userID string, wantMicro int64, nowNs int64, currencies ...string) (DepositIntentView, error) {
+	c := s.paymentConfig()
+	currency := "usdt"
+	if len(currencies) > 0 && currencies[0] != "" {
+		currency = currencies[0]
+	}
+	if currency != "usdt" && currency != "trx" {
+		return DepositIntentView{}, invalidArg("currency: must be usdt or trx")
+	}
+	if currency == "trx" && !c.TronTRXEnabled {
+		return DepositIntentView{}, invalidArg("deposit: TRX deposits are not enabled")
+	}
+	if !c.TronDepositEnabled || c.TronAddress == "" {
 		return DepositIntentView{}, invalidArg("deposit: on-chain deposits are not configured")
 	}
 	if wantMicro < depositMinMicro {
-		return DepositIntentView{}, invalidArg("amount_micro: the smallest deposit is 1 USDT")
+		return DepositIntentView{}, invalidArg("amount_micro: the smallest deposit is 1 currency unit")
 	}
 	if wantMicro > depositMaxMicro {
-		return DepositIntentView{}, invalidArg("amount_micro: the largest deposit is 100000 USDT")
+		return DepositIntentView{}, invalidArg("amount_micro: the largest deposit is 100000 currency units")
 	}
 	user, err := s.Engine.GetUser(userID)
 	if err != nil {
@@ -138,6 +139,22 @@ func (s *ControlPlaneService) SelfDeposit(userID string, wantMicro int64, nowNs 
 		return DepositIntentView{}, forbidden("deposit: the account is not active")
 	}
 
+	if err := s.Engine.BindLegacyDepositTargets(c.TronAddress, c.TronUSDTContract); err != nil {
+		return DepositIntentView{}, err
+	}
+	rate := 1.0
+	contract := c.TronUSDTContract
+	if currency == "trx" {
+		rate = c.TronTRXRatio
+		contract = ""
+	}
+	if _, err := model.ConvertPaymentMicro(wantMicro+depositAmountAttempts, rate); err != nil {
+		return DepositIntentView{}, invalidArg(err.Error())
+	}
+	windowNs := int64(c.TronWindowMinutes) * int64(time.Minute)
+	if nowNs < 0 || nowNs > math.MaxInt64-windowNs-depositHoldNs {
+		return DepositIntentView{}, invalidArg("deposit: invalid order timestamp")
+	}
 	candidates := depositCandidates(wantMicro)
 	if len(candidates) == 0 {
 		return DepositIntentView{}, conflict("deposit: no amount is free right now, try again in a minute")
@@ -147,11 +164,12 @@ func (s *ControlPlaneService) SelfDeposit(userID string, wantMicro int64, nowNs 
 		return DepositIntentView{}, err
 	}
 	intent := model.DepositIntent{
+		Currency: currency, Address: c.TronAddress, Contract: contract, Rate: rate,
 		ID:          intentID,
 		UserID:      userID,
 		CreatedAtNs: nowNs,
-		ExpiresAtNs: nowNs + depositWindowNs,
-		HoldUntilNs: nowNs + depositWindowNs + depositHoldNs,
+		ExpiresAtNs: nowNs + windowNs,
+		HoldUntilNs: nowNs + windowNs + depositHoldNs,
 	}
 	stored, err := s.Engine.InsertDepositIntent(intent, candidates, nowNs)
 	if err != nil {
@@ -193,11 +211,16 @@ func (s *ControlPlaneService) SelfDeposits(userID string, limit int) ([]DepositI
 }
 
 func (s *ControlPlaneService) depositView(intent model.DepositIntent) DepositIntentView {
+	address := intent.Address
+	if address == "" {
+		address = s.paymentConfig().TronAddress
+	}
 	return DepositIntentView{
+		Currency: intent.Currency, CreditMicro: intent.CreditMicro, Rate: intent.Rate, Contract: intent.Contract,
 		ID:          intent.ID,
 		AmountMicro: intent.AmountMicro,
 		Status:      intent.Status,
-		Address:     s.depositAddress(),
+		Address:     address,
 		TxID:        intent.TxID,
 		CreatedAtNs: intent.CreatedAtNs,
 		ExpiresAtNs: intent.ExpiresAtNs,
@@ -239,81 +262,150 @@ func (s *ControlPlaneService) SweepDeposits(nowNs int64) (int, error) {
 // whole system. A matched transfer is written in a single transaction that also
 // advances the cursor, and the transaction id makes a replay harmless.
 func (s *ControlPlaneService) ScanDeposits(ctx context.Context, nowNs int64) (int, error) {
-	address := s.depositAddress()
-	if address == "" {
+	s.depositScanMu.Lock()
+	defer s.depositScanMu.Unlock()
+	c := s.paymentConfig()
+	if s.Tron == nil && s.RuntimeCfg == nil {
 		return 0, nil
 	}
-	if s.Tron == nil {
-		return 0, nil
+	if c.TronAddress != "" {
+		if err := s.Engine.BindLegacyDepositTargets(c.TronAddress, c.TronUSDTContract); err != nil {
+			return 0, err
+		}
 	}
-
-	watermarkMs, err := s.Engine.ChainCursor(depositCursorName)
+	targets, err := s.Engine.DepositScanTargets()
 	if err != nil {
 		return 0, err
 	}
-	page, err := s.Tron.TransfersSince(ctx, address, watermarkMs, 200)
+	if c.TronDepositEnabled && c.TronAddress != "" {
+		for _, currency := range []string{"usdt", "trx"} {
+			if currency == "trx" && !c.TronTRXEnabled {
+				continue
+			}
+			contract := c.TronUSDTContract
+			if currency == "trx" {
+				contract = ""
+			}
+			found := false
+			for _, t := range targets {
+				if t.Currency == currency && t.Address == c.TronAddress && t.Contract == contract {
+					found = true
+				}
+			}
+			if !found {
+				targets = append(targets, model.DepositTarget{Currency: currency, Address: c.TronAddress, Contract: contract, SinceNs: nowNs - depositWindowNs - depositHoldNs})
+			}
+		}
+	}
+	credited := 0
+	var scanErrors []error
+	for index, target := range targets {
+		budget := 30 * time.Second
+		if deadline, ok := ctx.Deadline(); ok {
+			budget = time.Until(deadline) / time.Duration(len(targets)-index)
+		}
+		targetCtx, cancel := context.WithTimeout(ctx, budget)
+		n, err := s.scanDepositTarget(targetCtx, nowNs, c, target)
+		cancel()
+		credited += n
+		if err != nil {
+			scanErrors = append(scanErrors, err)
+		}
+	}
+	return credited, errors.Join(scanErrors...)
+}
+
+func (s *ControlPlaneService) scanDepositTarget(ctx context.Context, nowNs int64, c *config.RuntimeConfig, target model.DepositTarget) (int, error) {
+	base := s.Tron
+	if base == nil {
+		endpoint := config.DefaultTronGridEndpoint
+		if s.EnvCfg != nil && s.EnvCfg.TronGridEndpoint != "" {
+			endpoint = s.EnvCfg.TronGridEndpoint
+		}
+		base = tron.NewClient(endpoint, c.TronAPIKey, target.Contract)
+	}
+	client := base.WithSettings(c.TronAPIKey, target.Contract)
+	cursor := fmt.Sprintf("tron:%x", sha256.Sum256([]byte(target.Currency+"|"+target.Address+"|"+target.Contract)))
+	// Keep the legacy cursor for existing environment-only deployments.
+	if s.RuntimeCfg == nil && target.Currency == "usdt" && target.Address == c.TronAddress {
+		cursor = depositCursorName
+	}
+	watermark, err := s.Engine.ChainCursor(cursor)
 	if err != nil {
 		return 0, err
 	}
-
+	since := watermark
+	// Revisit outstanding order windows to catch confirmations indexed late.
+	if since == 0 || (target.SinceNs > 0 && target.SinceNs/1e6 < since) {
+		since = target.SinceNs / 1e6
+	}
+	savedSince, until, fingerprint, err := s.Engine.ChainScan(cursor)
+	if err != nil {
+		return 0, err
+	}
+	if until == 0 {
+		until = nowNs/1_000_000 + 60_000
+		if err := s.Engine.SaveChainScan(cursor, since, until, ""); err != nil {
+			return 0, err
+		}
+	} else {
+		since = savedSince
+	}
+	client = client.WithPagination(fingerprint, until)
+	var page tron.TransferPage
+	if target.Currency == "trx" {
+		page, err = client.TRXTransfersSince(ctx, target.Address, since, 200)
+	} else {
+		page, err = client.TransfersSince(ctx, target.Address, since, 200)
+	}
+	if err != nil {
+		// Only an explicitly invalid continuation restarts the bounded interval.
+		// Timeouts, cancellation, rate limits and server errors retain progress.
+		if fingerprint != "" && errors.Is(err, tron.ErrInvalidFingerprint) {
+			return 0, errors.Join(err, s.Engine.SaveChainScan(cursor, since, until, ""))
+		}
+		return 0, err
+	}
 	credited := 0
 	for _, transfer := range page.Transfers {
-		if transfer.AmountMicro < depositMinMicro {
+		if transfer.AmountMicro < depositMinMicro || transfer.BlockTSMs <= 0 || transfer.BlockTSMs > math.MaxInt64/1_000_000 || transfer.BlockTSMs > nowNs/1e6+60_000 {
 			continue
 		}
-		blockTSNs := transfer.BlockTSMs * 1_000_000
 		entryID, err := newID("bl_")
 		if err != nil {
 			return credited, err
 		}
-		entry := model.BalanceEntry{
-			ID:     entryID,
-			Note:   "on-chain deposit",
-			Actor:  "chain",
-			RefID:  transfer.TxID,
-			Reason: model.BalanceReasonDeposit,
+		entry := model.BalanceEntry{ID: entryID, Note: "on-chain " + target.Currency + " deposit", Actor: "chain", RefID: transfer.TxID, Reason: model.BalanceReasonDeposit}
+		_, err = s.Engine.CreditDeposit(transfer.TxID, transfer.AmountMicro, transfer.BlockTSMs*1e6, nowNs, cursor, transfer.BlockTSMs, entry, target)
+		if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrConflict) {
+			continue
 		}
-		if _, err := s.Engine.CreditDeposit(transfer.TxID, transfer.AmountMicro, blockTSNs, nowNs, depositCursorName, transfer.BlockTSMs, entry); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				// No intent owns this transfer. It stays on chain for the
-				// operator to handle by hand; nothing is guessed here.
-				continue
-			}
-			if errors.Is(err, state.ErrConflict) {
-				// Already credited. The cursor below still moves past it.
-				continue
-			}
+		if err != nil {
 			return credited, err
 		}
 		credited++
 	}
-
-	// Advance past everything that was read, so the next poll starts where this
-	// one stopped. Matched transfers already advanced it inside their own
-	// transaction; this covers everything else on the page.
-	//
-	// The watermark is the raw page's newest row, not the newest transfer that
-	// survived the client-side filters. A page of transfers out of this address
-	// survives as nothing, and advancing on survivors would leave the cursor
-	// standing still on that page for ever - the whole deposit scan would then
-	// stop noticing money that had already arrived.
-	if page.NewestRawMs > watermarkMs {
-		if err := s.Engine.AdvanceChainCursor(depositCursorName, page.NewestRawMs, nowNs); err != nil {
-			return credited, err
-		}
+	if page.NewestRawMs > watermark && page.NewestRawMs <= nowNs/1e6+60_000 {
+		err = s.Engine.AdvanceChainCursor(cursor, page.NewestRawMs, nowNs)
 	}
-	return credited, nil
+	if err != nil {
+		return credited, err
+	}
+	if page.NextFingerprint != "" {
+		return credited, s.Engine.SaveChainScan(cursor, since, until, page.NextFingerprint)
+	}
+	return credited, s.Engine.CompleteChainScan(cursor, target, since, until, nowNs)
 }
 
 // StartDepositScanner runs the deposit sweep and chain listener until the
 // returned function is called.
 //
 // The two loops share one goroutine because they are both about the same pool of
-// amounts: the sweep frees what expired, the scan credits what arrived. When
-// deposits are not configured there is nothing to watch and the returned
-// function does nothing.
+// amounts: the sweep frees what expired, the scan credits what arrived. The
+// loop also runs while disabled, allowing live enablement and settlement of
+// existing orders after an operator closes checkout.
 func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf func(string, ...any)) func() {
-	if cp == nil || cp.depositAddress() == "" || cp.Tron == nil {
+	if cp == nil || cp.Engine == nil {
 		return func() {}
 	}
 	if interval <= 0 {
@@ -322,7 +414,8 @@ func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf f
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	stop := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := ctx.Done()
 	done := make(chan struct{})
 	var once sync.Once
 
@@ -342,9 +435,9 @@ func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf f
 					if _, err := cp.SweepDeposits(nowNs); err != nil {
 						logf("[service] sweep deposits: %v", err)
 					}
-					ctx, cancel := context.WithTimeout(context.Background(), interval)
-					_, err := cp.ScanDeposits(ctx, nowNs)
-					cancel()
+					passCtx, passCancel := context.WithTimeout(ctx, interval)
+					_, err := cp.ScanDeposits(passCtx, nowNs)
+					passCancel()
 					if err != nil {
 						logf("[service] scan deposits: %v", err)
 					}
@@ -355,7 +448,7 @@ func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf f
 
 	return func() {
 		once.Do(func() {
-			close(stop)
+			cancel()
 			<-done
 		})
 	}

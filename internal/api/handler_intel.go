@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
@@ -267,10 +266,5 @@ func writeIntelPage[T any](w http.ResponseWriter, items []T, total int, p Pagina
 }
 
 func writeDecodeError(w http.ResponseWriter, err error) {
-	var tooLarge *requestBodyTooLargeError
-	if errors.As(err, &tooLarge) {
-		WriteError(w, http.StatusRequestEntityTooLarge, "PAYLOAD_TOO_LARGE", err.Error())
-		return
-	}
-	WriteError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+	writeDecodeBodyError(w, err)
 }

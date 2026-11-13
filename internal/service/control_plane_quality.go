@@ -2,13 +2,13 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"net/netip"
 	"sort"
 	"strings"
 	"time"
 
 	"prism/internal/intel"
+	"prism/internal/intel/assess"
 	"prism/internal/intel/jobs"
 	"prism/internal/intel/providers"
 	"prism/internal/intel/store"
@@ -33,10 +33,6 @@ import (
 // as private constants so this projection cannot silently follow a rename in
 // another package without the alias surface being revisited.
 const (
-	assessmentStateValid       = "valid"
-	assessmentStatePending     = "pending"
-	assessmentStateUnsupported = "unsupported"
-
 	assessmentVerdictFavorable = "favorable"
 	assessmentVerdictHighRisk  = "high_risk"
 	assessmentVerdictConflict  = "conflicting"
@@ -265,13 +261,13 @@ func (s *ControlPlaneService) QualityIP(ctx context.Context, rawIP string) (qual
 	normalized := ip.Unmap().String()
 	rows, err := svc.Store().ListEvidenceByIP(ctx, normalized)
 	if err != nil {
-		return quality.Summary{}, internal("read evidence", err)
+		return quality.Summary{}, qualityStorageError("EVIDENCE_READ_FAILED", err)
 	}
 	assessment, err := s.qualityAssessmentRow(ctx, svc, normalized)
 	if err != nil {
 		return quality.Summary{}, err
 	}
-	return qualitySummaryFromRows(normalized, rows, assessment, time.Now().UTC()), nil
+	return qualitySummaryFromRows(normalized, rows, assessment, time.Now().UTC(), s.qualityBands()), nil
 }
 
 // ListQuality returns every assessed IP, newest evidence first, optionally
@@ -295,7 +291,7 @@ func (s *ControlPlaneService) ListQuality(ctx context.Context, query string) ([]
 	}
 	evidence, err := st.ListEvidenceByIPs(ctx, ips)
 	if err != nil {
-		return nil, internal("read evidence", err)
+		return nil, qualityStorageError("EVIDENCE_READ_FAILED", err)
 	}
 	byIP := make(map[string][]store.Evidence, len(ips))
 	for _, row := range evidence {
@@ -307,7 +303,7 @@ func (s *ControlPlaneService) ListQuality(ctx context.Context, query string) ([]
 	result := make([]quality.Summary, 0, len(rows))
 	for i := range rows {
 		row := rows[i]
-		summary := qualitySummaryFromRows(row.IP, byIP[row.IP], &row, now)
+		summary := qualitySummaryFromRows(row.IP, byIP[row.IP], &row, now, s.qualityBands())
 		if query != "" && !strings.Contains(strings.ToLower(qualityHaystack(summary)), query) {
 			continue
 		}
@@ -350,6 +346,9 @@ func qualityHaystack(summary quality.Summary) string {
 	}
 	if summary.Assessment != nil {
 		parts = append(parts, summary.Assessment.Verdict, summary.Assessment.PurityBand, summary.Assessment.NetworkType)
+		parts = append(parts, summary.Assessment.Reasons...)
+		f := summary.Assessment.Facts["purity"]
+		parts = append(parts, f.Cause, f.ErrorCode, f.Explanation)
 	}
 	return strings.Join(parts, " ")
 }
@@ -358,7 +357,7 @@ func qualityHaystack(summary quality.Summary) string {
 func (s *ControlPlaneService) qualityAssessmentRow(ctx context.Context, svc *intel.Service, ip string) (*store.Assessment, error) {
 	row, ok, err := svc.Store().GetAssessment(ctx, ip)
 	if err != nil {
-		return nil, internal("read assessment", err)
+		return nil, qualityStorageError("EVIDENCE_READ_FAILED", err)
 	}
 	if !ok {
 		return nil, nil
@@ -369,7 +368,11 @@ func (s *ControlPlaneService) qualityAssessmentRow(ctx context.Context, svc *int
 // qualitySummaryFromRows maps the intel rows of one IP onto the legacy summary.
 //
 // It is a pure function so the projection can be unit-tested without a database.
-func qualitySummaryFromRows(ip string, rows []store.Evidence, assessment *store.Assessment, now time.Time) quality.Summary {
+func qualitySummaryFromRows(ip string, rows []store.Evidence, assessment *store.Assessment, now time.Time, configured ...quality.Bands) quality.Summary {
+	bands := quality.DefaultBands()
+	if len(configured) > 0 {
+		bands = configured[0].Normalized()
+	}
 	summary := quality.Summary{
 		IP:      ip,
 		State:   qualityStateFromRows(rows, assessment, now),
@@ -380,6 +383,9 @@ func qualitySummaryFromRows(ip string, rows []store.Evidence, assessment *store.
 			Provider:   row.Provider,
 			Configured: true,
 			State:      qualityStateFromEvidence(row, now),
+		}
+		if issue := qualityEvidenceIssue(row, now); issue != "" {
+			source.Task = &quality.Task{IP: row.IP, Provider: row.Provider, State: "failed", ErrorCode: quality.SafeCode(issue)}
 		}
 		if ev, err := intel.EvidenceFromRow(row); err == nil {
 			evidence := ev
@@ -398,41 +404,49 @@ func qualitySummaryFromRows(ip string, rows []store.Evidence, assessment *store.
 		if row.Status == store.StatusError && strings.TrimSpace(row.ErrorCode) != "" {
 			summary.Task = &quality.Task{
 				IP: row.IP, Provider: row.Provider, Profile: row.Profile,
-				State: "failed", ErrorCode: row.ErrorCode,
+				State: "failed", ErrorCode: quality.SafeCode(row.ErrorCode),
 			}
 			break
 		}
 	}
 	if assessment != nil {
-		mapped := qualityAssessmentFromRow(*assessment)
-		mapped.NetworkSource = qualityNetworkSource(rows)
-		mapped.TorRoles = qualityTorRoles(rows)
+		mapped := qualityAssessmentFromLite(intel.AssessmentLiteFromRow(*assessment, bands).Current(now))
+		diagnostic := assessmentDiagnostics(ip, rows, now)
+		if mapped.PurityScore != nil && (diagnostic.PurityScore == nil || *diagnostic.PurityScore != *mapped.PurityScore) {
+			mapped.PurityScore = nil
+			fact := diagnostic.Facts["purity"]
+			if diagnostic.PurityScore != nil {
+				fact = quality.PurityDiagnostic("CURRENT_EXIT_UNASSESSED")
+			}
+			mapped.Facts["purity"] = fact
+			mapped.Reasons = append(mapped.Reasons, fact.Cause)
+			mapped.State = "pending"
+			if mapped.Verdict == "favorable" {
+				mapped.Verdict = "pending"
+			}
+			summary.State = "pending"
+		}
+		mapped.PurityBand = bands.Name(mapped.PurityScore)
+		mapped.Bands = bands
+		mapped.NetworkSource = "assessment"
+		mapped.TorRoles = qualityTorRoles(rows, now)
 		summary.Assessment = &mapped
+	}
+	if summary.Assessment == nil {
+		diagnostic := assessmentDiagnostics(ip, rows, now)
+		f := diagnostic.Facts["purity"]
+		if diagnostic.PurityScore != nil {
+			f = quality.PurityDiagnostic("CURRENT_EXIT_UNASSESSED")
+		}
+		summary.Assessment = &quality.Assessment{State: "pending", ScoreSource: "ippure", PurityBand: "unknown", NetworkType: "unknown", Verdict: "pending", Reasons: []string{f.Cause}, Facts: map[string]quality.Fact{"purity": f}, Bands: bands}
 	}
 	return summary
 }
 
-// qualityNetworkSource attributes the winning network classification the way the
-// legacy projection did: ProxyCheck when its evidence is present, otherwise
-// IPPure.
-func qualityNetworkSource(rows []store.Evidence) string {
-	for _, row := range rows {
-		if row.Provider == quality.ProviderID && row.Status == store.StatusOk {
-			return quality.ProviderID
-		}
-	}
-	for _, row := range rows {
-		if row.Provider == "ippure" && row.Status == store.StatusOk {
-			return "ippure"
-		}
-	}
-	return ""
-}
-
 // qualityTorRoles returns the public relay roles of the Tor registry evidence.
-func qualityTorRoles(rows []store.Evidence) []string {
+func qualityTorRoles(rows []store.Evidence, now time.Time) []string {
 	for _, row := range rows {
-		if row.Provider != "torproject" || row.Status != store.StatusOk {
+		if row.Provider != "torproject" || qualityStateFromEvidence(row, now) != "valid" {
 			continue
 		}
 		ev, err := intel.EvidenceFromRow(row)
@@ -452,20 +466,7 @@ func qualityTorRoles(rows []store.Evidence) []string {
 // valid rather than as a fourth state.
 func qualityStateFromRows(rows []store.Evidence, assessment *store.Assessment, now time.Time) string {
 	if assessment != nil {
-		if assessment.Verdict == assessmentVerdictConflict || assessment.IPType == assessmentIPTypeConflict {
-			return assessmentVerdictConflict
-		}
-		switch assessment.State {
-		case assessmentStateUnsupported:
-			return "unsupported"
-		case assessmentStatePending:
-			return "pending"
-		case assessmentStateValid:
-			if assessment.ValidUntilNs > 0 && assessment.ValidUntilNs <= now.UnixNano() {
-				return "stale"
-			}
-			return "valid"
-		}
+		return qualityStateFromLite(intel.AssessmentLiteFromRow(*assessment), now)
 	}
 	if len(rows) == 0 {
 		return "unobserved"
@@ -486,12 +487,45 @@ func qualityStateFromRows(rows []store.Evidence, assessment *store.Assessment, n
 	return state
 }
 
+func parseQualityEvidenceIP(raw string) netip.Addr { ip, _ := netip.ParseAddr(raw); return ip }
+
+// Keep invalid persisted observations explainable without exposing payloads.
+func qualityEvidenceIssue(row store.Evidence, now time.Time) string {
+	if row.ErrorCode != "" {
+		return quality.SafeCode(row.ErrorCode)
+	}
+	if row.Status != store.StatusOk {
+		return ""
+	}
+	ev, err := intel.EvidenceFromRow(row)
+	if err != nil {
+		return "EVIDENCE_DECODE_FAILED"
+	}
+	if ev.IP != row.IP {
+		return "EGRESS_MISMATCH"
+	}
+	if row.ObservedAtNs <= 0 || row.ObservedAtNs > now.UnixNano() || ev.ObservedAt.IsZero() || ev.ObservedAt.After(now) || ev.ValidUntil.IsZero() {
+		return "EVIDENCE_TIME_INVALID"
+	}
+	if row.ValidUntilNs <= now.UnixNano() || !ev.ValidUntil.After(now) {
+		return "EVIDENCE_EXPIRED"
+	}
+	return ""
+}
+
 // qualityStateFromEvidence maps one intel evidence status onto the legacy state.
 func qualityStateFromEvidence(row store.Evidence, now time.Time) string {
 	switch row.Status {
 	case store.StatusOk:
-		if row.ValidUntilNs > 0 && row.ValidUntilNs <= now.UnixNano() {
+		if row.ObservedAtNs <= 0 || row.ObservedAtNs > now.UnixNano() {
+			return "unobserved"
+		}
+		if row.ValidUntilNs <= now.UnixNano() {
 			return "stale"
+		}
+		ev, err := intel.EvidenceFromRow(row)
+		if err != nil || len(assess.CurrentEvidence(parseQualityEvidenceIP(row.IP), []quality.Evidence{ev}, now)) == 0 {
+			return "unobserved"
 		}
 		return "valid"
 	case store.StatusUnsupported:
@@ -508,7 +542,7 @@ func qualityStateFromEvidence(row store.Evidence, now time.Time) string {
 // qualityScorePtr narrows the stored purity score to the *int the legacy shape
 // uses. The column is an INTEGER; the legacy contract is a small 0..100 value.
 func qualityScorePtr(score *int64) *int {
-	if score == nil {
+	if score == nil || *score < 0 || *score > 100 {
 		return nil
 	}
 	value := int(*score)
@@ -521,28 +555,7 @@ func qualityScorePtr(score *int64) *int {
 // result; the intel row is the source of truth since replaced the old
 // in-memory assessment.
 func qualityAssessmentFromRow(row store.Assessment) quality.Assessment {
-	assessment := quality.Assessment{
-		State:       row.State,
-		ScoreSource: "ippure",
-		PurityScore: qualityScorePtr(row.ScoreOrNil()),
-		PurityBand:  row.PurityBand,
-		NetworkType: row.IPType,
-		Verdict:     row.Verdict,
-		// Default to an empty list, not nil: a nil slice marshals to `null` and
-		// the WebUI reads this array. Rows without stored reasons keep this value.
-		Reasons: []string{},
-	}
-	if row.Native.Valid {
-		native := row.Native.Int64 != 0
-		assessment.Native = &native
-	}
-	if strings.TrimSpace(row.ReasonsJSON) != "" {
-		var reasons []string
-		if err := json.Unmarshal([]byte(row.ReasonsJSON), &reasons); err == nil {
-			assessment.Reasons = reasons
-		}
-	}
-	return assessment
+	return qualityAssessmentFromLite(intel.AssessmentLiteFromRow(row).Current(time.Now().UTC()))
 }
 
 // qualityAssessmentFromLite maps the in-memory projection onto the legacy shape.
@@ -554,6 +567,7 @@ func qualityAssessmentFromLite(lite intel.AssessmentLite) quality.Assessment {
 	return quality.Assessment{
 		State:       intel.StateName(lite.State),
 		ScoreSource: "ippure",
+		Facts:       lite.FactValues(),
 		PurityScore: lite.ScoreValue(),
 		PurityBand:  intel.BandName(lite.Band),
 		NetworkType: intel.IPTypeName(lite.IPType),
@@ -562,7 +576,7 @@ func qualityAssessmentFromLite(lite intel.AssessmentLite) quality.Assessment {
 		// A nil slice marshals to `null`, and "deliberately empty" has to look like
 		// an empty list on the wire. The WebUI reads this array, and the sibling
 		// qualityAssessmentFromRow path already yields [] from the stored JSON.
-		Reasons: []string{},
+		Reasons: lite.ReasonValues(),
 	}
 }
 
@@ -592,7 +606,7 @@ func qualityStateFromLite(lite intel.AssessmentLite, now time.Time) string {
 // it must stay an allocation-only lookup (R3). The evidence rows that carry the
 // per-provider detail are added for a whole page at once by
 // FillNodeQualityEvidence.
-func (s *ControlPlaneService) nodeQuality(ip netip.Addr) quality.Summary {
+func (s *ControlPlaneService) nodeQuality(ip netip.Addr, nodeHashes ...string) quality.Summary {
 	summary := quality.Summary{State: "unobserved", Sources: []quality.SourceSummary{}}
 	if !ip.IsValid() {
 		return summary
@@ -603,10 +617,14 @@ func (s *ControlPlaneService) nodeQuality(ip netip.Addr) quality.Summary {
 		return summary
 	}
 	lite, ok := snap.Assessment(ip.Unmap())
+	if len(nodeHashes) > 0 {
+		lite, ok = snap.NodeAssessment(nodeHashes[0], ip.Unmap())
+	}
 	if !ok {
 		return summary
 	}
-	assessment := qualityAssessmentFromLite(lite)
+	assessment := qualityAssessmentFromLite(lite.Current(time.Now().UTC()))
+	assessment.Bands = s.qualityBands()
 	summary.Assessment = &assessment
 	summary.State = qualityStateFromLite(lite, time.Now().UTC())
 	return summary
@@ -624,6 +642,22 @@ const maxQualityEvidenceIPs = 2000
 // FillNodeIntelEgress: the assessment already came from the projection, and this
 // is the only database read the quality view needs.
 func (s *ControlPlaneService) FillNodeQualityEvidence(ctx context.Context, nodes []NodeSummary) {
+	defer func() {
+		for i := range nodes {
+			nodes[i].Intel.explainFacts()
+			if a := nodes[i].Quality.Assessment; a != nil {
+				a.Facts = nodes[i].Intel.Facts
+				a.PurityScore = nodes[i].Intel.PurityScore
+				a.PurityBand = nodes[i].Intel.PurityBand
+				a.Verdict = nodes[i].Intel.Verdict
+			}
+			if nodes[i].ReferenceLatencyMs == nil {
+				nodes[i].Intel.Facts["latency"] = quality.Missing("active_probe", "NO_SUCCESSFUL_LATENCY_SAMPLE", "修复节点连接后运行延迟探测；失败继续健康重试，不删除节点。")
+			} else {
+				nodes[i].Intel.Facts["latency"] = quality.Known("active_probe")
+			}
+		}
+	}()
 	if s == nil || s.Intel == nil || s.Intel.Store() == nil || len(nodes) == 0 {
 		return
 	}
@@ -641,6 +675,9 @@ func (s *ControlPlaneService) FillNodeQualityEvidence(ctx context.Context, nodes
 	}
 	rows, err := s.Intel.Store().ListEvidenceByIPs(ctx, ips)
 	if err != nil {
+		for i := range nodes {
+			nodes[i].Intel.evidenceReadFailed = true
+		}
 		return
 	}
 	byIP := make(map[string][]store.Evidence, len(ips))
@@ -649,32 +686,77 @@ func (s *ControlPlaneService) FillNodeQualityEvidence(ctx context.Context, nodes
 	}
 	now := time.Now().UTC()
 	for i := range nodes {
-		evidence, ok := byIP[nodes[i].EgressIP]
-		if !ok {
-			continue
+		evidence := byIP[nodes[i].EgressIP]
+		diagnostic := assessmentDiagnostics(nodes[i].EgressIP, evidence, now)
+		if diagnostic.PurityScore == nil && len(evidence) > 0 {
+			nodes[i].Intel.PurityScore = nil
+			nodes[i].Intel.PurityBand = "unknown"
+			if nodes[i].Intel.Facts == nil {
+				nodes[i].Intel.Facts = map[string]quality.Fact{}
+			}
+			nodes[i].Intel.Facts["purity"] = diagnostic.Facts["purity"]
 		}
 		sources := make([]quality.SourceSummary, 0, len(evidence))
+		if nodes[i].Intel.Facts == nil {
+			nodes[i].Intel.explainFacts()
+		}
+		for _, key := range []string{"purity", "network_type", "proxy", "vpn", "tor", "hosting", "compromised", "scraper", "anonymous", "asn", "as_org", "country", "city", "native"} {
+			f := nodes[i].Intel.Facts[key]
+			if f.Provider != "" || len(f.Observations) > 0 {
+				continue
+			}
+			f.Sources = nil
+			for _, row := range evidence {
+				source := row.Provider + ":" + qualityStateFromEvidence(row, now)
+				if issue := qualityEvidenceIssue(row, now); issue != "" {
+					source += ":" + issue
+				}
+				if ev, err := intel.EvidenceFromRow(row); err == nil && key == "network_type" && ev.IPType != "" {
+					source += ":" + ev.IPType
+				}
+				f.Sources = append(f.Sources, source)
+			}
+			nodes[i].Intel.Facts[key] = f
+		}
 		var primary *quality.Evidence
+		var candidates []quality.Evidence
 		for _, row := range evidence {
 			source := quality.SourceSummary{
 				Provider:   row.Provider,
 				Configured: true,
 				State:      qualityStateFromEvidence(row, now),
 			}
+			if issue := qualityEvidenceIssue(row, now); issue != "" {
+				source.Task = &quality.Task{IP: row.IP, Provider: row.Provider, State: "failed", ErrorCode: quality.SafeCode(issue)}
+			}
 			if ev, err := intel.EvidenceFromRow(row); err == nil {
 				copied := ev
 				source.Evidence = &copied
+				if row.Status == store.StatusOk {
+					candidates = append(candidates, ev)
+				}
+
 				if primary == nil || row.Provider == quality.ProviderID {
 					primary = &copied
 				}
 			}
 			sources = append(sources, source)
 		}
+		nodes[i].Intel.Signals = quality.Signals{}
+		for _, ev := range assess.CurrentEvidence(parseQualityEvidenceIP(nodes[i].EgressIP), candidates, now) {
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.Proxy, ev.Signals.Proxy)
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.VPN, ev.Signals.VPN)
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.Tor, ev.Signals.Tor)
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.Hosting, ev.Signals.Hosting)
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.Compromised, ev.Signals.Compromised)
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.Scraper, ev.Signals.Scraper)
+			mergeMeasuredSignal(&nodes[i].Intel.Signals.Anonymous, ev.Signals.Anonymous)
+		}
 		nodes[i].Quality.Sources = sources
 		nodes[i].Quality.Evidence = primary
 		if nodes[i].Quality.Assessment != nil {
-			nodes[i].Quality.Assessment.NetworkSource = qualityNetworkSource(evidence)
-			nodes[i].Quality.Assessment.TorRoles = qualityTorRoles(evidence)
+			nodes[i].Quality.Assessment.NetworkSource = "assessment"
+			nodes[i].Quality.Assessment.TorRoles = qualityTorRoles(evidence, now)
 		}
 	}
 }
@@ -808,10 +890,9 @@ func (s *ControlPlaneService) ReviewIPPure(ctx context.Context, hash string) (IP
 
 	now := time.Now().UTC()
 	result := IPPureReviewResult{
-		NodeHash:      hash,
-		JobID:         job.ID,
-		Queued:        true,
-		NextAllowedAt: now.Add(ippureReviewInterval).Format(time.RFC3339),
+		NodeHash: hash,
+		JobID:    job.ID,
+		Queued:   true,
 	}
 	if expected.IsValid() {
 		result.ExpectedIP = expected.String()
@@ -831,7 +912,7 @@ func (s *ControlPlaneService) ReviewIPPure(ctx context.Context, hash string) (IP
 				result.Queued = false
 				result.IsResidential = evidence.IsResidential
 				// IPPure does not calculate an IPv6 fraud score.
-				result.ScoreSupported = expected.Is4() && evidence.RiskScore != nil
+				result.ScoreSupported = expected.Is4() && evidence.FraudScore != nil
 				result.MatchesNodeIP = evidence.IP == expected.String() && s.nodeEgressStillIs(h, expected)
 				return result, nil
 			}
@@ -881,10 +962,6 @@ const ippureReviewWait = 15 * time.Second
 // ippureReviewPoll is the evidence polling interval during that wait.
 const ippureReviewPoll = 250 * time.Millisecond
 
-// ippureReviewInterval is the manual review cooldown the frontend renders. It
-// matches the legacy IPPure per-minute limit.
-const ippureReviewInterval = time.Minute
-
 // ippureProviderID is the provider whose evidence the review reports.
 const ippureProviderID = "ippure"
 
@@ -897,7 +974,7 @@ func (s *ControlPlaneService) ippureEvidence(ctx context.Context, ip string) (*q
 	}
 	row, ok, err := svc.Store().GetEvidence(ctx, ip, ippureProviderID)
 	if err != nil {
-		return nil, internal("read evidence", err)
+		return nil, qualityStorageError("EVIDENCE_READ_FAILED", err)
 	}
 	if !ok || row.Status != store.StatusOk {
 		return nil, nil
@@ -913,5 +990,38 @@ func (s *ControlPlaneService) ippureEvidence(ctx context.Context, ip string) (*q
 		// had never been inspected.
 		return nil, internal("decode evidence", err)
 	}
+	if len(assess.CurrentEvidence(parseQualityEvidenceIP(ip), []quality.Evidence{ev}, time.Now().UTC())) == 0 {
+		return nil, nil
+	}
 	return &ev, nil
+}
+
+// Missing signals stay nil. An observed positive outranks observed negatives.
+func mergeMeasuredSignal(dst **bool, src *bool) {
+	if src == nil {
+		return
+	}
+	if *dst == nil || *src {
+		v := *src
+		*dst = &v
+	}
+}
+
+// qualityBands is the single runtime band policy, also installed on the intel
+// snapshot for filters, routing, export and job scopes.
+func (s *ControlPlaneService) qualityBands() quality.Bands {
+	if s != nil && s.RuntimeCfg != nil {
+		if cfg := s.RuntimeCfg.Load(); cfg != nil {
+			b := cfg.PurityBands.Normalized()
+			return quality.Bands{Excellent: b.Excellent, Clean: b.Clean, Fair: b.Fair, Mixed: b.Mixed}
+		}
+	}
+	return quality.DefaultBands()
+}
+
+// assessmentDiagnostics uses the same pure assessor as persisted evaluations.
+// Callers use it only to reject stale scores and explain absent assessments.
+func assessmentDiagnostics(ip string, rows []store.Evidence, now time.Time) assess.Assessment {
+	input := intel.AssessmentInputFromRows(parseQualityEvidenceIP(ip), rows, now)
+	return assess.AssessInput(input)
 }

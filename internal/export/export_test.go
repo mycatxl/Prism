@@ -129,7 +129,7 @@ func TestExportJSONCarriesReportInBody(t *testing.T) {
 		t.Fatal("json export skipped must be an array, not null")
 	}
 	first := decoded.Items[0]
-	if first.Name != "ss-tokyo" || first.Purity != "96" || first.Band != "excellent" || first.EgressV4 != "198.51.100.10" || first.Colo != "NRT" {
+	if first.Name != "ss-tokyo" || first.Purity != "96" || first.Band != "excellent" || first.EgressV4 != "198.51.100.10" || first.Colo != "" {
 		t.Fatalf("first json row = %+v", first)
 	}
 	assertNoCredential(t, FormatJSON, body)

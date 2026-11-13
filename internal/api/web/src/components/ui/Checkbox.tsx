@@ -1,21 +1,23 @@
-import { Checkbox as HeroCheckbox } from "@heroui/react";
-import type { ComponentProps, ReactNode } from "react";
+import { Check } from "lucide-react";
+import type { InputHTMLAttributes, ReactNode } from "react";
 import { cn } from "../../lib/cn";
 
-export type CheckboxProps = Omit<ComponentProps<typeof HeroCheckbox>, "children" | "className"> & {
+export type CheckboxProps = Omit<InputHTMLAttributes<HTMLInputElement>, "checked" | "onChange" | "type"> & {
   className?: string;
   label?: ReactNode;
+  isSelected?: boolean;
+  isDisabled?: boolean;
+  onChange?: (checked: boolean) => void;
 };
 
-export function Checkbox({ className, label, ...props }: CheckboxProps) {
+export function Checkbox({ className, label, isSelected, isDisabled, disabled, onChange, ...props }: CheckboxProps) {
   return (
-    <HeroCheckbox {...props} className={cn("workspace-checkbox", className)}>
-      <HeroCheckbox.Content>
-        <HeroCheckbox.Control>
-          <HeroCheckbox.Indicator />
-        </HeroCheckbox.Control>
+    <label className={cn("workspace-checkbox", className)}>
+      <span className="workspace-checkbox__content">
+        <input {...props} type="checkbox" checked={Boolean(isSelected)} disabled={isDisabled || disabled} onChange={(event) => onChange?.(event.target.checked)} />
+        <span className="workspace-checkbox__control" aria-hidden><Check size={12} /></span>
         {label ? <span className="workspace-checkbox__label">{label}</span> : null}
-      </HeroCheckbox.Content>
-    </HeroCheckbox>
+      </span>
+    </label>
   );
 }

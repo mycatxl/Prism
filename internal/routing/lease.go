@@ -141,7 +141,7 @@ func (t *LeaseTable) DeleteLeaseIfOlderThan(userID, account string, createdBefor
 
 // Size returns the number of leases in the table.
 func (t *LeaseTable) Size() int {
-	return t.leases.Size()
+	return max(0, t.leases.Size())
 }
 
 // Inc increments the lease count for an IP.
@@ -197,5 +197,5 @@ func (s *IPLoadStats) Snapshot() map[netip.Addr]int64 {
 
 // IsExpired checks if a lease is expired relative to the given time.
 func (l Lease) IsExpired(now time.Time) bool {
-	return l.ExpiryNs < now.UnixNano()
+	return l.expiryNs() <= now.UnixNano()
 }

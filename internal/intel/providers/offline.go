@@ -507,7 +507,7 @@ func (r *TorRegistry) Snapshot() (published, checked time.Time, entries int, err
 func (r *TorRegistry) Status() TorStatus {
 	published, checked, entries, errCode := r.Snapshot()
 	status := TorStatus{ID: "torproject", Entries: entries, ErrorCode: errCode}
-	status.Ready = entries > 0 && r.now().UTC().Sub(published) < torRegistryValidity
+	status.Ready = entries > 0 && !published.IsZero() && !published.After(r.now().UTC()) && r.now().UTC().Sub(published) < torRegistryValidity
 	if !published.IsZero() {
 		value := published
 		status.UpdatedAt = &value
@@ -550,6 +550,7 @@ func (r *TorRegistry) Refresh(ctx context.Context) error {
 	if resp.StatusCode == http.StatusNotModified {
 		r.mu.Lock()
 		r.nextRefresh = r.now().UTC().Add(torRefreshInterval)
+		r.refreshing = false
 		r.errorCode = ""
 		r.mu.Unlock()
 		return nil
@@ -658,21 +659,40 @@ func (p *TorProvider) Lookup(raw netip.Addr) Result {
 		return unsupported
 	}
 	if p.registry == nil {
-		return Failure(CodeUnavailable, "Tor registry is not available")
+		return Failure(CodeRegistryUnavailable, "Tor registry is not available")
 	}
 	p.registry.maybeRefresh()
-	roles, listed := p.registry.Roles(ip)
-	if !listed {
-		return Failure(CodeUnavailable, "Tor registry has no public relay for this address")
-	}
-	published, checked, _, _ := p.registry.Snapshot()
-	validUntil := checked.Add(p.ttl)
-	if limit := published.Add(p.ttl); limit.Before(validUntil) {
-		validUntil = limit
-	}
+	// Capture roles and timestamps together: a concurrent refresh must not
+	// combine old roles with a newer publication time.
+	p.registry.mu.Lock()
+	bits, listed := p.registry.roles[ip.Unmap()]
+	published, checked := p.registry.published, p.registry.checked
+	p.registry.mu.Unlock()
 	now := p.now().UTC()
-	if !validUntil.After(now) {
-		validUntil = now.Add(p.ttl)
+	validUntil := checked.Add(p.ttl)
+	for _, limit := range []time.Time{published.Add(p.ttl), published.Add(torRegistryValidity)} {
+		if limit.Before(validUntil) {
+			validUntil = limit
+		}
+	}
+	if published.IsZero() || checked.IsZero() {
+		return Failure(CodeRegistryUnavailable, "Tor registry is not available; download the registry")
+	}
+	if published.After(now) || checked.After(now) || !validUntil.After(now) {
+		return Failure(CodeRegistryExpired, "Tor registry is expired or has invalid timestamps; refresh the registry")
+	}
+	if !listed {
+		return Failure(CodeTorNotListed, "Tor registry has no public relay for this address; private bridges remain unknown")
+	}
+	var roles []string
+	if bits&torExit != 0 {
+		roles = append(roles, "exit")
+	}
+	if bits&torGuard != 0 {
+		roles = append(roles, "guard")
+	}
+	if bits&torRelay != 0 {
+		roles = append(roles, "relay")
 	}
 	signals := quality.Signals{}
 	if len(roles) > 0 {

@@ -1,6 +1,7 @@
 export interface SelfPlatform {
   platform_id: string;
   platform_name: string;
+  measured_countries?: string[];
 }
 
 export interface SubscriptionView {
@@ -42,10 +43,15 @@ export interface SelfOverview {
   live_concurrent: number;
   usage_daily: UsageDay[];
   platforms: SelfPlatform[];
+  key_platforms: SelfPlatform[];
 }
 
 /** A plan a customer may buy: active and priced. */
 export interface PurchasablePlan {
+  max_rps: number;
+  max_bandwidth_bps: number;
+  max_concurrent: number;
+  max_keys: number;
   id: string;
   name: string;
   platforms: string[] | null;
@@ -140,6 +146,8 @@ export interface SessionsResponse {
 }
 
 export interface DepositInfo {
+  trx_enabled: boolean;
+  trx_ratio: number;
   enabled: boolean;
   address: string;
   contract: string;
@@ -149,6 +157,10 @@ export interface DepositInfo {
 }
 
 export interface DepositIntent {
+  currency: "usdt" | "trx";
+  credit_micro: number;
+  rate: number;
+  contract: string;
   id: string;
   amount_micro: number;
   status: string;
@@ -163,3 +175,14 @@ export interface DepositIntent {
 export interface DepositIntentsResponse {
   items: DepositIntent[];
 }
+
+export interface LDCInfo {
+  rate: number;
+  enabled: boolean;
+}
+
+export interface LDCPayResponse {
+  redirect_url: string;
+  out_trade_no: string;
+}
+

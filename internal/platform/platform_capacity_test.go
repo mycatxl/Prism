@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"prism/internal/node"
-	"prism/internal/quality"
 	"prism/internal/testutil"
 )
 
@@ -70,7 +69,7 @@ func TestPlatformCapacity_FullRebuildLargePool(t *testing.T) {
 				},
 				func(_ string, _ node.Hash) (string, bool, []string, bool) { return "", true, nil, true },
 				func(_ netip.Addr) string { return "us" },
-				func(_ netip.Addr) quality.Summary { return quality.Summary{} },
+				testutil.MeasuredQuality,
 			)
 			elapsed := time.Since(start)
 
@@ -121,7 +120,7 @@ func TestPlatformCapacity_NotifyDirtyThroughput(t *testing.T) {
 		},
 		func(_ string, _ node.Hash) (string, bool, []string, bool) { return "", true, nil, true },
 		func(_ netip.Addr) string { return "us" },
-		func(_ netip.Addr) quality.Summary { return quality.Summary{} },
+		testutil.MeasuredQuality,
 	)
 
 	if plat.View().Size() != baseCount {
@@ -143,7 +142,7 @@ func TestPlatformCapacity_NotifyDirtyThroughput(t *testing.T) {
 			getEntry,
 			func(_ string, _ node.Hash) (string, bool, []string, bool) { return "", true, nil, true },
 			func(_ netip.Addr) string { return "us" },
-			func(_ netip.Addr) quality.Summary { return quality.Summary{} },
+			testutil.MeasuredQuality,
 		)
 	}
 	elapsed := time.Since(start)
@@ -181,7 +180,7 @@ func TestPlatformCapacity_ViewRangeThroughput(t *testing.T) {
 		},
 		func(_ string, _ node.Hash) (string, bool, []string, bool) { return "", true, nil, true },
 		func(_ netip.Addr) string { return "us" },
-		func(_ netip.Addr) quality.Summary { return quality.Summary{} },
+		testutil.MeasuredQuality,
 	)
 
 	// Full scan

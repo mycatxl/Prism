@@ -26,6 +26,8 @@ import (
 	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
 	M "github.com/sagernet/sing/common/metadata"
+	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
 
 	"prism/internal/config"
 	"prism/internal/outbound"
@@ -264,7 +266,8 @@ func startPeerFixture(t *testing.T, fixture peerFixture) {
 	if len(fixture.inbounds) == 0 && len(fixture.endpoints) == 0 {
 		t.Fatal("peer fixture serves no listener")
 	}
-	ctx := include.Context(context.Background())
+	ctx, cancel := context.WithCancel(include.Context(context.Background()))
+	t.Cleanup(cancel)
 
 	inbounds := make([]option.Inbound, 0, len(fixture.inbounds))
 	for _, raw := range fixture.inbounds {
@@ -294,10 +297,14 @@ func startPeerFixture(t *testing.T, fixture peerFixture) {
 		t.Fatalf("box.New(inbounds=%v endpoints=%v): %v", fixture.inbounds, fixture.endpoints, err)
 	}
 	if err := instance.Start(); err != nil {
+		cancel()
 		_ = instance.Close()
 		t.Fatalf("instance.Start(inbounds=%v endpoints=%v): %v", fixture.inbounds, fixture.endpoints, err)
 	}
-	t.Cleanup(func() { _ = instance.Close() })
+	// The peer only uses loopback; a namespace without an external default
+	// route still has every network path this fixture needs.
+	service.FromContext[pause.Manager](ctx).NetworkWake()
+	t.Cleanup(func() { cancel(); _ = instance.Close() })
 }
 
 // decodeInbound parses one rendered inbound object with sing's context-aware

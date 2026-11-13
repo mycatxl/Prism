@@ -18,8 +18,7 @@ type requestLifecycle struct {
 	log                 RequestLogEntry
 	firstByteDurationNs atomic.Int64
 
-	// meter attributes this request's traffic to an access key, when one was
-	// presented. It is nil on the transitional token path.
+	// meter attributes this request's traffic to its AccessKey.
 	meter *requestMeter
 
 	reqBodyCapture  *payloadCaptureReadCloser
@@ -73,14 +72,28 @@ func newRequestLifecycle(
 
 func (l *requestLifecycle) finish() {
 	if l.reqBodyCapture != nil {
-		l.log.ReqBody = l.reqBodyCapture.Payload()
+		l.log.ReqBody = sanitizeLogPayload(l.reqBodyCapture.Payload())
 		l.log.ReqBodyLen = l.reqBodyCapture.TotalLen()
 		l.log.ReqBodyTruncated = l.reqBodyCapture.Truncated()
+		if len(l.log.ReqBody) > 0 {
+			l.log.ReqBodyTruncated = true
+		}
+		if max := l.reqBodyCapture.maxBytes; max >= 0 && len(l.log.ReqBody) > max {
+			l.log.ReqBody = l.log.ReqBody[:max]
+			l.log.ReqBodyTruncated = true
+		}
 	}
 	if l.respBodyCapture != nil {
-		l.log.RespBody = l.respBodyCapture.Payload()
+		l.log.RespBody = sanitizeLogPayload(l.respBodyCapture.Payload())
 		l.log.RespBodyLen = l.respBodyCapture.TotalLen()
 		l.log.RespBodyTruncated = l.respBodyCapture.Truncated()
+		if len(l.log.RespBody) > 0 {
+			l.log.RespBodyTruncated = true
+		}
+		if max := l.respBodyCapture.maxBytes; max >= 0 && len(l.log.RespBody) > max {
+			l.log.RespBody = l.log.RespBody[:max]
+			l.log.RespBodyTruncated = true
+		}
 	}
 
 	durationNs := time.Since(l.startedAt).Nanoseconds()

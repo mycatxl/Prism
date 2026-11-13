@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"prism/internal/node"
+	"prism/internal/testutil"
 )
 
 // rebuildProbePool builds n fully routable nodes with distinct hashes so the
@@ -41,7 +42,7 @@ func rebuildWith(
 			}
 		}
 		observe()
-	}, alwaysLookup, usGeoLookup, nil)
+	}, alwaysLookup, usGeoLookup, testutil.MeasuredQuality)
 }
 
 // TestPlatform_FullRebuild_NeverExposesEmptyView pins the publication contract
@@ -214,7 +215,7 @@ func TestPlatform_NotifyDirty_MutatesThePublishedGeneration(t *testing.T) {
 	}
 
 	// Dirty add lands on the published generation.
-	plat.NotifyDirty(extra, getEntry, alwaysLookup, usGeoLookup, nil)
+	plat.NotifyDirty(extra, getEntry, alwaysLookup, usGeoLookup, testutil.MeasuredQuality)
 	if got := plat.View().Size(); got != len(baseHashes)+1 {
 		t.Fatalf("after dirty add: view size = %d, want %d", got, len(baseHashes)+1)
 	}
@@ -224,7 +225,7 @@ func TestPlatform_NotifyDirty_MutatesThePublishedGeneration(t *testing.T) {
 
 	// Circuit-break it, dirty remove must reach the same generation.
 	extraEntries[extra].CircuitOpenSince.Store(time.Now().UnixNano())
-	plat.NotifyDirty(extra, getEntry, alwaysLookup, usGeoLookup, nil)
+	plat.NotifyDirty(extra, getEntry, alwaysLookup, usGeoLookup, testutil.MeasuredQuality)
 	if got := plat.View().Size(); got != len(baseHashes) {
 		t.Fatalf("after dirty remove: view size = %d, want %d", got, len(baseHashes))
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"prism/internal/intel"
+	"prism/internal/quality"
 	"prism/internal/service"
 )
 
@@ -34,6 +35,8 @@ const (
 // query parameters and the stored export filter are projected onto it before
 // validation.
 type nodeIntelFilterValues struct {
+	PurityState   string
+	PurityReason  string
 	PurityMin     string
 	PurityMax     string
 	Verdict       string
@@ -48,6 +51,18 @@ type nodeIntelFilterValues struct {
 func (v nodeIntelFilterValues) apply(filters *service.NodeFilters) error {
 	if filters == nil {
 		return fmt.Errorf("filters: required")
+	}
+	if v.PurityState != "" {
+		if v.PurityState != "rated" && v.PurityState != "unrated" {
+			return fmt.Errorf("purity_state: must be rated or unrated")
+		}
+		filters.PurityState = &v.PurityState
+	}
+	if v.PurityReason != "" {
+		if quality.SafeCode(v.PurityReason) == "" {
+			return fmt.Errorf("purity_reason: invalid reason code")
+		}
+		filters.PurityReason = &v.PurityReason
 	}
 	if raw := strings.TrimSpace(v.PurityMin); raw != "" {
 		value, err := parsePurityBound(raw, "purity_min")

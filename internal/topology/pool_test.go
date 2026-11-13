@@ -219,7 +219,7 @@ func TestPool_PlatformNotifyOnAddRemove(t *testing.T) {
 	sub := subscription.NewSubscription("s1", "Sub1", "url", true, false)
 	subMgr.Register(sub)
 
-	pool := newTestPool(subMgr)
+	pool := newMeasuredTestPool(subMgr)
 
 	// Create a platform with no filters (everything passes regex/region checks).
 	plat := platform.NewPlatform("p1", "TestPlat", nil, nil)
@@ -353,7 +353,8 @@ func TestPool_RebuildAllPlatforms_UpdatesInParallel(t *testing.T) {
 	var geoLookupCalls atomic.Int32
 
 	pool := NewGlobalNodePool(PoolConfig{
-		SubLookup: subMgr.Lookup,
+		QualityLookup: testutil.MeasuredQuality,
+		SubLookup:     subMgr.Lookup,
 		GeoLookup: func(addr netip.Addr) string {
 			if geoLookupCalls.Add(1) == 2 {
 				close(allGeoLookupStarted)
@@ -429,7 +430,7 @@ func TestPool_RegexFilteredPlatform(t *testing.T) {
 	sub := subscription.NewSubscription("s1", "Provider", "url", true, false)
 	subMgr.Register(sub)
 
-	pool := newTestPool(subMgr)
+	pool := newMeasuredTestPool(subMgr)
 
 	// Platform with "us" regex filter.
 	plat := platform.NewPlatform("p1", "US-Only", []*regexp.Regexp{regexp.MustCompile("us")}, nil)
@@ -737,7 +738,7 @@ func TestPool_ReplacePlatform_RebuildsViewBeforePublish(t *testing.T) {
 	sub := subscription.NewSubscription("s1", "Provider", "url", true, false)
 	subMgr.Register(sub)
 
-	pool := newTestPool(subMgr)
+	pool := newMeasuredTestPool(subMgr)
 	oldPlat := platform.NewPlatform("p-rebuild", "Old", nil, nil)
 	pool.RegisterPlatform(oldPlat)
 
@@ -949,4 +950,10 @@ func TestEphemeralCleaner_SkipsRecentCircuitBreak(t *testing.T) {
 	if pool.Size() != 1 {
 		t.Fatal("recently circuit-broken node should not be evicted yet")
 	}
+}
+
+func newMeasuredTestPool(sm *SubscriptionManager) *GlobalNodePool {
+	p := newTestPool(sm)
+	p.qualityLookup = testutil.MeasuredQuality
+	return p
 }

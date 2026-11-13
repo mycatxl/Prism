@@ -20,8 +20,7 @@ import (
 // hex cannot contain the "_" separator, so splitting the credential needs no
 // escaping and a secret can never be mistaken for the start of another part.
 const (
-	// CredentialPrefix marks a credential as an access key rather than the
-	// transitional global proxy token.
+	// CredentialPrefix marks a credential as an AccessKey.
 	CredentialPrefix = "pk_"
 	// IDHexLength is the length of the hex-encoded key id (a UUIDv7 without
 	// its dashes).
@@ -62,10 +61,9 @@ func FormatCredential(id, secret string) string {
 //
 // It reports ok=false for anything that is not shaped like an access key. That
 // answer is deliberately structural rather than cryptographic: it tells the
-// caller whether the credential is even a candidate for key verification, so a
-// deployment still using the global proxy token can fall through to comparing
-// that token instead. Whether the halves name a real key is decided later, by
-// VerifyKey, which fails closed.
+// caller whether the credential is even a candidate for key verification.
+// Whether the halves name a real key is decided later, by VerifyCredential,
+// which fails closed.
 func ParseCredential(credential string) (id, secret string, ok bool) {
 	if !strings.HasPrefix(credential, CredentialPrefix) {
 		return "", "", false
@@ -79,9 +77,8 @@ func ParseCredential(credential string) (id, secret string, ok bool) {
 	id, secret = parts[1], parts[2]
 	// The lengths are checked as well as the alphabet. That keeps the answer a
 	// statement about shape alone, and it keeps a value that is merely hex-ish
-	// from being mistaken for a key: the transitional global token is an
-	// arbitrary string, and the narrower this test is, the less chance it has
-	// of catching that token by accident.
+	// from being mistaken for a key: arbitrary strings must never be treated as
+	// credentials.
 	if len(id) != IDHexLength || len(secret) != SecretHexLength {
 		return "", "", false
 	}
@@ -92,9 +89,8 @@ func ParseCredential(credential string) (id, secret string, ok bool) {
 }
 
 // IsCredentialShape reports whether a value is shaped like an access key
-// without checking whether one exists. The request dispatcher uses it to tell a
-// key-bearing path segment from the transitional global token before the
-// credential reaches any verifier.
+// without checking whether one exists. The request dispatcher uses it to admit
+// only AccessKey-shaped path segments before the credential reaches a verifier.
 func IsCredentialShape(value string) bool {
 	_, _, ok := ParseCredential(value)
 	return ok

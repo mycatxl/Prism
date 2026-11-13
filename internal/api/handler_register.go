@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/model"
 )
@@ -53,6 +52,7 @@ func (h *AuthHandlers) registrationMode() config.RegistrationMode {
 // just chose a password to type it again is friction with no security value.
 func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		// The block is checked first, and here rather than in the identity
 		// middleware, because sign-up is one of the two public paths that
 		// middleware lets through (identity.go: publicPaths) and the login
@@ -83,6 +83,16 @@ func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 			return
 		}
 
+		// The cookie policy is decided before anything is created, so a
+		// deployment serving the console over plain HTTP to a real host refuses
+		// the sign-up rather than opening an account whose session cookie
+		// anyone on the path could read.
+		policy, err := h.cookiePolicy(r)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "HTTPS_REQUIRED",
+				"the console must be reached over HTTPS, or over plain HTTP on loopback")
+			return
+		}
 		var req registerRequest
 		if !decodeJSONBody(w, r, &req) {
 			return
@@ -91,17 +101,6 @@ func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 		req.InviteCode = strings.TrimSpace(req.InviteCode)
 		if req.Username == "" || req.Password == "" {
 			WriteError(w, http.StatusBadRequest, "INVALID_REQUEST", "a username and a password are required")
-			return
-		}
-
-		// The cookie policy is decided before anything is created, so a
-		// deployment serving the console over plain HTTP to a real host refuses
-		// the sign-up rather than opening an account whose session cookie
-		// anyone on the path could read.
-		policy, err := auth.NewCookiePolicy(h.secureTransport(r), r.Host)
-		if err != nil {
-			WriteError(w, http.StatusBadRequest, "HTTPS_REQUIRED",
-				"the console must be reached over HTTPS, or over plain HTTP on loopback")
 			return
 		}
 
@@ -118,6 +117,7 @@ func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 			writeServiceError(w, err)
 			return
 		}
+		setAuditActor(r, user.ID, user.ID)
 
 		result, loginErr := h.Sessions.Login(
 			req.Username, req.Password, "",
@@ -128,7 +128,7 @@ func (h *AuthHandlers) HandleRegister() http.HandlerFunc {
 			// Reporting that honestly leaves the console able to send the user
 			// to the login page, while an error response would tell them the
 			// registration itself did not happen.
-			h.logf("api: registered %s but could not sign the account in: %v", user.Username, loginErr)
+			h.logf("api: registered account %s but could not sign it in", user.ID)
 			WriteJSON(w, http.StatusCreated, map[string]any{
 				"authenticated": false,
 				"user": sessionUser{

@@ -42,6 +42,8 @@ func (s *ControlPlaneService) ExplainPlatformNode(platformID, nodeHash string) (
 		disabled = s.Pool.IsNodeDisabled(h)
 	}
 	add("node.enabled", !disabled, boolText(disabled, "disabled by subscription", "enabled"))
+	privacy := entry.Privacy()
+	add("node.privacy", entry.PrivacyAllowed(), strings.Join(privacy.Reasons, ","))
 	add("node.healthy", entry.IsHealthy(), boolText(entry.IsHealthy(), "outbound ready", "outbound not ready"))
 
 	subLookup := s.Pool.MakeSubLookup()

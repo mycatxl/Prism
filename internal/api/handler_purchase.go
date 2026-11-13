@@ -46,6 +46,9 @@ func HandleMePurchase(cp *service.ControlPlaneService) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		if !requireSessionActor(w, actor) {
+			return
+		}
 		var in service.PurchaseInput
 		if err := DecodeBody(r, &in); err != nil {
 			writeDecodeBodyError(w, err)
@@ -70,6 +73,9 @@ func HandleMeAutoRenew(cp *service.ControlPlaneService) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := meActor(w, r)
 		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
 			return
 		}
 		var in struct {
@@ -103,6 +109,9 @@ func HandleMeRenew(cp *service.ControlPlaneService) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 		actor, ok := meActor(w, r)
 		if !ok {
+			return
+		}
+		if !requireSessionActor(w, actor) {
 			return
 		}
 		var in service.RenewInput

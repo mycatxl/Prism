@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,12 +14,8 @@ import (
 
 // Flush scheduling defaults.
 const (
-	// DefaultFlushInterval is how often the in-memory counters reach disk.
-	//
-	// It is the bound on how much traffic a crash can lose, and the plan's
-	// acceptance criterion is "usage is off by no more than ten seconds of
-	// traffic", so ten seconds it is. It is also short enough that a console
-	// reading the tables sees a live number rather than one from minutes ago.
+	// DefaultFlushInterval controls request/error aggregation. Production byte
+	// liability is journaled before service, independently of this interval.
 	DefaultFlushInterval = 10 * time.Second
 )
 
@@ -55,12 +52,35 @@ type PeriodGuardedFlushStore interface {
 	AddSubscriptionUsedBytesInPeriod(id string, periodStartNs, delta int64) (bool, error)
 }
 
+// AtomicUsageFlushStore lets a persistence layer commit the hourly rows and
+// the matching subscription-period increments together. Without this hook a
+// successful hourly write followed by a failed subscription update drains the
+// in-memory bucket permanently and undercharges the quota after a restart.
+type AtomicUsageFlushStore interface {
+	FlushUsageHourlyAndCharge(rows []model.UsageRow, charges []UsageCharge) (map[string]UsageChargeResult, error)
+}
+
+// UsageCharge and UsageChargeResult are aliases so callers can use the usage
+// package's flush vocabulary while the persistence layer keeps the shared
+// contract in model.
+type UsageCharge = model.UsageCharge
+type UsageChargeResult = model.UsageChargeResult
+
+type usageGroup struct {
+	userID         string
+	subscriptionID string
+	periodStartNs  int64
+	generation     uint64
+}
+
+func usageGroupKey(group usageGroup) string {
+	return group.userID + "\x00" + group.subscriptionID + "\x00" + fmt.Sprint(group.periodStartNs) + "\x00" + fmt.Sprint(group.generation)
+}
+
 // Flusher writes the in-memory counters to the usage tables.
 //
-// The data plane never touches the database: every byte is an in-memory atomic
-// and this worker is the only thing that persists them. That is what keeps the
-// proxy's hot path free of disk I/O, at the cost of a bounded window of traffic
-// that a hard crash would lose - the flush interval.
+// Production bytes are settled through Journal; this worker persists request
+// counts and legacy in-process callers. It must not duplicate journaled bytes.
 type Flusher struct {
 	// Counters is the live view the data plane writes to. Required.
 	Counters *Counters
@@ -135,6 +155,8 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.Counters.persistenceMu.Lock()
+	defer f.Counters.persistenceMu.Unlock()
 
 	keys := f.Counters.Keys()
 	if len(keys) == 0 {
@@ -152,7 +174,7 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 	hourTS := (nowNs / int64(time.Hour)) * int64(time.Hour)
 
 	rows := make([]model.UsageRow, 0, len(drained))
-	perUser := make(map[string]int64)
+	perUser := make(map[usageGroup]int64)
 	for key, delta := range drained {
 		rows = append(rows, model.UsageRow{
 			KeyID:        key.KeyID,
@@ -164,9 +186,93 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 			Requests:     delta.Requests,
 			Errors:       delta.Errors,
 		})
-		if key.UserID != "" {
-			perUser[key.UserID] += delta.Total()
+		if key.UserID != "" && delta.Total() > 0 {
+			group := usageGroup{
+				userID: key.UserID, subscriptionID: key.subscriptionID,
+				periodStartNs: key.periodStartNs, generation: key.generation,
+			}
+			perUser[group] = saturatingBytesAdd(perUser[group], delta.Total())
 		}
+	}
+
+	// The subscription update is normally a second write, but it is not a second
+	// accounting: it is the same bytes, summed per user. StateRepo implements
+	// AtomicUsageFlushStore, so its hourly rows and period increments commit as
+	// one unit; generic stores retain the historical two-write fallback below.
+	//
+	// The billing window is snapshotted first, at drain time, and the write
+	// below is guarded on that same snapshot. A rollover that lands in between
+	// must not charge the new period for the previous one's traffic: those
+	// bytes belong to a period that has already been closed and reset, and
+	// billing them to its successor would take allowance away from a period
+	// the user has not used yet.
+	atomicStore, atomicFlush := f.Store.(AtomicUsageFlushStore)
+	windows := make(map[usageGroup]subscriptionWindow, len(perUser))
+	for group := range perUser {
+		userID := group.userID
+		if group.subscriptionID != "" {
+			windows[group] = subscriptionWindow{id: group.subscriptionID, periodStartNs: group.periodStartNs}
+			continue
+		}
+		subscription, err := f.Store.GetActiveUserSubscription(userID)
+		if err != nil {
+			f.logf("usage flush: look up subscription for user %s: %v", userID, err)
+			if atomicFlush {
+				// The atomic path must not commit the hourly row without a
+				// chance to charge this user's period. Keep the bucket for a
+				// later retry when the lookup is available again.
+				f.requeue(drained)
+				return result, fmt.Errorf("look up subscription for user %s: %w", userID, err)
+			}
+			continue
+		}
+		if subscription == nil {
+			continue
+		}
+		windows[group] = subscriptionWindow{
+			id:            subscription.ID,
+			periodStartNs: subscription.PeriodStartNs,
+		}
+	}
+
+	if atomicFlush {
+		charges := make([]UsageCharge, 0, len(windows))
+		for group, window := range windows {
+			charges = append(charges, UsageCharge{
+				Key: usageGroupKey(group), UserID: group.userID,
+				SubscriptionID: window.id, PeriodStartNs: window.periodStartNs,
+				Bytes: perUser[group],
+			})
+		}
+		chargeResults, err := atomicStore.FlushUsageHourlyAndCharge(rows, charges)
+		if err != nil {
+			// The atomic store rolled the hourly rows back with the failed
+			// period writes, so the drained buckets are safe to retry.
+			f.requeue(drained)
+			return result, fmt.Errorf("write usage and subscription charge: %w", err)
+		}
+		result.Rows = len(rows)
+		for _, row := range rows {
+			result.Bytes = saturatingBytesAdd(result.Bytes, saturatingBytesAdd(row.IngressBytes, row.EgressBytes))
+		}
+		for group, bytes := range perUser {
+			userID := group.userID
+			charge, ok := chargeResults[usageGroupKey(group)]
+			if !ok {
+				result.UnclaimedBytes = saturatingBytesAdd(result.UnclaimedBytes, bytes)
+				continue
+			}
+			switch {
+			case charge.Charged:
+				result.Subscriptions++
+				f.Counters.markPersistedGeneration(userID, bytes, group.generation)
+			case charge.Rolled:
+				result.RolledBytes = saturatingBytesAdd(result.RolledBytes, bytes)
+			default:
+				result.UnclaimedBytes = saturatingBytesAdd(result.UnclaimedBytes, bytes)
+			}
+		}
+		return result, nil
 	}
 
 	if err := f.Store.UpsertUsageHourly(rows); err != nil {
@@ -175,62 +281,34 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 	}
 	result.Rows = len(rows)
 	for _, row := range rows {
-		result.Bytes += row.IngressBytes + row.EgressBytes
+		result.Bytes = saturatingBytesAdd(result.Bytes, saturatingBytesAdd(row.IngressBytes, row.EgressBytes))
 	}
 
-	// The subscription update is a second write, but it is not a second
-	// accounting: it is the same bytes, summed per user. It is not put back on
-	// failure either - the hourly rows are the record of what moved, and
-	// period_used_bytes is a derived running total the next pass will add to.
-	// Requeueing here would double-count against the allowance.
-	//
-	// The billing window is snapshotted first, at drain time, and the write
-	// below is guarded on that same snapshot. A rollover that lands in between
-	// must not charge the new period for the previous one's traffic: those
-	// bytes belong to a period that has already been closed and reset, and
-	// billing them to its successor would take allowance away from a period
-	// the user has not used yet.
-	windows := make(map[string]subscriptionWindow, len(perUser))
-	for userID, bytes := range perUser {
-		subscription, err := f.Store.GetActiveUserSubscription(userID)
-		if err != nil {
-			f.logf("usage flush: look up subscription for user %s: %v", userID, err)
-			result.UnclaimedBytes += bytes
-			continue
-		}
-		if subscription == nil {
-			result.UnclaimedBytes += bytes
-			continue
-		}
-		windows[userID] = subscriptionWindow{
-			id:            subscription.ID,
-			periodStartNs: subscription.PeriodStartNs,
-		}
-	}
-
-	for userID, bytes := range perUser {
-		window, ok := windows[userID]
+	for group, bytes := range perUser {
+		userID := group.userID
+		window, ok := windows[group]
 		if !ok {
-			continue // already counted as unclaimed above
+			result.UnclaimedBytes = saturatingBytesAdd(result.UnclaimedBytes, bytes)
+			continue
 		}
 		charged, err := f.chargeSubscription(userID, window, bytes)
 		switch {
 		case err != nil:
 			f.logf("usage flush: add %d bytes to subscription %s: %v", bytes, window.id, err)
-			result.UnclaimedBytes += bytes
+			result.UnclaimedBytes = saturatingBytesAdd(result.UnclaimedBytes, bytes)
 		case !charged:
 			// A period boundary was crossed between the drain and the write.
 			// The hourly rows still record the traffic; the period it belonged
 			// to is gone.
 			f.logf("usage flush: %d bytes for subscription %s arrived after its period rolled over", bytes, window.id)
-			result.RolledBytes += bytes
+			result.RolledBytes = saturatingBytesAdd(result.RolledBytes, bytes)
 		default:
 			result.Subscriptions++
 			// Exactly what was charged, and only that: the water mark is what
 			// keeps a later seed of this subscription from adding the same
 			// bytes to the aggregate a second time. A refused or failed write
 			// is not on disk, so it must not move the mark.
-			f.Counters.MarkPersisted(userID, bytes)
+			f.Counters.markPersistedGeneration(userID, bytes, group.generation)
 		}
 	}
 
@@ -243,6 +321,16 @@ func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
 type subscriptionWindow struct {
 	id            string
 	periodStartNs int64
+}
+
+func saturatingBytesAdd(current, delta int64) int64 {
+	if delta <= 0 {
+		return current
+	}
+	if current == math.MaxInt64 || delta > math.MaxInt64-current {
+		return math.MaxInt64
+	}
+	return current + delta
 }
 
 // chargeSubscription adds bytes to a subscription's period usage, refusing to
@@ -341,7 +429,7 @@ func (f *Flusher) flushOnShutdown() {
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		f.logf("final usage flush timed out; up to %s of traffic may be unrecorded", f.interval())
+		f.logf("final usage aggregation timed out; durable byte reservations remain recoverable")
 	}
 }
 
@@ -383,7 +471,7 @@ func (c *Counters) SeedFromSubscriptions(subs []model.UserSubscription, nowNs in
 	}
 	seeded := 0
 	for _, subscription := range subs {
-		if subscription.UserID == "" || subscription.PeriodUsedBytes <= 0 {
+		if subscription.UserID == "" {
 			continue
 		}
 		// Only the usage of a subscription that is still the user's current one
@@ -395,26 +483,54 @@ func (c *Counters) SeedFromSubscriptions(subs []model.UserSubscription, nowNs in
 		if subscription.ExpiresAtNs > 0 && nowNs > 0 && subscription.ExpiresAtNs < nowNs {
 			continue
 		}
-		mark := c.persistedFor(subscription.UserID)
-		if mark == nil {
-			// No water mark to compare against. Only a counter set built by
-			// hand rather than by NewCounters gets here, and counting the
-			// total as unseeded is the conservative answer: it can make the
-			// aggregate too large, never too small.
-			total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
-				return new(atomic.Int64), false
-			})
-			total.Add(subscription.PeriodUsedBytes)
-			seeded++
-			continue
+		seeded += c.seedSubscription(subscription)
+	}
+	return seeded
+}
+
+func (c *Counters) seedSubscription(subscription model.UserSubscription) int {
+	c.persistenceMu.Lock()
+	defer c.persistenceMu.Unlock()
+	defer c.lockUser(subscription.UserID)()
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	seeded := 0
+	if c.periods != nil {
+		if period, ok := c.periods[subscription.UserID]; !ok ||
+			(period.subscriptionID == "" && period.periodStartNs == 0) {
+			period.subscriptionID = subscription.ID
+			period.periodStartNs = subscription.PeriodStartNs
+			period.planPeriodIndex = subscription.PeriodIndex
+			c.periods[subscription.UserID] = period
+		} else if period.subscriptionID != subscription.ID || period.periodStartNs != subscription.PeriodStartNs {
+			return 0
 		}
-		if restore := subscription.PeriodUsedBytes - mark.Load(); restore > 0 {
-			total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
-				return new(atomic.Int64), false
-			})
-			total.Add(restore)
-			seeded++
-		}
+	}
+	if subscription.PeriodUsedBytes <= 0 {
+		return seeded
+	}
+	mark := c.persistedFor(subscription.UserID)
+	if mark == nil {
+		// No water mark to compare against. Only a counter set built by
+		// hand rather than by NewCounters gets here, and counting the
+		// total as unseeded is the conservative answer: it can make the
+		// aggregate too large, never too small.
+		total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
+			return new(atomic.Int64), false
+		})
+		atomicAddSaturating(total, subscription.PeriodUsedBytes)
+		seeded++
+		return seeded
+	}
+	if restore := subscription.PeriodUsedBytes - mark.Load(); restore > 0 {
+		total, _ := c.users.LoadOrCompute(subscription.UserID, func() (*atomic.Int64, bool) {
+			return new(atomic.Int64), false
+		})
+		atomicAddSaturating(total, restore)
+		seeded++
+	}
+	// An older database snapshot must never lower an advanced watermark.
+	if subscription.PeriodUsedBytes > mark.Load() {
 		mark.Store(subscription.PeriodUsedBytes)
 	}
 	return seeded

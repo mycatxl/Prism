@@ -63,7 +63,7 @@ func TestExportCSVColumns(t *testing.T) {
 		"subscription":    "sub-a",
 		"egress_ipv4":     "198.51.100.10",
 		"egress_ipv6":     "",
-		"colo":            "NRT",
+		"colo":            "",
 		"country":         "JP",
 		"city":            "Tokyo",
 		"asn":             "AS64500",
@@ -135,6 +135,22 @@ func TestExportCSVQuotesNamesWithCommas(t *testing.T) {
 	}
 	if records[1][0] != "tokyo, japan" {
 		t.Fatalf("name = %q", records[1][0])
+	}
+}
+
+func TestExportCSVNeutralizesSpreadsheetFormulas(t *testing.T) {
+	item := fixtureNodes(t)[0]
+	item.Name = "=HYPERLINK(\"https://example.test\")"
+	body, _, _, err := Export([]Item{item}, FormatCSV, Options{})
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	records, err := csv.NewReader(bytes.NewReader(body)).ReadAll()
+	if err != nil {
+		t.Fatalf("parse csv: %v", err)
+	}
+	if got := records[1][0]; !strings.HasPrefix(got, "'=") {
+		t.Fatalf("formula cell was not neutralized: %q", got)
 	}
 }
 

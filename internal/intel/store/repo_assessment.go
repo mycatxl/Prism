@@ -17,6 +17,9 @@ func (s *Store) UpsertAssessment(ctx context.Context, a Assessment) error {
 	if strings.TrimSpace(a.IP) == "" {
 		return fmt.Errorf("upsert assessment: ip is required")
 	}
+	if len(a.ComponentsJSON) > MaxAssessmentJSONBytes {
+		return fmt.Errorf("assessment provenance exceeds storage limit")
+	}
 	_, err = db.ExecContext(ctx, `
 		INSERT INTO ip_assessment (ip, profile, state, verdict, purity_score, purity_band, confidence,
 			coverage, ip_type, native, flags, asn, as_org, country, city, reasons_json, components_json,
@@ -43,7 +46,7 @@ func (s *Store) UpsertAssessment(ctx context.Context, a Assessment) error {
 			valid_until_ns  = excluded.valid_until_ns`,
 		a.IP, a.Profile, a.State, a.Verdict, a.PurityScore, a.PurityBand, a.Confidence,
 		a.Coverage, a.IPType, a.Native, a.Flags, a.ASN, a.ASOrg, a.Country, a.City,
-		truncateJSON(a.ReasonsJSON, MaxDetailJSONBytes), truncateJSON(a.ComponentsJSON, MaxNormalizedJSONBytes),
+		truncateJSON(a.ReasonsJSON, MaxDetailJSONBytes), truncateJSON(a.ComponentsJSON, MaxAssessmentJSONBytes),
 		a.ComputedAtNs, a.ValidUntilNs)
 	return err
 }

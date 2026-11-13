@@ -635,7 +635,7 @@ func TestIPAPIISViaNodeNeedsAnAddress(t *testing.T) {
 	}
 }
 
-func TestIPAPIISNodeSpecSpendsQuotaPerNode(t *testing.T) {
+func TestIPAPIISNodeSpecRequiresExplicitEnablement(t *testing.T) {
 	spec := NewIPAPIISViaNodeProvider(IPAPIISViaNodeOptions{}).Spec()
 	if spec.Kind != KindViaNode {
 		t.Fatalf("kind: %v", spec.Kind)
@@ -643,8 +643,8 @@ func TestIPAPIISNodeSpecSpendsQuotaPerNode(t *testing.T) {
 	if spec.RequiresKey {
 		t.Fatal("the via-node variant must never need a credential")
 	}
-	if !spec.DefaultEnabled {
-		t.Fatal("the via-node variant is the default ipapi.is source")
+	if spec.DefaultEnabled {
+		t.Fatal("unverified source must not consume fleet quota by default")
 	}
 	if spec.DefaultDailyLimit != 0 || spec.DefaultQPS != 0 {
 		t.Fatalf("a via-node source must not cap itself: daily=%d qps=%v",

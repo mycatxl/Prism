@@ -132,9 +132,9 @@ func countAttempts(store *flakyInserter) int {
 
 // The retry buffer is bounded. An outage must not let the request log grow
 // without limit on the data plane's heap, and the entries it does give up have
-// to be counted and the oldest ones - the newest are the ones an operator is
-// about to look for.
-func TestService_RetryBufferIsBoundedAndDropsTheOldest(t *testing.T) {
+// to be counted. The oldest evidence is preserved so new traffic cannot evict
+// the event that first observed the outage.
+func TestService_RetryBufferIsBoundedAndDropsTheNewest(t *testing.T) {
 	svc := NewService(ServiceConfig{QueueSize: 8, FlushBatch: 4, FlushInterval: time.Hour})
 	// No Start: this is the buffer policy on its own, without a store.
 
@@ -155,12 +155,43 @@ func TestService_RetryBufferIsBoundedAndDropsTheOldest(t *testing.T) {
 	if dropped := svc.DroppedEntries(); dropped != uint64(len(entries)-limit) {
 		t.Fatalf("dropped = %d, want %d", dropped, len(entries)-limit)
 	}
-	if got, want := svc.retry[0].TargetURL, entries[len(entries)-limit].TargetURL; got != want {
-		t.Fatalf("oldest kept entry = %q, want %q: the newest are the ones worth keeping", got, want)
+	if got, want := svc.retry[0].TargetURL, entries[0].TargetURL; got != want {
+		t.Fatalf("oldest kept entry = %q, want %q", got, want)
+	}
+	if got, want := svc.retry[len(svc.retry)-1].TargetURL, entries[limit-1].TargetURL; got != want {
+		t.Fatalf("newest kept entry = %q, want %q", got, want)
 	}
 	if svc.retryAt.IsZero() {
 		t.Fatal("a requeued batch has no retry deadline; it would never be attempted again")
 	}
+}
+
+func TestService_NewTrafficDoesNotBypassRetryBackoff(t *testing.T) {
+	store := &flakyInserter{failuresLeft: 10}
+	svc := NewService(ServiceConfig{QueueSize: 8, FlushBatch: 4, FlushInterval: time.Hour})
+	svc.insert = store
+	svc.retryBackoffMin = time.Hour
+	svc.retryBackoffMax = time.Hour
+
+	svc.flush([]proxy.RequestLogEntry{testEntry("/first")})
+	if got := countAttempts(store); got != 1 {
+		t.Fatalf("initial attempts = %d, want 1", got)
+	}
+	svc.flush([]proxy.RequestLogEntry{testEntry("/new-traffic")})
+	if got := countAttempts(store); got != 1 {
+		t.Fatalf("new traffic bypassed retry backoff: attempts = %d, want 1", got)
+	}
+	if len(svc.retry) != 2 {
+		t.Fatalf("retry backlog = %d, want both entries", len(svc.retry))
+	}
+}
+
+func TestService_StartAndStopAreIdempotent(t *testing.T) {
+	svc := NewService(ServiceConfig{QueueSize: 1, FlushBatch: 1, FlushInterval: time.Hour})
+	svc.Start()
+	svc.Start()
+	svc.Stop()
+	svc.Stop()
 }
 
 // Shutdown during an outage cannot write what is left, and saying so is the

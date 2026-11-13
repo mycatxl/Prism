@@ -272,22 +272,54 @@ const (
 	DepositStatusReleased = "released"
 )
 
-// DepositIntent is one request to top up by an amount that nobody else is
-// holding at that moment.
-//
-// The amount, not a memo, is what identifies the payer: a bare TRC20 transfer
-// carries no field for an identifier and the server holds no keys, so the
-// unique amount is the only channel left. HoldUntilNs is the end of the amount's
-// occupancy and is what crediting is judged against - a transfer made at the
-// last second of the payment window is only visible on chain a minute later.
+// DepositTarget identifies one currency/address/contract stream to scan.
+type DepositTarget struct {
+	Currency string
+	Address  string
+	Contract string
+	SinceNs  int64
+}
+
+// DepositIntent reserves an amount within a payment window. The amount matches
+// an order, not a payer identity; HoldUntilNs also allows confirmation delay.
 type DepositIntent struct {
-	ID          string `json:"id"`
-	UserID      string `json:"user_id"`
-	AmountMicro int64  `json:"amount_micro"`
-	Status      string `json:"status"`
-	TxID        string `json:"tx_id"`
-	CreatedAtNs int64  `json:"created_at_ns"`
-	ExpiresAtNs int64  `json:"expires_at_ns"`
-	HoldUntilNs int64  `json:"hold_until_ns"`
-	PaidAtNs    int64  `json:"paid_at_ns"`
+	Currency    string  `json:"currency"`
+	Address     string  `json:"address"`
+	Contract    string  `json:"contract"`
+	Rate        float64 `json:"rate"`
+	CreditMicro int64   `json:"credit_micro"`
+	ID          string  `json:"id"`
+	UserID      string  `json:"user_id"`
+	AmountMicro int64   `json:"amount_micro"`
+	Status      string  `json:"status"`
+	TxID        string  `json:"tx_id"`
+	CreatedAtNs int64   `json:"created_at_ns"`
+	ExpiresAtNs int64   `json:"expires_at_ns"`
+	HoldUntilNs int64   `json:"hold_until_ns"`
+	PaidAtNs    int64   `json:"paid_at_ns"`
+}
+
+// Linux.do Credit checkout statuses. A pending row is waiting for a signed
+// gateway callback; paid is terminal.
+const (
+	LDCDepositStatusPending = "pending"
+	LDCDepositStatusPaid    = "paid"
+)
+
+// LDCDeposit records the account and exact balance credit attached to an
+// EasyPay out_trade_no. It is created before the redirect is returned so a
+// later callback never has to trust an account or amount supplied by the
+// gateway request itself.
+type LDCDeposit struct {
+	PaymentMicro    int64   `json:"payment_micro"`
+	Rate            float64 `json:"rate"`
+	MerchantPID     string  `json:"-"`
+	VerificationKey string  `json:"-"`
+	OutTradeNo      string  `json:"out_trade_no"`
+	UserID          string  `json:"user_id"`
+	AmountMicro     int64   `json:"amount_micro"`
+	Status          string  `json:"status"`
+	TradeNo         string  `json:"trade_no"`
+	CreatedAtNs     int64   `json:"created_at_ns"`
+	PaidAtNs        int64   `json:"paid_at_ns"`
 }

@@ -10,7 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strconv"
+	"regexp"
 	"strings"
 	"syscall"
 )
@@ -27,25 +27,11 @@ func summarizeUpstreamError(err error) upstreamErrorDetail {
 	if err == nil {
 		return upstreamErrorDetail{}
 	}
-	rawMessage := err.Error()
-	for nested := err; nested != nil; {
-		var urlErr *url.Error
-		if !errors.As(nested, &urlErr) {
-			break
-		}
-		if urlErr.URL != "" {
-			// url.Error quotes its URL; remove both quoted and literal forms,
-			// including relative or malformed URLs that a URL regexp misses.
-			rawMessage = strings.ReplaceAll(rawMessage, strconv.Quote(urlErr.URL), strconv.Quote(redactedLogValue))
-			rawMessage = strings.ReplaceAll(rawMessage, urlErr.URL, redactedLogValue)
-		}
-		nested = urlErr.Err
-	}
-	detail := upstreamErrorDetail{
-		Errno:   extractErrnoCode(err),
-		Message: sanitizeUpstreamErrMsg(rawMessage),
-	}
+	detail := upstreamErrorDetail{Errno: extractErrnoCode(err)}
 	detail.Kind = classifyUpstreamErrKind(err, detail.Errno)
+	// Network errors can quote arbitrary upstream bytes, credentials, paths or
+	// driver errors. Classification is sufficient for operational diagnostics.
+	detail.Message = strings.ReplaceAll(detail.Kind, "_", " ")
 	return detail
 }
 
@@ -157,7 +143,12 @@ func normalizeErrno(errno syscall.Errno) string {
 	}
 }
 
+var sensitiveErrorText = regexp.MustCompile(`(?i)(pk_|authorization|bearer|basic\s|cookie|password|secret|token|pepper|sqlite|database|\b(?:select|insert|update|delete|constraint|table)\b|(?:^|[\s"'(:])(?:/|[a-z]:\\))`)
+
 func sanitizeUpstreamErrMsg(raw string) string {
+	if sensitiveErrorText.MatchString(raw) {
+		return redactedLogValue
+	}
 	raw = loggedErrorURLPattern.ReplaceAllString(raw, redactedLogValue)
 	raw = strings.Join(strings.Fields(strings.TrimSpace(raw)), " ")
 	if raw == "" {

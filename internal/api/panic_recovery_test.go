@@ -34,7 +34,7 @@ func TestPanicRecoveryAnswersTheGenericInternalError(t *testing.T) {
 	if body.Error.Code != "INTERNAL" {
 		t.Fatalf("code = %q, want INTERNAL", body.Error.Code)
 	}
-	if body.Error.Message != "internal error" {
+	if body.Error.Message != "internal server error" {
 		t.Fatalf("message = %q, want the generic text", body.Error.Message)
 	}
 	if strings.Contains(rec.Body.String(), "boom") {
@@ -46,7 +46,7 @@ func TestPanicRecoveryAnswersTheGenericInternalError(t *testing.T) {
 // tell a panic from an ordinary error by reading the body.
 func TestPanicRecoveryMatchesTheOrdinaryInternalError(t *testing.T) {
 	ordinary := httptest.NewRecorder()
-	WriteError(ordinary, http.StatusInternalServerError, "INTERNAL", "internal error")
+	WriteError(ordinary, http.StatusInternalServerError, "INTERNAL", "internal server error")
 
 	panicked := httptest.NewRecorder()
 	PanicRecoveryMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -93,4 +93,31 @@ func TestPanicRecoveryLeavesAServedResponseAlone(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"ok":true`) {
 		t.Fatalf("body = %q", rec.Body.String())
 	}
+}
+
+func TestPanicRecoveryDoesNotLeakStagedHeaders(t *testing.T) {
+	handler := PanicRecoveryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Set-Cookie", "session=secret")
+		w.Header().Set("Location", "/reset?token=secret")
+		panic("database /private/path")
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/test", nil))
+	if rec.Header().Get("Set-Cookie") != "" || rec.Header().Get("Location") != "" {
+		t.Fatalf("panic response leaked staged headers: %v", rec.Header())
+	}
+}
+
+func TestPanicRecoveryAbortsAfterAResponseWasCommitted(t *testing.T) {
+	handler := PanicRecoveryMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("partial"))
+		panic("boom")
+	}))
+	defer func() {
+		if recovered := recover(); recovered != http.ErrAbortHandler {
+			t.Fatalf("recovered %v, want http.ErrAbortHandler", recovered)
+		}
+	}()
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/test", nil))
 }

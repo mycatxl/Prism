@@ -265,7 +265,7 @@ func HandleHistoryTraffic(mgr *metrics.Manager) http.Handler {
 
 		rows, err := mgr.QueryHistoryTraffic(from.Unix(), to.Unix())
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		bucketSeconds := mgr.BucketSeconds()
@@ -299,7 +299,7 @@ func HandleHistoryRequests(mgr *metrics.Manager) http.Handler {
 
 		rows, err := mgr.QueryHistoryRequests(from.Unix(), to.Unix(), platformID)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		bucketSeconds := mgr.BucketSeconds()
@@ -338,7 +338,7 @@ func HandleHistoryAccessLatency(mgr *metrics.Manager) http.Handler {
 
 		rows, err := mgr.QueryHistoryAccessLatency(from.Unix(), to.Unix(), platformID)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 
@@ -380,7 +380,7 @@ func HandleHistoryProbes(mgr *metrics.Manager) http.Handler {
 
 		rows, err := mgr.QueryHistoryProbes(from.Unix(), to.Unix())
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		bucketSeconds := mgr.BucketSeconds()
@@ -412,7 +412,7 @@ func HandleHistoryNodePool(mgr *metrics.Manager) http.Handler {
 
 		rows, err := mgr.QueryHistoryNodePool(from.Unix(), to.Unix())
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		bucketSeconds := mgr.BucketSeconds()
@@ -447,7 +447,7 @@ func HandleHistoryLeaseLifetime(mgr *metrics.Manager) http.Handler {
 
 		rows, err := mgr.QueryHistoryLeaseLifetime(from.Unix(), to.Unix(), platformID)
 		if err != nil {
-			WriteError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+			WriteError(w, http.StatusInternalServerError, "INTERNAL", "internal server error")
 			return
 		}
 		bucketSeconds := mgr.BucketSeconds()

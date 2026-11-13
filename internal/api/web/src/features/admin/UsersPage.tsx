@@ -70,6 +70,7 @@ export function UsersPage() {
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createPending, setCreatePending] = useState(false);
   const [selected, setSelected] = useState<AdminUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
 
@@ -208,11 +209,11 @@ export function UsersPage() {
         description={t("余额、订阅、密钥数量和最近活动只显示真实账户数据；选择一行查看状态与管理动作。")}
       >
         {usersQuery.isError && !usersQuery.data ? (
-          <EmptyWorkState title={t("用户目录读取失败")} detail={formatApiErrorMessage(usersQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void usersQuery.refetch()}>{t("重试")}</ControlButton>} />
+          <EmptyWorkState embedded title={t("用户目录读取失败")} detail={formatApiErrorMessage(usersQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void usersQuery.refetch()}>{t("重试")}</ControlButton>} />
         ) : null}
         {usersQuery.isLoading && !usersQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载用户列表")}</div> : null}
         {!usersQuery.isLoading && !usersQuery.isError && users.length === 0 ? (
-          <EmptyWorkState
+          <EmptyWorkState embedded
             title={t(filtersActive ? "没有匹配的用户" : "暂无用户")}
             detail={t(filtersActive ? "调整搜索、状态或角色筛选后重试。" : "创建第一个用户后，账户关系会显示在这里。")}
             action={filtersActive ? <ControlButton variant="secondary" size="sm" onPress={clearFilters}>{t("清除筛选")}</ControlButton> : <ControlButton variant="primary" size="sm" onPress={() => setCreateOpen(true)}><Plus size={14} aria-hidden />{t("新建用户")}</ControlButton>}
@@ -313,13 +314,15 @@ export function UsersPage() {
       <InspectorDrawer
         open={createOpen}
         onOpenChange={setCreateOpen}
+        dismissible={!createPending}
         title={t("新建用户")}
         eyebrow={t("Administrator action")}
-        footer={<div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setCreateOpen(false)}>{t("取消")}</ControlButton><ControlButton type="submit" form="create-user-form" variant="primary" size="sm">{t("创建用户")}</ControlButton></div>}
+        footer={<div className="workspace-drawer-actions"><ControlButton variant="ghost" size="sm" onPress={() => setCreateOpen(false)} isDisabled={createPending}>{t("取消")}</ControlButton><ControlButton type="submit" form="create-user-form" variant="primary" size="sm" loading={createPending}>{t("创建用户")}</ControlButton></div>}
       >
         {createOpen ? (
           <CreateUserContent
             plans={plansQuery.data?.items ?? []}
+            onPendingChange={setCreatePending}
             onSuccess={() => {
               showToast("success", t("用户创建成功"));
               setCreateOpen(false);
@@ -355,7 +358,7 @@ function UserBalanceCell({ userId }: { userId: string }) {
   return <span className="readout">{formatMicro(balanceQuery.data.balance_micro)}<small>USDT</small></span>;
 }
 
-function CreateUserContent({ plans, onSuccess }: { plans: AdminPlan[]; onSuccess: () => void }) {
+function CreateUserContent({ plans, onSuccess, onPendingChange }: { plans: AdminPlan[]; onSuccess: () => void; onPendingChange: (pending: boolean) => void }) {
   const { t } = useI18n();
   const usernameId = useId();
   const passwordId = useId();
@@ -370,6 +373,8 @@ function CreateUserContent({ plans, onSuccess }: { plans: AdminPlan[]; onSuccess
   const [errorMsg, setErrorMsg] = useState("");
   const createMutation = useMutation({
     mutationFn: (input: CreateUserInput) => createUser(input),
+    onMutate: () => onPendingChange(true),
+    onSettled: () => onPendingChange(false),
     onSuccess: () => {
       setUsername("");
       setPassword("");
@@ -383,6 +388,7 @@ function CreateUserContent({ plans, onSuccess }: { plans: AdminPlan[]; onSuccess
   });
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
+    if (createMutation.isPending) return;
     if (!username.trim()) {
       setErrorMsg(t("用户名不能为空"));
       return;

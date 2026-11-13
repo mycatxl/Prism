@@ -12,3 +12,9 @@ var ErrConflict = errors.New("conflict")
 // zero. There is no overdraft: a charge larger than the balance is refused
 // outright rather than applied and left negative.
 var ErrInsufficientBalance = errors.New("insufficient balance")
+
+// ErrBalanceOverflow is returned when a credit would exceed the signed balance
+// representation. Refusing the movement preserves the non-negative balance
+// invariant; wrapping to a negative value would turn a credit into an
+// accidental overdraft.
+var ErrBalanceOverflow = errors.New("balance overflow")

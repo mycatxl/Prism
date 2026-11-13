@@ -46,9 +46,12 @@ type Options struct {
 	// ScopeValidator re-checks nodes at execution time so removed or changed
 	// nodes become explicit skipped items instead of failed probes.
 	ScopeValidator ScopeValidator
-	Config         ConfigProvider
-	Clock          Clock
-	Census         NodeCensus
+	// NodeProbeAllowed is checked before every step, for materialized and paged
+	// jobs alike. A rejected item is terminally skipped, never retried.
+	NodeProbeAllowed func(nodeHash string) bool
+	Config           ConfigProvider
+	Clock            Clock
+	Census           NodeCensus
 	// ProviderSpecs and Lookup enable the per-provider queue workers.
 	ProviderSpecs ProviderSpecSource
 	Lookup        OnlineLookup
@@ -84,11 +87,12 @@ type Stats struct {
 
 // Manager owns the node worker pool, the job lifecycle and the SSE hub.
 type Manager struct {
-	store          *store.Store
-	runner         StepRunner
-	scope          ScopeResolver
-	scopePage      ScopePageResolver
-	scopeValidator ScopeValidator
+	store            *store.Store
+	runner           StepRunner
+	scope            ScopeResolver
+	scopePage        ScopePageResolver
+	scopeValidator   ScopeValidator
+	nodeProbeAllowed func(nodeHash string) bool
 
 	config ConfigProvider
 	clock  Clock
@@ -159,20 +163,21 @@ func New(opts Options) *Manager {
 	}
 
 	m := &Manager{
-		store:          opts.Store,
-		runner:         opts.Runner,
-		scope:          opts.Scope,
-		scopePage:      opts.ScopePage,
-		scopeValidator: opts.ScopeValidator,
-		config:         config,
-		clock:          clock,
-		census:         opts.Census,
-		idGen:          idGen,
-		logf:           logf,
-		tick:           tick,
-		owner:          "intel-worker-" + newShortID(),
-		hub:            newHub(time.Second),
-		stopCh:         make(chan struct{}),
+		store:            opts.Store,
+		runner:           opts.Runner,
+		scope:            opts.Scope,
+		scopePage:        opts.ScopePage,
+		scopeValidator:   opts.ScopeValidator,
+		nodeProbeAllowed: opts.NodeProbeAllowed,
+		config:           config,
+		clock:            clock,
+		census:           opts.Census,
+		idGen:            idGen,
+		logf:             logf,
+		tick:             tick,
+		owner:            "intel-worker-" + newShortID(),
+		hub:              newHub(time.Second),
+		stopCh:           make(chan struct{}),
 
 		progress: make(map[string]jobProgress),
 	}
@@ -549,7 +554,6 @@ func (m *Manager) refreshActiveJobs(cfg Config) {
 
 	ordered := make([]store.Job, 0, len(active))
 	var stalled []store.Job
-	queuedWaiting := 0
 	for _, job := range active {
 		if job.Status != store.JobRunning {
 			continue
@@ -560,14 +564,15 @@ func (m *Manager) refreshActiveJobs(cfg Config) {
 		}
 		ordered = append(ordered, job)
 	}
+	queuedWaiting := 0
 	for _, job := range active {
 		if job.Status == store.JobQueued {
 			ordered = append(ordered, job)
 			queuedWaiting++
 		}
 	}
-	// A stalled job is only given up on when its slot is actually wanted: with
-	// no queued job waiting it still runs at the end of the order.
+	// Yielding already frees wanted slots. Only queued pressure justifies
+	// abandoning pending items; otherwise their finite retry budget applies.
 	if queuedWaiting > 0 {
 		stalled = m.settleAbandonedJobs(ctx, stalled)
 	}
@@ -601,7 +606,7 @@ type jobProgress struct {
 // Settling is deliberately a partial result rather than a cancel: the items that
 // did run keep their evidence, and the job stays retryable through the normal
 // RetryFailedJobItems path. See jobStallTimeout for why this is a no-progress
-// bound applied under queued pressure rather than a wall-clock deadline.
+// bound rather than a total wall-clock deadline.
 func (m *Manager) settleAbandonedJobs(ctx context.Context, stalled []store.Job) []store.Job {
 	if len(stalled) == 0 {
 		return stalled
@@ -621,7 +626,7 @@ func (m *Manager) settleAbandonedJobs(ctx context.Context, stalled []store.Job) 
 			continue
 		}
 		m.forgetProgress(job.ID)
-		m.logf("[intel] job %s settled no item for %s while another job waited: failed %d pending item(s) as %s",
+		m.logf("[intel] job %s settled no item for %s: failed %d pending item(s) as %s",
 			job.ID, jobStallTimeout, failed, CodeJobTimeout)
 		m.publish(ctx, job.ID, true)
 	}
@@ -771,13 +776,13 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 		scope, err := scopeFromJob(job)
 		if err != nil {
 			m.logf("[intel] decode scope for item %s/%s: %v", item.JobID, item.NodeHash, err)
-			m.deferItem(parent, item, item.StepIndex, m.nowNs()+int64(backoff(item.Attempts-1)), CodeScopeValidationError, nil)
+			m.retryOrFail(parent, item, item.StepIndex, CodeScopeValidationError, nil)
 			return
 		}
 		valid, err := m.scopeValidator.ValidateScopeNode(parent, scope, item.NodeHash)
 		if err != nil {
 			m.logf("[intel] validate scope for item %s/%s: %v", item.JobID, item.NodeHash, err)
-			m.deferItem(parent, item, item.StepIndex, m.nowNs()+int64(backoff(item.Attempts-1)), CodeScopeValidationError, nil)
+			m.retryOrFail(parent, item, item.StepIndex, CodeScopeValidationError, nil)
 			return
 		}
 		if !valid {
@@ -793,7 +798,16 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 	kind := Kind(job.Kind)
 	lastCompleted := item.StepIndex
 	summary := map[string]any{}
+	_ = json.Unmarshal([]byte(item.ResultJSON), &summary)
+	if summary == nil {
+		summary = map[string]any{}
+	}
 	for _, step := range PendingSteps(kind, lastCompleted) {
+		if m.nodeProbeAllowed != nil && !m.nodeProbeAllowed(item.NodeHash) {
+			m.finishItem(parent, item, store.ItemSkipped, "NODE_QUARANTINED",
+				map[string]any{"reason": "NODE_QUARANTINED"})
+			return
+		}
 		// A canceled job stops the item before the next step starts; a
 		// job settled by the timeout sweep stops it too, because the sweep
 		// already failed this item and writing it back would revive both the
@@ -806,7 +820,7 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 			return
 		}
 		if ctx.Err() != nil {
-			m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoff(item.Attempts-1)), CodeItemTimeout, summary)
+			m.retryOrFail(parent, item, lastCompleted, CodeItemTimeout, summary)
 			return
 		}
 
@@ -816,14 +830,21 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 		}
 
 		if result.ErrorCode != "" {
-			if item.Attempts >= maxItemAttempts {
+			if item.Attempts < maxItemAttempts {
+				m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoff(item.Attempts-1)), result.ErrorCode, summary)
+				return
+			}
+			if !result.ContinueAfterRetries {
 				m.finishItem(parent, item, store.ItemFailed, result.ErrorCode, summary)
 				return
 			}
-			m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoff(item.Attempts-1)), result.ErrorCode, summary)
-			return
+			summary["partial_error"] = result.ErrorCode
 		}
 		if result.DeferUntilNs > 0 {
+			if item.Attempts >= maxItemAttempts {
+				m.finishItem(parent, item, store.ItemFailed, "PROVIDER_WAIT_EXHAUSTED", summary)
+				return
+			}
 			m.deferItem(parent, item, lastCompleted, deferDeadline(m.nowNs(), item, result.DeferUntilNs), "", summary)
 			return
 		}
@@ -841,11 +862,15 @@ func (m *Manager) runItem(parent context.Context, item store.JobItem) {
 				return
 			}
 			m.logf("[intel] save job item step: %v", err)
-			m.deferItem(parent, item, lastCompleted, m.nowNs()+int64(backoffBase), "", summary)
+			m.retryOrFail(parent, item, lastCompleted, "BREAKPOINT_WRITE_FAILED", summary)
 			return
 		}
 	}
-	m.finishItem(parent, item, store.ItemDone, "", summary)
+	if code, ok := summary["partial_error"].(string); ok && code != "" {
+		m.finishItem(parent, item, store.ItemFailed, code, summary)
+	} else {
+		m.finishItem(parent, item, store.ItemDone, "", summary)
+	}
 }
 
 // jobGate is what the scheduler tells a running item about its job. One read
@@ -1134,4 +1159,13 @@ func newShortID() string {
 		return "00000000"
 	}
 	return hex.EncodeToString(buf[:])
+}
+
+// All infrastructure errors share the same finite retry budget as probe errors.
+func (m *Manager) retryOrFail(ctx context.Context, item store.JobItem, step int, code string, summary map[string]any) {
+	if item.Attempts >= maxItemAttempts {
+		m.finishItem(ctx, item, store.ItemFailed, code, summary)
+		return
+	}
+	m.deferItem(ctx, item, step, m.nowNs()+int64(backoff(item.Attempts-1)), code, summary)
 }

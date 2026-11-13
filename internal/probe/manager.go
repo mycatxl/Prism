@@ -28,14 +28,18 @@ type Fetcher func(hash node.Hash, url string) (body []byte, latency time.Duratio
 // ProbeConfig configures the ProbeManager.
 // Field names align 1:1 with RuntimeConfig to prevent mis-wiring.
 type ProbeConfig struct {
-	Pool        *topology.GlobalNodePool
-	Concurrency int // number of async probe workers
+	MeasureIdentity func(node.Hash, netip.Addr)
+	Pool            *topology.GlobalNodePool
+	Concurrency     int // number of async probe workers
 	// QueueCapacity is the per-priority async queue capacity.
 	// If <= 0, defaults to max(1024, Concurrency*4).
 	QueueCapacity int
 
 	// Fetcher executes HTTP via node hash. Injectable for testing.
 	Fetcher Fetcher
+	// PrepareManualProbe may build an outbound for an explicit API retest.
+	// It is never called by a timer, subscription hook, or async worker.
+	PrepareManualProbe func(node.Hash)
 
 	// Interval thresholds — closures for hot-reload from RuntimeConfig.
 	MaxEgressTestInterval           func() time.Duration
@@ -62,14 +66,17 @@ type ProbeConfig struct {
 // ProbeManager schedules and executes active probes against nodes in the pool.
 // It holds a direct reference to *topology.GlobalNodePool (no interface).
 type ProbeManager struct {
-	pool        *topology.GlobalNodePool
-	stopCh      chan struct{}
-	stopOnce    sync.Once
-	wg          sync.WaitGroup
-	fetcher     Fetcher
-	workerCount int
-	taskQueue   *probeTaskQueue
-	taskStates  *xsync.Map[probeTaskKey, *probeTaskState]
+	measureIdentity    func(node.Hash, netip.Addr)
+	privacyMu          sync.Mutex
+	pool               *topology.GlobalNodePool
+	stopCh             chan struct{}
+	stopOnce           sync.Once
+	wg                 sync.WaitGroup
+	fetcher            Fetcher
+	prepareManualProbe func(node.Hash)
+	workerCount        int
+	taskQueue          *probeTaskQueue
+	taskStates         *xsync.Map[probeTaskKey, *probeTaskState]
 
 	maxEgressTestInterval           func() time.Duration
 	maxLatencyTestInterval          func() time.Duration
@@ -89,6 +96,7 @@ const (
 	defaultEgressTraceURL = "https://cloudflare.com/cdn-cgi/trace"
 	defaultLatencyTestURL = "https://www.gstatic.com/generate_204"
 	defaultQueueCap       = 1024
+	probeRecoveryInterval = time.Minute
 )
 
 type probePriority uint8
@@ -272,6 +280,7 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 	}
 
 	return &ProbeManager{
+		measureIdentity:                 cfg.MeasureIdentity,
 		pool:                            cfg.Pool,
 		stopCh:                          make(chan struct{}),
 		fetcher:                         cfg.Fetcher,
@@ -281,6 +290,7 @@ func NewProbeManager(cfg ProbeConfig) *ProbeManager {
 		maxEgressTestInterval:           cfg.MaxEgressTestInterval,
 		maxLatencyTestInterval:          cfg.MaxLatencyTestInterval,
 		maxAuthorityLatencyTestInterval: cfg.MaxAuthorityLatencyTestInterval,
+		prepareManualProbe:              cfg.PrepareManualProbe,
 		latencyTestURL:                  cfg.LatencyTestURL,
 		latencyAuthorities:              cfg.LatencyAuthorities,
 		egressTraceURL:                  cfg.EgressTraceURL,
@@ -367,6 +377,16 @@ type EgressProbeResult struct {
 // ProbeEgressSync performs a blocking egress probe and returns the results.
 // Used by API action endpoints that must return probe data synchronously.
 func (m *ProbeManager) ProbeEgressSync(hash node.Hash) (*EgressProbeResult, error) {
+	return m.probeEgressSync(hash, true)
+}
+
+// ProbeEgressAutomaticSync is for background callers such as intel jobs.
+// Being synchronous does not make a probe an administrator-requested retest.
+func (m *ProbeManager) ProbeEgressAutomaticSync(hash node.Hash) (*EgressProbeResult, error) {
+	return m.probeEgressSync(hash, false)
+}
+
+func (m *ProbeManager) probeEgressSync(hash node.Hash, adminRetest bool) (*EgressProbeResult, error) {
 	if m.fetcher == nil {
 		return nil, fmt.Errorf("no probe fetcher configured")
 	}
@@ -380,6 +400,12 @@ func (m *ProbeManager) ProbeEgressSync(hash node.Hash) (*EgressProbeResult, erro
 	if !ok {
 		return nil, fmt.Errorf("node not found")
 	}
+	if !entry.ConfigPrivacyAllowed() || (!adminRetest && !entry.AutomaticProbeAllowed()) {
+		return nil, fmt.Errorf("node configuration quarantined")
+	}
+	if adminRetest && m.prepareManualProbe != nil {
+		m.prepareManualProbe(hash)
+	}
 	if entry.Outbound.Load() == nil {
 		return nil, fmt.Errorf("node outbound not ready")
 	}
@@ -389,7 +415,7 @@ func (m *ProbeManager) ProbeEgressSync(hash node.Hash) (*EgressProbeResult, erro
 		m.onProbeEvent("egress")
 	}
 
-	ip, stage, err := m.performEgressProbe(hash)
+	ip, stage, err := m.performEgressProbe(hash, adminRetest)
 	if err != nil {
 		if stage == egressProbeParseError {
 			return nil, fmt.Errorf("parse egress IP: %w", err)
@@ -431,6 +457,12 @@ func (m *ProbeManager) ProbeLatencySync(hash node.Hash) (*LatencyProbeResult, er
 	entry, ok := m.pool.GetEntry(hash)
 	if !ok {
 		return nil, fmt.Errorf("node not found")
+	}
+	if !entry.ConfigPrivacyAllowed() {
+		return nil, fmt.Errorf("node configuration quarantined")
+	}
+	if m.prepareManualProbe != nil {
+		m.prepareManualProbe(hash)
 	}
 	if entry.Outbound.Load() == nil {
 		return nil, fmt.Errorf("node outbound not ready")
@@ -479,7 +511,7 @@ func (m *ProbeManager) scanEgress() {
 		default:
 		}
 
-		if entry.IsDisabledBySubscriptions(subLookup) {
+		if !entry.AutomaticProbeAllowed() || entry.IsDisabledBySubscriptions(subLookup) {
 			return true // disabled node -> skip periodic probe
 		}
 
@@ -488,9 +520,13 @@ func (m *ProbeManager) scanEgress() {
 		}
 
 		// Check if due: lastAttempt + interval - lookahead <= now.
+		nodeInterval := interval
+		if !entry.GetEgressIP().IsValid() || entry.CircuitOpenSince.Load() != 0 {
+			nodeInterval = min(interval, probeRecoveryInterval)
+		}
 		lastCheck := entry.LastEgressUpdateAttempt.Load()
-		if lastCheck > 0 {
-			nextDue := time.Unix(0, lastCheck).Add(interval).Add(-lookahead)
+		if lastCheck > 0 && !entry.IdentityRetryDue(now) {
+			nextDue := time.Unix(0, lastCheck).Add(nodeInterval).Add(-lookahead)
 			if now.Before(nextDue) {
 				return true // not yet due
 			}
@@ -527,7 +563,7 @@ func (m *ProbeManager) scanLatency() {
 		default:
 		}
 
-		if entry.IsDisabledBySubscriptions(subLookup) {
+		if !entry.AutomaticProbeAllowed() || entry.IsDisabledBySubscriptions(subLookup) {
 			return true // disabled node -> skip periodic probe
 		}
 
@@ -535,7 +571,11 @@ func (m *ProbeManager) scanLatency() {
 			return true // skip nil outbound
 		}
 
-		if !m.isLatencyProbeDue(entry, now, maxLatencyInterval, maxAuthorityInterval, authorities, lookahead) {
+		nodeInterval := maxLatencyInterval
+		if entry.CircuitOpenSince.Load() != 0 {
+			nodeInterval = min(nodeInterval, probeRecoveryInterval)
+		}
+		if !m.isLatencyProbeDue(entry, now, nodeInterval, maxAuthorityInterval, authorities, lookahead) {
 			return true
 		}
 
@@ -557,14 +597,16 @@ func (m *ProbeManager) runProbeWorker() {
 			continue
 		}
 
-		m.executeTask(task)
-		m.finishTask(task.key, state)
+		safego.Run("a probe task", func() {
+			defer m.finishTask(task.key, state)
+			m.executeTask(task)
+		})
 	}
 }
 
 func (m *ProbeManager) executeTask(task probeTask) {
 	entry, ok := m.pool.GetEntry(task.key.hash)
-	if !ok || entry.Outbound.Load() == nil {
+	if !ok || !entry.AutomaticProbeAllowed() || entry.Outbound.Load() == nil {
 		return
 	}
 	if entry.IsDisabledBySubscriptions(m.pool.MakeSubLookup()) {
@@ -580,6 +622,14 @@ func (m *ProbeManager) executeTask(task probeTask) {
 }
 
 func (m *ProbeManager) enqueueProbe(hash node.Hash, kind probeTaskKind, priority probePriority) bool {
+	m.privacyMu.Lock()
+	defer m.privacyMu.Unlock()
+	if m.pool.PrivacyDeleted(hash) {
+		return false
+	}
+	if entry, ok := m.pool.GetEntry(hash); ok && !entry.AutomaticProbeAllowed() {
+		return false
+	}
 	key := probeTaskKey{hash: hash, kind: kind}
 	state, _ := m.taskStates.LoadOrCompute(key, func() (*probeTaskState, bool) {
 		return &probeTaskState{}, false
@@ -672,6 +722,12 @@ func (m *ProbeManager) markTaskRunning(key probeTaskKey) (*probeTaskState, bool)
 }
 
 func (m *ProbeManager) finishTask(key probeTaskKey, state *probeTaskState) {
+	m.privacyMu.Lock()
+	defer m.privacyMu.Unlock()
+	if m.pool.PrivacyDeleted(key.hash) {
+		m.taskStates.Delete(key)
+		return
+	}
 	requeue := false
 	requeuePriority := probePriorityNormal
 
@@ -766,7 +822,7 @@ func (m *ProbeManager) isLatencyProbeDue(
 // Writes back: RecordOutcome (success, or a classified failure reason),
 // RecordLatency (cloudflare.com), UpdateNodeEgressIP.
 func (m *ProbeManager) probeEgress(hash node.Hash, entry *node.NodeEntry) {
-	if m.fetcher == nil {
+	if m.fetcher == nil || !entry.AutomaticProbeAllowed() {
 		return
 	}
 
@@ -779,7 +835,7 @@ func (m *ProbeManager) probeEgress(hash node.Hash, entry *node.NodeEntry) {
 		m.onProbeEvent("egress")
 	}
 
-	_, stage, err := m.performEgressProbe(hash)
+	_, stage, err := m.performEgressProbe(hash, false)
 	if err != nil {
 		if stage == egressProbeParseError {
 			log.Printf("[probe] parse egress IP for %s: %v", hash.Hex(), err)
@@ -794,7 +850,7 @@ func (m *ProbeManager) probeEgress(hash node.Hash, entry *node.NodeEntry) {
 // Writes back: RecordOutcome (success, or a classified failure reason),
 // RecordLatency.
 func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testURL string) {
-	if m.fetcher == nil {
+	if m.fetcher == nil || !entry.AutomaticProbeAllowed() {
 		return
 	}
 
@@ -813,29 +869,50 @@ func (m *ProbeManager) probeLatency(hash node.Hash, entry *node.NodeEntry, testU
 	}
 }
 
-func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressProbeErrorStage, error) {
+func (m *ProbeManager) performEgressProbe(hash node.Hash, adminRetest bool) (netip.Addr, egressProbeErrorStage, error) {
+	entry, ok := m.pool.GetEntry(hash)
+	if !ok {
+		return netip.Addr{}, egressProbeFetchError, fmt.Errorf("node removed")
+	}
 	traceURL := m.currentEgressTraceURL()
 	body, latency, err := m.fetcher(hash, traceURL)
+	if current, ok := m.pool.GetEntry(hash); !ok || current != entry {
+		return netip.Addr{}, egressProbeFetchError, fmt.Errorf("node removed")
+	}
 	if err != nil {
+		entry.RecordIdentityPrerequisiteFailure()
 		m.pool.RecordOutcome(hash, false, node.ClassifyProbeError(err), node.BoundedProbeErrorDetail(err))
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
 		return netip.Addr{}, egressProbeFetchError, err
 	}
 
-	m.pool.RecordResult(hash, true)
-	if latency > 0 {
-		m.pool.RecordLatency(hash, m.currentEgressTraceDomain(), &latency)
-	}
-
 	ip, loc, err := ParseCloudflareTrace(body)
 	if err != nil {
+		entry.RecordIdentityPrerequisiteFailure()
 		m.pool.UpdateNodeEgressIP(hash, nil, nil)
 		// A parse failure is still a probe failure: it now counts against the
 		// node and records its reason (previously this path recorded nothing).
 		m.pool.RecordOutcome(hash, false, node.ProbeErrorParse, node.BoundedProbeErrorDetail(err))
 		return netip.Addr{}, egressProbeParseError, err
 	}
-	m.pool.UpdateNodeEgressIP(hash, &ip, loc)
+	m.pool.RecordResult(hash, true)
+	if latency > 0 {
+		m.pool.RecordLatency(hash, m.currentEgressTraceDomain(), &latency)
+	}
+	if adminRetest {
+		m.pool.UpdateNodeEgressIPFromAdminProbe(hash, &ip, loc)
+	} else {
+		m.pool.UpdateNodeEgressIP(hash, &ip, loc)
+	}
+	if _, ok := m.pool.GetEntry(hash); !ok {
+		return netip.Addr{}, egressProbeFetchError, fmt.Errorf("node privacy deleted")
+	}
+	if m.measureIdentity != nil {
+		m.measureIdentity(hash, ip)
+	}
+	if _, ok := m.pool.GetEntry(hash); !ok {
+		return netip.Addr{}, egressProbeFetchError, fmt.Errorf("node privacy deleted")
+	}
 	if observer := m.onEgressObserved.Load(); observer != nil {
 		locValue := ""
 		if loc != nil {
@@ -849,6 +926,13 @@ func (m *ProbeManager) performEgressProbe(hash node.Hash) (netip.Addr, egressPro
 func (m *ProbeManager) performLatencyProbe(hash node.Hash, testURL string) error {
 	domain := netutil.ExtractDomain(testURL)
 	_, latency, err := m.fetcher(hash, testURL)
+	if err == nil && latency <= 0 {
+		// The transport succeeded, so this is not evidence of an unhealthy
+		// node. Record the attempt without inventing latency or clearing an
+		// existing health failure, and explain why measurement did not finish.
+		m.pool.RecordLatency(hash, domain, nil)
+		return fmt.Errorf("no positive TLS handshake latency; configure an HTTPS latency_test_url with a valid certificate")
+	}
 	if err != nil {
 		m.pool.RecordOutcome(hash, false, node.ClassifyProbeError(err), node.BoundedProbeErrorDetail(err))
 		m.pool.RecordLatency(hash, domain, nil)

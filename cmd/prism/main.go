@@ -134,6 +134,7 @@ func loadRuntimeConfig(engine *state.StateEngine, envCfg *config.EnvConfig) *con
 			runtimeCfg.AlertRetentionDays = envCfg.AlertRetentionDays
 		}
 	}
+	runtimeCfg.SeedPaymentConfig(envCfg)
 	return runtimeCfg
 }
 
@@ -298,9 +299,14 @@ func newTopologyRuntime(
 	// stays nil until injects the intel-backed lookup.
 	subManager := topology.NewSubscriptionManager()
 
+	privacyPolicy, err := node.NewPrivacyPolicy(runtimeConfigSnapshot(runtimeCfg).NodePrivacy)
+	if err != nil {
+		return nil, err
+	}
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
-		SubLookup: subManager.Lookup,
-		GeoLookup: geoSvc.Lookup,
+		PrivacyPolicy: privacyPolicy,
+		SubLookup:     subManager.Lookup,
+		GeoLookup:     geoSvc.Lookup,
 		OnSubNodeChanged: func(subID string, hash node.Hash, added bool) {
 			if added {
 				engine.MarkSubscriptionNode(subID, hash.Hex())
@@ -326,6 +332,7 @@ func newTopologyRuntime(
 		},
 	})
 	log.Println("Topology: GlobalNodePool initialized")
+	subManager.PrivacyFilter = pool.RejectPrivacyDocument
 
 	// 6. Node builder: outbound.NewSingboxBuilderWithConfig today, replaces
 	// it with outbound.NewSingboxRuntime.
@@ -348,8 +355,12 @@ func newTopologyRuntime(
 	// failure-class transitions so the frequent probes do not flood the log.
 	pool.SetLogf(log.Printf)
 	probeMgr := probe.NewProbeManager(probe.ProbeConfig{
-		Pool:        pool,
-		Concurrency: envCfg.ProbeConcurrency,
+		MeasureIdentity: func(h node.Hash, ip netip.Addr) {
+			measureNodeIdentity(pool, h, ip, runtimeConfigSnapshot(runtimeCfg).NodePrivacy)
+		},
+		Pool:               pool,
+		Concurrency:        envCfg.ProbeConcurrency,
+		PrepareManualProbe: outboundMgr.EnsureNodeOutboundForAdminProbe,
 		Fetcher: func(hash node.Hash, url string) ([]byte, time.Duration, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), envCfg.ProbeTimeout)
 			defer cancel()
@@ -357,12 +368,15 @@ func newTopologyRuntime(
 			if !ok {
 				return nil, 0, fmt.Errorf("node not found")
 			}
+			ctx, privacyCancel := entry.BindPrivacyContext(ctx)
+			defer privacyCancel()
 			outboundPtr := entry.Outbound.Load()
 			if outboundPtr == nil {
 				return nil, 0, outbound.ErrOutboundNotReady
 			}
 			return netutil.HTTPGetViaOutbound(ctx, *outboundPtr, url, netutil.OutboundHTTPOptions{
-				RequireStatusOK: false,
+				RequireStatusSuccess: true,
+				MaxBodyBytes:         netutil.ProbeResponseMaxBytes,
 				OnConnLifecycle: func(op netutil.ConnLifecycleOp) {
 					if onProbeConnLifecycle != nil {
 						onProbeConnLifecycle(op)
@@ -400,6 +414,7 @@ func newTopologyRuntime(
 		probeMgr.TriggerImmediateEgressProbe(hash)
 	})
 	pool.SetOnNodeRemoved(func(hash node.Hash, entry *node.NodeEntry) {
+		probeMgr.ForgetNode(hash)
 		markNodeRemovedDirty(engine, hash, entry)
 		outboundMgr.RemoveNodeOutbound(entry)
 		if entry != nil && entry.LatencyTable != nil {
@@ -840,11 +855,7 @@ func loadBootstrapNodeStatics(
 			log.Printf("[bootstrap] skip node %s: %v", ns.Hash, err)
 			continue
 		}
-		entry := &node.NodeEntry{
-			Hash:       hash,
-			RawOptions: append(json.RawMessage(nil), ns.RawOptions...),
-			CreatedAt:  time.Unix(0, ns.CreatedAtNs),
-		}
+		entry := node.NewNodeEntry(hash, append(json.RawMessage(nil), ns.RawOptions...), time.Unix(0, ns.CreatedAtNs), 0)
 		// Bootstrap default: treat nodes as circuit-open unless a persisted
 		// nodes_dynamic row later overrides this state.
 		entry.CircuitOpenSince.Store(bootstrapNowNs)
@@ -959,6 +970,10 @@ func restoreBootstrapNodeDynamics(
 		entry.LastEgressUpdateAttempt.Store(nd.LastEgressUpdateAttemptNs)
 		if nd.EgressIP != "" {
 			if ip, err := netip.ParseAddr(nd.EgressIP); err == nil {
+				if entry.PrivacyDeniesEgress(ip) {
+					pool.DeletePrivacyNode(hash, node.PrivacyOwnAsset, "")
+					continue
+				}
 				entry.SetEgressIP(ip)
 				// The direct SetEgressIP above bypasses the pool, so the
 				// egress reverse index has to be seeded explicitly: without it
@@ -1080,14 +1095,13 @@ func bootstrapNodes(
 		return err
 	}
 
-	warmupBootstrapOutbounds(hashes, outboundMgr)
-
 	if err := restoreBootstrapSubscriptionBindings(engine, pool, subManager); err != nil {
 		return err
 	}
 	if err := restoreBootstrapNodeDynamics(engine, pool); err != nil {
 		return err
 	}
+	warmupBootstrapOutbounds(hashes, outboundMgr)
 	if err := restoreBootstrapNodeLatencies(
 		engine,
 		pool,

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { queryClient } from "../../lib/query-client";
 
 export type AuthUser = {
   id: string;
@@ -27,10 +28,16 @@ const anonymousSession: SessionInfo = {
   authenticated: false,
 };
 
-export const useAuthStore = create<AuthState>((set) => ({
+let sessionGeneration = 0;
+export function getSessionGeneration(): number { return sessionGeneration; }
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   session: anonymousSession,
-  setSession: (session) => set({ session }),
-  clearSession: () => set({ session: anonymousSession }),
+  setSession: (session) => {
+    if (get().session.user?.id !== session.user?.id || get().session.user?.role !== session.user?.role) { sessionGeneration++; queryClient.clear(); }
+    set({ session });
+  },
+  clearSession: () => { sessionGeneration++; queryClient.clear(); set({ session: anonymousSession }); },
 }));
 
 export function setSession(session: SessionInfo): void {

@@ -1145,7 +1145,7 @@ func TestScheduler_SetSubscriptionEnabled_RebuildsPlatformViews(t *testing.T) {
 	sub := subscription.NewSubscription("s1", "Provider", "http://example.com", true, false)
 	subMgr.Register(sub)
 
-	pool := newTestPool(subMgr)
+	pool := newMeasuredTestPool(subMgr)
 
 	// Platform with regex matching the tag "us-node" via sub name "Provider".
 	plat := platform.NewPlatform("p1", "US", []*regexp.Regexp{regexp.MustCompile("us")}, nil)
@@ -1203,7 +1203,7 @@ func TestScheduler_SetSubscriptionEnabled_RebuildsPlatformViews_EmptyRegex(t *te
 	sub := subscription.NewSubscription("s1", "Provider", "http://example.com", true, false)
 	subMgr.Register(sub)
 
-	pool := newTestPool(subMgr)
+	pool := newMeasuredTestPool(subMgr)
 
 	// Empty regex should still require at least one enabled subscription.
 	plat := platform.NewPlatform("p1", "All", nil, nil)

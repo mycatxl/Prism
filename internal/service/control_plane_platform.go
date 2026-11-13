@@ -876,25 +876,26 @@ type ProbeErrorView struct {
 
 // NodeSummary is the API response for a node.
 type NodeSummary struct {
-	Quality                          quality.Summary `json:"quality"`
-	Intel                            NodeIntel       `json:"intel"`
-	NodeHash                         string          `json:"node_hash"`
-	Protocol                         string          `json:"protocol"`
-	CreatedAt                        string          `json:"created_at"`
-	Enabled                          bool            `json:"enabled"`
-	DisplayTag                       string          `json:"display_tag,omitempty"`
-	HasOutbound                      bool            `json:"has_outbound"`
-	LastError                        string          `json:"last_error,omitempty"`
-	CircuitOpenSince                 *string         `json:"circuit_open_since"`
-	FailureCount                     int             `json:"failure_count"`
-	EgressIP                         string          `json:"egress_ip,omitempty"`
-	Region                           string          `json:"region,omitempty"`
-	LastEgressUpdate                 string          `json:"last_egress_update,omitempty"`
-	LastLatencyProbeAttempt          string          `json:"last_latency_probe_attempt,omitempty"`
-	LastAuthorityLatencyProbeAttempt string          `json:"last_authority_latency_probe_attempt,omitempty"`
-	ReferenceLatencyMs               *float64        `json:"reference_latency_ms,omitempty"`
-	LastEgressUpdateAttempt          string          `json:"last_egress_update_attempt,omitempty"`
-	Tags                             []NodeTag       `json:"tags"`
+	Privacy                          node.PrivacyDecision `json:"privacy"`
+	Quality                          quality.Summary      `json:"quality"`
+	Intel                            NodeIntel            `json:"intel"`
+	NodeHash                         string               `json:"node_hash"`
+	Protocol                         string               `json:"protocol"`
+	CreatedAt                        string               `json:"created_at"`
+	Enabled                          bool                 `json:"enabled"`
+	DisplayTag                       string               `json:"display_tag,omitempty"`
+	HasOutbound                      bool                 `json:"has_outbound"`
+	LastError                        string               `json:"last_error,omitempty"`
+	CircuitOpenSince                 *string              `json:"circuit_open_since"`
+	FailureCount                     int                  `json:"failure_count"`
+	EgressIP                         string               `json:"egress_ip,omitempty"`
+	Region                           string               `json:"region,omitempty"`
+	LastEgressUpdate                 string               `json:"last_egress_update,omitempty"`
+	LastLatencyProbeAttempt          string               `json:"last_latency_probe_attempt,omitempty"`
+	LastAuthorityLatencyProbeAttempt string               `json:"last_authority_latency_probe_attempt,omitempty"`
+	ReferenceLatencyMs               *float64             `json:"reference_latency_ms,omitempty"`
+	LastEgressUpdateAttempt          string               `json:"last_egress_update_attempt,omitempty"`
+	Tags                             []NodeTag            `json:"tags"`
 	// LastProbeError is the reason this node's last probe failed, or nil when the
 	// last probe succeeded. Probe failures never touch LastError: that one means
 	// the node could not be built at all and drives the ephemeral cleaner.
@@ -916,6 +917,7 @@ type NodeTag struct {
 
 func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEntry) NodeSummary {
 	ns := NodeSummary{
+		Privacy:      entry.Privacy(),
 		Quality:      quality.Summary{State: "unobserved", Sources: []quality.SourceSummary{}},
 		NodeHash:     h.Hex(),
 		Protocol:     entry.Protocol,
@@ -945,7 +947,7 @@ func (s *ControlPlaneService) nodeEntryToSummary(h node.Hash, entry *node.NodeEn
 	}
 
 	egressIP := entry.GetEgressIP()
-	ns.Quality = s.nodeQuality(egressIP)
+	ns.Quality = s.nodeQuality(egressIP, h.Hex())
 	// the assessment view of the node's egress IP, read from the
 	// in-memory projection. The node_egress display facts are added by
 	// FillNodeIntelEgress for a whole page at once.

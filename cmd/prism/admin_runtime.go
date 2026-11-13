@@ -37,6 +37,7 @@ func startAdminListener(addr string, apiHandler http.Handler) (*adminListener, e
 	if err != nil {
 		return nil, fmt.Errorf("admin listener %s: %w", trimmed, err)
 	}
+	listener = limitInboundConnections(listener, inboundMaxConnections)
 
 	l := &adminListener{
 		addr:     trimmed,
@@ -86,6 +87,7 @@ func newAdminOnlyHandler(apiHandler http.Handler) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !isManagementPath(r) {
+			w.Header().Set("Connection", "close")
 			http.NotFound(w, r)
 			return
 		}

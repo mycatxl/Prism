@@ -130,16 +130,25 @@ func (e ConfigAwareEventEmitter) emitBase() EventEmitter {
 
 func (e ConfigAwareEventEmitter) reverseDetailCaptureConfig() reverseDetailCaptureConfig {
 	cfg := reverseDetailCaptureConfig{
-		Enabled:             true,
-		ReqHeadersMaxBytes:  -1,
-		ReqBodyMaxBytes:     -1,
-		RespHeadersMaxBytes: -1,
-		RespBodyMaxBytes:    -1,
+		Enabled:             false,
+		ReqHeadersMaxBytes:  0,
+		ReqBodyMaxBytes:     0,
+		RespHeadersMaxBytes: 0,
+		RespBodyMaxBytes:    0,
+	}
+	if e.ReverseProxyLogDetailEnabled != nil {
+		cfg.Enabled = e.ReverseProxyLogDetailEnabled()
+		if cfg.Enabled {
+			// An explicit opt-in without per-field callbacks is still bounded.
+			// Production supplies tighter runtime values; this ceiling protects
+			// tests and future embeddings from an unlimited capture.
+			cfg.ReqHeadersMaxBytes = maxPersistedLogPayloadBytes
+			cfg.ReqBodyMaxBytes = maxPersistedLogPayloadBytes
+			cfg.RespHeadersMaxBytes = maxPersistedLogPayloadBytes
+			cfg.RespBodyMaxBytes = maxPersistedLogPayloadBytes
+		}
 	}
 	if e.RequestLogEnabled != nil && !e.RequestLogEnabled() {
-		cfg.Enabled = false
-	}
-	if e.ReverseProxyLogDetailEnabled != nil && !e.ReverseProxyLogDetailEnabled() {
 		cfg.Enabled = false
 	}
 	if e.ReverseProxyLogReqHeadersMaxBytes != nil {
@@ -160,6 +169,27 @@ func (e ConfigAwareEventEmitter) reverseDetailCaptureConfig() reverseDetailCaptu
 func normalizePayloadField(payload []byte, length int, truncated bool, max int) ([]byte, int, bool) {
 	if length < len(payload) {
 		length = len(payload)
+	}
+	if max >= 0 && len(payload) > max {
+		payload = payload[:max]
+		truncated = true
+	}
+	if len(payload) == 0 {
+		payload = nil
+	} else {
+		payload = append([]byte(nil), payload...)
+	}
+	return payload, length, truncated
+}
+
+func normalizeBodyPayloadField(payload []byte, length int, truncated bool, max int) ([]byte, int, bool) {
+	hadPayload := len(payload) > 0
+	if length < len(payload) {
+		length = len(payload)
+	}
+	payload = sanitizeLogPayload(payload)
+	if hadPayload {
+		truncated = true
 	}
 	if max >= 0 && len(payload) > max {
 		payload = payload[:max]
@@ -209,7 +239,7 @@ func (e ConfigAwareEventEmitter) EmitRequestLog(ev RequestLogEntry) {
 				ev.ReqHeadersTruncated,
 				cfg.ReqHeadersMaxBytes,
 			)
-			ev.ReqBody, ev.ReqBodyLen, ev.ReqBodyTruncated = normalizePayloadField(
+			ev.ReqBody, ev.ReqBodyLen, ev.ReqBodyTruncated = normalizeBodyPayloadField(
 				ev.ReqBody,
 				ev.ReqBodyLen,
 				ev.ReqBodyTruncated,
@@ -221,7 +251,7 @@ func (e ConfigAwareEventEmitter) EmitRequestLog(ev RequestLogEntry) {
 				ev.RespHeadersTruncated,
 				cfg.RespHeadersMaxBytes,
 			)
-			ev.RespBody, ev.RespBodyLen, ev.RespBodyTruncated = normalizePayloadField(
+			ev.RespBody, ev.RespBodyLen, ev.RespBodyTruncated = normalizeBodyPayloadField(
 				ev.RespBody,
 				ev.RespBodyLen,
 				ev.RespBodyTruncated,

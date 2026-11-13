@@ -5,6 +5,25 @@ import "time"
 // RuntimeConfig holds all hot-updatable global settings.
 // These are persisted in the database and served via GET /system/config.
 type RuntimeConfig struct {
+	NodePrivacy NodePrivacyConfig `json:"node_privacy"`
+	// PaymentConfigInitialized distinguishes an upgraded environment-backed config
+	// from an explicit disable/clear saved by the operator. It is read-only in PATCH.
+	PaymentConfigInitialized bool    `json:"payment_config_initialized"`
+	LDCEnabled               bool    `json:"ldc_enabled"`
+	LDCGatewayURL            string  `json:"ldc_gateway_url"`
+	LDCPID                   string  `json:"ldc_pid"`
+	LDCKey                   string  `json:"ldc_key"`
+	LDCRate                  float64 `json:"ldc_rate"`
+	LDCNotifyURL             string  `json:"ldc_notify_url"`
+	LDCReturnURL             string  `json:"ldc_return_url"`
+	TronDepositEnabled       bool    `json:"tron_deposit_enabled"`
+	TronAddress              string  `json:"tron_address"`
+	TronAPIKey               string  `json:"tron_api_key"`
+	TronUSDTContract         string  `json:"tron_usdt_contract"`
+	TronTRXEnabled           bool    `json:"tron_trx_enabled"`
+	TronTRXRatio             float64 `json:"tron_trx_ratio"`
+	TronWindowMinutes        int     `json:"tron_window_minutes"`
+
 	// Request log
 	RequestLogEnabled                  bool `json:"request_log_enabled"`
 	ReverseProxyLogDetailEnabled       bool `json:"reverse_proxy_log_detail_enabled"`

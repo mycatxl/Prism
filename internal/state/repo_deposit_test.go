@@ -2,6 +2,9 @@ package state
 
 import (
 	"errors"
+	"fmt"
+	"math"
+	"sync"
 	"testing"
 
 	"prism/internal/model"
@@ -260,6 +263,84 @@ func TestCreditDepositIsIdempotentByTxID(t *testing.T) {
 	}
 	if balance != 6_000_001 {
 		t.Fatalf("balance after replay: got %d, want 6000001", balance)
+	}
+}
+
+func TestCreditDepositConcurrentReplayCreditsOnce(t *testing.T) {
+	repo := newTestStateRepo(t)
+	seedDepositUser(t, repo, "u-dep-parallel")
+	intent := newDepositIntent("dep-parallel", "u-dep-parallel", 0, depositTestNowNs)
+	if _, err := repo.InsertDepositIntent(intent, []int64{8_000_001}, depositTestNowNs); err != nil {
+		t.Fatalf("allocation: %v", err)
+	}
+	blockTSNs := intent.CreatedAtNs + 1_000_000_000
+	const workers = 32
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := repo.CreditDeposit("tx-parallel", 8_000_001, blockTSNs, depositTestNowNs,
+				testCursorName, blockTSNs/1_000_000, model.BalanceEntry{ID: fmt.Sprintf("bl-parallel-%d", i)})
+			errs <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	succeeded := 0
+	for err := range errs {
+		if err == nil {
+			succeeded++
+		} else if !errors.Is(err, ErrConflict) {
+			t.Fatalf("parallel deposit: %v", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d parallel deposit credits succeeded, want 1", succeeded)
+	}
+	if balance, err := repo.GetBalance("u-dep-parallel"); err != nil || balance != 8_000_001 {
+		t.Fatalf("parallel deposit balance = %d, %v", balance, err)
+	}
+	ledger, err := repo.ListBalanceLedger("u-dep-parallel", 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	if len(ledger) != 1 {
+		t.Fatalf("parallel deposit wrote %d ledger rows, want 1", len(ledger))
+	}
+}
+
+func TestCreditDepositRefusesBalanceOverflow(t *testing.T) {
+	repo := newTestStateRepo(t)
+	seedDepositUser(t, repo, "u-dep-overflow")
+	if _, err := repo.ApplyBalanceDelta(model.BalanceEntry{
+		ID: "bl-near-max", UserID: "u-dep-overflow", DeltaMicro: math.MaxInt64 - 1,
+		Reason: model.BalanceReasonAdminAdjust, CreatedAtNs: 1,
+	}); err != nil {
+		t.Fatalf("seed near-max balance: %v", err)
+	}
+	intent := newDepositIntent("dep-overflow", "u-dep-overflow", 0, depositTestNowNs)
+	if _, err := repo.InsertDepositIntent(intent, []int64{2}, depositTestNowNs); err != nil {
+		t.Fatalf("allocation: %v", err)
+	}
+	_, err := repo.CreditDeposit("tx-overflow", 2, intent.CreatedAtNs+1, depositTestNowNs,
+		testCursorName, (intent.CreatedAtNs+1)/1_000_000, model.BalanceEntry{ID: "bl-overflow"})
+	if !errors.Is(err, ErrBalanceOverflow) {
+		t.Fatalf("overflowing credit = %v, want ErrBalanceOverflow", err)
+	}
+	if balance, err := repo.GetBalance("u-dep-overflow"); err != nil || balance != math.MaxInt64-1 {
+		t.Fatalf("balance after overflow = %d, %v", balance, err)
+	}
+	stored, err := repo.GetDepositIntent(intent.ID)
+	if err != nil {
+		t.Fatalf("read intent: %v", err)
+	}
+	if stored.Status == model.DepositStatusPaid {
+		t.Fatal("overflowing credit marked the intent paid")
 	}
 }
 

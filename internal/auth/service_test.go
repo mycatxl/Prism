@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/subtle"
 	"errors"
 	"strings"
 	"sync"
@@ -89,6 +90,22 @@ func (s *fakeStore) InsertSession(session model.Session) error {
 	return nil
 }
 
+func (s *fakeStore) InsertVerifiedSession(session model.Session, verified model.User) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.insertErr != nil {
+		return false, s.insertErr
+	}
+	user := s.users[session.UserID]
+	if user == nil || user.Status != model.UserStatusActive ||
+		subtle.ConstantTimeCompare([]byte(user.PasswordHash), []byte(verified.PasswordHash)) != 1 ||
+		subtle.ConstantTimeCompare(user.TOTPSecretEnc, verified.TOTPSecretEnc) != 1 {
+		return false, nil
+	}
+	s.sessions[session.IDHash] = session
+	return true, nil
+}
+
 func (s *fakeStore) GetSession(idHash string) (*model.Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -141,13 +158,20 @@ func (s *fakeStore) MarkUserLogin(userID string, atNs int64) error {
 	return nil
 }
 
-// AdvanceTOTPLastUsed is the compare-and-set the real repository performs: the
+// AdvanceVerifiedTOTPLastUsed is the compare-and-set the real repository performs: the
 // step is accepted only when it is newer than the one already recorded.
-func (s *fakeStore) AdvanceTOTPLastUsed(userID string, stepNs int64) (bool, error) {
+func (s *fakeStore) AdvanceVerifiedTOTPLastUsed(verified model.User, stepNs int64) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.totpStepErr != nil {
 		return false, s.totpStepErr
+	}
+	userID := verified.ID
+	user := s.users[userID]
+	if user == nil || user.Status != model.UserStatusActive || user.Role != verified.Role || user.UpdatedAtNs != verified.UpdatedAtNs ||
+		subtle.ConstantTimeCompare([]byte(user.PasswordHash), []byte(verified.PasswordHash)) != 1 ||
+		subtle.ConstantTimeCompare(user.TOTPSecretEnc, verified.TOTPSecretEnc) != 1 {
+		return false, nil
 	}
 	if last, ok := s.totpSteps[userID]; ok && stepNs <= last {
 		return false, nil
@@ -197,7 +221,7 @@ func (b *fakeBlocklist) failureKeys() []string {
 
 func newLoginService(t *testing.T, store Store) *Service {
 	t.Helper()
-	pepper, err := NewPepper([]byte("a-test-pepper-of-at-least-16-bytes"))
+	pepper, err := NewPepper([]byte(strings.Repeat("p", pepperLength)))
 	if err != nil {
 		t.Fatalf("NewPepper: %v", err)
 	}
@@ -381,7 +405,7 @@ func TestService_LoginRefusesWhenTheFactorCannotBeOpened(t *testing.T) {
 	store.addUser(t, "admin", "the-right-password")
 	svc := newLoginService(t, store)
 
-	other, err := NewPepper([]byte("a-different-pepper-entirely"))
+	other, err := NewPepper([]byte(strings.Repeat("o", pepperLength)))
 	if err != nil {
 		t.Fatalf("NewPepper: %v", err)
 	}
@@ -721,6 +745,50 @@ func TestService_SecondFactorIsSingleUse(t *testing.T) {
 	}
 	if got := store.sessionCount(); got != 2 {
 		t.Fatalf("%d sessions were issued, want 2", got)
+	}
+}
+
+func TestService_ConcurrentSecondFactorReplayIssuesOneSession(t *testing.T) {
+	store := newFakeStore()
+	user := store.addUser(t, "admin", "the-right-password")
+	svc := newLoginService(t, store)
+	clock := (int64(1_750_000_000) / int64(totpStep/time.Second)) * int64(totpStep/time.Second) * int64(time.Second)
+	svc.Now = func() int64 { return clock }
+	secret := enrolTOTP(t, store, svc, user.ID)
+	code, err := TOTPCode(secret, time.Unix(0, clock))
+	if err != nil {
+		t.Fatalf("TOTPCode: %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, loginErr := svc.Login("admin", "the-right-password", code, "", "", "")
+			errs <- loginErr
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	successes, replays := 0, 0
+	for loginErr := range errs {
+		switch {
+		case loginErr == nil:
+			successes++
+		case errors.Is(loginErr, ErrTOTPAlreadyUsed):
+			replays++
+		default:
+			t.Fatalf("unexpected login result: %v", loginErr)
+		}
+	}
+	if successes != 1 || replays != 1 || store.sessionCount() != 1 {
+		t.Fatalf("successes=%d replays=%d sessions=%d, want 1/1/1", successes, replays, store.sessionCount())
 	}
 }
 

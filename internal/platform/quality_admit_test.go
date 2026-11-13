@@ -58,6 +58,7 @@ var admitNow = time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 // lite builds a projected assessment that passes every rule by default.
 func lite() intel.AssessmentLite {
 	return intel.AssessmentLite{
+		State:      intel.StateValid,
 		Score:      90,
 		Band:       intel.BandCode("clean"),
 		Verdict:    intel.VerdictCode("favorable"),
@@ -99,7 +100,8 @@ func TestAdmitQuality_Rules(t *testing.T) {
 			name:   "empty_policy_always_passes",
 			policy: model.QualityPolicy{},
 			lite:   nil,
-			wantOK: true,
+			wantOK: false,
+			want:   "QUALITY_UNKNOWN",
 		},
 		{
 			name:     "missing_egress_ip_fails_closed",
@@ -120,7 +122,8 @@ func TestAdmitQuality_Rules(t *testing.T) {
 			name:   "unknown_assessment_allowed_by_unknown_action",
 			policy: model.QualityPolicy{MinPurity: intPtr(50), UnknownAction: "allow"},
 			lite:   nil,
-			wantOK: true,
+			wantOK: false,
+			want:   "QUALITY_UNKNOWN",
 		},
 		{
 			name:   "stale_assessment_is_unknown",
@@ -234,7 +237,7 @@ func TestAdmitQuality_Rules(t *testing.T) {
 				return &unknown
 			}(),
 			wantOK: false,
-			want:   "QUALITY_MIN_PURITY",
+			want:   "QUALITY_UNKNOWN",
 		},
 		{
 			name:   "ip_type_not_allowed",
@@ -427,13 +430,13 @@ func litePtr() *intel.AssessmentLite {
 	return &v
 }
 
-// TestAdmitQuality_EmptyPolicySkipsSnapshot covers deviation X5: without a
-// configured policy the admission path must not even look at the snapshot.
-func TestAdmitQuality_EmptyPolicySkipsSnapshot(t *testing.T) {
+// Even an empty policy requires evidence for the current exit. It adds no
+// minimum score or risk filter once the measurement floor is satisfied.
+func TestAdmitQuality_EmptyPolicyRequiresMeasurement(t *testing.T) {
 	entry := admitEntry(t)
 	entry.SetEgressIP(netip.Addr{})
-	if ok, reason := AdmitQuality(model.QualityPolicy{}, entry, nil, admitNow); !ok || reason != "" {
-		t.Fatalf("empty policy must always pass, got ok=%v reason=%q", ok, reason)
+	if ok, reason := AdmitQuality(model.QualityPolicy{}, entry, nil, admitNow); ok || reason != ReasonQualityEgressUnknown {
+		t.Fatalf("empty policy must reject unknown egress, got ok=%v reason=%q", ok, reason)
 	}
 }
 
@@ -535,17 +538,17 @@ func TestExplainQuality_UnknownAndEmpty(t *testing.T) {
 	policy := model.QualityPolicy{MinPurity: &minPurity}
 
 	empty := ExplainQuality(model.QualityPolicy{}, entry, newFakeSnapshot(), admitNow)
-	if len(empty) != 1 || !empty[0].Passed {
+	if len(empty) != 2 || empty[1].Passed {
 		t.Fatalf("empty policy explain = %+v", empty)
 	}
 
 	unknown := ExplainQuality(policy, entry, newFakeSnapshot(), admitNow)
-	if len(unknown) != 2 || unknown[1].Rule != "quality.unknown" || unknown[1].Passed {
+	if len(unknown) != 2 || unknown[1].Rule != "quality.measured" || unknown[1].Passed {
 		t.Fatalf("unknown explain = %+v", unknown)
 	}
 
 	allowed := ExplainQuality(model.QualityPolicy{MinPurity: &minPurity, UnknownAction: "allow"}, entry, newFakeSnapshot(), admitNow)
-	if len(allowed) != 2 || !allowed[1].Passed {
+	if len(allowed) != 2 || allowed[1].Passed {
 		t.Fatalf("allowed explain = %+v", allowed)
 	}
 }

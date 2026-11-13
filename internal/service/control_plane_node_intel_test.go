@@ -236,8 +236,8 @@ func TestListNodes_IntelStateIsStaleAfterValidUntil(t *testing.T) {
 	if stale.Intel.State != IntelStateStale {
 		t.Fatalf("state = %q, want %q", stale.Intel.State, IntelStateStale)
 	}
-	if stale.Intel.PurityScore == nil || *stale.Intel.PurityScore != 88 {
-		t.Errorf("score = %v, want 88 (the stored value, reported stale)", stale.Intel.PurityScore)
+	if stale.Intel.PurityScore != nil {
+		t.Errorf("score = %v, want null for expired primary evidence", stale.Intel.PurityScore)
 	}
 }
 

@@ -55,6 +55,14 @@ type PeriodStore interface {
 	ResetSubscriptionPeriod(id string, fromPeriodStartNs, toPeriodStartNs int64) error
 }
 
+// PeriodGuardedResetStore is implemented by stores that can report whether the
+// observed period was actually moved. A second worker may legitimately lose
+// the guarded update; it must not clear bytes that arrived after the winner's
+// reset.
+type PeriodGuardedResetStore interface {
+	ResetSubscriptionPeriodIfCurrent(id string, fromPeriodStartNs, toPeriodStartNs int64) (bool, error)
+}
+
 // PeriodReset advances subscriptions whose usage period has elapsed.
 //
 // Without it an allowance is a one-time grant: a user who uses their monthly
@@ -179,18 +187,37 @@ func (p *PeriodReset) RunOnce(nowNs int64) (PeriodResetResult, error) {
 			continue
 		}
 
-		err := p.Store.ResetSubscriptionPeriod(sub.ID, sub.PeriodStartNs, next)
+		transition := p.Counters.BeginUserPeriodTransition(sub.UserID)
+		if !transition.Matches(sub.ID, sub.PeriodStartNs) {
+			transition.Cancel()
+			continue
+		}
+		changed := true
+		var err error
+		if guarded, ok := p.Store.(PeriodGuardedResetStore); ok {
+			changed, err = guarded.ResetSubscriptionPeriodIfCurrent(sub.ID, sub.PeriodStartNs, next)
+		} else {
+			err = p.Store.ResetSubscriptionPeriod(sub.ID, sub.PeriodStartNs, next)
+		}
 		if err != nil {
+			transition.Cancel()
 			// The repository answers nil when another writer got there first, so
 			// anything here is a real failure - a missing row included - worth
 			// logging and worth retrying on the next pass.
 			p.logf("usage: reset period for subscription %s: %v", sub.ID, err)
 			continue
 		}
+		if !changed {
+			transition.Cancel()
+			// Another resetter moved this period first. The row is already on
+			// the new period, so clearing the aggregate here would erase traffic
+			// that arrived after that winner's reset.
+			continue
+		}
 		// The running total is cleared only after the database has the new
 		// period, so a failed write never hands out an allowance that is still
 		// spent on disk.
-		p.Counters.ResetUser(sub.UserID)
+		transition.Commit(sub.ID, next)
 		result.Rolled++
 		p.logf("usage: started a new %s period for subscription %s (user %s)", period, sub.ID, sub.UserID)
 	}

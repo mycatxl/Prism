@@ -62,13 +62,18 @@ type sessionReservation struct {
 	release sync.Once
 }
 
-// Release unregisters the session. It is idempotent and safe on a nil
-// reservation, so every caller can defer it unconditionally.
+// Release unregisters and closes the session. It is idempotent and safe on a
+// nil reservation, so every caller can defer it unconditionally. Closing here
+// is the final cleanup backstop for a handler that panics after hijacking a
+// socket but before its relay gets a chance to close both ends.
 func (r *sessionReservation) Release() {
 	if r == nil || !r.tracked {
 		return
 	}
-	r.release.Do(func() { r.tracker.Untrack(r.keyID, r.session) })
+	r.release.Do(func() {
+		r.tracker.Untrack(r.keyID, r.session)
+		_ = r.session.Close()
+	})
 }
 
 // reserveSession records the session of the request that is about to be served
@@ -82,8 +87,8 @@ func (r *sessionReservation) Release() {
 // "concurrent". A refusal releases the reservation again and leaves nothing
 // behind.
 //
-// A nil gate, and a request that carried no key, both proceed: the gate is
-// optional and the transitional token path has no allowance to check.
+// A nil gate leaves quota enforcement disabled. Authenticated requests
+// always carry a key before reaching this reservation.
 func reserveSession(
 	gate QuotaGate,
 	tracker SessionTracker,
@@ -94,6 +99,13 @@ func reserveSession(
 	reservation := &sessionReservation{}
 	if key == nil {
 		return nil, reservation
+	}
+	// A finite concurrency limit needs a tracker to hold the reservation that
+	// the decision is based on. Treat a missing tracker as unavailable capacity
+	// rather than passing concurrent=0 for every request and silently turning
+	// the plan's limit into unlimited access.
+	if tracker == nil && key.Plan.MaxConcurrent > 0 {
+		return refusalProxyError("concurrency", key, logf), reservation
 	}
 
 	sessionReservationMu.Lock()
@@ -140,7 +152,13 @@ func refusalProxyError(reason string, key *keys.KeyState, logf func(format strin
 		}
 		logf("proxy: refused a request for key %s: %s", keyID, reason)
 	}
-	return ErrQuotaExceeded
+	if reason == "accounting" {
+		return ErrAccountingUnavailable
+	}
+	if reason == "traffic" {
+		return ErrQuotaExceeded
+	}
+	return ErrCapacityExceeded
 }
 
 // pendingSession is the registry handle of a session that is being
@@ -226,8 +244,8 @@ func sessionCount(tracker SessionTracker, key *keys.KeyState) int {
 // have to depend on the accounting implementation.
 type MeteringSink interface {
 	// OnKeyTrafficDelta reports bytes moved for one key on one platform.
-	// An empty keyID means the request carried no key - the transitional
-	// global-token path - and such a delta is counted against nobody.
+	// An empty keyID is ignored by the implementation because only keyed
+	// requests reach the data plane.
 	OnKeyTrafficDelta(keyID, userID, platformID string, ingressBytes, egressBytes int64)
 	// OnKeyRequest reports one finished request. failed says whether the
 	// request ended in a proxy or upstream error.
@@ -305,8 +323,7 @@ type requestMeter struct {
 
 // attachMeter enables attributed accounting for this request.
 //
-// A nil sink, or a request that carried no key, leaves the lifecycle
-// unattributed: the transitional token path has nothing to attribute to.
+// A nil sink, or an invalid key state, leaves the lifecycle unattributed.
 func (l *requestLifecycle) attachMeter(sink MeteringSink, key *keys.KeyState, bytesAtConn bool) {
 	if l == nil || sink == nil || key == nil || key.KeyID == "" {
 		return

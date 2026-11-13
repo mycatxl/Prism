@@ -102,7 +102,7 @@ func (s *ControlPlaneService) UsageSummary(nowNs int64) (UsageSummary, error) {
 	var periodBytes int64
 	for _, sub := range subs {
 		byUser[sub.UserID] = sub
-		periodBytes += sub.PeriodUsedBytes
+		periodBytes = model.SaturatingUsageAdd(periodBytes, sub.PeriodUsedBytes)
 		// Only a window that is still in force can be renewed, so the horizon
 		// is (nowNs, nowNs+expiringSoonDays]. A window that has already passed
 		// is not one: it is the lag between the expiry and the sweep that
@@ -130,7 +130,7 @@ func (s *ControlPlaneService) UsageSummary(nowNs int64) (UsageSummary, error) {
 		return UsageSummary{}, internal("list usage", err)
 	}
 	for _, row := range rows {
-		summary.TodayBytes += row.IngressBytes + row.EgressBytes
+		summary.TodayBytes = model.SaturatingUsageAdd(summary.TodayBytes, model.SaturatingUsageAdd(row.IngressBytes, row.EgressBytes))
 	}
 	return summary, nil
 }
@@ -156,8 +156,14 @@ func (s *ControlPlaneService) UsageByUser(fromNs, toNs int64, limit int, nowNs i
 	if fromNs < 0 || toNs < 0 {
 		return nil, invalidArg("from_ns and to_ns: must not be negative")
 	}
+	if (fromNs == 0) != (toNs == 0) {
+		return nil, invalidArg("from_ns and to_ns: must be provided together")
+	}
 	if toNs > 0 && fromNs >= toNs {
 		return nil, invalidArg("from_ns: must be earlier than to_ns")
+	}
+	if toNs > 0 && toNs-fromNs > int64(maxUsageDays)*int64(24*time.Hour) {
+		return nil, invalidArg("from_ns and to_ns: window must not exceed 365 days")
 	}
 
 	rows, err := s.Engine.ListUsageDailyRange(fromNs, toNs)
@@ -177,8 +183,8 @@ func (s *ControlPlaneService) UsageByUser(fromNs, toNs int64, limit int, nowNs i
 	byUser := make(map[string]totals, len(users))
 	for _, row := range rows {
 		accumulated := byUser[row.UserID]
-		accumulated.ingress += row.IngressBytes
-		accumulated.egress += row.EgressBytes
+		accumulated.ingress = model.SaturatingUsageAdd(accumulated.ingress, row.IngressBytes)
+		accumulated.egress = model.SaturatingUsageAdd(accumulated.egress, row.EgressBytes)
 		byUser[row.UserID] = accumulated
 	}
 
@@ -195,7 +201,7 @@ func (s *ControlPlaneService) UsageByUser(fromNs, toNs int64, limit int, nowNs i
 	for userID, accumulated := range byUser {
 		entry := UsageUserRow{
 			UserID:       userID,
-			TotalBytes:   accumulated.ingress + accumulated.egress,
+			TotalBytes:   model.SaturatingUsageAdd(accumulated.ingress, accumulated.egress),
 			IngressBytes: accumulated.ingress,
 			EgressBytes:  accumulated.egress,
 		}
@@ -259,7 +265,7 @@ func (s *ControlPlaneService) UsageByPlatform(days int, nowNs int64) ([]UsagePla
 	}
 	totals := make(map[string]int64)
 	for _, row := range rows {
-		totals[row.PlatformID] += row.IngressBytes + row.EgressBytes
+		totals[row.PlatformID] = model.SaturatingUsageAdd(totals[row.PlatformID], model.SaturatingUsageAdd(row.IngressBytes, row.EgressBytes))
 	}
 
 	result := make([]UsagePlatformRow, 0, len(totals))
@@ -320,11 +326,12 @@ func (s *ControlPlaneService) UsageByPlan(days int, nowNs int64) ([]UsagePlanRow
 	for _, view := range views {
 		entry := bucket(view.PlanID, view.PlanName)
 		entry.Subscribers++
-		entry.PeriodBytes += view.PeriodUsedBytes
+		entry.PeriodBytes = model.SaturatingUsageAdd(entry.PeriodBytes, view.PeriodUsedBytes)
 		planByUser[view.UserID] = view.PlanID
 	}
 	for _, row := range rows {
-		bucket(planByUser[row.UserID], "").TotalBytes += row.IngressBytes + row.EgressBytes
+		entry := bucket(planByUser[row.UserID], "")
+		entry.TotalBytes = model.SaturatingUsageAdd(entry.TotalBytes, model.SaturatingUsageAdd(row.IngressBytes, row.EgressBytes))
 	}
 
 	result := make([]UsagePlanRow, 0, len(byPlan))

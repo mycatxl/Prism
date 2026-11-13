@@ -91,6 +91,13 @@ func TestLoadEnvConfig_Defaults(t *testing.T) {
 	// Auth
 	assertEqual(t, "AuthVersion", cfg.AuthVersion, AuthVersionV1)
 
+	// Linux.do Credit
+	assertEqual(t, "LDCPID", cfg.LDCPID, "")
+	assertEqual(t, "LDCKey", cfg.LDCKey, "")
+	assertEqual(t, "LDCGatewayURL", cfg.LDCGatewayURL, "https://credit.linux.do/epay")
+	assertEqual(t, "LDCNotifyURL", cfg.LDCNotifyURL, "")
+	assertEqual(t, "LDCReturnURL", cfg.LDCReturnURL, "")
+
 	// Metrics
 	assertEqual(t, "MetricThroughputIntervalSeconds", cfg.MetricThroughputIntervalSeconds, 2)
 	assertEqual(t, "MetricThroughputRetentionSeconds", cfg.MetricThroughputRetentionSeconds, 3600)
@@ -182,6 +189,40 @@ func TestLoadEnvConfig_EnvOverrides(t *testing.T) {
 	if cfg.RequestLogQueueFlushInterval.String() != "10m0s" {
 		t.Errorf("RequestLogQueueFlushInterval: got %v, want 10m", cfg.RequestLogQueueFlushInterval)
 	}
+}
+
+func TestLoadEnvConfig_LDCAliasesAndTrimming(t *testing.T) {
+	envs := requiredEnvs()
+	setEnvs(t, envs)
+	unsetEnvForConfigTest(t,
+		"PRISM_LDC_PID", "PRISM_LDC_CLIENT_ID", "PRISM_LDC_KEY", "PRISM_LDC_CLIENT_SECRET",
+		"PRISM_LDC_GATEWAY_URL", "PRISM_LDC_NOTIFY_URL", "PRISM_LDC_RETURN_URL",
+		"RESIN_LDC_PID", "RESIN_LDC_CLIENT_ID", "RESIN_LDC_KEY", "RESIN_LDC_CLIENT_SECRET",
+	)
+	t.Setenv("PRISM_LDC_CLIENT_ID", " alias-client-id ")
+	t.Setenv("PRISM_LDC_CLIENT_SECRET", " alias-client-secret ")
+	t.Setenv("PRISM_LDC_GATEWAY_URL", " https://gateway.example/epay/ ")
+	t.Setenv("PRISM_LDC_NOTIFY_URL", " https://merchant.example/notify ")
+	t.Setenv("PRISM_LDC_RETURN_URL", " https://merchant.example/return ")
+
+	cfg, err := LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertEqual(t, "LDCPID alias", cfg.LDCPID, "alias-client-id")
+	assertEqual(t, "LDCKey alias", cfg.LDCKey, "alias-client-secret")
+	assertEqual(t, "LDCGatewayURL", cfg.LDCGatewayURL, "https://gateway.example/epay/")
+	assertEqual(t, "LDCNotifyURL", cfg.LDCNotifyURL, "https://merchant.example/notify")
+	assertEqual(t, "LDCReturnURL", cfg.LDCReturnURL, "https://merchant.example/return")
+
+	t.Setenv("PRISM_LDC_PID", " primary-id ")
+	t.Setenv("PRISM_LDC_KEY", " primary-key ")
+	cfg, err = LoadEnvConfig()
+	if err != nil {
+		t.Fatalf("unexpected primary-value error: %v", err)
+	}
+	assertEqual(t, "LDCPID primary", cfg.LDCPID, "primary-id")
+	assertEqual(t, "LDCKey primary", cfg.LDCKey, "primary-key")
 }
 
 func TestLoadEnvConfig_EgressTraceURL(t *testing.T) {

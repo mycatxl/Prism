@@ -9,7 +9,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -65,6 +64,8 @@ func (s *inboundDemuxServer) Serve(ln net.Listener) error {
 	if ln == nil {
 		return net.ErrClosed
 	}
+	ln = limitInboundConnections(ln, inboundMaxConnections)
+	defer ln.Close()
 
 	s.mu.Lock()
 	s.outer = ln
@@ -190,7 +191,6 @@ func (s *inboundDemuxServer) Shutdown(ctx context.Context) error {
 		if s.httpServer != nil {
 			_ = s.httpServer.Close()
 		}
-		<-waitDone
 		if httpErr == nil {
 			return ctx.Err()
 		}
@@ -205,14 +205,21 @@ func (s *inboundDemuxServer) handleAcceptedConn(conn net.Conn) {
 	// process down. One SOCKS5 session must not be able to stop the proxy.
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			log.Printf("proxy: recovered a panic serving an inbound connection: %v\n%s", recovered, debug.Stack())
+			log.Printf("proxy: recovered a panic serving an inbound connection")
 			if conn != nil {
 				_ = conn.Close()
 			}
 		}
 	}()
-	s.trackActiveConn(conn)
-	s.trackSniffConn(conn)
+	if !s.trackActiveConn(conn) {
+		_ = conn.Close()
+		return
+	}
+	if !s.trackSniffConn(conn) {
+		s.untrackActiveConn(conn)
+		_ = conn.Close()
+		return
+	}
 
 	reader := bufio.NewReader(conn)
 	if err := conn.SetReadDeadline(time.Now().Add(inboundDemuxSniffTimeout)); err != nil {
@@ -284,13 +291,17 @@ func (s *inboundDemuxServer) tryStartConnWorker() bool {
 	return true
 }
 
-func (s *inboundDemuxServer) trackActiveConn(conn net.Conn) {
+func (s *inboundDemuxServer) trackActiveConn(conn net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.shuttingDown {
+		return false
+	}
 	if s.activeConns == nil {
 		s.activeConns = make(map[net.Conn]struct{})
 	}
 	s.activeConns[conn] = struct{}{}
+	return true
 }
 
 func (s *inboundDemuxServer) untrackActiveConn(conn net.Conn) {
@@ -299,13 +310,17 @@ func (s *inboundDemuxServer) untrackActiveConn(conn net.Conn) {
 	delete(s.activeConns, conn)
 }
 
-func (s *inboundDemuxServer) trackSniffConn(conn net.Conn) {
+func (s *inboundDemuxServer) trackSniffConn(conn net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.shuttingDown {
+		return false
+	}
 	if s.sniffConns == nil {
 		s.sniffConns = make(map[net.Conn]struct{})
 	}
 	s.sniffConns[conn] = struct{}{}
+	return true
 }
 
 func (s *inboundDemuxServer) untrackSniffConn(conn net.Conn) {
@@ -343,10 +358,11 @@ func (s *inboundDemuxServer) closeActiveConns() {
 }
 
 type connChannelListener struct {
-	mu     sync.Mutex
-	cond   *sync.Cond
-	conns  []net.Conn
-	closed bool
+	mu       sync.Mutex
+	notEmpty *sync.Cond
+	notFull  *sync.Cond
+	conns    []net.Conn
+	closed   bool
 }
 
 const connChannelListenerCapacity = 128
@@ -355,7 +371,8 @@ func newConnChannelListener() *connChannelListener {
 	l := &connChannelListener{
 		conns: make([]net.Conn, 0, connChannelListenerCapacity),
 	}
-	l.cond = sync.NewCond(&l.mu)
+	l.notEmpty = sync.NewCond(&l.mu)
+	l.notFull = sync.NewCond(&l.mu)
 	return l
 }
 
@@ -364,7 +381,7 @@ func (l *connChannelListener) Accept() (net.Conn, error) {
 	defer l.mu.Unlock()
 
 	for len(l.conns) == 0 && !l.closed {
-		l.cond.Wait()
+		l.notEmpty.Wait()
 	}
 	if len(l.conns) == 0 {
 		return nil, net.ErrClosed
@@ -373,7 +390,7 @@ func (l *connChannelListener) Accept() (net.Conn, error) {
 	conn := l.conns[0]
 	l.conns[0] = nil
 	l.conns = l.conns[1:]
-	l.cond.Signal()
+	l.notFull.Signal()
 	return conn, nil
 }
 
@@ -386,7 +403,8 @@ func (l *connChannelListener) Close() error {
 	l.closed = true
 	pending := append([]net.Conn(nil), l.conns...)
 	l.conns = nil
-	l.cond.Broadcast()
+	l.notEmpty.Broadcast()
+	l.notFull.Broadcast()
 	l.mu.Unlock()
 
 	for _, conn := range pending {
@@ -406,14 +424,14 @@ func (l *connChannelListener) Enqueue(conn net.Conn) error {
 	defer l.mu.Unlock()
 
 	for len(l.conns) >= connChannelListenerCapacity && !l.closed {
-		l.cond.Wait()
+		l.notFull.Wait()
 	}
 	if l.closed {
 		return net.ErrClosed
 	}
 
 	l.conns = append(l.conns, conn)
-	l.cond.Signal()
+	l.notEmpty.Signal()
 	return nil
 }
 

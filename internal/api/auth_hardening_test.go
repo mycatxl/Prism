@@ -309,6 +309,27 @@ func TestHandleLogin_TrustsForwardedProtoOnlyFromATrustedProxy(t *testing.T) {
 	}
 }
 
+func TestHandleLogin_DoesNotTrustLoopbackHostFromRemotePeer(t *testing.T) {
+	handlers := &AuthHandlers{
+		Sessions: &fakeSessions{loginResult: auth.LoginResult{
+			SessionID: "session", CSRFToken: "csrf", User: adminUser(),
+			ExpiresAtNs: time.Now().Add(time.Hour).UnixNano(),
+		}},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login",
+		strings.NewReader(`{"username":"admin","password":"a-long-enough-password"}`))
+	req.Host = "127.0.0.1:8080"
+	req.RemoteAddr = "203.0.113.9:5000"
+	rec := httptest.NewRecorder()
+	handlers.HandleLogin().ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("spoofed loopback Host returned %d, want 400 (body=%s)", rec.Code, rec.Body.String())
+	}
+	if len(rec.Result().Cookies()) != 0 {
+		t.Fatal("spoofed loopback Host received a session cookie")
+	}
+}
+
 // fakeRegistrarStub stands in for the tenant service's self-service sign-up.
 type fakeRegistrarStub struct {
 	calls int
@@ -478,6 +499,7 @@ func TestHandleRegister_RefusesCrossSiteRequests(t *testing.T) {
 				Registration:     registrar,
 				RegistrationMode: func() config.RegistrationMode { return config.RegistrationOpen },
 				ClientKey:        func(*http.Request) string { return "192.0.2.1" },
+				AllowPlainHTTP:   func(r *http.Request) bool { return auth.PlainHTTPAllowed(r.Host) },
 			}
 
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register",
@@ -569,7 +591,7 @@ func TestLoginAudit_NamesTheActorAndRecordsFailures(t *testing.T) {
 	if failed.Actor != "" || failed.UserID != "" {
 		t.Fatalf("a refused login named actor %q / user %q", failed.Actor, failed.UserID)
 	}
-	if failed.RemoteAddr != "203.0.113.7:1234" {
+	if failed.RemoteAddr != "203.0.113.9" {
 		t.Fatalf("remote_addr = %q", failed.RemoteAddr)
 	}
 	if rendered := fmt.Sprintf("%+v", failed); strings.Contains(rendered, password) ||

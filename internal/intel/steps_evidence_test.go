@@ -133,8 +133,8 @@ func TestViaNodeStepRetriesASourceWhoseEvidenceDidNotLand(t *testing.T) {
 	blockEvidenceWrites(t, st)
 	beforeIPPure := hits("/ippure")
 	first := handlers.ViaNode(ctx, jobID, nodeHash)
-	if first.ErrorCode != "" {
-		t.Fatalf("ViaNode error = %s (%v)", first.ErrorCode, first.Summary)
+	if first.ErrorCode != "VIA_NODE_PROVIDER_FAILED" {
+		t.Fatalf("ViaNode must retry failed writes = %s (%v)", first.ErrorCode, first.Summary)
 	}
 	if asked := hits("/ippure") - beforeIPPure; asked == 0 {
 		t.Fatal("ippure was never asked: this test needs its lookup to come back clean")

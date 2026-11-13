@@ -28,6 +28,7 @@ type SubscriptionAutoIntel struct {
 // honours both switches the plan requires: the subscription's auto_intel flag
 // and the system-level intel_enabled setting (through the job manager).
 type AutoEnqueueOptions struct {
+	InitialFull bool // guarantee one measured outcome per enabled import
 	// Lookup resolves the persisted auto_intel flag of one subscription.
 	Lookup func(subscriptionID string) (autoIntel bool, found bool)
 	// AutoChecks reports the runtime intel_auto_checks switch: false creates
@@ -253,6 +254,15 @@ func (q *autoEnqueueQueue) flush(ctx context.Context) int {
 		subs = append(subs, entry)
 	}
 
+	if q.opts.InitialFull {
+		for _, sub := range subs {
+			if sub.AutoIntel {
+				if _, err := q.svc.EnsureInitialMeasurements(ctx, sub.NodeHashes); err != nil {
+					q.opts.Logf("[intel] initial measurement: %v", err)
+				}
+			}
+		}
+	}
 	created, skipped, err := q.svc.AutoEnqueueSubscriptions(ctx, subs, q.autoChecks())
 	q.mu.Lock()
 	q.created += int64(created)

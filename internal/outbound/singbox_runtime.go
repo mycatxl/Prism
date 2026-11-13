@@ -19,6 +19,7 @@ import (
 	"github.com/sagernet/sing-box/option"
 	sJson "github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
 
 	"prism/internal/node"
 )
@@ -44,6 +45,7 @@ const (
 // when the CAS loser closes its handle.
 type SingboxRuntime struct {
 	ctx          context.Context
+	cancel       context.CancelFunc
 	inst         *box.Box
 	logger       log.ContextLogger
 	seq          atomic.Uint64
@@ -61,7 +63,13 @@ func NewSingboxRuntime(cfg SingboxBuilderConfig) (*SingboxRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
-	ctx := include.Context(context.Background())
+	ctx, cancel := context.WithCancel(include.Context(context.Background()))
+	started := false
+	defer func() {
+		if !started {
+			cancel()
+		}
+	}()
 	registry, ok := service.FromContext[adapter.DNSTransportRegistry](ctx).(*dns.TransportRegistry)
 	if !ok {
 		return nil, fmt.Errorf("singbox runtime: unexpected DNS transport registry type %T",
@@ -104,11 +112,14 @@ func NewSingboxRuntime(cfg SingboxBuilderConfig) (*SingboxRuntime, error) {
 		return nil, fmt.Errorf("singbox runtime: create instance: %w", err)
 	}
 	if err := inst.Start(); err != nil {
+		cancel()
 		_ = inst.Close()
 		return nil, fmt.Errorf("singbox runtime: start instance: %w", err)
 	}
+	started = true
 	return &SingboxRuntime{
 		ctx:          ctx,
+		cancel:       cancel,
 		inst:         inst,
 		logger:       inst.LogFactory().NewLogger("prism-outbound"),
 		maxEndpoints: maxEndpoints,
@@ -147,6 +158,9 @@ func (r *SingboxRuntime) ActiveEndpoints() int64 {
 
 // Close shuts down the embedded sing-box instance.
 func (r *SingboxRuntime) Close() error {
+	if r.cancel != nil {
+		r.cancel()
+	}
 	if r.inst == nil {
 		return nil
 	}
@@ -165,7 +179,12 @@ func (r *SingboxRuntime) Build(rawOptions json.RawMessage) (adapter.Outbound, er
 	}
 
 	base := outboundTagPrefix + doc.Hash.Hex()[:16] + "/" + strconv.FormatUint(r.seq.Add(1), 10)
-	handle := &singboxHandle{rt: r}
+	nodeCtx, cancel := context.WithCancel(service.ExtendContext(r.ctx))
+	manager := service.FromContext[pause.Manager](r.ctx)
+	if manager != nil {
+		nodeCtx = service.ContextWith[pause.Manager](nodeCtx, &nodePauseManager{Manager: manager, ctx: nodeCtx})
+	}
+	handle := &singboxHandle{rt: r, ctx: nodeCtx, cancel: cancel}
 
 	switch doc.Kind {
 	case node.DocOutbound:
@@ -237,14 +256,14 @@ func (r *SingboxRuntime) createObject(handle *singboxHandle, tag string, raw jso
 		if err := r.reserveEndpoint(); err != nil {
 			return err
 		}
-		if err := r.createEndpoint(tag, raw); err != nil {
+		if err := r.createEndpoint(handle.ctx, tag, raw); err != nil {
 			r.endpoints.Add(-1)
 			return err
 		}
 		handle.record(tag, true)
 		return nil
 	}
-	if err := r.createOutbound(tag, raw); err != nil {
+	if err := r.createOutbound(handle.ctx, tag, raw); err != nil {
 		return err
 	}
 	handle.record(tag, false)
@@ -259,7 +278,7 @@ func (r *SingboxRuntime) reserveEndpoint() error {
 	return nil
 }
 
-func (r *SingboxRuntime) createOutbound(tag string, raw json.RawMessage) error {
+func (r *SingboxRuntime) createOutbound(ctx context.Context, tag string, raw json.RawMessage) error {
 	var parsed option.Outbound
 	if err := sJson.UnmarshalContext(r.ctx, raw, &parsed); err != nil {
 		return fmt.Errorf("parse outbound options: %w", err)
@@ -268,13 +287,13 @@ func (r *SingboxRuntime) createOutbound(tag string, raw json.RawMessage) error {
 	if logger == nil {
 		logger = r.inst.LogFactory().NewLogger("outbound/" + parsed.Type)
 	}
-	if err := r.inst.Outbound().Create(r.ctx, r.inst.Router(), logger, tag, parsed.Type, parsed.Options); err != nil {
+	if err := r.inst.Outbound().Create(ctx, r.inst.Router(), logger, tag, parsed.Type, parsed.Options); err != nil {
 		return fmt.Errorf("create outbound [%s]: %w", parsed.Type, err)
 	}
 	return nil
 }
 
-func (r *SingboxRuntime) createEndpoint(tag string, raw json.RawMessage) error {
+func (r *SingboxRuntime) createEndpoint(ctx context.Context, tag string, raw json.RawMessage) error {
 	var parsed option.Endpoint
 	if err := sJson.UnmarshalContext(r.ctx, raw, &parsed); err != nil {
 		return fmt.Errorf("parse endpoint options: %w", err)
@@ -283,7 +302,7 @@ func (r *SingboxRuntime) createEndpoint(tag string, raw json.RawMessage) error {
 	if logger == nil {
 		logger = r.inst.LogFactory().NewLogger("endpoint/" + parsed.Type)
 	}
-	if err := r.inst.Endpoint().Create(r.ctx, r.inst.Router(), logger, tag, parsed.Type, parsed.Options); err != nil {
+	if err := r.inst.Endpoint().Create(ctx, r.inst.Router(), logger, tag, parsed.Type, parsed.Options); err != nil {
 		return fmt.Errorf("create endpoint [%s]: %w", parsed.Type, err)
 	}
 	return nil
@@ -294,6 +313,8 @@ func (r *SingboxRuntime) createEndpoint(tag string, raw json.RawMessage) error {
 type singboxHandle struct {
 	adapter.Outbound
 	rt     *SingboxRuntime
+	ctx    context.Context
+	cancel context.CancelFunc
 	tags   []string
 	isEP   []bool
 	closed atomic.Bool
@@ -309,6 +330,9 @@ func (h *singboxHandle) record(tag string, endpoint bool) {
 func (h *singboxHandle) Close() error {
 	h.once.Do(func() {
 		h.closed.Store(true)
+		if h.cancel != nil {
+			h.cancel()
+		}
 		for i := len(h.tags) - 1; i >= 0; i-- {
 			tag := h.tags[i]
 			if h.isEP[i] {

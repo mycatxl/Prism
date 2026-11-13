@@ -1,11 +1,3 @@
-import {
-  Button as HeroButton,
-  Description as HeroDescription,
-  FieldError as HeroFieldError,
-  Input as HeroInput,
-  Label as HeroLabel,
-  TextField as HeroTextField,
-} from "@heroui/react";
 import { Eye, EyeOff, LockKeyhole, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -13,6 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { PrismMark } from "../../components/PrismMark";
+import { ControlButton, ControlInput } from "../../components/control-plane";
 import { ErrorState } from "../../components/ui/QueryState";
 import { Tooltip } from "../../components/ui/Tooltip";
 import { LanguageSwitcher } from "../../components/LanguageSwitcher";
@@ -132,74 +125,63 @@ export function LoginPage() {
           </div>
 
           <form className="access-form access-login__form" onSubmit={onSubmit} noValidate>
-            <HeroTextField className="workspace-field" isInvalid={Boolean(errors.username)}>
-              <HeroLabel>{t("用户名")}</HeroLabel>
-              <HeroInput
-                id="username"
-                className="workspace-input"
-                autoComplete="username"
-                autoCapitalize="none"
-                {...register("username")}
-              />
-              {errors.username?.message ? <HeroFieldError>{t(errors.username.message)}</HeroFieldError> : null}
-            </HeroTextField>
+            <ControlInput
+              label={t("用户名")}
+              id="username"
+              autoComplete="username"
+              autoCapitalize="none"
+              invalid={Boolean(errors.username)}
+              hint={errors.username?.message ? t(errors.username.message) : undefined}
+              {...register("username")}
+            />
 
             <div className="access-login__password">
-              <HeroTextField className="workspace-field" isInvalid={Boolean(errors.password)}>
-                <HeroLabel>{t("密码")}</HeroLabel>
-                <HeroInput
-                  id="password"
-                  type={isPasswordVisible ? "text" : "password"}
-                  className="workspace-input access-login__password-input"
-                  autoComplete="current-password"
-                  {...register("password")}
-                />
-                {errors.password?.message ? <HeroFieldError>{t(errors.password.message)}</HeroFieldError> : null}
-              </HeroTextField>
+              <ControlInput
+                label={t("密码")}
+                id="password"
+                type={isPasswordVisible ? "text" : "password"}
+                className="access-login__password-field"
+                autoComplete="current-password"
+                invalid={Boolean(errors.password)}
+                hint={errors.password?.message ? t(errors.password.message) : undefined}
+                {...register("password")}
+              />
               <Tooltip triggerClassName="access-login__password-toggle-trigger" content={isPasswordVisible ? t("隐藏密码") : t("显示密码")}>
-                <HeroButton
+                <ControlButton
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  isIconOnly
+                  size="icon"
                   className="workspace-button access-login__password-toggle"
                   aria-label={isPasswordVisible ? t("隐藏密码") : t("显示密码")}
                   onPress={() => setIsPasswordVisible((visible) => !visible)}
                 >
                   {isPasswordVisible ? <EyeOff size={15} aria-hidden /> : <Eye size={15} aria-hidden />}
-                </HeroButton>
+                </ControlButton>
               </Tooltip>
             </div>
 
-            <HeroTextField className="workspace-field" isInvalid={Boolean(errors.totp)}>
-              <HeroLabel>{t("身份验证码")}</HeroLabel>
-              <HeroInput
-                id="totp"
-                className="workspace-input"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                maxLength={6}
-                {...register("totp")}
-              />
-              {errors.totp?.message ? (
-                <HeroFieldError>{t(errors.totp.message)}</HeroFieldError>
-              ) : (
-                <HeroDescription>{t("启用双因素认证后填写身份验证器中的 6 位验证码。")}</HeroDescription>
-              )}
-            </HeroTextField>
+            <ControlInput
+              label={t("身份验证码")}
+              id="totp"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              invalid={Boolean(errors.totp)}
+              hint={errors.totp?.message ? t(errors.totp.message) : t("启用双因素认证后填写身份验证器中的 6 位验证码。")}
+              {...register("totp")}
+            />
 
             {submitError ? <ErrorState message={submitError} /> : null}
-            <HeroButton
+            <ControlButton
               type="submit"
               variant="primary"
-              fullWidth
               className="workspace-button access-login__submit"
               isDisabled={isSubmitting}
+              loading={isSubmitting}
               aria-busy={isSubmitting || undefined}
             >
-              {isSubmitting ? <span className="workspace-spinner" aria-hidden /> : null}
               {t("登录")}
-            </HeroButton>
+            </ControlButton>
           </form>
 
           <footer className="access-login__footer">

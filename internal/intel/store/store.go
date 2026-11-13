@@ -9,6 +9,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -50,6 +51,10 @@ type Store struct {
 
 	mu     sync.RWMutex
 	closed bool
+
+	evidenceLocks      [64]sync.Mutex
+	evidenceCommitted  func(context.Context, string) error
+	measurementChanged func([]string)
 }
 
 // Open creates (or opens) path and applies the pragmas and migrations.

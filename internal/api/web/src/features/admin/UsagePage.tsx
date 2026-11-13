@@ -15,6 +15,7 @@ import {
   WorkspaceCard,
 } from "../../components/control-plane";
 import { ToastContainer } from "../../components/control-plane";
+import { DailyUsageChart } from "../../components/ui/DailyUsageChart";
 import { useToast } from "../../hooks/useToast";
 import { useI18n } from "../../i18n";
 import { getCurrentLocale, isEnglishLocale } from "../../i18n/locale";
@@ -47,6 +48,7 @@ function formatNsDate(ns?: number | null): string {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
+    timeZone: "UTC",
   }).format(date);
 }
 
@@ -90,7 +92,7 @@ function queryLabel(query: QueryLike, t: Translator, ready: string): string {
 
 function QueryFailure({ query, t, retry }: { query: { error: unknown; refetch: () => unknown }; t: Translator; retry: () => void }) {
   return (
-    <EmptyWorkState
+    <EmptyWorkState embedded
       title={t("读取失败")}
       detail={formatApiErrorMessage(query.error, t)}
       action={<ControlButton variant="secondary" size="sm" onPress={retry}>{t("重试")}</ControlButton>}
@@ -218,7 +220,8 @@ export function UsagePage() {
       >
         {dailyQuery.isError && !dailyQuery.data ? <QueryFailure query={dailyQuery} t={t} retry={() => void dailyQuery.refetch()} /> : null}
         {dailyQuery.isLoading && !dailyQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载每日流量...")}</div> : null}
-        {!dailyQuery.isLoading && !dailyQuery.isError && dailyItems.length === 0 ? <EmptyWorkState title={t("暂无每日流量数据")} detail={t("所选时间窗口内未记录到流量数据。" )} /> : null}
+        {!dailyQuery.isLoading && !dailyQuery.isError && dailyItems.length === 0 ? <EmptyWorkState embedded title={t("暂无每日流量数据")} detail={t("所选时间窗口内未记录到流量数据。" )} /> : null}
+        {dailyItems.length > 0 ? <DailyUsageChart items={dailyItems} /> : null}
         {dailyItems.length ? <ObjectList>{dailyItems.map((day) => <ObjectRow key={day.day_ns} leading={<span className="workspace-platform-row__mark" aria-hidden>DAY</span>} title={formatNsDate(day.day_ns)} subtitle={t("每日流量证据")} facts={<><span>{t("入站")} <span className="readout">{trafficReadout(day.ingress_bytes)}</span></span><span>{t("出站")} <span className="readout">{trafficReadout(day.egress_bytes)}</span></span><span>{t("合计")} <span className="readout">{trafficReadout(day.total_bytes)}</span></span></>} status={<QueryBadge label={t("已记录")} tone="signal" />} />)}</ObjectList> : null}
       </WorkspaceCard>
 
@@ -231,7 +234,7 @@ export function UsagePage() {
         {usersQuery.isError && !usersQuery.data ? <QueryFailure query={usersQuery} t={t} retry={() => void usersQuery.refetch()} /> : null}
         {usersQuery.isLoading && !usersQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载用户用量排行...")}</div> : null}
         {usersQuery.isError && usersQuery.data ? <StaleNotice error={usersQuery.error} t={t} retry={() => void usersQuery.refetch()} /> : null}
-        {!usersQuery.isLoading && !usersQuery.isError && userItems.length === 0 ? <EmptyWorkState title={t("暂无用户用量数据")} detail={t("所选时间窗口内未记录到用户流量。" )} /> : null}
+        {!usersQuery.isLoading && !usersQuery.isError && userItems.length === 0 ? <EmptyWorkState embedded title={t("暂无用户用量数据")} detail={t("所选时间窗口内未记录到用户流量。" )} /> : null}
         {userItems.length ? <ObjectList>{userItems.map((user) => <ObjectRow key={user.user_id} leading={<span className="workspace-platform-row__mark" aria-hidden>USR</span>} title={user.username || user.user_id} subtitle={user.plan_name || t("无活跃订阅")} facts={<><span>{t("入站")} <span className="readout">{trafficReadout(user.ingress_bytes)}</span></span><span>{t("出站")} <span className="readout">{trafficReadout(user.egress_bytes)}</span></span><span>{t("合计")} <span className="readout">{trafficReadout(user.total_bytes)}</span></span><span>{t("周期用量")} <span className="readout">{formatTraffic(user.period_used_bytes)} / {user.traffic_bytes > 0 ? formatTraffic(user.traffic_bytes) : t("不限")}</span></span></>} status={<QueryBadge label={user.expires_at_ns > 0 ? formatNsDate(user.expires_at_ns) : t("未提供")} />} />)}</ObjectList> : null}
       </WorkspaceCard>
 
@@ -239,13 +242,13 @@ export function UsagePage() {
         <WorkspaceCard eyebrow="Customers / platform distribution" title={t("平台用量分布")} meta={platformsQuery.data ? t("共 {{count}} 个平台", { count: platformItems.length }) : t("未加载")} description={t("各平台在所选时间窗口内的真实流量分发。")}>
           {platformsQuery.isError && !platformsQuery.data ? <QueryFailure query={platformsQuery} t={t} retry={() => void platformsQuery.refetch()} /> : null}
           {platformsQuery.isLoading && !platformsQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载平台用量...")}</div> : null}
-          {!platformsQuery.isLoading && !platformsQuery.isError && platformItems.length === 0 ? <EmptyWorkState title={t("暂无平台用量数据")} detail={t("所选时间窗口内未记录到平台流量。" )} /> : null}
+          {!platformsQuery.isLoading && !platformsQuery.isError && platformItems.length === 0 ? <EmptyWorkState embedded title={t("暂无平台用量数据")} detail={t("所选时间窗口内未记录到平台流量。" )} /> : null}
           {platformItems.length ? <ObjectList>{platformItems.map((platform) => <ObjectRow key={platform.platform_id} leading={<span className="workspace-platform-row__mark" aria-hidden>PLT</span>} title={platform.platform_name || platform.platform_id} subtitle={platform.platform_id} facts={<span>{t("合计流量")} <span className="readout">{trafficReadout(platform.total_bytes)}</span></span>} status={<QueryBadge label={t("已记录")} tone="signal" />} />)}</ObjectList> : null}
         </WorkspaceCard>
         <WorkspaceCard eyebrow="Customers / plan distribution" title={t("套餐用量分布")} meta={plansQuery.data ? t("共 {{count}} 个套餐", { count: planItems.length }) : t("未加载")} description={t("每个套餐当前承载的账号数与流量占用。") }>
           {plansQuery.isError && !plansQuery.data ? <QueryFailure query={plansQuery} t={t} retry={() => void plansQuery.refetch()} /> : null}
           {plansQuery.isLoading && !plansQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载套餐用量...")}</div> : null}
-          {!plansQuery.isLoading && !plansQuery.isError && planItems.length === 0 ? <EmptyWorkState title={t("暂无套餐用量数据")} detail={t("所选时间窗口内没有套餐承载流量。" )} /> : null}
+          {!plansQuery.isLoading && !plansQuery.isError && planItems.length === 0 ? <EmptyWorkState embedded title={t("暂无套餐用量数据")} detail={t("所选时间窗口内没有套餐承载流量。" )} /> : null}
           {planItems.length ? <ObjectList>{planItems.map((plan) => <ObjectRow key={plan.plan_id || "unsubscribed"} leading={<span className="workspace-platform-row__mark" aria-hidden>PLN</span>} title={plan.plan_name || t("无活跃订阅")} subtitle={t("{{count}} 个订阅账号", { count: plan.subscribers })} facts={<><span>{t("窗口流量")} <span className="readout">{trafficReadout(plan.total_bytes)}</span></span><span>{t("本周期已用")} <span className="readout">{trafficReadout(plan.period_bytes)}</span></span></>} status={<QueryBadge label={t("已记录")} tone="signal" />} />)}</ObjectList> : null}
         </WorkspaceCard>
       </div>
@@ -262,7 +265,7 @@ export function UsagePage() {
         {alertsQuery.isError && !alertsQuery.data ? <QueryFailure query={alertsQuery} t={t} retry={() => void alertsQuery.refetch()} /> : null}
         {alertsQuery.isLoading && !alertsQuery.data ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载异常告警...")}</div> : null}
         {alertsQuery.isError && alertsQuery.data ? <StaleNotice error={alertsQuery.error} t={t} retry={() => void alertsQuery.refetch()} /> : null}
-        {!alertsQuery.isLoading && !alertsQuery.isError && alertItems.length === 0 ? <EmptyWorkState title={unacknowledgedOnly ? t("已加载的未确认告警为空") : t("已加载的告警为空")} detail={unacknowledgedOnly ? t("本次只读取上限 {{limit}} 条告警；没有未确认项不等于全站没有未确认告警。", { limit: ALERT_LIST_LIMIT }) : t("本次只读取上限 {{limit}} 条告警；没有记录不等于用量检测没有发现异常。", { limit: ALERT_LIST_LIMIT })} /> : null}
+        {!alertsQuery.isLoading && !alertsQuery.isError && alertItems.length === 0 ? <EmptyWorkState embedded title={unacknowledgedOnly ? t("已加载的未确认告警为空") : t("已加载的告警为空")} detail={unacknowledgedOnly ? t("本次只读取上限 {{limit}} 条告警；没有未确认项不等于全站没有未确认告警。", { limit: ALERT_LIST_LIMIT }) : t("本次只读取上限 {{limit}} 条告警；没有记录不等于用量检测没有发现异常。", { limit: ALERT_LIST_LIMIT })} /> : null}
         {alertItems.length ? <ObjectList>{alertItems.map((alert) => {
           const acknowledged = alert.acknowledged_at_ns > 0;
           const acknowledging = acknowledgeMutation.isPending && acknowledgeMutation.variables === alert.id;

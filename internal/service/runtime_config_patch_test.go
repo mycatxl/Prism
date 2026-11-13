@@ -355,17 +355,17 @@ func TestPatchRuntimeConfig_DistributesToConfigAwareEventEmitter(t *testing.T) {
 	if string(base.last.ReqHeaders) != "012" {
 		t.Fatalf("ReqHeaders = %q, want %q", string(base.last.ReqHeaders), "012")
 	}
-	if string(base.last.ReqBody) != "a" || base.last.ReqBodyLen != 6 || !base.last.ReqBodyTruncated {
+	if string(base.last.ReqBody) != "[" || base.last.ReqBodyLen != 6 || !base.last.ReqBodyTruncated {
 		t.Fatalf("ReqBody=%q len=%d truncated=%v, want %q len=6 truncated=true",
-			string(base.last.ReqBody), base.last.ReqBodyLen, base.last.ReqBodyTruncated, "a")
+			string(base.last.ReqBody), base.last.ReqBodyLen, base.last.ReqBodyTruncated, "[")
 	}
 	if string(base.last.RespHeaders) != "z" || base.last.RespHeadersLen != 10 || !base.last.RespHeadersTruncated {
 		t.Fatalf("RespHeaders=%q len=%d truncated=%v, want %q len=10 truncated=true",
 			string(base.last.RespHeaders), base.last.RespHeadersLen, base.last.RespHeadersTruncated, "z")
 	}
-	if string(base.last.RespBody) != "o" || base.last.RespBodyLen != 3 || !base.last.RespBodyTruncated {
+	if string(base.last.RespBody) != "[" || base.last.RespBodyLen != 3 || !base.last.RespBodyTruncated {
 		t.Fatalf("RespBody=%q len=%d truncated=%v, want %q len=3 truncated=true",
-			string(base.last.RespBody), base.last.RespBodyLen, base.last.RespBodyTruncated, "o")
+			string(base.last.RespBody), base.last.RespBodyLen, base.last.RespBodyTruncated, "[")
 	}
 
 	_, err = h.cp.PatchRuntimeConfig([]byte(`{
@@ -394,13 +394,13 @@ func TestPatchRuntimeConfig_DistributesToConfigAwareEventEmitter(t *testing.T) {
 	if string(base.last.ReqHeaders) != "0123456789" {
 		t.Fatalf("ReqHeaders after threshold up = %q, want %q", string(base.last.ReqHeaders), "0123456789")
 	}
-	if base.last.ReqBodyTruncated || string(base.last.ReqBody) != "abcdef" {
+	if !base.last.ReqBodyTruncated || string(base.last.ReqBody) != "[redacted]" {
 		t.Fatalf("ReqBody after threshold up = %q, truncated=%v", string(base.last.ReqBody), base.last.ReqBodyTruncated)
 	}
 	if base.last.RespHeadersTruncated || string(base.last.RespHeaders) != "zyxwvutsrq" {
 		t.Fatalf("RespHeaders after threshold up = %q, truncated=%v", string(base.last.RespHeaders), base.last.RespHeadersTruncated)
 	}
-	if base.last.RespBodyTruncated || string(base.last.RespBody) != "ok!" {
+	if !base.last.RespBodyTruncated || string(base.last.RespBody) != "[redacted]" {
 		t.Fatalf("RespBody after threshold up = %q, truncated=%v", string(base.last.RespBody), base.last.RespBodyTruncated)
 	}
 }

@@ -87,14 +87,22 @@ func FileName(format string) string {
 	return "prism.export"
 }
 
-// Item is one node candidate for export.
-//
-// Name is the already rendered node name (see RenderNames). RawOptions is the
-// node document in form A or form B. Intel is the optional
-// quality/assessment summary of the node's egress IP; a nil Intel, or
-// Options.IncludeIntel == false, leaves the intel-derived name-template
-// variables and the intel CSV columns empty.
+// AnalysisFacts contains measured fields and their provenance for analysis export.
+type AnalysisFacts struct {
+	Facts                                                                                                   map[string]quality.Fact
+	Signals                                                                                                 quality.Signals
+	EgressIPv4, EgressIPv6, Colo, Country, City, ASOrg, IPType, PurityBand, Confidence, Verdict, AssessedAt string
+	ASN                                                                                                     int
+	Native                                                                                                  *bool
+	PurityScore                                                                                             *int
+	Flags, Reasons                                                                                          []string
+	Checks                                                                                                  map[string]string
+}
+
+// Item is one node candidate for export. Name is already rendered; RawOptions
+// is the node document. Optional Intel fields remain empty when not requested.
 type Item struct {
+	Analysis     *AnalysisFacts
 	Name         string
 	Hash         string // node hash; analysis formats only, never a credential
 	Subscription string

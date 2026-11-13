@@ -48,6 +48,19 @@ func TestConfigAwareEventEmitter_EnabledRequestLog(t *testing.T) {
 	}
 }
 
+func TestConfigAwareEventEmitter_DetailCaptureDefaultsOff(t *testing.T) {
+	base := &recordingEmitter{}
+	emitter := ConfigAwareEventEmitter{Base: base}
+	emitter.EmitRequestLog(RequestLogEntry{
+		ProxyType: ProxyTypeReverse,
+		ReqBody:   []byte("password=secret"),
+		RespBody:  []byte("Bearer token"),
+	})
+	if len(base.lastLog.ReqBody) != 0 || len(base.lastLog.RespBody) != 0 {
+		t.Fatal("reverse detail payload was captured without an explicit enable callback")
+	}
+}
+
 func TestConfigAwareEventEmitter_NilBase(t *testing.T) {
 	emitter := ConfigAwareEventEmitter{
 		RequestLogEnabled: func() bool { return true },
@@ -107,8 +120,8 @@ func TestConfigAwareEventEmitter_ReverseHeadersTruncationHotReload(t *testing.T)
 	if !base.lastLog.ReqBodyTruncated {
 		t.Fatal("ReqBodyTruncated = false, want true")
 	}
-	if string(base.lastLog.ReqBody) != "abc" {
-		t.Fatalf("ReqBody = %q, want %q", string(base.lastLog.ReqBody), "abc")
+	if string(base.lastLog.ReqBody) != redactedLogValue[:reqBodyMaxBytes] {
+		t.Fatalf("ReqBody = %q, want bounded redaction marker", string(base.lastLog.ReqBody))
 	}
 	if base.lastLog.RespHeadersLen != 10 {
 		t.Fatalf("RespHeadersLen = %d, want 10", base.lastLog.RespHeadersLen)
@@ -125,8 +138,8 @@ func TestConfigAwareEventEmitter_ReverseHeadersTruncationHotReload(t *testing.T)
 	if !base.lastLog.RespBodyTruncated {
 		t.Fatal("RespBodyTruncated = false, want true")
 	}
-	if string(base.lastLog.RespBody) != "ok" {
-		t.Fatalf("RespBody = %q, want %q", string(base.lastLog.RespBody), "ok")
+	if string(base.lastLog.RespBody) != redactedLogValue[:respBodyMaxBytes] {
+		t.Fatalf("RespBody = %q, want bounded redaction marker", string(base.lastLog.RespBody))
 	}
 
 	// Hot-reload simulation: increase runtime threshold without recreating emitter.
@@ -144,11 +157,11 @@ func TestConfigAwareEventEmitter_ReverseHeadersTruncationHotReload(t *testing.T)
 	if string(base.lastLog.ReqHeaders) != "0123456789" {
 		t.Fatalf("ReqHeaders(after reload) = %q, want %q", string(base.lastLog.ReqHeaders), "0123456789")
 	}
-	if base.lastLog.ReqBodyTruncated {
-		t.Fatal("ReqBodyTruncated(after reload) = true, want false")
+	if !base.lastLog.ReqBodyTruncated {
+		t.Fatal("ReqBodyTruncated(after reload) = false, want true because the body is redacted")
 	}
-	if string(base.lastLog.ReqBody) != "abcdef" {
-		t.Fatalf("ReqBody(after reload) = %q, want %q", string(base.lastLog.ReqBody), "abcdef")
+	if string(base.lastLog.ReqBody) != redactedLogValue {
+		t.Fatalf("ReqBody(after reload) = %q, want redacted", string(base.lastLog.ReqBody))
 	}
 	if base.lastLog.RespHeadersTruncated {
 		t.Fatal("RespHeadersTruncated(after reload) = true, want false")
@@ -156,11 +169,11 @@ func TestConfigAwareEventEmitter_ReverseHeadersTruncationHotReload(t *testing.T)
 	if string(base.lastLog.RespHeaders) != "zyxwvutsrq" {
 		t.Fatalf("RespHeaders(after reload) = %q, want %q", string(base.lastLog.RespHeaders), "zyxwvutsrq")
 	}
-	if base.lastLog.RespBodyTruncated {
-		t.Fatal("RespBodyTruncated(after reload) = true, want false")
+	if !base.lastLog.RespBodyTruncated {
+		t.Fatal("RespBodyTruncated(after reload) = false, want true because the body is redacted")
 	}
-	if string(base.lastLog.RespBody) != "ok!" {
-		t.Fatalf("RespBody(after reload) = %q, want %q", string(base.lastLog.RespBody), "ok!")
+	if string(base.lastLog.RespBody) != redactedLogValue {
+		t.Fatalf("RespBody(after reload) = %q, want redacted", string(base.lastLog.RespBody))
 	}
 
 	// Disable detail logging at runtime.

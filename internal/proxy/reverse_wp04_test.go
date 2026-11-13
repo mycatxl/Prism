@@ -16,6 +16,7 @@ import (
 	"prism/internal/routing"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -30,6 +31,7 @@ func newReverseE2EEnv(t *testing.T) *reverseE2EEnv {
 
 	subMgr := topology.NewSubscriptionManager()
 	pool := topology.NewGlobalNodePool(topology.PoolConfig{
+		QualitySnapshot:        measurement.Snapshot(netip.MustParseAddr("203.0.113.10")),
 		SubLookup:              subMgr.Lookup,
 		GeoLookup:              func(netip.Addr) string { return "us" },
 		MaxLatencyTableEntries: 16,
@@ -92,7 +94,7 @@ func TestReverseProxy_DirectDenyPrivate(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/direct", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/direct", host)
 
 	for _, tc := range []struct {
 		name      string
@@ -106,7 +108,9 @@ func TestReverseProxy_DirectDenyPrivate(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rp := NewReverseProxy(ReverseProxyConfig{
-				ProxyToken:        "tok",
+				ProxyToken: "tok",
+
+				AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 				Events:            NoOpEventEmitter{},
 				ProxyBypassRules:  []string{"127.*"},
 				DirectDenyPrivate: tc.deny,
@@ -140,10 +144,12 @@ func TestReverseProxy_BypassCreatesNoLease(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/direct", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/direct", host)
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:       "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:       keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:           env.router,
 		Pool:             env.pool,
 		PlatformLookup:   env.pool,
@@ -180,10 +186,12 @@ func TestReverseProxy_DirectDenyPrivateScope(t *testing.T) {
 	defer upstream.Close()
 
 	host := strings.TrimPrefix(upstream.URL, "http://")
-	path := fmt.Sprintf("/tok/plat:acct/http/%s/api/nodes", host)
+	path := fmt.Sprintf("/"+testCredential+"/plat:acct/http/%s/api/nodes", host)
 
 	rp := NewReverseProxy(ReverseProxyConfig{
-		ProxyToken:        "tok",
+		ProxyToken: "tok",
+
+		AccessKeys:        keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:            env.router,
 		Pool:              env.pool,
 		PlatformLookup:    env.pool,

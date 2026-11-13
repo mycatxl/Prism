@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"os"
 
@@ -34,7 +35,15 @@ type quietPlatformInterface struct {
 }
 
 func newQuietPlatformInterface() *quietPlatformInterface {
-	return &quietPlatformInterface{monitor: new(quietInterfaceMonitor)}
+	p := &quietPlatformInterface{monitor: new(quietInterfaceMonitor)}
+	interfaces, _ := net.Interfaces()
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagLoopback != 0 && iface.Flags&net.FlagUp != 0 {
+			p.monitor.iface = &control.Interface{Index: iface.Index, Name: iface.Name, MTU: iface.MTU, Flags: iface.Flags}
+			break
+		}
+	}
+	return p
 }
 
 func (p *quietPlatformInterface) Initialize(adapter.NetworkManager) error { return nil }
@@ -125,15 +134,15 @@ func (p *quietPlatformInterface) CreateBridge(adapter.BridgeOptions) (adapter.Br
 	return nil, os.ErrInvalid
 }
 
-// quietInterfaceMonitor is a default-interface monitor that never reports an
-// interface and therefore never invokes a network-manager callback.
-type quietInterfaceMonitor struct{}
+// quietInterfaceMonitor reports loopback as available without live callbacks.
+// A nil interface makes sing-box pause WireGuard even for local fixture peers.
+type quietInterfaceMonitor struct{ iface *control.Interface }
 
 func (m *quietInterfaceMonitor) Start() error { return nil }
 
 func (m *quietInterfaceMonitor) Close() error { return nil }
 
-func (m *quietInterfaceMonitor) DefaultInterface() *control.Interface { return nil }
+func (m *quietInterfaceMonitor) DefaultInterface() *control.Interface { return m.iface }
 
 func (m *quietInterfaceMonitor) OverrideAndroidVPN() bool { return false }
 

@@ -45,6 +45,7 @@ func subscriptionSortKey(sortBy string, s service.SubscriptionResponse) string {
 // HandleListSubscriptions returns a handler for GET /api/v1/subscriptions.
 func HandleListSubscriptions(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		enabled, ok := parseBoolQueryOrWriteInvalid(w, r, "enabled")
 		if !ok {
 			return
@@ -81,6 +82,7 @@ func HandleListSubscriptions(cp *service.ControlPlaneService) http.HandlerFunc {
 // HandleGetSubscription returns a handler for GET /api/v1/subscriptions/{id}.
 func HandleGetSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
 		if !ok {
 			return
@@ -99,6 +101,7 @@ func HandleGetSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 // parse, so a user can see exactly which nodes were dropped and why.
 func HandleGetSubscriptionParseReport(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
 		if !ok {
 			return
@@ -115,6 +118,7 @@ func HandleGetSubscriptionParseReport(cp *service.ControlPlaneService) http.Hand
 // HandleCreateSubscription returns a handler for POST /api/v1/subscriptions.
 func HandleCreateSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		var req service.CreateSubscriptionRequest
 		if err := DecodeBody(r, &req); err != nil {
 			writeDecodeBodyError(w, err)
@@ -132,6 +136,7 @@ func HandleCreateSubscription(cp *service.ControlPlaneService) http.HandlerFunc 
 // HandleUpdateSubscription returns a handler for PATCH /api/v1/subscriptions/{id}.
 func HandleUpdateSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
 		if !ok {
 			return
@@ -152,6 +157,7 @@ func HandleUpdateSubscription(cp *service.ControlPlaneService) http.HandlerFunc 
 // HandleDeleteSubscription returns a handler for DELETE /api/v1/subscriptions/{id}.
 func HandleDeleteSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
 		if !ok {
 			return
@@ -167,6 +173,7 @@ func HandleDeleteSubscription(cp *service.ControlPlaneService) http.HandlerFunc 
 // HandleRefreshSubscription returns a handler for POST /api/v1/subscriptions/{id}/actions/refresh.
 func HandleRefreshSubscription(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
 		if !ok {
 			return
@@ -183,6 +190,7 @@ func HandleRefreshSubscription(cp *service.ControlPlaneService) http.HandlerFunc
 // POST /api/v1/subscriptions/{id}/actions/cleanup-circuit-open-nodes.
 func HandleCleanupSubscriptionCircuitOpenNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := requireUUIDPathParam(w, r, "id", "subscription_id")
 		if !ok {
 			return

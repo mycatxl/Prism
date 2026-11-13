@@ -9,7 +9,8 @@ import { opsPaths } from "../../../lib/paths";
 import { formatDateTime, formatRelativeTime } from "../../../lib/time";
 import type { QualityEvidence, QualitySummary } from "./types";
 import { useNow } from "../../../lib/clock";
-import { assessmentReasons, evidenceFor, inspectionErrorLabel, purityBand, purityScore, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, verdictLabels } from "./presentation";
+import { assessmentReasons, evidenceFor, inspectionErrorLabel, canonicalPurity, riskLabels, sourceIsFresh, torRoleLabels, typeLabels, verdictLabels } from "./presentation";
+import { UnratedPurity, MeasurementTime } from "./PurityStatus";
 import { PurityGuide } from "./PurityGuide";
 import { IPPureReviewPanel } from "./IPPureReview";
 
@@ -58,25 +59,21 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
 
 export function QualityBadge({ summary, showScore = true }: { summary?: QualitySummary | null; showScore?: boolean }) {
   const { t } = useI18n();
-  const now = useNow();
-  const evidence = evidenceFor(summary, "ippure");
-  if (evidence && !sourceIsFresh(summary, "ippure", now)) return <Badge tone="warn"><Clock3 size={11} aria-hidden />{t("纯净度评分已过期")}</Badge>;
-  if (sourceIsFresh(summary, "ippure", now)) {
-    const score = purityScore(evidence!.risk_score);
-    const band = purityBand(score);
-    return <Badge tone={bandTones[band?.variant ?? ""] ?? "neutral"}>
+  const { score, band } = canonicalPurity(summary);
+  if (score === null) return <UnratedPurity fact={summary?.assessment?.facts?.purity}/>;
+  return <span className="flex flex-wrap items-center gap-1.5">
+    <Badge tone={bandTones[band?.variant ?? ""] ?? "neutral"}>
       {showScore && score !== null && <span className="readout font-semibold">{score}</span>}{t(band?.label || "未提供纯净度评分")}
-    </Badge>;
-  }
-  if (summary?.state === "unsupported") return <Badge tone="neutral">{t("不支持检测")}</Badge>;
-  return <Badge tone="neutral">{t("待纯净度复核")}</Badge>;
+    </Badge>
+    {summary?.state === "stale" && <Badge tone="warn">{t("纯净度评分已过期")}</Badge>}
+  </span>;
 }
 
 export function VerdictBadge({ summary }: { summary?: QualitySummary | null }) {
   const { t } = useI18n();
   const now = useNow();
   const verdict = summary?.assessment?.verdict || "pending";
-  const expired = ["ippure", "proxycheck"].some(id => { const evidence = evidenceFor(summary,id); return evidence && Date.parse(evidence.valid_until) <= now; });
+  const expired = summary?.state === "stale" || ["ippure", "proxycheck"].some(id => { const evidence = evidenceFor(summary,id); return evidence && Date.parse(evidence.valid_until) <= now; });
   const adverse = ["high_risk","review","conflicting"].includes(verdict);
   if (expired && !adverse) return <Badge tone="warn">{t("部分证据过期")}</Badge>;
   return <span className="flex flex-wrap items-center gap-1.5">
@@ -93,7 +90,7 @@ export function NetworkSignals({ summary }: { summary?: QualitySummary | null })
   const roleTags = torRoles.filter(role => role !== "relay" || torRoles.length === 1).map(role => role === "guard" ? "Tor 守卫" : torRoleLabels[role]);
   if (!sourceIsFresh(summary,"proxycheck",now) || !evidence) return roleTags.length
     ? <span className="flex flex-wrap items-center gap-1.5">{roleTags.map(label => <Badge key={label} tone="warn">{t(label)}</Badge>)}</span>
-    : <span className="text-xs text-ink-faint">{t("特征待查")}</span>;
+    : <span className="text-xs text-ink-faint">{t("暂无有效风险检测结果，请更新网络特征")}</span>;
   const labels: string[] = ([["proxy","代理"],["vpn","VPN"],["tor","Tor"],["compromised","被入侵记录"],["scraper","爬取特征"]] as const)
     .filter(([key]) => evidence.signals[key] === true && !(key === "tor" && roleTags.length > 0)).map(([,label]) => label);
   labels.push(...roleTags);
@@ -101,21 +98,13 @@ export function NetworkSignals({ summary }: { summary?: QualitySummary | null })
   if (labels.length) return <span className="flex flex-wrap items-center gap-1.5">{labels.slice(0,3).map(label => <Badge key={label} tone="warn">{t(label)}</Badge>)}{labels.length > 3 && <span className="readout text-2xs text-ink-faint">+{labels.length - 3}</span>}</span>;
   const complete = [evidence.signals.proxy,evidence.signals.vpn,evidence.signals.tor].every(value => value === false);
   return complete
-    ? <Badge tone="signal" dot>{t("未见匿名标记")}</Badge>
-    : <span className="text-xs text-ink-faint">{t("部分特征未知")}</span>;
+    ? <Badge tone="signal" dot>{t("未标记代理、VPN 或 Tor")}</Badge>
+    : <span className="text-xs text-ink-faint">{t("部分风险特征尚未检测，请更新网络特征")}</span>;
 }
 
 export function IPTypeBadge({ summary }: { summary?: QualitySummary | null }) {
   const { t } = useI18n();
-  const now = useNow();
-  const proxyFresh = sourceIsFresh(summary,"proxycheck",now);
-  const pureFresh = sourceIsFresh(summary,"ippure",now);
-  let type = proxyFresh ? evidenceFor(summary,"proxycheck")!.ip_type : "unknown";
-  if (pureFresh && proxyFresh) type = summary?.assessment?.network_type || type;
-  else if (pureFresh) {
-    const pure = evidenceFor(summary,"ippure");
-    type = pure?.source_type === "Residential" ? "residential" : pure?.source_type === "Non-residential" ? "non_residential" : "unknown";
-  }
+  const type = summary?.assessment?.network_type || "unknown";
   const Icon = type === "residential" ? Home : type === "mobile" ? Smartphone : type === "datacenter" ? Server : type === "business" ? Building2 : type === "wireless" ? Wifi : AlertCircle;
   return <Badge
     tone={type === "conflicting" ? "warn" : type === "unknown" ? "neutral" : "outline"}
@@ -148,8 +137,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
   const now = useNow();
   const evidence = summary?.evidence;
   const pure = evidenceFor(summary,"ippure");
-  const pureFresh = sourceIsFresh(summary,"ippure",now);
-  const pureScore = purityScore(pure?.risk_score);
+  const { score: pureScore, band } = canonicalPurity(summary);
   const abuse = summary?.sources?.find(source => source.provider === "abuseipdb");
   const tor = summary?.sources?.find(source => source.provider === "torproject");
   return <div className="space-y-3">
@@ -172,42 +160,36 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
         <ReadoutStrip>
           <ReadoutCell>
             <Readout
-              label={t("纯净度参考")}
-              value={pureFresh ? pureScore ?? "—" : "—"}
+              label={t("纯净度")}
+              value={pureScore ?? "—"}
               unit="/ 100"
               size="lg"
-              tone={pureFresh ? bandReadoutTones[purityBand(pureScore)?.variant ?? ""] ?? "ink" : "muted"}
-            />
-          </ReadoutCell>
-          <ReadoutCell>
-            <Readout
-              label={t("来源原始风险")}
-              value={pure?.risk_score ?? "—"}
-              unit="/ 100"
+              tone={bandReadoutTones[band?.variant ?? ""] ?? "muted"}
             />
           </ReadoutCell>
         </ReadoutStrip>
 
+        {pureScore === null && <UnratedPurity fact={summary?.assessment?.facts?.purity}/>}
+        <MeasurementTime fact={summary?.assessment?.facts?.purity}/>
         <div className="flex flex-wrap items-center gap-1.5">
-          <QualityBadge summary={summary} showScore={false} />
+          {pureScore !== null && <QualityBadge summary={summary} showScore={false} />}
           <IPTypeBadge summary={summary} />
         </div>
-        <p className="max-w-[68ch] text-2xs leading-relaxed text-ink-faint">{t("数值越低，来源判定风险越低")}</p>
       </div>
     </WorkspaceCard>
 
     <WorkspaceCard title={t("综合判定")}>
       <div className="space-y-1.5">
         <VerdictBadge summary={summary} />
-        {summary?.assessment?.reasons?.length ? <ul className="max-w-[68ch] space-y-0.5 text-xs leading-relaxed text-ink-soft">{summary.assessment.reasons.map(reason => <li key={reason}>{t(assessmentReasons[reason] || reason)}</li>)}</ul> : null}
+        {summary?.assessment?.reasons?.length ? <ul className="max-w-[68ch] space-y-0.5 text-xs leading-relaxed text-ink-soft">{summary.assessment.reasons.filter(reason => assessmentReasons[reason]).map(reason => <li key={reason}>{t(assessmentReasons[reason])}</li>)}</ul> : null}
       </div>
     </WorkspaceCard>
 
-    <PurityGuide />
+    <PurityGuide bands={summary?.assessment?.bands} />
 
     {pure && <div className="space-y-2">
       <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
-        <Fact label={t("来源分类")}>{pure.source_type === "Residential" ? t("住宅网络") : pure.source_type === "Non-residential" ? t("非住宅网络") : t("未知")}</Fact>
+        <Fact label={t("网络类型")}>{pure.source_type === "Residential" ? t("住宅网络") : pure.source_type === "Non-residential" ? t("非住宅网络") : t("未知")}</Fact>
         <Fact label={t("地址归属")}>{t(pure.native === true ? "原生 IP" : pure.native === false ? "广播 IP" : "未知")}</Fact>
         <Fact label="ASN"><span className="readout">{pure.asn || "—"}</span></Fact>
       </dl>
@@ -225,21 +207,17 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
     </p>}
 
     {evidence && <section className="space-y-3 border-t border-rule pt-3">
-      <SectionHeading>{t("网络证据")}</SectionHeading>
+      <SectionHeading>{t("网络特征")}</SectionHeading>
       <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
         <Fact label="ASN"><span className="readout">{evidence.asn || "—"}</span></Fact>
         <Fact label={t("网络组织")}><span className="block max-w-[46ch] truncate" title={evidence.organization || undefined}>{evidence.organization || "—"}</span></Fact>
-        <Fact label={t("来源分类")}>{evidence.source_type || "—"}</Fact>
+        <Fact label={t("网络类型")}>{t(typeLabels[evidence.ip_type] || "类型未知")}</Fact>
         {evidence.network_provider && <Fact label={t("网络供应商")}>{evidence.network_provider}</Fact>}
         {evidence.operator && <Fact label={t("代理服务商")}>
           <span>{evidence.operator}</span>
           {evidence.operator_services?.length ? <span className="text-ink-soft">{evidence.operator_services.join(", ")}</span> : null}
         </Fact>}
-        <Fact label={t("来源风险等级")}>{t(riskLabels[evidence.grade])}</Fact>
-        <Fact label={t("来源原始风险")}>
-          <span className="readout">{evidence.risk_score ?? "—"}</span>
-          <span className="text-2xs text-ink-faint">/ 100</span>
-        </Fact>
+        <Fact label={t("风险等级")}>{t(riskLabels[evidence.grade])}</Fact>
         {evidence.source_confidence !== null && <Fact label={t("标记置信度")}>
           <span className="readout">{evidence.source_confidence}</span>
           <span className="text-2xs text-ink-faint">/ 100</span>
@@ -252,6 +230,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           ["proxy", "公开代理"], ["vpn", "VPN"], ["tor", "Tor"], ["hosting", "机房特征"], ["compromised", "被入侵记录"], ["scraper", "爬取特征"], ["anonymous", "匿名网络"],
         ] as const).map(([key, label]) => {
           const value = evidence.signals[key];
+          if (value == null) return null;
           return <div key={key} className="flex min-w-0 items-center justify-between gap-2 border-b border-rule-faint py-1.5">
             <span className="truncate text-xs text-ink-soft">{t(label)}</span>
             <Badge tone={value === true ? "alert" : value === false ? "signal" : "neutral"}>
@@ -263,14 +242,13 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
       </div>
 
       {evidence.attack_history && Object.keys(evidence.attack_history).length > 0 && <div className="space-y-1.5">
-        <h4 className="text-xs font-medium text-ink-soft">{t("来源攻击记录")}</h4>
+        <h4 className="text-xs font-medium text-ink-soft">{t("攻击记录")}</h4>
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           {Object.entries(evidence.attack_history).map(([kind, count]) => <span key={kind} className="flex items-baseline gap-1.5 text-xs">
             <span className="text-ink-soft">{kind}</span>
             <span className="readout font-medium">{count}</span>
           </span>)}
         </div>
-        <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("展示来源返回的攻击类型与次数，最多保留 8 类；不推断为节点使用者的行为。")}</p>
       </div>}
 
       <EvidenceTime evidence={evidence} />
@@ -291,7 +269,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
           {Date.parse(tor.evidence.valid_until) <= now && <Badge tone="warn">{t("已过期")}</Badge>}
         </div>
         <EvidenceTime evidence={tor.evidence} />
-      </> : <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("角色资料暂不可用，保留 Tor 标记，具体角色未知。")}</p>}
+      </> : <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("Tor 角色暂未检测，请更新网络特征。")}</p>}
       <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("出口依据最近 24 小时的实际出口记录；Guard 表示具备入口守卫资格。未列出不代表未使用 Tor，私有网桥不会公开地址。")}</p>
     </section>}
 
@@ -319,7 +297,7 @@ export function QualityDetails({ summary, onInspect, pending = false, disabled =
         <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t("没有举报不等于没有风险；此项与网络类型、代理识别分别展示。")}</p>
       </> : <p className="max-w-[68ch] text-xs leading-relaxed text-ink-soft">{t(abuse?.configured
         ? (abuse.task?.error_code ? inspectionErrorLabel(abuse.task.error_code) : "等待近期滥用记录")
-        : "可配置举报数据源，补充近 30 天的举报记录。")}</p>}
+        : "暂无近期滥用检测结果。")}</p>}
     </section>}
 
     {nodeHash ? <IPPureReviewPanel key={nodeHash + ":" + nodeIP} nodeHash={nodeHash} nodeIP={nodeIP} ready={nodeReady} /> : <div className="space-y-1 border-t border-rule pt-3">

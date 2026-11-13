@@ -3,17 +3,6 @@ import { initTheme } from "./lib/theme";
 // The ground is set before the first paint so a dark console never flashes white.
 initTheme();
 
-/*
- * One family, two voices (see `--font-sans` / `--font-mono` in design.css).
- * Manrope used to be imported here and matched no rule in the stylesheet: four
- * weights of `@font-face` and eight files shipped for a face nothing asked for.
- */
-import "@fontsource/ibm-plex-sans/latin-400.css";
-import "@fontsource/ibm-plex-sans/latin-500.css";
-import "@fontsource/ibm-plex-sans/latin-600.css";
-import "@fontsource/ibm-plex-mono/latin-400.css";
-import "@fontsource/ibm-plex-mono/latin-500.css";
-import "@fontsource/ibm-plex-mono/latin-600.css";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";

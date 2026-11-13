@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"prism/internal/intel/assess"
 	"prism/internal/intel/store"
 )
 
@@ -103,6 +104,8 @@ func TestAssessmentLite_UnknownAndReadback(t *testing.T) {
 		t.Fatal("Valid must be exclusive of valid_until")
 	}
 
+	row.Profile = assess.Profile
+	row.State = "valid"
 	row.PurityScore = sql.NullInt64{Int64: 88, Valid: true}
 	row.Native = sql.NullInt64{Int64: 0, Valid: true}
 	row.Flags = int64(FlagProxy)

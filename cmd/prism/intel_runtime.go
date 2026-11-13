@@ -80,11 +80,28 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 		Store:   intelStore,
 		URLv4:   traceURL,
 		URLv6:   traceURL,
+		ObserveSample: func(hash node.Hash, ip netip.Addr, loc string) bool {
+			// Intel observes v4/v6 before its legacy cache synchronization call.
+			// Publish a denied address immediately so v6 or a later pipeline step
+			// cannot contact the node again after the first owned-egress sample.
+			entry, ok := a.topoRuntime.pool.GetEntry(hash)
+			if !ok || !entry.AutomaticProbeAllowed() {
+				return false
+			}
+			if entry.PrivacyDeniesEgress(ip) {
+				a.topoRuntime.pool.UpdateNodeEgressIP(hash, &ip, &loc)
+				return false
+			}
+			return true
+		},
 		ProbeEgressSync: func(_ context.Context, hash node.Hash) error {
 			if a.topoRuntime.probeMgr == nil {
 				return nil
 			}
-			_, err := a.topoRuntime.probeMgr.ProbeEgressSync(hash)
+			if !a.intelNodeProbeAllowed(hash.Hex()) {
+				return fmt.Errorf("node quarantined")
+			}
+			_, err := a.topoRuntime.probeMgr.ProbeEgressAutomaticSync(hash)
 			return err
 		},
 	}
@@ -127,10 +144,11 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	}
 
 	svc, err := intel.NewService(intel.Options{
-		Store:          intelStore,
-		Scope:          jobs.ScopeResolverFunc(a.resolveIntelScope),
-		ScopePage:      a,
-		ScopeValidator: a,
+		Store:            intelStore,
+		Scope:            jobs.ScopeResolverFunc(a.resolveIntelScope),
+		ScopePage:        a,
+		ScopeValidator:   a,
+		NodeProbeAllowed: a.intelNodeProbeAllowed,
 		// Step 1 stays the built-in egress probe. Every other step is now a real
 		// /handler, so no step degrades to a no-op skip any more.
 		Prober:        prober,
@@ -176,9 +194,10 @@ func (a *prismApp) initIntelJobs(engine *state.StateEngine, intelStore *store.St
 	//: a subscription with auto_intel=1 auto-enqueues the nodes a refresh
 	// added; auto_intel=0 and intel_enabled=false never do.
 	svc.EnableAutoEnqueue(intel.AutoEnqueueOptions{
-		Lookup:     a.intelSubscriptionAutoIntel,
-		AutoChecks: func() bool { return runtimeConfigSnapshot(a.runtimeCfg).IntelAutoChecks },
-		Logf:       log.Printf,
+		InitialFull: true,
+		Lookup:      a.intelSubscriptionAutoIntel,
+		AutoChecks:  func() bool { return runtimeConfigSnapshot(a.runtimeCfg).IntelAutoChecks },
+		Logf:        log.Printf,
 	})
 	// 定时刷新: the scheduled pass. It re-reads intel_refresh_schedule on
 	// every wake-up, so a PATCH applies without a restart, and it picks its job
@@ -316,16 +335,25 @@ func (s intelCheckEnabledSource) CheckEnabled(checkID string) (bool, bool) {
 // intelNodeOutbound resolves a node hash to its live node outbound. Requests of
 // the via-node data sources and of the unlock checks leave through it, never
 // through the host network or the platform router.
-func (a *prismApp) intelNodeOutbound(nodeHash string) (adapter.Outbound, bool) {
+func (a *prismApp) intelNodeProbeAllowed(nodeHash string) bool {
 	if a == nil || a.topoRuntime == nil || a.topoRuntime.pool == nil {
-		return nil, false
+		return false
 	}
 	hash, err := node.ParseHex(strings.TrimSpace(nodeHash))
 	if err != nil {
-		return nil, false
+		return false
 	}
 	entry, ok := a.topoRuntime.pool.GetEntry(hash)
-	if !ok || entry == nil {
+	return ok && entry.AutomaticProbeAllowed()
+}
+
+func (a *prismApp) intelNodeOutbound(nodeHash string) (adapter.Outbound, bool) {
+	if !a.intelNodeProbeAllowed(nodeHash) {
+		return nil, false
+	}
+	hash, _ := node.ParseHex(strings.TrimSpace(nodeHash))
+	entry, ok := a.topoRuntime.pool.GetEntry(hash)
+	if !ok {
 		return nil, false
 	}
 	outbound := entry.Outbound.Load()
@@ -380,17 +408,9 @@ func (a *prismApp) wireIntelSubscriptionAutoEnqueue() {
 // assessmentSweepInterval is the expiry sweep period.
 const assessmentSweepInterval = 5 * time.Minute
 
-// intelEnabledSources reports the enabled data sources for the coverage
-// denominator. The effective setting decides: a data source that needs a
-// missing key, or that the settings page disabled, does not count as coverage.
-//
-// Alias variants are resolved onto their scoring source before the denominator
-// is built. The scoring layer folds e.g. proxycheck_node onto proxycheck
-// (assess.ProviderAliases), so a variant that answered contributes its weight to
-// the numerator while the host-side source stays disabled. Without this
-// resolution the denominator would omit that weight, coverage would be
-// truncated at 1.0, and the derived confidence / `incomplete` verdict /
-// min_confidence admission would all be overstated.
+// intelEnabledSources reports runnable providers for source diagnostics. Host
+// and via-node aliases share one enabled state. Only IPPure can supply primary
+// purity; auxiliary availability never contributes a weight or coverage vote.
 func intelEnabledSources(registry *providers.Registry) map[string]bool {
 	enabled := make(map[string]bool)
 	for _, id := range assess.ScoringSources() {
@@ -410,9 +430,6 @@ func intelEnabledSources(registry *providers.Registry) map[string]bool {
 		source := id
 		if aliased, ok := assess.ProviderAliases[id]; ok {
 			source = aliased
-		}
-		if _, known := enabled[source]; !known {
-			continue
 		}
 		defined[source] = true
 		if setting.Enabled && setting.Runnable() {
@@ -456,6 +473,25 @@ func (a *prismApp) startIntel() error {
 	// re-installs the projection on every platform before it evaluates a node.
 	if a.topoRuntime != nil && a.topoRuntime.pool != nil {
 		a.topoRuntime.pool.RebuildAllPlatforms()
+	}
+	initial := []string{}
+	a.topoRuntime.pool.Range(func(h node.Hash, e *node.NodeEntry) bool {
+		for _, id := range e.SubscriptionIDs() {
+			if a.topoRuntime.subManager == nil {
+				break
+			}
+			sub := a.topoRuntime.subManager.Lookup(id)
+			if sub != nil && sub.Enabled() && sub.AutoIntel() {
+				initial = append(initial, h.Hex())
+				break
+			}
+		}
+		return true
+	})
+	if count, err := a.intelSvc.EnsureInitialMeasurements(context.Background(), initial); err != nil {
+		return fmt.Errorf("initial measurements: %w", err)
+	} else if count > 0 {
+		log.Printf("Intel: scheduled initial full measurement for %d nodes", count)
 	}
 	log.Println("Intel store, projection and job executor started (step 12)")
 	return nil

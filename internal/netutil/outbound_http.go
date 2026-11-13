@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-box/adapter"
-	M "github.com/sagernet/sing/common/metadata"
 )
 
 const defaultOutboundUserAgent = "Prism/1.0"
@@ -25,8 +24,12 @@ const (
 
 // OutboundHTTPOptions controls outbound-backed HTTP execution behavior.
 type OutboundHTTPOptions struct {
+	Headers    http.Header
+	NoRedirect bool
 	// RequireStatusOK enforces HTTP 200 status; otherwise any status is accepted.
 	RequireStatusOK bool
+	// RequireStatusSuccess accepts the full 2xx range, including probe 204s.
+	RequireStatusSuccess bool
 	// UserAgent overrides the request User-Agent when non-empty.
 	UserAgent string
 	// MaxBodyBytes caps the decoded HTTP response. Zero uses the resource default.
@@ -51,7 +54,11 @@ func HTTPGetViaOutbound(
 
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			conn, err := outbound.DialContext(ctx, network, M.ParseSocksaddr(addr))
+			destination, err := ParseDestination(addr)
+			if err != nil {
+				return nil, err
+			}
+			conn, err := outbound.DialContext(ctx, network, destination)
 			if err != nil {
 				return nil, err
 			}
@@ -70,6 +77,9 @@ func HTTPGetViaOutbound(
 		Transport:     transport,
 		CheckRedirect: resourceRedirect,
 	}
+	if opts.NoRedirect {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -81,6 +91,11 @@ func HTTPGetViaOutbound(
 		userAgent = defaultOutboundUserAgent
 	}
 	req.Header.Set("User-Agent", userAgent)
+	for key, values := range opts.Headers {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
 
 	var start time.Time
 	var latency time.Duration
@@ -100,7 +115,7 @@ func HTTPGetViaOutbound(
 	}
 	defer resp.Body.Close()
 
-	if opts.RequireStatusOK && resp.StatusCode != http.StatusOK {
+	if (opts.RequireStatusOK && resp.StatusCode != http.StatusOK) || (opts.RequireStatusSuccess && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
 		return nil, latency, &HTTPStatusError{StatusCode: resp.StatusCode, URL: url}
 	}
 

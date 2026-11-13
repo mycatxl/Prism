@@ -106,8 +106,8 @@ function BalanceLedger({ userId }: { userId: string }) {
   const balanceQuery = useUserBalance(userId);
   const entries: AdminBalanceEntry[] = balanceQuery.data?.ledger ?? [];
   if (balanceQuery.isLoading) return <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载余额流水")}</div>;
-  if (balanceQuery.isError) return <EmptyWorkState title={t("余额流水读取失败")} detail={formatApiErrorMessage(balanceQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void balanceQuery.refetch()}>{t("重试")}</ControlButton>} />;
-  if (entries.length === 0) return <EmptyWorkState title={t("暂无余额变动")} detail={t("兑换码充值或运营调整后，流水会显示在这里。")} />;
+  if (balanceQuery.isError) return <EmptyWorkState embedded title={t("余额流水读取失败")} detail={formatApiErrorMessage(balanceQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void balanceQuery.refetch()}>{t("重试")}</ControlButton>} />;
+  if (entries.length === 0) return <EmptyWorkState embedded title={t("暂无余额变动")} detail={t("兑换码充值或运营调整后，流水会显示在这里。")} />;
 
   return (
     <ObjectList>
@@ -163,7 +163,7 @@ function SubscriptionSurface({
   const now = useNow();
   const sub = user.subscription;
   if (!sub) {
-    return <WorkspaceCard eyebrow="Customer / plan" title={t("套餐与订阅")} actions={<ControlButton variant="primary" size="sm" onPress={onAssign}><Plus size={14} aria-hidden />{t("分配套餐")}</ControlButton>}><EmptyWorkState title={t("暂无活跃订阅")} detail={t("该用户当前未绑定任何套餐，点击上方按钮进行分配。")} /></WorkspaceCard>;
+    return <WorkspaceCard eyebrow="Customer / plan" title={t("套餐与订阅")} actions={<ControlButton variant="primary" size="sm" onPress={onAssign}><Plus size={14} aria-hidden />{t("分配套餐")}</ControlButton>}><EmptyWorkState embedded title={t("暂无活跃订阅")} detail={t("该用户当前未绑定任何套餐，点击上方按钮进行分配。")} /></WorkspaceCard>;
   }
   const startsMs = Math.round(sub.starts_at_ns / NANOS_PER_MILLI);
   const expiresMs = Math.round(sub.expires_at_ns / NANOS_PER_MILLI);
@@ -202,7 +202,7 @@ function KeysSurface({ keys, onCreate, onDelete }: { keys: AdminKey[]; onCreate:
   const { t } = useI18n();
   return (
     <WorkspaceCard eyebrow="Customer / access" title={t("访问密钥")} meta={t("{{count}} 个密钥", { count: keys.length })} actions={<ControlButton variant="primary" size="sm" onPress={onCreate}><Plus size={14} aria-hidden />{t("新建密钥")}</ControlButton>}>
-      {keys.length === 0 ? <EmptyWorkState title={t("暂无访问密钥")} detail={t("点击上方按钮为该用户生成新的访问凭据。")} action={<ControlButton variant="primary" size="sm" onPress={onCreate}><Plus size={14} aria-hidden />{t("新建密钥")}</ControlButton>} /> : <ObjectList>{keys.map((key) => <ObjectRow key={key.id} leading={<span className="workspace-platform-row__mark" aria-hidden>KEY</span>} title={key.name} subtitle={`${key.credential_hint || "****"} · ${key.platforms?.length ? key.platforms.join(", ") : t("全部平台")}`} facts={<><span>{t("创建")} {formatNsTime(key.created_at_ns)}</span><span>{t("最后使用")} {formatNsTime(key.last_used_ns)}</span></>} status={<StatusMark tone={statusTone(key.status)} label={statusLabel(key.status, t)} />} action={<ControlButton variant="ghost" size="sm" isIconOnly aria-label={t("删除密钥")} onPress={() => onDelete(key)}><Trash2 size={14} aria-hidden /></ControlButton>} />)}</ObjectList>}
+      {keys.length === 0 ? <EmptyWorkState embedded title={t("暂无访问密钥")} detail={t("点击上方按钮为该用户生成新的访问凭据。")} action={<ControlButton variant="primary" size="sm" onPress={onCreate}><Plus size={14} aria-hidden />{t("新建密钥")}</ControlButton>} /> : <ObjectList>{keys.map((key) => <ObjectRow key={key.id} leading={<span className="workspace-platform-row__mark" aria-hidden>KEY</span>} title={key.name} subtitle={`${key.credential_hint || "****"} · ${key.platforms?.length ? key.platforms.join(", ") : t("全部平台")}`} facts={<><span>{t("创建")} {formatNsTime(key.created_at_ns)}</span><span>{t("最后使用")} {formatNsTime(key.last_used_ns)}</span></>} status={<StatusMark tone={statusTone(key.status)} label={statusLabel(key.status, t)} />} action={<ControlButton variant="ghost" size="sm" isIconOnly aria-label={t("删除密钥")} onPress={() => onDelete(key)}><Trash2 size={14} aria-hidden /></ControlButton>} />)}</ObjectList>}
     </WorkspaceCard>
   );
 }
@@ -212,7 +212,7 @@ function UsageSurface({ days }: { days: UsageDay[] }) {
   const total = days.reduce((sum, day) => sum + day.total_bytes, 0);
   return (
     <WorkspaceCard eyebrow="Customer / usage" title={t("最近 30 天用量")} meta={days.length ? `${days.length} ${t("天")}` : t("未提供")} description={t("显示接口返回的每日入站、出站和合计流量，不在前端补算缺失数据。")}>
-      {days.length === 0 ? <EmptyWorkState title={t("暂无历史用量数据")} detail={t("当前周期内未产生入站或出站流量。")} /> : <ObjectList>{days.map((day) => <ObjectRow key={day.day_ns} leading={<span className="workspace-platform-row__mark" aria-hidden>DAY</span>} title={formatNsDate(day.day_ns)} subtitle={t("每日流量证据")} facts={<><span>{t("入站")} <span className="readout">{formatBytes(day.ingress_bytes)}</span></span><span>{t("出站")} <span className="readout">{formatBytes(day.egress_bytes)}</span></span><span>{t("合计")} <span className="readout">{formatBytes(day.total_bytes)}</span></span></>} status={day.total_bytes > 0 ? <QueryBadge label={formatBytes(day.total_bytes)} tone="signal" /> : <QueryBadge label={t("无流量")} />} />)}</ObjectList>}
+      {days.length === 0 ? <EmptyWorkState embedded title={t("暂无历史用量数据")} detail={t("当前周期内未产生入站或出站流量。")} /> : <ObjectList>{days.map((day) => <ObjectRow key={day.day_ns} leading={<span className="workspace-platform-row__mark" aria-hidden>DAY</span>} title={formatNsDate(day.day_ns)} subtitle={t("每日流量证据")} facts={<><span>{t("入站")} <span className="readout">{formatBytes(day.ingress_bytes)}</span></span><span>{t("出站")} <span className="readout">{formatBytes(day.egress_bytes)}</span></span><span>{t("合计")} <span className="readout">{formatBytes(day.total_bytes)}</span></span></>} status={day.total_bytes > 0 ? <QueryBadge label={formatBytes(day.total_bytes)} tone="signal" /> : <QueryBadge label={t("无流量")} />} />)}</ObjectList>}
       {days.length ? <p className="workspace-muted">{t("当前返回周期合计")} <span className="readout">{formatBytes(total)}</span></p> : null}
     </WorkspaceCard>
   );

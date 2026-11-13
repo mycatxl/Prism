@@ -9,15 +9,18 @@ import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { formatRelativeTime } from "../../lib/time";
 import { createIntelJob } from "../jobs/api";
+import { checkOutcomeLabel, GEMINI_EVIDENCE_NOTE } from "../intel/checkPresentation";
+import { UnratedPurity, MeasurementTime } from "./quality/PurityStatus";
+import { validPurityScore } from "./quality/presentation";
 import { IPTypeBadge } from "./quality/QualityDetails";
 import {
   confidenceLabels,
   flagLabels,
-  outcomeLabels,
   outcomeTones,
   purityBands,
   stateLabels,
   typeLabels,
+  verdictLabels,
 } from "./quality/presentation";
 import type { QualitySummary } from "./quality/types";
 import { getRegionName } from "./regions";
@@ -59,25 +62,9 @@ function Fact({ label, children }: { label: ReactNode; children: ReactNode }) {
 export function NodeIntelCell({ intel }: { intel?: NodeIntel | null }) {
   const { t } = useI18n();
   const state = intel?.state || "unassessed";
-  if (state === "unassessed") {
-    return (
-      <span className="flex min-w-0 items-center gap-1.5" title={t("等待纯净度评估")}>
-        <Badge tone="neutral" dot>
-          {t(stateLabels.unassessed)}
-        </Badge>
-      </span>
-    );
-  }
-  if (state === "pending" || state === "unsupported") {
-    const pending = state === "pending";
-    return (
-      <Badge tone={pending ? "live" : "neutral"} dot={pending}>
-        {t(stateLabels[state])}
-      </Badge>
-    );
-  }
+  const score = state === "stale" ? null : validPurityScore(intel?.purity_score);
+  if (score === null) return <UnratedPurity fact={intel?.facts?.purity}/>;
   const band = purityBands.find((item) => item.id === intel?.purity_band);
-  const score = typeof intel?.purity_score === "number" ? intel.purity_score : null;
   const qualifier = [
     t(confidenceLabels[intel?.confidence || "none"]),
     intel?.assessed_at ? formatRelativeTime(intel.assessed_at) : "",
@@ -211,36 +198,28 @@ export function NodeIntelPanel({ intel, nodeHash, ready, notify }: {
     </div>
   );
   const state = intel?.state || "unassessed";
-  if (state === "unassessed") {
-    return (
-      <div className="space-y-3">
-        {actions}
-        <p className="max-w-[68ch] text-sm leading-relaxed text-ink-soft">
-          {t("该节点还没有纯净度评估，运行一次节点检测后即可看到评分。")}
-        </p>
-      </div>
-    );
-  }
+  const score = state === "stale" ? null : validPurityScore(intel?.purity_score);
   const band = purityBands.find((item) => item.id === intel?.purity_band);
   const checks = Object.entries(intel?.checks || {});
   return (
     <div className="space-y-4">
       {actions}
       <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-        <Fact label={t("纯净度评分")}>
-          <span className="readout text-base font-semibold">
-            {typeof intel?.purity_score === "number" ? intel.purity_score : "--"}
-          </span>
-          <span className="text-2xs text-ink-faint">/ 100</span>
-          {band && <Badge tone={bandTones[band.variant] ?? "neutral"}>{t(band.label)}</Badge>}
+        <Fact label={t("纯净度")}>
+          {score === null ? <UnratedPurity fact={intel?.facts?.purity}/> : <>
+            <span className="readout text-base font-semibold">{score}</span>
+            <span className="text-2xs text-ink-faint">/ 100</span>
+            {band && <Badge tone={bandTones[band.variant] ?? "neutral"}>{t(band.label)}</Badge>}
+          </>}
+          <MeasurementTime fact={intel?.facts?.purity}/>
         </Fact>
-        <Fact label={t("评估状态")}>{t(stateLabels[state] || state)}</Fact>
+        <Fact label={t("评估状态")}>{t(stateLabels[state] || "未评估")}</Fact>
         <Fact label={t("置信度")}>{t(confidenceLabels[intel?.confidence || "none"])}</Fact>
         <Fact label={t("判定")}>
-          <span className="readout">{intel?.verdict || "--"}</span>
+          <span>{intel?.verdict ? t(verdictLabels[intel.verdict as keyof typeof verdictLabels] || "未知") : "--"}</span>
         </Fact>
         <Fact label={t("网络类型")}>
-          <span className="readout">{intel?.ip_type || "--"}</span>
+          <span>{t(typeLabels[intel?.ip_type as keyof typeof typeLabels] || "类型未知")}</span>
         </Fact>
         <Fact label={t("原生 IP")}>
           {intel?.native === null || intel?.native === undefined ? "--" : t(intel.native ? "是" : "否")}
@@ -271,16 +250,17 @@ export function NodeIntelPanel({ intel, nodeHash, ready, notify }: {
                   {t(flagLabels[flag] || flag)}
                 </Badge>
               ))
-            : t("未见明显标记")}
+            : t("暂未标记风险特征")}
         </Fact>
         {checks.length > 0 && (
           <Fact label={t("检测结果")}>
             {checks.map(([id, outcome]) => (
               <Badge key={id} tone={outcomeTones[outcome] ?? "neutral"}>
                 <span className="readout">{id}</span>
-                <span>{t(outcomeLabels[outcome] || outcome)}</span>
+                <span>{t(checkOutcomeLabel(id, outcome))}</span>
               </Badge>
             ))}
+            {checks.some(([id]) => id === "gemini") ? <p className="workspace-muted">{t(GEMINI_EVIDENCE_NOTE)}</p> : null}
           </Fact>
         )}
       </dl>

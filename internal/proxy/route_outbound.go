@@ -12,21 +12,49 @@ type routedOutbound struct {
 	Outbound adapter.Outbound
 }
 
+// authorizeBypassPlatform enforces a restricted key's platform scope before an
+// operator-configured direct bypass. Bypass targets do not create routing
+// leases, but the credential still names a platform and must not gain a second,
+// unrestricted authorization path merely because its target is dialled locally.
+// Unrestricted keys keep the historical direct-only behavior and do not require
+// a router just to resolve a platform they are allowed to use universally.
+func authorizeBypassPlatform(router *routing.Router, platformName string, key *keys.KeyState) *ProxyError {
+	if router != nil && router.PrivacyPolicyEnabled() {
+		return ErrNoAvailableNodes
+	}
+	// Local direct egress has no assessed node identity. It cannot satisfy a
+	// plan's tier restriction, even when an operator configured a bypass.
+	if key != nil && len(key.Plan.IPTiers) > 0 {
+		return ErrPlatformForbidden
+	}
+	if key == nil || len(key.EffectivePlatforms()) == 0 {
+		return nil
+	}
+	if router == nil {
+		return ErrPlatformForbidden
+	}
+	platformID, err := router.ResolvePlatformID(platformName)
+	if err != nil {
+		return mapRouteError(err)
+	}
+	if !key.AllowsPlatform(platformID) {
+		return ErrPlatformForbidden
+	}
+	return nil
+}
+
 // resolveRoutedOutbound resolves the platform, enforces the key's platform
 // restriction, and then routes.
 //
-// This is the single convergence point of the forward proxy, the CONNECT
-// tunnel, the SOCKS5 inbound and the reverse proxy, which is why the platform
-// check lives here rather than in each entry point: there is exactly one place
-// that can get it wrong.
+// Routed requests from the forward proxy, CONNECT tunnel, SOCKS5 inbound and
+// reverse proxy converge here. Direct bypasses use authorizeBypassPlatform for
+// the same key-scope check without creating a routing lease.
 //
-// key is nil for the transitional global-token path and for deployments with
-// authentication disabled. A nil key imposes no restriction, so those paths
-// behave exactly as they did before access keys existed.
+// key is the authenticated AccessKey. A nil key is retained as a defensive
+// guard for internal callers and imposes no platform restriction there.
 //
-// The platform is resolved before the check because the key stores platform
-// IDs, while the request names a platform. That costs one extra map lookup on
-// the routed path, which is not measurable next to a proxy round trip.
+// The platform name is resolved once; authorization and routing use that same
+// ID even if an operator concurrently reassigns the name.
 func resolveRoutedOutbound(
 	router *routing.Router,
 	pool outbound.PoolAccessor,
@@ -35,31 +63,30 @@ func resolveRoutedOutbound(
 	target string,
 	key *keys.KeyState,
 ) (routedOutbound, *ProxyError) {
-	if key != nil {
-		platformID, err := router.ResolvePlatformID(platformName)
-		if err != nil {
-			return routedOutbound{}, mapRouteError(err)
-		}
-		if !key.AllowsPlatform(platformID) {
-			return routedOutbound{}, ErrPlatformForbidden
-		}
+	platformID, err := router.ResolvePlatformID(platformName)
+	if err != nil {
+		return routedOutbound{}, mapRouteError(err)
+	}
+	if key != nil && !key.AllowsPlatform(platformID) {
+		return routedOutbound{}, ErrPlatformForbidden
 	}
 
 	// The key's owner, when there is one, is part of the lease identity: two
 	// tenants that both call their account "default" must not share an egress
-	// IP. The transitional global-token path carries no user and keeps the
-	// single-tenant behaviour.
+	// lease.
 	userID := ""
+	var tiers []string
 	if key != nil {
 		userID = key.UserID
+		tiers = key.Plan.IPTiers
 	}
-	result, err := router.RouteRequest(platformName, userID, account, target)
+	result, err := router.RouteRequestForPlatform(platformID, userID, account, target, tiers)
 	if err != nil {
 		return routedOutbound{}, mapRouteError(err)
 	}
 
 	entry, ok := pool.GetEntry(result.NodeHash)
-	if !ok {
+	if !ok || !entry.PrivacyAllowed() || !router.RouteStillValid(result, tiers) {
 		return routedOutbound{}, ErrNoAvailableNodes
 	}
 	obPtr := entry.Outbound.Load()

@@ -223,3 +223,33 @@ func TestProbe_RequiresFetcherAndStore(t *testing.T) {
 		t.Fatal("expected an error when the fetcher is missing")
 	}
 }
+
+func TestIPv6FirstSampleSurvivesLaterFailure(t *testing.T) {
+	now := time.Now()
+	f := &fakeFetcher{byURL: map[string][]byte{DefaultTraceURLv4: []byte("ip=2001:db8::7\nloc=JP\n")}, errs: map[string]error{DefaultTraceURLv6: errors.New("timeout")}}
+	p := newTestProbe(t, f, &now)
+	h := node.HashFromRawOptions([]byte(`{"type":"ss"}`))
+	result, err := p.Run(context.Background(), h)
+	if err != nil || result.Row.IPv6 != "2001:db8::7" || result.Row.IPv4 != "" {
+		t.Fatal(result, err)
+	}
+	if _, ok, err := p.Store.GetNodeEgress(context.Background(), h.Hex()); err != nil || !ok {
+		t.Fatal("not persisted", err)
+	}
+}
+func TestRejectedSampleCannotWriteOrContinueProbing(t *testing.T) {
+	now := time.Now()
+	f := &fakeFetcher{byURL: map[string][]byte{DefaultTraceURLv4: []byte("ip=192.0.2.7\n")}}
+	p := newTestProbe(t, f, &now)
+	p.ObserveSample = func(node.Hash, netip.Addr, string) bool { return false }
+	h := node.HashFromRawOptions([]byte(`{"type":"ss"}`))
+	if _, err := p.Run(context.Background(), h); !errors.Is(err, ErrPrivacyRejected) {
+		t.Fatal(err)
+	}
+	if len(f.calls) != 1 {
+		t.Fatal("continued network work", f.calls)
+	}
+	if _, ok, _ := p.Store.GetNodeEgress(context.Background(), h.Hex()); ok {
+		t.Fatal("recreated deleted intel row")
+	}
+}

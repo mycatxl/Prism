@@ -6,6 +6,7 @@ import (
 
 	"prism/internal/keys"
 	"prism/internal/model"
+	"prism/internal/usage"
 )
 
 // A subscription is what actually grants access: it binds one user to one plan
@@ -88,6 +89,9 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 	if durationDays < 0 {
 		return SubscriptionView{}, invalidArg("duration_days: must not be negative")
 	}
+	if durationDays > maxExpiryDays {
+		return SubscriptionView{}, invalidArg("duration_days: must not exceed 36500 (100 years)")
+	}
 	planID = strings.TrimSpace(planID)
 	if planID == "" {
 		return SubscriptionView{}, invalidArg("plan_id: required")
@@ -121,7 +125,9 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 		return SubscriptionView{}, internal("generate subscription id", err)
 	}
 
+	periodTransition := s.Usage.BeginUserPeriodTransition(userID)
 	if err := s.expireActiveSubscriptions(userID, nowNs); err != nil {
+		periodTransition.Cancel()
 		return SubscriptionView{}, err
 	}
 
@@ -141,15 +147,14 @@ func (s *ControlPlaneService) AssignSubscription(userID, planID string, duration
 		// concurrent assign that slips in behind the expire above trips
 		// ux_user_subscriptions_active, and that is a conflict to report, not a
 		// server fault.
+		periodTransition.Cancel()
 		return SubscriptionView{}, mapSubscriptionWriteError("write subscription", err)
 	}
 	// The running aggregate belongs to the subscription that just ended, the
 	// same way it does after a purchase: the new row starts at zero bytes on
 	// disk, and leaving the old total in memory would keep the quota refusing
 	// a user who has used nothing of the plan they were just given.
-	if s.Usage != nil {
-		s.Usage.ResetUser(userID)
-	}
+	periodTransition.CommitSubscription(row)
 	// The new plan is in force from the next request, not from the next
 	// restart: the keys of this user are republished with the new snapshot.
 	if err := s.republishUserKeys(userID); err != nil {
@@ -264,6 +269,9 @@ func (s *ControlPlaneService) UpdateTenantSubscription(id string, patchJSON json
 		if value <= 0 {
 			return SubscriptionView{}, invalidArg("extend_days: must be greater than zero")
 		}
+		if value > maxExpiryDays {
+			return SubscriptionView{}, invalidArg("extend_days: must not exceed 36500 (100 years)")
+		}
 		from := nowNs
 		if updated.ExpiresAtNs > from {
 			from = updated.ExpiresAtNs
@@ -276,20 +284,45 @@ func (s *ControlPlaneService) UpdateTenantSubscription(id string, patchJSON json
 		if value < 0 {
 			return SubscriptionView{}, invalidArg("expires_at_ns: must not be negative")
 		}
+		if value > 0 && int64(value) > expiryFromDays(maxExpiryDays, nowNs) {
+			return SubscriptionView{}, invalidArg("expires_at_ns: must be within 100 years")
+		}
 		updated.ExpiresAtNs = int64(value)
 	}
 	// Bring the row back to active only after ending whatever else is running.
 	// Doing it the other way round would leave two active rows whenever the
 	// patch itself arrived second.
 	reactivating := updated.Status == model.SubscriptionStatusActive && row.Status != model.SubscriptionStatusActive
+	var transition *usage.UserPeriodTransition
+	var pending []model.UsageReservation
 	if reactivating {
-		if err := s.expireActiveSubscriptions(updated.UserID, nowNs); err != nil {
-			return SubscriptionView{}, err
+		transition = s.Usage.BeginUserPeriodTransition(updated.UserID)
+		defer transition.Cancel()
+		// Reserve/settle cannot change this user's liabilities while the
+		// transition is held. Preserve reservations from the restored window;
+		// completions from a different subscription stay in their own history.
+		pending, err = s.Engine.PendingUsage()
+		if err != nil {
+			return SubscriptionView{}, internal("read usage liabilities", err)
 		}
 	}
 
-	if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+	writeTerms := s.Engine.UpdateUserSubscriptionTerms
+	if reactivating {
+		writeTerms = s.Engine.ReactivateUserSubscription
+	}
+	if err := writeTerms(updated, *row); err != nil {
 		return SubscriptionView{}, mapSubscriptionWriteError("write subscription", err)
+	}
+	if reactivating {
+		// The initial read preceded the transition; a completion could have
+		// increased usage before it was acquired. Reload the persisted total.
+		current, err := s.Engine.GetUserSubscription(updated.ID)
+		if err != nil {
+			return SubscriptionView{}, mapSubscriptionLookupError(err)
+		}
+		updated = *current
+		transition.ResumeSubscription(updated, pending)
 	}
 	if err := s.republishUserKeys(updated.UserID); err != nil {
 		return SubscriptionView{}, err
@@ -337,7 +370,7 @@ func (s *ControlPlaneService) expireActiveSubscriptions(userID string, nowNs int
 		}
 		updated := row
 		updated.Status = model.SubscriptionStatusExpired
-		if err := s.Engine.UpdateUserSubscriptionTerms(updated); err != nil {
+		if err := s.Engine.UpdateUserSubscriptionTerms(updated, row); err != nil {
 			return mapSubscriptionWriteError("expire previous subscription", err)
 		}
 	}

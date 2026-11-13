@@ -43,9 +43,12 @@ type SubscriptionScheduler struct {
 	// cannot bloat the database.
 	onParseReport func(subscriptionID string, reportJSON string)
 
-	stopCh   chan struct{}
-	stopOnce sync.Once
-	wg       sync.WaitGroup
+	stopCh      chan struct{}
+	stopOnce    sync.Once
+	wg          sync.WaitGroup
+	lifecycleMu sync.Mutex
+	stopping    bool
+	startOnce   sync.Once
 }
 
 // SchedulerConfig configures the SubscriptionScheduler.
@@ -86,11 +89,25 @@ func NewSubscriptionScheduler(cfg SchedulerConfig) *SubscriptionScheduler {
 
 // Start launches the background scheduler goroutine.
 func (s *SubscriptionScheduler) Start() {
+	s.startOnce.Do(func() {
+		if !s.beginWork() {
+			return
+		}
+		safego.Go("the subscription scheduler", func() {
+			defer s.wg.Done()
+			scanloop.Run(s.stopCh, scanloop.DefaultMinInterval, scanloop.DefaultJitterRange, s.tick)
+		})
+	})
+}
+
+func (s *SubscriptionScheduler) beginWork() bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopping {
+		return false
+	}
 	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		scanloop.Run(s.stopCh, scanloop.DefaultMinInterval, scanloop.DefaultJitterRange, s.tick)
-	}()
+	return true
 }
 
 // Stop signals the scheduler to stop and waits for it to finish. It is
@@ -101,6 +118,9 @@ func (s *SubscriptionScheduler) Start() {
 // immediately. Shutdown paths and tests may call it more than once.
 func (s *SubscriptionScheduler) Stop() {
 	s.stopOnce.Do(func() {
+		s.lifecycleMu.Lock()
+		defer s.lifecycleMu.Unlock()
+		s.stopping = true
 		close(s.stopCh)
 		s.cancelDownload()
 	})
@@ -136,7 +156,9 @@ func (s *SubscriptionScheduler) ForceRefreshAll() {
 // ForceRefreshAllAsync triggers ForceRefreshAll in a background goroutine.
 // The goroutine is tracked by scheduler waitgroup so Stop() waits for exit.
 func (s *SubscriptionScheduler) ForceRefreshAllAsync() {
-	s.wg.Add(1)
+	if !s.beginWork() {
+		return
+	}
 	safego.Go("a subscription force refresh", func() {
 		defer s.wg.Done()
 		s.ForceRefreshAll()
@@ -213,12 +235,29 @@ func (s *SubscriptionScheduler) runUpdatesWithWorkerLimit(subs []*subscription.S
 // applies the result under WithSubLock. This keeps the lock scope narrow
 // (no I/O under lock) while still preventing concurrent diff/apply races.
 func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscription) {
+	if sub == nil || !s.beginWork() {
+		return
+	}
+	defer s.wg.Done()
+	s.updateSubscription(sub)
+}
+
+// UpdateSubscriptionAsync registers before spawning, so shutdown also joins
+// updates submitted by API handlers that have already returned.
+func (s *SubscriptionScheduler) UpdateSubscriptionAsync(sub *subscription.Subscription) {
+	if sub == nil || !s.beginWork() {
+		return
+	}
+	safego.Go("a subscription update", func() {
+		defer s.wg.Done()
+		s.updateSubscription(sub)
+	})
+}
+
+func (s *SubscriptionScheduler) updateSubscription(sub *subscription.Subscription) {
 	attemptStartedNs := time.Now().UnixNano()
 	attemptSeq := sub.NextAttemptSeq()
-	attemptURL := sub.URL()
-	attemptSourceType := sub.SourceType()
-	attemptContent := sub.Content()
-	attemptConfigVersion := sub.ConfigVersion()
+	attemptURL, attemptSourceType, attemptContent, attemptConfigVersion := sub.RefreshInputs()
 
 	// 1. Fetch/read content (lock-free).
 	var (
@@ -278,7 +317,7 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 	applied := false
 	sub.WithOpLock(func() {
 		// If refresh-input config changed while this attempt was in-flight, discard.
-		if sub.ConfigVersion() != attemptConfigVersion {
+		if s.downloadCtx.Err() != nil || s.subManager.Lookup(sub.ID) != sub || sub.ConfigVersion() != attemptConfigVersion {
 			return
 		}
 		// Stale success guard: if a newer successful update has already landed,
@@ -368,14 +407,13 @@ func (s *SubscriptionScheduler) UpdateSubscription(sub *subscription.Subscriptio
 		sub.MarkAppliedAttempt(attemptSeq)
 		sub.SetLastError("")
 		applied = true
+		if s.onSubUpdated != nil {
+			s.onSubUpdated(sub)
+		}
 	})
 	if !applied {
 		log.Printf("[scheduler] stale success ignored for %s", sub.ID)
 		return
-	}
-
-	if s.onSubUpdated != nil {
-		s.onSubUpdated(sub)
 	}
 }
 
@@ -444,7 +482,7 @@ func (s *SubscriptionScheduler) handleUpdateFailure(
 	applied := false
 	sub.WithOpLock(func() {
 		// If refresh-input config changed while this attempt was in-flight, discard.
-		if sub.ConfigVersion() != attemptConfigVersion {
+		if s.downloadCtx.Err() != nil || s.subManager.Lookup(sub.ID) != sub || sub.ConfigVersion() != attemptConfigVersion {
 			return
 		}
 		if sub.LastAppliedSeq() > attemptSeq {
@@ -457,6 +495,9 @@ func (s *SubscriptionScheduler) handleUpdateFailure(
 		sub.LastCheckedNs.Store(now)
 		sub.SetLastError(err.Error())
 		applied = true
+		if s.onSubUpdated != nil {
+			s.onSubUpdated(sub)
+		}
 	})
 	if !applied {
 		log.Printf("[scheduler] stale %s failure ignored for %s: %v", stage, sub.ID, err)
@@ -464,9 +505,6 @@ func (s *SubscriptionScheduler) handleUpdateFailure(
 	}
 
 	log.Printf("[scheduler] %s %s failed: %v", stage, sub.ID, err)
-	if s.onSubUpdated != nil {
-		s.onSubUpdated(sub)
-	}
 }
 
 // SetSubscriptionEnabled updates the enabled flag and rebuilds all platform

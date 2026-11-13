@@ -183,8 +183,23 @@ func isWireGuardPeer(object map[string]any) bool {
 // Uses CompareAndSwap(nil, &wrapped) to guarantee only one goroutine's build
 // result is stored. Losers discard their result (stage 6 adds io.Closer release).
 func (m *OutboundManager) EnsureNodeOutbound(hash node.Hash) {
+	m.ensureNodeOutbound(hash, false)
+}
+
+// EnsureNodeOutboundForAdminProbe is only for the explicit node retest action.
+func (m *OutboundManager) EnsureNodeOutboundForAdminProbe(hash node.Hash) {
+	m.ensureNodeOutbound(hash, true)
+}
+
+func (m *OutboundManager) ensureNodeOutbound(hash node.Hash, adminProbe bool) {
 	entry, ok := m.pool.GetEntry(hash)
 	if !ok {
+		return
+	}
+	// Run before target validation, which can resolve DNS, and before builders
+	// which may start their own connections. Do not mark quarantine as a build
+	// error: subscription cleanup must not erase the retained evidence.
+	if !entry.ConfigPrivacyAllowed() || (!adminProbe && !entry.AutomaticProbeAllowed()) {
 		return
 	}
 	// Fast path: already has outbound.
@@ -209,6 +224,7 @@ func (m *OutboundManager) EnsureNodeOutbound(hash node.Hash) {
 		return
 	}
 
+	ob = entry.GuardPrivacyOutbound(ob)
 	if !entry.Outbound.CompareAndSwap(nil, &ob) {
 		// Another goroutine won the race. Close the losing build result.
 		closeOutbound(ob)
@@ -273,6 +289,11 @@ func (m *OutboundManager) FetchWithOptions(ctx context.Context, hash node.Hash, 
 	entry, ok := m.pool.GetEntry(hash)
 	if !ok {
 		return nil, 0, errors.New("node not found")
+	}
+	ctx, cancel := entry.BindPrivacyContext(ctx)
+	defer cancel()
+	if !entry.AutomaticProbeAllowed() {
+		return nil, 0, errors.New("node quarantined")
 	}
 	outboundPtr := entry.Outbound.Load() // *adapter.Outbound
 	if outboundPtr == nil {

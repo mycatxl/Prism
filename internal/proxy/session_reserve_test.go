@@ -486,6 +486,21 @@ func TestProxyConcurrency_ReservesTheSessionBeforeItAnswers(t *testing.T) {
 	})
 }
 
+func TestProxyConcurrencyFailsClosedWithoutSessionTracker(t *testing.T) {
+	key := workingKeyState()
+	key.Plan.MaxConcurrent = 1
+	gate := &usage.Gate{Limiter: usage.NewLimiter(usage.NewCounters())}
+	session := newPendingSession(func() {})
+
+	err, reservation := reserveSession(gate, nil, key, session, nil)
+	if err != ErrCapacityExceeded {
+		t.Fatalf("finite concurrency without a tracker returned %v, want quota refusal", err)
+	}
+	if reservation == nil || reservation.tracked {
+		t.Fatal("a refused request without a tracker left a tracked reservation")
+	}
+}
+
 // openTunnelWrite writes into an established tunnel and reports how much of the
 // payload was accepted.
 func openTunnelWrite(t *testing.T, conn net.Conn, payload []byte) (int, error) {

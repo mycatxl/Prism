@@ -117,6 +117,8 @@ func TestForwardProxy_CONNECTUpstreamWriteFailureRecordsNodeFailure(t *testing.T
 
 	fp := NewForwardProxy(ForwardProxyConfig{
 		ProxyToken: "tok",
+
+		AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
 		Router:     env.router,
 		Pool:       env.pool,
 		Health:     health,

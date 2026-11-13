@@ -9,6 +9,7 @@ import (
 	"prism/internal/intel"
 	"prism/internal/model"
 	"prism/internal/node"
+	"prism/internal/testutil"
 )
 
 // criteriaEntry builds a fully routable node with the fields the explicit
@@ -40,12 +41,13 @@ func subLookupAlwaysEnabled(string, node.Hash) (string, bool, []string, bool) {
 // cleanAssessment is the projection row of a node that passes every quality rule.
 func cleanAssessment(band string, ipType string) intel.AssessmentLite {
 	return intel.AssessmentLite{
+		State:      intel.StateValid,
 		Score:      92,
 		Band:       intel.BandCode(band),
 		Verdict:    intel.VerdictCode("favorable"),
 		IPType:     intel.IPTypeCode(ipType),
 		Confidence: intel.ConfidenceCode("high"),
-		ValidUntil: admitNow.Add(time.Hour).UnixNano(),
+		ValidUntil: time.Now().Add(time.Hour).UnixNano(),
 	}
 }
 
@@ -195,17 +197,17 @@ func TestMatchNodeCriteria_RegionAndProtocolCombine(t *testing.T) {
 
 	// hk+vless matches the first node only.
 	intersected := NodeCriteria{Regions: []string{"hk"}, Protocols: []string{"vless"}}
-	if ok, reason := MatchNodeCriteria(intersected, hk, subLookupAlwaysEnabled, nil, nil, nil, admitNow); !ok {
+	if ok, reason := MatchNodeCriteria(intersected, hk, subLookupAlwaysEnabled, nil, testutil.MeasuredQuality, nil, admitNow); !ok {
 		t.Fatalf("hk+vless node rejected: %s", reason)
 	}
-	if ok, _ := MatchNodeCriteria(intersected, us, subLookupAlwaysEnabled, nil, nil, nil, admitNow); ok {
+	if ok, _ := MatchNodeCriteria(intersected, us, subLookupAlwaysEnabled, nil, testutil.MeasuredQuality, nil, admitNow); ok {
 		t.Fatal("us+trojan node admitted by the hk+vless intersection")
 	}
 
 	// us+vless matches nothing.
 	empty := NodeCriteria{Regions: []string{"us"}, Protocols: []string{"vless"}}
 	for name, candidate := range map[string]*node.NodeEntry{"hk": hk, "us": us} {
-		if ok, _ := MatchNodeCriteria(empty, candidate, subLookupAlwaysEnabled, nil, nil, nil, admitNow); ok {
+		if ok, _ := MatchNodeCriteria(empty, candidate, subLookupAlwaysEnabled, nil, testutil.MeasuredQuality, nil, admitNow); ok {
 			t.Fatalf("%s node admitted by an empty intersection (region us + protocol vless)", name)
 		}
 	}
@@ -241,7 +243,7 @@ func TestPlatform_LegacyRegexOnlyPlatformIsUnchanged(t *testing.T) {
 		lookup := func(string, node.Hash) (string, bool, []string, bool) {
 			return "TestSub", true, tags, true
 		}
-		ok, _ := MatchNodeCriteria(plat.Criteria(), entry, lookup, usGeoLookup, nil, nil, time.Now())
+		ok, _ := MatchNodeCriteria(plat.Criteria(), entry, lookup, usGeoLookup, testutil.MeasuredQuality, nil, time.Now())
 		return ok
 	}
 
@@ -276,7 +278,7 @@ func TestPlatform_LegacyRegexOnlyPlatformIsUnchanged(t *testing.T) {
 		mustPlatform.Criteria(),
 		makeFullyRoutableEntry(makeHash(`{"type":"ss"}`), "sub1"),
 		func(string, node.Hash) (string, bool, []string, bool) { return "TestSub", true, []string{"fast"}, true },
-		usGeoLookup, nil, nil, time.Now(),
+		usGeoLookup, testutil.MeasuredQuality, nil, time.Now(),
 	)
 	if !ok {
 		t.Fatal("legacy * rule rejected a node whose tag matches it")
@@ -285,7 +287,7 @@ func TestPlatform_LegacyRegexOnlyPlatformIsUnchanged(t *testing.T) {
 		mustPlatform.Criteria(),
 		makeFullyRoutableEntry(makeHash(`{"type":"ss"}`), "sub1"),
 		func(string, node.Hash) (string, bool, []string, bool) { return "TestSub", true, []string{"slow"}, true },
-		usGeoLookup, nil, nil, time.Now(),
+		usGeoLookup, testutil.MeasuredQuality, nil, time.Now(),
 	)
 	if ok {
 		t.Fatal("legacy * rule admitted a node whose tags do not match it")
@@ -335,7 +337,7 @@ func TestMatchNodeCriteria_FailsClosedWithoutProjection(t *testing.T) {
 		{IPTypes: []string{"residential"}},
 		{PurityBands: []string{"clean"}},
 	} {
-		ok, reason := MatchNodeCriteria(criteria, entry, subLookupAlwaysEnabled, nil, nil, nil, admitNow)
+		ok, reason := MatchNodeCriteria(criteria, entry, subLookupAlwaysEnabled, nil, testutil.MeasuredQuality, nil, admitNow)
 		if ok {
 			t.Fatalf("criteria %+v admitted a node without an intel projection", criteria)
 		}

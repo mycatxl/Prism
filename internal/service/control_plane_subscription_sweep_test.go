@@ -18,9 +18,10 @@ func sweepTestSubscription(t *testing.T, cp *ControlPlaneService, nowNs int64, u
 	t.Helper()
 
 	sub, _ := alertTestSubscription(t, cp, nowNs, username, 1<<30)
+	expected := sub
 	sub.Status = model.SubscriptionStatusActive
 	sub.ExpiresAtNs = expiresAtNs
-	if err := cp.Engine.UpdateUserSubscriptionTerms(sub); err != nil {
+	if err := cp.Engine.UpdateUserSubscriptionTerms(sub, expected); err != nil {
 		t.Fatalf("UpdateUserSubscriptionTerms(%s): %v", sub.ID, err)
 	}
 	return sub

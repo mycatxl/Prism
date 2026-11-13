@@ -17,13 +17,10 @@ import (
 // publish() (and so RefreshJob) concurrently, so the slower writer could
 // overwrite the newer settlement with a status derived from a stale counter set.
 //
-// This one is a known, deliberately unfixed narrow window
-// (non-transactional read-modify-write, measured at 0.05%): the test is the anchor that
-// keeps the defect from getting worse, but it must not redden a normal test run.
-// The window is real, so a green 300-round run is a coin toss rather than a
-// property of the code - leaving it enabled would make CI flaky for a defect
-// this change set explicitly does not fix. It runs only when
-// PRISM_REFRESH_RACE_PROBE=1 is set, which is how the audit measured it:
+// RefreshJob now uses a guarded update and bounded retries. Deterministic
+// interleaving tests cover that contract; this longer stress probe remains
+// opt-in and does not prove the absence of races merely by passing 300 rounds.
+// Enable PRISM_REFRESH_RACE_PROBE=1 to run it explicitly:
 //
 //	PRISM_REFRESH_RACE_PROBE=1 go test -tags "$TAGS" \
 //	  -run TestConcurrentRefreshJobLosesUpdates -count=20 ./internal/intel/jobs/
@@ -34,7 +31,7 @@ func TestConcurrentRefreshJobLosesUpdates(t *testing.T) {
 	const rounds = 300
 	regressions := 0
 	if os.Getenv("PRISM_REFRESH_RACE_PROBE") == "" {
-		t.Skip("known unfixed RefreshJob race: set PRISM_REFRESH_RACE_PROBE=1 to measure it")
+		t.Skip("opt-in RefreshJob stress probe: set PRISM_REFRESH_RACE_PROBE=1")
 	}
 	var lastSeen store.Job
 

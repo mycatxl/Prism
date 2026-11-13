@@ -57,6 +57,21 @@ func TestHTTPGetViaOutbound_AllowNon200(t *testing.T) {
 	}
 }
 
+func TestRound3OutboundProbeRequiresSuccessfulStatus(t *testing.T) {
+	for _, status := range []int{200, 204, 429, 502, 503} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+		outbound, err := (&testutil.StubOutboundBuilder{}).Build(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = HTTPGetViaOutbound(context.Background(), outbound, server.URL, OutboundHTTPOptions{RequireStatusSuccess: true, MaxBodyBytes: ProbeResponseMaxBytes})
+		server.Close()
+		if (err == nil) != (status < 300) {
+			t.Fatalf("status=%d err=%v", status, err)
+		}
+	}
+}
+
 func TestConnCloseHook_CloseIsIdempotentAndConcurrentSafe(t *testing.T) {
 	client, server := net.Pipe()
 	defer server.Close()

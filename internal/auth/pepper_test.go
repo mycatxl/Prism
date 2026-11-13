@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -64,6 +65,12 @@ func TestNewPepper_RejectsEmpty(t *testing.T) {
 	}
 	if _, err := NewPepper([]byte{}); !errors.Is(err, ErrPepperMissing) {
 		t.Fatalf("got %v, want ErrPepperMissing", err)
+	}
+}
+
+func TestNewPepper_RejectsWeakManualValues(t *testing.T) {
+	if _, err := NewPepper([]byte("short")); err == nil {
+		t.Fatal("a short manually provisioned pepper was accepted")
 	}
 }
 
@@ -230,6 +237,22 @@ func TestLoadPepper_Missing(t *testing.T) {
 	}
 }
 
+func TestLoadPepper_RejectsWorldReadableFile(t *testing.T) {
+	t.Setenv(PepperEnvVar, "")
+	dir := t.TempDir()
+	raw, err := GeneratePepper()
+	if err != nil {
+		t.Fatalf("GeneratePepper: %v", err)
+	}
+	path := filepath.Join(dir, PepperFileName)
+	if err := os.WriteFile(path, []byte(encodePepper(raw)), 0o644); err != nil {
+		t.Fatalf("write pepper: %v", err)
+	}
+	if _, err := LoadPepper(dir); err == nil {
+		t.Fatal("a group/world-readable pepper file was accepted")
+	}
+}
+
 // The environment variable wins over the file, which is how an operator
 // supplies the pepper from a secret manager instead of the disk.
 func TestLoadPepper_EnvOverridesFile(t *testing.T) {
@@ -239,12 +262,13 @@ func TestLoadPepper_EnvOverridesFile(t *testing.T) {
 		t.Fatalf("WritePepperFile: %v", err)
 	}
 
-	t.Setenv(PepperEnvVar, "from-the-environment")
+	envRaw := strings.Repeat("e", pepperLength)
+	t.Setenv(PepperEnvVar, envRaw)
 	loaded, err := LoadPepper(dir)
 	if err != nil {
 		t.Fatalf("LoadPepper: %v", err)
 	}
-	if !bytes.Equal(loaded.Raw(), []byte("from-the-environment")) {
+	if !bytes.Equal(loaded.Raw(), []byte(envRaw)) {
 		t.Errorf("the environment must win over the file, got %q", loaded.Raw())
 	}
 }
@@ -253,7 +277,8 @@ func TestLoadPepper_EnvOverridesFile(t *testing.T) {
 // supply one without base64 encoding it.
 func TestLoadPepper_PlainTextFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, PepperFileName), []byte("plain-text-pepper\n"), 0o600); err != nil {
+	plainRaw := strings.Repeat("p", pepperLength)
+	if err := os.WriteFile(filepath.Join(dir, PepperFileName), []byte(plainRaw+"\n"), 0o600); err != nil {
 		t.Fatalf("write pepper: %v", err)
 	}
 
@@ -261,7 +286,7 @@ func TestLoadPepper_PlainTextFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadPepper: %v", err)
 	}
-	if !bytes.Equal(loaded.Raw(), []byte("plain-text-pepper")) {
+	if !bytes.Equal(loaded.Raw(), []byte(plainRaw)) {
 		t.Errorf("plain text pepper: got %q", loaded.Raw())
 	}
 }

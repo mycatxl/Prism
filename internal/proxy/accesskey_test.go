@@ -117,6 +117,40 @@ func TestAccessKeyVerifier_RejectsEverythingElse(t *testing.T) {
 	}
 }
 
+// Unknown IDs and wrong secrets both perform one HMAC comparison. This is a
+// coarse timing regression check: returning before the HMAC makes the two paths
+// differ by far more than the deliberately loose scheduler-noise allowance.
+func TestAccessKeyVerifier_UnknownAndWrongSecretHaveComparableTiming(t *testing.T) {
+	fx := newKeyFixture(t)
+	verifier := NewAccessKeyVerifier(fx.store, fx.pepper)
+	unknownID, wrongSecret, err := keys.GenerateCredential()
+	if err != nil {
+		t.Fatalf("GenerateCredential: %v", err)
+	}
+	unknown := keys.FormatCredential(unknownID, fx.secret)
+	wrong := keys.FormatCredential(fx.keyID, wrongSecret)
+
+	measure := func(credential string) time.Duration {
+		const iterations = 5000
+		start := time.Now()
+		for i := 0; i < iterations; i++ {
+			_ = verifier.VerifyCredential(credential, testClientAddr)
+		}
+		return time.Since(start)
+	}
+	_ = measure(unknown)
+	_ = measure(wrong)
+	unknownTime := measure(unknown)
+	wrongTime := measure(wrong)
+	slower, faster := unknownTime, wrongTime
+	if faster > slower {
+		slower, faster = faster, slower
+	}
+	if slower > 4*faster {
+		t.Fatalf("unknown ID took %s and wrong secret took %s", unknownTime, wrongTime)
+	}
+}
+
 // A key that authenticates but is not a data-plane key must not open the data
 // plane, and vice versa: the scopes are what keep the console credential and
 // the proxy credential from substituting for one another.
@@ -144,6 +178,62 @@ func TestAccessKeyVerifier_RejectsTheWrongScope(t *testing.T) {
 	verifier := NewAccessKeyVerifier(fx.store, fx.pepper)
 	if state := verifier.VerifyCredential(keys.FormatCredential(adminKeyID, adminSecret), testClientAddr); state != nil {
 		t.Fatalf("an admin-scoped key was accepted on the data plane")
+	}
+}
+
+// Management authentication uses the same key store as the data plane, but a
+// verifier is explicitly scoped so an admin key is accepted only by the former.
+func TestAccessKeyVerifierForScopeAcceptsAnAdminCredential(t *testing.T) {
+	fx := newKeyFixture(t)
+	adminKeyID, adminSecret, err := keys.GenerateCredential()
+	if err != nil {
+		t.Fatalf("keys.GenerateCredential: %v", err)
+	}
+	if err := fx.store.Load(
+		[]model.AccessKey{{
+			ID:         adminKeyID,
+			UserID:     "u-admin",
+			SecretHash: fx.pepper.HashSecret(adminSecret),
+			Scope:      model.KeyScopeAdmin,
+			Status:     model.KeyStatusActive,
+		}},
+		map[string]model.User{"u-admin": {ID: "u-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive}},
+		nil,
+	); err != nil {
+		t.Fatalf("store.Load: %v", err)
+	}
+	credential := keys.FormatCredential(adminKeyID, adminSecret)
+	if got := NewAccessKeyVerifier(fx.store, fx.pepper).VerifyCredential(credential, testClientAddr); got != nil {
+		t.Fatalf("proxy-scoped verifier accepted an admin key: %+v", got)
+	}
+	adminVerifier := NewAccessKeyVerifierForScope(fx.store, fx.pepper, model.KeyScopeAdmin)
+	state := adminVerifier.VerifyCredential(credential, testClientAddr)
+	if state == nil || state.KeyID != adminKeyID {
+		t.Fatalf("admin-scoped verifier rejected the admin key: %+v", state)
+	}
+}
+
+func TestAccessKeyVerifierForScope_AdminKeyIgnoresProxyPlanState(t *testing.T) {
+	pepper := testPepper(t)
+	keyID, secret, err := keys.GenerateCredential()
+	if err != nil {
+		t.Fatalf("GenerateCredential: %v", err)
+	}
+	store := keys.NewStore()
+	if err := store.Load([]model.AccessKey{{
+		ID: keyID, UserID: "u-admin", SecretHash: pepper.HashSecret(secret),
+		Scope: model.KeyScopeAdmin, Status: model.KeyStatusActive,
+	}}, map[string]model.User{
+		"u-admin": {ID: "u-admin", Role: model.UserRoleAdmin, Status: model.UserStatusActive},
+	}, map[string]keys.PlanSnapshot{
+		"u-admin": {Status: model.SubscriptionStatusSuspended, ExpiresAtNs: -1},
+	}); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	credential := keys.FormatCredential(keyID, secret)
+	state := NewAccessKeyVerifierForScope(store, pepper, model.KeyScopeAdmin).VerifyCredential(credential, testClientAddr)
+	if state == nil {
+		t.Fatal("admin key was disabled by proxy plan state")
 	}
 }
 

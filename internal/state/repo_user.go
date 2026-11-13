@@ -361,17 +361,55 @@ func (r *StateRepo) userNotFoundIfAbsent(id string) error {
 // concurrent status or role change silently, which is the one outcome a "my
 // password was leaked, change it" flow must not have.
 func (r *StateRepo) UpdateUserPassword(id, passwordHash string, atNs int64) error {
-	return r.updateUserColumn(id, "password_hash", passwordHash, atNs)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec("UPDATE users SET password_hash = ?, updated_at_ns = ? WHERE id = ?", passwordHash, atNs, id)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id = ?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // UpdateUserStatus writes the status of one account and nothing else.
 func (r *StateRepo) UpdateUserStatus(id, status string, atNs int64) error {
-	return r.updateUserColumn(id, "status", status, atNs)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec("UPDATE users SET status=?, updated_at_ns=? WHERE id=?", status, atNs, id)
+	if err != nil {
+		return err
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // UpdateUserRole writes the role of one account and nothing else.
 func (r *StateRepo) UpdateUserRole(id, role string, atNs int64) error {
-	return r.updateUserColumn(id, "role", role, atNs)
+	return r.UpdateUserSecurityPatch(id, nil, &role, nil, atNs)
 }
 
 // UpdateUserTOTPSecret writes the sealed second factor of one account and
@@ -496,27 +534,26 @@ func (r *StateRepo) UpsertUserSubscription(s model.UserSubscription) error {
 // and leaves the usage counters alone: period_used_bytes and period_start_ns
 // are never written here.
 //
-// The reason this method exists is that the counter has a concurrent writer.
-// The flush worker adds to period_used_bytes with an UPDATE of its own
-// (AddSubscriptionUsedBytes), while an operator's PATCH reads the row, changes
-// a term and writes it back. UpsertUserSubscription writes every column, so
-// that write-back carries the counter as it looked when the operator's read
-// happened: any increment in between is overwritten and the bytes it counted
-// are given away for free, permanently, because nothing recomputes the counter
-// from the usage tables. Writing only the terms removes the race: the terms are
-// not mutated behind the operator's back, only the counter is.
-//
-// The caller passes the complete terms (normally the row it read, with the
-// fields it is changing applied). A missing row is ErrNotFound, and a set of
-// terms that would leave a second active subscription behind is ErrConflict.
-//
-// Terms that change nothing are a write like any other: the console replaces a
-// status with the status it already holds whenever it PATCHes {"status":"active"}
-// on an active row, and that is a legal request. So zero rows affected is not
-// read as "no such row" on its own - the row is checked, which is also what the
-// other writers in this file do (ResetSubscriptionPeriod, RevokeUserSubscription,
-// userNotFoundIfAbsent).
-func (r *StateRepo) UpdateUserSubscriptionTerms(s model.UserSubscription) error {
+// The caller supplies the original terms as well as the edited row. Compare
+// every term atomically so a stale expiry edit cannot undo a revocation, a
+// renewal or an emergency plan stop. Usage and auto-renew have independent
+// writers and are deliberately neither compared nor overwritten here.
+// SQLite counts matched rows even for unchanged values. Zero matches means
+// the row disappeared (ErrNotFound) or its terms changed (ErrConflict).
+func (r *StateRepo) UpdateUserSubscriptionTerms(s, expected model.UserSubscription) error {
+	return r.updateUserSubscriptionTerms(s, expected, false)
+}
+
+// ReactivateUserSubscription replaces another active subscription atomically
+// with the target's terms CAS. Ordinary terms updates retain conflict semantics.
+func (r *StateRepo) ReactivateUserSubscription(s, expected model.UserSubscription) error {
+	if s.Status != model.SubscriptionStatusActive || expected.Status == model.SubscriptionStatusActive {
+		return fmt.Errorf("%w: invalid reactivation", ErrConflict)
+	}
+	return r.updateUserSubscriptionTerms(s, expected, true)
+}
+
+func (r *StateRepo) updateUserSubscriptionTerms(s, expected model.UserSubscription, replaceActive bool) error {
 	snapshot := strings.TrimSpace(s.PlanSnapshotJSON)
 	if snapshot == "" {
 		snapshot = "{}"
@@ -528,19 +565,32 @@ func (r *StateRepo) UpdateUserSubscriptionTerms(s model.UserSubscription) error 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	result, err := r.db.Exec(`
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if replaceActive {
+		// Replacement and the target's compare-and-swap are one transaction.
+		// A stale activation must not end the subscription that won the race.
+		if _, err := tx.Exec(`UPDATE user_subscriptions SET status = ? WHERE user_id = ? AND id != ? AND status = ?`,
+			model.SubscriptionStatusExpired, s.UserID, s.ID, model.SubscriptionStatusActive); err != nil {
+			return err
+		}
+	}
+	result, err := tx.Exec(`
 		UPDATE user_subscriptions SET
 			user_id            = ?,
 			plan_id            = ?,
 			plan_snapshot_json = ?,
 			starts_at_ns       = ?,
 			expires_at_ns      = ?,
-			auto_renew         = ?,
-			period_index       = ?,
 			status             = ?
-		WHERE id = ?
+		WHERE id = ? AND period_index = ? AND user_id = ? AND COALESCE(plan_id, '') = ?
+		  AND plan_snapshot_json = ? AND starts_at_ns = ? AND expires_at_ns = ? AND status = ?
 	`, s.UserID, nullableString(s.PlanID), snapshot, s.StartsAtNs,
-		s.ExpiresAtNs, s.AutoRenew, s.PeriodIndex, s.Status, s.ID)
+		s.ExpiresAtNs, s.Status, s.ID, expected.PeriodIndex, expected.UserID, expected.PlanID,
+		expected.PlanSnapshotJSON, expected.StartsAtNs, expected.ExpiresAtNs, expected.Status)
 	if isSQLiteUniqueConstraint(err) {
 		return fmt.Errorf("%w: the user already has an active subscription", ErrConflict)
 	}
@@ -548,20 +598,17 @@ func (r *StateRepo) UpdateUserSubscriptionTerms(s model.UserSubscription) error 
 		return err
 	}
 	if n, _ := result.RowsAffected(); n == 0 {
-		// Zero rows: the row is gone, or the write stored the terms it
-		// already held. The console's PATCH {"status":"active"} on an
-		// active row is exactly that second case and it is a legal
-		// request, so the two are told apart rather than assumed, the way
-		// ResetSubscriptionPeriod and RevokeUserSubscription do it.
-		exists, checkErr := r.subscriptionRowExists(s.ID)
+		var exists int
+		checkErr := tx.QueryRow("SELECT COUNT(1) FROM user_subscriptions WHERE id = ?", s.ID).Scan(&exists)
 		if checkErr != nil {
 			return fmt.Errorf("check subscription %s: %w", s.ID, checkErr)
 		}
-		if !exists {
+		if exists == 0 {
 			return ErrNotFound
 		}
+		return fmt.Errorf("%w: subscription changed while it was being edited", ErrConflict)
 	}
-	return nil
+	return tx.Commit()
 }
 
 // subscriptionRowExists reports whether a subscription row is still there. The
@@ -649,7 +696,7 @@ func (r *StateRepo) AddSubscriptionUsedBytes(id string, delta int64) error {
 
 	result, err := r.db.Exec(`
 		UPDATE user_subscriptions
-		SET period_used_bytes = MAX(0, period_used_bytes + ?)
+		SET period_used_bytes = MAX(0, period_used_bytes + MIN(?, 9223372036854775807 - period_used_bytes))
 		WHERE id = ?
 	`, delta, id)
 	if err != nil {
@@ -660,6 +707,42 @@ func (r *StateRepo) AddSubscriptionUsedBytes(id string, delta int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// AddSubscriptionUsedBytesInPeriod charges a flush only when the observed
+// period is still current. The period predicate and increment are one SQL
+// statement under the repository write lock, so a rollover cannot move the row
+// between the check and the write.
+func (r *StateRepo) AddSubscriptionUsedBytesInPeriod(id string, periodStartNs, delta int64) (bool, error) {
+	if delta <= 0 {
+		return false, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var currentUsed int64
+	if err := r.db.QueryRow("SELECT period_used_bytes FROM user_subscriptions WHERE id = ? AND period_start_ns = ? AND status = ?",
+		id, periodStartNs, model.SubscriptionStatusActive).Scan(&currentUsed); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if _, err := checkedBalanceAfter(currentUsed, delta); err != nil {
+		return false, err
+	}
+	result, err := r.db.Exec(`
+		UPDATE user_subscriptions
+		SET period_used_bytes = MAX(0, period_used_bytes + ?)
+		WHERE id = ? AND period_start_ns = ? AND status = ?
+	`, delta, id, periodStartNs, model.SubscriptionStatusActive)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 // ResetSubscriptionPeriod starts a new usage period for a subscription.
@@ -673,19 +756,28 @@ func (r *StateRepo) AddSubscriptionUsedBytes(id string, delta int64) error {
 // It reports ErrNotFound when the subscription does not exist, and nil when the
 // period had already moved on: a lost race is not a failure.
 func (r *StateRepo) ResetSubscriptionPeriod(id string, fromPeriodStartNs, toPeriodStartNs int64) error {
+	_, err := r.ResetSubscriptionPeriodIfCurrent(id, fromPeriodStartNs, toPeriodStartNs)
+	return err
+}
+
+// ResetSubscriptionPeriodIfCurrent reports whether this call moved the row.
+// A false result is the expected outcome when another worker won the guarded
+// period transition; callers must not clear a freshly started period's in
+// memory usage in that case.
+func (r *StateRepo) ResetSubscriptionPeriodIfCurrent(id string, fromPeriodStartNs, toPeriodStartNs int64) (bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	result, err := r.db.Exec(`
 		UPDATE user_subscriptions
 		SET period_start_ns = ?, period_used_bytes = 0
-		WHERE id = ? AND period_start_ns = ?
-	`, toPeriodStartNs, id, fromPeriodStartNs)
+		WHERE id = ? AND period_start_ns = ? AND status = ?
+	`, toPeriodStartNs, id, fromPeriodStartNs, model.SubscriptionStatusActive)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if n, _ := result.RowsAffected(); n > 0 {
-		return nil
+		return true, nil
 	}
 
 	// Nothing was updated. Either the subscription is gone, or its period moved
@@ -693,12 +785,12 @@ func (r *StateRepo) ResetSubscriptionPeriod(id string, fromPeriodStartNs, toPeri
 	// log a genuine missing row without logging every lost race.
 	exists, err := r.subscriptionRowExists(id)
 	if err != nil {
-		return fmt.Errorf("check subscription %s: %w", id, err)
+		return false, fmt.Errorf("check subscription %s: %w", id, err)
 	}
 	if !exists {
-		return ErrNotFound
+		return false, ErrNotFound
 	}
-	return nil
+	return false, nil
 }
 
 // --- access_keys ---
@@ -882,16 +974,102 @@ func (r *StateRepo) UpsertUsageHourly(rows []model.UsageRow) error {
 		                          ingress_bytes, egress_bytes, requests, errors)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(key_id, platform_id, hour_ts_ns) DO UPDATE SET
-			ingress_bytes = ingress_bytes + excluded.ingress_bytes,
-			egress_bytes  = egress_bytes  + excluded.egress_bytes,
-			requests      = requests      + excluded.requests,
-			errors        = errors        + excluded.errors
+			ingress_bytes = ingress_bytes + MIN(excluded.ingress_bytes, 9223372036854775807 - ingress_bytes),
+			egress_bytes  = egress_bytes + MIN(excluded.egress_bytes, 9223372036854775807 - egress_bytes),
+			requests      = requests + MIN(excluded.requests, 9223372036854775807 - requests),
+			errors        = errors + MIN(excluded.errors, 9223372036854775807 - errors)
 	`, rows)
+}
+
+// FlushUsageHourlyAndCharge commits the hourly usage rows and the guarded
+// subscription-period increments in one transaction. A failure cannot leave
+// durable hourly rows with the in-memory counters already drained while the
+// quota period remains undercharged.
+func (r *StateRepo) FlushUsageHourlyAndCharge(rows []model.UsageRow, charges []model.UsageCharge) (map[string]model.UsageChargeResult, error) {
+	if err := validateUsageRows(rows); err != nil {
+		return nil, err
+	}
+	results := make(map[string]model.UsageChargeResult, len(charges))
+	if len(rows) == 0 && len(charges) == 0 {
+		return results, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	tx, err := r.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin usage flush: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO usage_hourly (key_id, user_id, platform_id, hour_ts_ns,
+		                          ingress_bytes, egress_bytes, requests, errors)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(key_id, platform_id, hour_ts_ns) DO UPDATE SET
+			ingress_bytes = ingress_bytes + MIN(excluded.ingress_bytes, 9223372036854775807 - ingress_bytes),
+			egress_bytes  = egress_bytes + MIN(excluded.egress_bytes, 9223372036854775807 - egress_bytes),
+			requests      = requests + MIN(excluded.requests, 9223372036854775807 - requests),
+			errors        = errors + MIN(excluded.errors, 9223372036854775807 - errors)
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("prepare usage flush: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+	for _, row := range rows {
+		if _, err := stmt.Exec(row.KeyID, row.UserID, row.PlatformID, row.TSNs,
+			row.IngressBytes, row.EgressBytes, row.Requests, row.Errors); err != nil {
+			return nil, fmt.Errorf("write usage %s/%s: %w", row.KeyID, row.PlatformID, err)
+		}
+	}
+
+	for _, charge := range charges {
+		if charge.Bytes <= 0 {
+			return nil, fmt.Errorf("%w: usage charge must be positive", ErrConflict)
+		}
+		var currentUsed int64
+		if err := tx.QueryRow("SELECT period_used_bytes FROM user_subscriptions WHERE id = ? AND period_start_ns = ? AND status = ?",
+			charge.SubscriptionID, charge.PeriodStartNs, model.SubscriptionStatusActive).Scan(&currentUsed); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				results[charge.Key] = model.UsageChargeResult{Rolled: true}
+				continue
+			}
+			return nil, fmt.Errorf("read subscription usage %s: %w", charge.SubscriptionID, err)
+		}
+		if _, err := checkedBalanceAfter(currentUsed, charge.Bytes); err != nil {
+			return nil, fmt.Errorf("charge subscription %s: %w", charge.SubscriptionID, err)
+		}
+		result, err := tx.Exec(`
+			UPDATE user_subscriptions
+			SET period_used_bytes = MAX(0, period_used_bytes + ?)
+			WHERE id = ? AND period_start_ns = ? AND status = ?
+		`, charge.Bytes, charge.SubscriptionID, charge.PeriodStartNs, model.SubscriptionStatusActive)
+		if err != nil {
+			return nil, fmt.Errorf("charge subscription %s: %w", charge.SubscriptionID, err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return nil, fmt.Errorf("read charge result for %s: %w", charge.SubscriptionID, err)
+		}
+		if n > 0 {
+			results[charge.Key] = model.UsageChargeResult{Charged: true}
+		} else {
+			results[charge.Key] = model.UsageChargeResult{Rolled: true}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit usage flush: %w", err)
+	}
+	return results, nil
 }
 
 // upsertUsage runs one batch insert in a single transaction. An empty batch is
 // a no-op rather than an error, because the flush path calls it every tick.
 func (r *StateRepo) upsertUsage(query string, rows []model.UsageRow) error {
+	if err := validateUsageRows(rows); err != nil {
+		return err
+	}
 	if len(rows) == 0 {
 		return nil
 	}
@@ -953,15 +1131,15 @@ func (r *StateRepo) SummarizeUsageHourlyBefore(cutoffNs int64) (int64, error) {
 		                         ingress_bytes, egress_bytes, requests, errors)
 		SELECT key_id, user_id, platform_id,
 		       (hour_ts_ns / 86400000000000) * 86400000000000 AS day_ts_ns,
-		       SUM(ingress_bytes), SUM(egress_bytes), SUM(requests), SUM(errors)
+		       prism_usage_sum(ingress_bytes), prism_usage_sum(egress_bytes), prism_usage_sum(requests), prism_usage_sum(errors)
 		FROM usage_hourly
 		WHERE hour_ts_ns < ?
 		GROUP BY key_id, user_id, platform_id, day_ts_ns
 		ON CONFLICT(key_id, platform_id, day_ts_ns) DO UPDATE SET
-			ingress_bytes = ingress_bytes + excluded.ingress_bytes,
-			egress_bytes  = egress_bytes  + excluded.egress_bytes,
-			requests      = requests      + excluded.requests,
-			errors        = errors        + excluded.errors
+			ingress_bytes = ingress_bytes + MIN(excluded.ingress_bytes, 9223372036854775807 - ingress_bytes),
+			egress_bytes  = egress_bytes + MIN(excluded.egress_bytes, 9223372036854775807 - egress_bytes),
+			requests      = requests + MIN(excluded.requests, 9223372036854775807 - requests),
+			errors        = errors + MIN(excluded.errors, 9223372036854775807 - errors)
 	`, cutoffNs); err != nil {
 		return 0, fmt.Errorf("write summarized usage: %w", err)
 	}
@@ -1047,7 +1225,7 @@ func (r *StateRepo) DeleteUsageDailyBefore(cutoffNs int64) (int64, error) {
 func (r *StateRepo) ListUsageByUser(userID string, fromNs, toNs int64) ([]model.UsageRow, error) {
 	rows, err := r.db.Query(`
 		SELECT key_id, user_id, platform_id, day_ts_ns,
-		       SUM(ingress_bytes), SUM(egress_bytes), SUM(requests), SUM(errors)
+		       prism_usage_sum(ingress_bytes), prism_usage_sum(egress_bytes), prism_usage_sum(requests), prism_usage_sum(errors)
 		FROM (
 			SELECT key_id, user_id, platform_id, day_ts_ns,
 			       ingress_bytes, egress_bytes, requests, errors
@@ -1122,7 +1300,9 @@ func (r *StateRepo) DeleteSession(idHash string) error {
 	}
 	n, _ := result.RowsAffected()
 	if n == 0 {
-		return ErrNotFound
+		// Logout is intentionally idempotent: a stale cookie may name a
+		// session that already expired or was revoked by another request.
+		return nil
 	}
 	return nil
 }
@@ -1300,7 +1480,7 @@ func (r *StateRepo) ListActiveUserSubscriptions() ([]model.UserSubscription, err
 func (r *StateRepo) ListUsageDailyRange(fromNs, toNs int64) ([]model.UsageRow, error) {
 	rows, err := r.db.Query(`
 		SELECT key_id, user_id, platform_id, day_ts_ns,
-		       SUM(ingress_bytes), SUM(egress_bytes), SUM(requests), SUM(errors)
+		       prism_usage_sum(ingress_bytes), prism_usage_sum(egress_bytes), prism_usage_sum(requests), prism_usage_sum(errors)
 		FROM (
 			SELECT key_id, user_id, platform_id, day_ts_ns,
 			       ingress_bytes, egress_bytes, requests, errors

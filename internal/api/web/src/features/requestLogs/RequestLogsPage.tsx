@@ -34,6 +34,7 @@ import { cn } from "../../lib/cn";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { formatDateTime } from "../../lib/time";
+import { nodeTagLabel } from "../nodes/detail/nodeMeta";
 import { getSystemConfig, SYSTEM_CONFIG_QUERY_KEY, SYSTEM_CONFIG_STALE_MS } from "../systemConfig/api";
 import { getRequestLog, getRequestLogPayloads, listRequestLogs } from "./api";
 import type { RequestLogItem, RequestLogListFilters } from "./types";
@@ -874,7 +875,7 @@ export function RequestLogsPage() {
 
           {showList && !isPageTransitioning && !logsQuery.isError && !visibleLogs.length ? (
             <div>
-              <EmptyState title={t("没有匹配日志")} />
+              <EmptyState title={t("没有匹配日志")} action={<ControlButton variant="secondary" size="sm" onPress={resetFilters}>{t("重置")}</ControlButton>} />
             </div>
           ) : null}
 
@@ -938,17 +939,17 @@ export function RequestLogsPage() {
                         <ControlTableNumericCell className="text-xs text-ink-soft">
                           {formatBytes((log.ingress_bytes || 0) + (log.egress_bytes || 0))}
                         </ControlTableNumericCell>
-                        <ControlTableClipCell className="text-xs" title={`${log.node_tag || "-"} · ${egress}`}>
-                          {log.node_tag ? (
+                        <ControlTableClipCell className="text-xs" title={`${nodeTagLabel(log.node_tag) || "-"} · ${egress}`}>
+                          {nodeTagLabel(log.node_tag) ? (
                             <Link
-                              to={`${opsPaths.nodes}?tag_keyword=${encodeURIComponent(log.node_tag)}`}
-                              title={t("在节点池搜索 {{tag}}", { tag: log.node_tag })}
+                              to={`${opsPaths.nodes}?tag_keyword=${encodeURIComponent(nodeTagLabel(log.node_tag))}`}
+                              title={t("在节点池搜索 {{tag}}", { tag: nodeTagLabel(log.node_tag) })}
                               className="text-signal-deep hover:underline"
                               onPointerDown={(event) => event.stopPropagation()}
                               onKeyDown={(event) => event.stopPropagation()}
                               onClick={(event) => event.stopPropagation()}
                             >
-                              {log.node_tag}
+                              {nodeTagLabel(log.node_tag)}
                             </Link>
                           ) : (
                             <span className="text-ink-faint">-</span>
@@ -1110,7 +1111,7 @@ export function RequestLogsPage() {
                   </div>
                 </StatCell>
                 <StatCell label={t("节点")}>
-                  <div className="text-xs">{detailLog.node_tag || "-"}</div>
+                  <div className="text-xs">{nodeTagLabel(detailLog.node_tag) || "-"}</div>
                   <div className="readout mt-0.5 text-2xs break-all text-ink-faint">{detailLog.node_hash || "-"}</div>
                 </StatCell>
               </div>

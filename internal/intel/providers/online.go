@@ -631,19 +631,13 @@ func DecodeIPQS(body []byte, ip netip.Addr, now time.Time, ttl time.Duration) (*
 		CountryCode: boundedText(payload.CountryCode, 8), City: boundedText(payload.City, 120),
 		Region: boundedText(payload.Region, 120), FraudScore: payload.FraudScore,
 		IsMobile: payload.Mobile, Signals: signals, Grade: quality.RiskGrade(payload.FraudScore, signals),
-		SourceConfidence: payload.FraudScore, ObservedAt: now, ValidUntil: now.Add(ttl),
+		ObservedAt: now, ValidUntil: now.Add(ttl),
 	}
 	if payload.ASN != nil {
 		evidence.ASNNumber = *payload.ASN
 		evidence.ASN = "AS" + strconv.Itoa(*payload.ASN)
 	}
-	// recent_abuse is the vendor's short-window reputation flag; it is surfaced
-	// as a signal the penalty table understands.
-	if payload.RecentAbuse != nil && *payload.RecentAbuse {
-		yes := true
-		evidence.Signals.Compromised = nil
-		evidence.Signals.Anonymous = &yes
-	}
+	evidence.RecentAbuse = payload.RecentAbuse
 	if ipType == "conflicting" {
 		evidence.Grade = "unknown"
 	}
@@ -812,7 +806,6 @@ func DecodeIPAPIISAs(body []byte, ip netip.Addr, now time.Time, ttl time.Duratio
 	if err != nil {
 		return invalid()
 	}
-	yes := true
 	if _, err := quality.PublicIP(returnedIP); err != nil || returnedIP.Unmap() != ip.Unmap() {
 		return invalid()
 	}
@@ -825,17 +818,17 @@ func DecodeIPAPIISAs(body []byte, ip netip.Addr, now time.Time, ttl time.Duratio
 		Proxy: payload.IsProxy, VPN: payload.IsVPN, Tor: payload.IsTor, Hosting: payload.IsDatacenter,
 		Scraper: payload.IsCrawler,
 	}
-	if payload.IsAbuser != nil && *payload.IsAbuser {
-		signals.Compromised = &yes
-	}
+	signals.Compromised = payload.IsAbuser
 	ipType := "unknown"
 	switch {
+	case payload.IsMobile != nil && *payload.IsMobile && ((payload.IsDatacenter != nil && *payload.IsDatacenter) || strings.EqualFold(payload.Company.Type, "hosting")):
+		ipType = "conflicting"
+	case payload.IsMobile != nil && *payload.IsMobile:
+		ipType = "mobile"
 	case payload.IsDatacenter != nil && *payload.IsDatacenter:
 		ipType = "datacenter"
 	case strings.EqualFold(payload.Company.Type, "hosting"):
 		ipType = "datacenter"
-	case strings.EqualFold(payload.Company.Type, "isp"):
-		ipType = "residential"
 	case strings.EqualFold(payload.Company.Type, "business"):
 		ipType = "business"
 	}

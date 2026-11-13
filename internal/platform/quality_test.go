@@ -77,6 +77,7 @@ func TestPlatform_EvaluateNode_QualityPolicy_IPTypes(t *testing.T) {
 	qualityLookup := func(addr netip.Addr) quality.Summary {
 		return quality.Summary{
 			Assessment: &quality.Assessment{
+				PurityScore: intPtr(90),
 				State:       "valid",
 				NetworkType: "residential",
 			},
@@ -96,6 +97,7 @@ func TestPlatform_EvaluateNode_QualityPolicy_IPTypes(t *testing.T) {
 	qualityLookup2 := func(addr netip.Addr) quality.Summary {
 		return quality.Summary{
 			Assessment: &quality.Assessment{
+				PurityScore: intPtr(90),
 				State:       "valid",
 				NetworkType: "datacenter",
 			},
@@ -124,8 +126,9 @@ func TestPlatform_EvaluateNode_QualityPolicy_ExcludeHighRisk(t *testing.T) {
 	qualityLookup := func(addr netip.Addr) quality.Summary {
 		return quality.Summary{
 			Assessment: &quality.Assessment{
-				State:   "valid",
-				Verdict: "high_risk",
+				PurityScore: intPtr(90),
+				State:       "valid",
+				Verdict:     "high_risk",
 			},
 		}
 	}
@@ -143,8 +146,9 @@ func TestPlatform_EvaluateNode_QualityPolicy_ExcludeHighRisk(t *testing.T) {
 	qualityLookup2 := func(addr netip.Addr) quality.Summary {
 		return quality.Summary{
 			Assessment: &quality.Assessment{
-				State:   "valid",
-				Verdict: "clean",
+				PurityScore: intPtr(90),
+				State:       "valid",
+				Verdict:     "clean",
 			},
 		}
 	}
@@ -171,8 +175,9 @@ func TestPlatform_EvaluateNode_QualityPolicy_ExcludeTor(t *testing.T) {
 	qualityLookup := func(addr netip.Addr) quality.Summary {
 		return quality.Summary{
 			Assessment: &quality.Assessment{
-				State:    "valid",
-				TorRoles: []string{"exit"},
+				PurityScore: intPtr(90),
+				State:       "valid",
+				TorRoles:    []string{"exit"},
 			},
 		}
 	}
@@ -190,8 +195,9 @@ func TestPlatform_EvaluateNode_QualityPolicy_ExcludeTor(t *testing.T) {
 	qualityLookup2 := func(addr netip.Addr) quality.Summary {
 		return quality.Summary{
 			Assessment: &quality.Assessment{
-				State:    "valid",
-				TorRoles: []string{},
+				PurityScore: intPtr(90),
+				State:       "valid",
+				TorRoles:    []string{},
 			},
 		}
 	}
@@ -256,7 +262,7 @@ func TestPlatform_EvaluateNode_QualityPolicy_NoAssessment(t *testing.T) {
 		t.Fatal("node without assessment should not be routable when UnknownAction=exclude")
 	}
 
-	// UnknownAction=allow should pass.
+	// UnknownAction cannot waive measurement.
 	policy2 := QualityPolicy{
 		MinPurity:     &minScore,
 		UnknownAction: "allow",
@@ -267,8 +273,8 @@ func TestPlatform_EvaluateNode_QualityPolicy_NoAssessment(t *testing.T) {
 		fn(h, entry)
 	}, alwaysLookup, usGeoLookup, qualityLookup)
 
-	if p2.View().Size() != 1 {
-		t.Fatal("node without assessment should be routable when UnknownAction=allow")
+	if p2.View().Size() != 0 {
+		t.Fatal("node without assessment bypassed the measurement floor")
 	}
 }
 

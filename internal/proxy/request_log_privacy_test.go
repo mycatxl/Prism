@@ -37,6 +37,36 @@ func TestRequestLogTargetURLPrivacy(t *testing.T) {
 	}
 }
 
+func TestSanitizeLogPayloadRedactsCredentialMaterial(t *testing.T) {
+	accessKey := "pk_" + strings.Repeat("a", 32) + "_" + strings.Repeat("b", 64)
+	payload := []byte(`{"password":"plain-password","nested":{"authorization":"Bearer bearer-token","pepper":"plain-pepper","note":"keep-me"},"value":"` + accessKey + `"}`)
+	sanitized := string(sanitizeLogPayload(payload))
+	if sanitized != redactedLogValue {
+		t.Fatalf("captured body = %q, want complete redaction", sanitized)
+	}
+
+	plain := string(sanitizeLogPayload([]byte("password=secret&note=ok Authorization: Bearer another-token")))
+	if plain != redactedLogValue {
+		t.Fatalf("plain body = %q, want complete redaction", plain)
+	}
+}
+
+func TestSanitizeRequestLogEntryRedactsRawSensitiveHeaders(t *testing.T) {
+	entry := SanitizeRequestLogEntry(RequestLogEntry{
+		ReqHeaders:  []byte("Authorization: Basic dXNlcjpwYXNz\r\nCookie: session=secret\r\nX-Safe: keep\r\n"),
+		RespHeaders: []byte("Set-Cookie: token=secret\r\nLocation: https://user:pass@example.test/next?q=secret\r\n"),
+	})
+	rendered := string(entry.ReqHeaders) + string(entry.RespHeaders)
+	for _, secret := range []string{"dXNlcjpwYXNz", "session=secret", "token=secret", "user:pass", "q=secret"} {
+		if strings.Contains(rendered, secret) {
+			t.Fatalf("sanitized headers still contain %q: %s", secret, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "X-Safe: keep") {
+		t.Fatalf("safe header was removed: %s", rendered)
+	}
+}
+
 func TestRequestLogHeaderPrivacyBeforeTruncation(t *testing.T) {
 	header := http.Header{
 		"authorization":       {"Bearer authorization-secret"}, // Also cover non-canonical input.
@@ -90,8 +120,8 @@ func TestRequestLogUpstreamErrorURLPrivacy(t *testing.T) {
 			t.Fatalf("redaction lost error classification: %+v", detail)
 		}
 	}
-	if got := summarizeUpstreamError(errors.New("ordinary diagnostic")).Message; got != "ordinary diagnostic" {
-		t.Fatalf("ordinary diagnostic lost: %q", got)
+	if got := summarizeUpstreamError(errors.New("ordinary diagnostic")).Message; got != "network error" {
+		t.Fatalf("untrusted diagnostic must be classified: %q", got)
 	}
 }
 
@@ -124,7 +154,9 @@ func TestReverseProxy_E2ELogPrivacyPreservesForwardingAndLease(t *testing.T) {
 			host := strings.TrimPrefix(upstream.URL, "http://")
 			rp := NewReverseProxy(ReverseProxyConfig{
 				ProxyToken: "test-proxy-key", Router: env.router, Pool: env.pool, PlatformLookup: env.pool,
-				Matcher: BuildAccountMatcher([]model.AccountHeaderRule{{URLPrefix: "*", Headers: []string{"X-Custom-Identity"}}}),
+
+				AccessKeys: keyVerifierStub{credential: testCredential, state: workingKeyState()},
+				Matcher:    BuildAccountMatcher([]model.AccountHeaderRule{{URLPrefix: "*", Headers: []string{"X-Custom-Identity"}}}),
 				Events: ConfigAwareEventEmitter{
 					Base:                         emitter,
 					ReverseProxyLogDetailEnabled: func() bool { return true },
@@ -132,7 +164,7 @@ func TestReverseProxy_E2ELogPrivacyPreservesForwardingAndLease(t *testing.T) {
 			})
 			send := func(pathAccount, overrideAccount string) RequestLogEntry {
 				t.Helper()
-				req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/test-proxy-key/plat:%s/http/%s/items?token=private-query", pathAccount, host), nil)
+				req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/%s/plat:%s/http/%s/items?token=private-query", testCredential, pathAccount, host), nil)
 				req.Header.Set("Authorization", authorization)
 				req.Header.Set("X-Custom-Identity", account)
 				if overrideAccount != "" {
@@ -176,7 +208,7 @@ func TestReverseProxy_E2ELogPrivacyPreservesForwardingAndLease(t *testing.T) {
 			if !strings.HasPrefix(first.Account, "header-hmac-v1:") || first.Account != second.Account || strings.Contains(first.Account, account) {
 				t.Fatal("header accounts need a stable, non-plaintext log identity")
 			}
-			if env.router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: account}) == nil {
+			if env.router.ReadLease(model.LeaseKey{PlatformID: plat.ID, UserID: "u-meter", Account: account}) == nil {
 				t.Fatal("header account redaction changed the routing lease key")
 			}
 			if env.router.ReadLease(model.LeaseKey{PlatformID: plat.ID, Account: first.Account}) != nil {

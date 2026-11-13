@@ -18,6 +18,9 @@ type GeoIPStatus struct {
 // GetGeoIPStatus returns the current GeoIP status.
 func (s *ControlPlaneService) GetGeoIPStatus() GeoIPStatus {
 	status := GeoIPStatus{}
+	if s == nil || s.GeoIP == nil {
+		return status
+	}
 	if t := s.GeoIP.LastUpdated(); !t.IsZero() {
 		status.DBMtime = t.UTC().Format(time.RFC3339Nano)
 	}
@@ -33,12 +36,18 @@ func (s *ControlPlaneService) LookupIP(ipStr string) (string, error) {
 	if err != nil {
 		return "", invalidArg("ip: invalid IP address")
 	}
+	if s == nil || s.GeoIP == nil {
+		return "", internal("geoip is not configured", nil)
+	}
 	region := s.GeoIP.Lookup(ip)
 	return region, nil
 }
 
 // UpdateGeoIPNow triggers an immediate GeoIP database update (blocks).
 func (s *ControlPlaneService) UpdateGeoIPNow() error {
+	if s == nil || s.GeoIP == nil {
+		return internal("geoip is not configured", nil)
+	}
 	if err := s.GeoIP.UpdateNow(); err != nil {
 		return internal("geoip update failed", err)
 	}

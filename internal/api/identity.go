@@ -1,11 +1,14 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 
 	"prism/internal/auth"
 	"prism/internal/config"
@@ -23,6 +26,10 @@ type Actor struct {
 	UserID   string
 	Username string
 	Role     string
+	// KeyID is the nonsecret identifier of an admin automation key. It is empty
+	// for console sessions and lets the audit log distinguish two keys owned by
+	// the same account without ever storing the bearer credential.
+	KeyID string
 	// ViaSession is true when the caller authenticated with a console session
 	// cookie rather than an access key.
 	ViaSession bool
@@ -97,6 +104,9 @@ type AdminKeyIdentity struct {
 
 // Identity authenticates management requests.
 type Identity struct {
+	// Mutations reauthenticate under this lock after receiving their bounded
+	// bodies. A queued write cannot reuse authority revoked by an earlier write.
+	mutationMu sync.Mutex
 	// Sessions resolves console cookies. Nil disables cookie authentication.
 	Sessions SessionResolver
 	// AdminKeys resolves automation credentials. Nil disables that path.
@@ -187,7 +197,13 @@ func (i *Identity) Middleware(next http.Handler) http.Handler {
 		// A cookie rides along with whatever the browser is asked to send, so a
 		// state-changing request needs proof that it came from the console
 		// rather than from another site.
-		if actor.ViaSession && !isSafeMethod(r.Method) && !csrfMatches(r) {
+		// A tenant probing outside its permitted prefixes must reach the role
+		// gate first so every management route has the same 404 shape. Applying
+		// CSRF before that gate would turn write routes into a 403 oracle while
+		// read routes stayed hidden. Administrators and reachable self-service
+		// routes still require the double-submit token on every write.
+		csrfApplies := actor.IsAdmin() || isUserReachablePath(r.URL.Path)
+		if actor.ViaSession && csrfApplies && !isSafeMethod(r.Method) && !csrfMatches(r) {
 			i.logf("api: refused a state-changing request from user %s: the CSRF token did not match", actor.UserID)
 			WriteError(w, http.StatusForbidden, "CSRF_FAILED",
 				"the "+auth.CSRFHeaderName+" header must repeat the "+auth.CSRFCookieName+" cookie")
@@ -198,6 +214,28 @@ func (i *Identity) Middleware(next http.Handler) http.Handler {
 			WriteError(w, http.StatusForbidden, "TOTP_ENROLMENT_REQUIRED",
 				"an administrator must enrol a second factor before using the console")
 			return
+		}
+
+		if !isSafeMethod(r.Method) && csrfApplies {
+			if r.Body != nil {
+				body, ok := readRawBodyOrWriteInvalid(w, r)
+				if !ok {
+					return
+				}
+				r.Body = io.NopCloser(bytes.NewReader(body))
+			}
+			i.mutationMu.Lock()
+			defer i.mutationMu.Unlock()
+			fresh, ok := i.resolve(r)
+			if !ok || fresh.UserID != actor.UserID || fresh.KeyID != actor.KeyID || fresh.ViaSession != actor.ViaSession {
+				WriteError(w, http.StatusUnauthorized, "UNAUTHORIZED", "authentication required")
+				return
+			}
+			actor = fresh
+			if actor.MustEnrolTOTP && !isTOTPEnrolmentPath(r.URL.Path) {
+				WriteError(w, http.StatusForbidden, "TOTP_ENROLMENT_REQUIRED", "an administrator must enrol a second factor before using the console")
+				return
+			}
 		}
 
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
@@ -269,6 +307,7 @@ func (i *Identity) resolveAdminKey(r *http.Request) (Actor, bool) {
 	return Actor{
 		UserID:     identity.UserID,
 		Role:       identity.Role,
+		KeyID:      identity.KeyID,
 		ViaSession: false,
 	}, true
 }

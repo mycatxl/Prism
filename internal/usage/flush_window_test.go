@@ -195,3 +195,35 @@ func TestFlusher_GuardedStoreRefusesAWriteAfterTheRollover(t *testing.T) {
 		t.Fatalf("the subscription was charged %d bytes, want 0", got)
 	}
 }
+
+func TestFlusher_SeparatesOldAndNewGenerationBytes(t *testing.T) {
+	store := &guardedFlushStore{fakeFlushStore: newFakeFlushStore(), periodStartNs: 2_000}
+	store.subs["u-1"] = &model.UserSubscription{
+		ID: "s-1", UserID: "u-1", PeriodStartNs: 2_000,
+		Status: model.SubscriptionStatusActive,
+	}
+	counters := NewCounters()
+	counters.SeedFromSubscriptions([]model.UserSubscription{{
+		ID: "s-1", UserID: "u-1", PeriodStartNs: 1_000,
+		Status: model.SubscriptionStatusActive,
+	}}, 0)
+	bucket := CounterKey{KeyID: "k-1", UserID: "u-1", PlatformID: "p-1"}
+	counters.Add(bucket, Delta{IngressBytes: 100})
+	transition := counters.BeginUserPeriodTransition("u-1")
+	transition.Commit("s-1", 2_000)
+	counters.Add(bucket, Delta{IngressBytes: 50})
+
+	result, err := (&Flusher{Counters: counters, Store: store}).FlushOnce(1)
+	if err != nil {
+		t.Fatalf("FlushOnce: %v", err)
+	}
+	if result.Bytes != 150 || result.RolledBytes != 100 || result.Subscriptions != 1 {
+		t.Fatalf("flush result = %+v, want 150 bytes with 100 rolled and one current charge", result)
+	}
+	if got := store.subAdds["s-1"]; got != 50 {
+		t.Fatalf("new period was charged %d bytes, want only its own 50", got)
+	}
+	if len(store.periodCalls) != 2 {
+		t.Fatalf("guarded charges = %+v, want old and new generations separately", store.periodCalls)
+	}
+}

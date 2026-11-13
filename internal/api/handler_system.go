@@ -1,7 +1,9 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	"prism/internal/config"
@@ -83,18 +85,21 @@ func HandleSystemInfo(info service.SystemInfo, panelEgress PanelEgressProvider) 
 // HandleSystemConfig returns a handler for GET /api/v1/system/config.
 func HandleSystemConfig(runtimeCfg *atomic.Pointer[config.RuntimeConfig]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
 		if runtimeCfg == nil {
 			WriteJSON(w, http.StatusOK, nil)
 			return
 		}
-		WriteJSON(w, http.StatusOK, runtimeCfg.Load())
+		WriteJSON(w, http.StatusOK, runtimeCfg.Load().PublicView())
 	}
 }
 
 // HandleSystemDefaultConfig returns a handler for GET /api/v1/system/config/default.
 func HandleSystemDefaultConfig() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, http.StatusOK, config.NewDefaultRuntimeConfig())
+		cfg := config.NewDefaultRuntimeConfig()
+		cfg.SeedPaymentConfig(nil)
+		WriteJSON(w, http.StatusOK, cfg.PublicView())
 	}
 }
 
@@ -108,8 +113,19 @@ func HandleSystemEnvConfig(envCfg *config.EnvConfig) http.HandlerFunc {
 // HandlePatchSystemConfig returns a handler for PATCH /api/v1/system/config.
 func HandlePatchSystemConfig(cp *service.ControlPlaneService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		actor, ok := adminActor(w, r)
+		if !ok {
+			return
+		}
 		body, ok := readRawBodyOrWriteInvalid(w, r)
 		if !ok {
+			return
+		}
+		// Registration and payment settings control durable accounts, merchant
+		// credentials and balance credits. They require the same console-session
+		// authority as direct account and balance writes.
+		if runtimePatchRequiresSession(body) && !requireSessionActor(w, actor) {
 			return
 		}
 		result, err := cp.PatchRuntimeConfig(body)
@@ -117,8 +133,21 @@ func HandlePatchSystemConfig(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeServiceError(w, err)
 			return
 		}
-		WriteJSON(w, http.StatusOK, result)
+		WriteJSON(w, http.StatusOK, result.PublicView())
 	}
+}
+
+func runtimePatchRequiresSession(body []byte) bool {
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(body, &object); err != nil {
+		return false
+	}
+	for field := range object {
+		if field == "node_privacy" || field == "registration_mode" || strings.HasPrefix(field, "ldc_") || strings.HasPrefix(field, "tron_") {
+			return true
+		}
+	}
+	return false
 }
 
 func systemEnvConfigSnapshot(envCfg *config.EnvConfig) *systemEnvConfigResponse {

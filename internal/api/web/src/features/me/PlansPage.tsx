@@ -6,8 +6,6 @@ import {
   DetailFact,
   EmptyWorkState,
   InspectorDrawer,
-  ObjectList,
-  ObjectRow,
   WorkspacePage,
   QueryBadge,
   StatusMark,
@@ -76,8 +74,8 @@ export function PlansPage() {
   return (
     <WorkspacePage
       eyebrow="Self Service / billing"
-      title={t("购买套餐")}
-      description={t("用余额购买或更换套餐，扣款与生效同时完成。")}
+      title={t("套餐与账单")}
+      description={t("选择套餐并使用账户余额完成购买或续费。")}
       meta={<StatusMark tone={plansQuery.isError && !plansQuery.data ? "warn" : plansQuery.data ? "live" : "neutral"} label={plansQuery.isError && !plansQuery.data ? t("读取失败") : plansQuery.data ? t("目录已同步") : t("等待目录")} />}
       actions={
         <>
@@ -96,13 +94,14 @@ export function PlansPage() {
     >
       <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       <WorkspaceCard
+        className="pricing-catalog"
         eyebrow="Purchasable catalog"
         title={t("可购买套餐")}
         description={t("价格按 USDT 计，一个周期扣一次。只有服务端返回的 active、可售套餐会显示在这里。")}
         meta={plansQuery.data ? t("共 {{count}} 个套餐", { count: plans.length }) : t("未加载")}
       >
         {plansQuery.isError && !plansQuery.data ? (
-          <EmptyWorkState
+          <EmptyWorkState embedded
             title={t("可购买套餐读取失败")}
             detail={formatApiErrorMessage(plansQuery.error, t)}
             action={<ControlButton variant="secondary" size="sm" onPress={() => void plansQuery.refetch()}>{t("重试")}</ControlButton>}
@@ -112,29 +111,29 @@ export function PlansPage() {
           <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载可购买套餐...")}</div>
         ) : null}
         {!plansQuery.isLoading && !plansQuery.isError && plans.length === 0 ? (
-          <EmptyWorkState title={t("暂无可购买套餐")} detail={t("当前没有对外开放的套餐，请联系运营人员。")} />
+          <EmptyWorkState embedded title={t("暂无可购买套餐")} detail={t("当前没有对外开放的套餐，请联系运营人员。")} />
         ) : null}
         {plans.length > 0 ? (
-          <ObjectList>
-            {plans.map((plan) => (
-              <ObjectRow
-                key={plan.id}
-                onClick={() => setBuying(plan)}
-                leading={<span aria-hidden>$</span>}
-                title={plan.name}
-                subtitle={`${periodLabel(plan.period, t)} · ${plan.duration_days > 0 ? t("{{days}} 天", { days: plan.duration_days }) : t("永久有效")}`}
-                facts={
-                  <>
-                    <span>{plan.traffic_bytes > 0 ? formatBytes(plan.traffic_bytes) : t("不限")}</span>
-                    <span>{plan.platforms?.length ? plan.platforms.join(", ") : t("全部平台")}</span>
-                    <span>{formatMicro(plan.price_micro)} USDT</span>
-                  </>
-                }
-                status={<StatusMark tone="signal" label={t("可购买")} />}
-                action={<ArrowRight size={14} aria-hidden />}
-              />
+          <div className="pricing-grid">
+            {plans.map((plan, index) => (
+              <article key={plan.id} className="pricing-card" data-featured={index === 1 || (plans.length === 1 && index === 0) ? "true" : undefined}>
+                <div className="pricing-card__head">
+                  <div><h3>{plan.name}</h3><span>{periodLabel(plan.period, t)}</span></div>
+                  <StatusMark tone="signal" label={t("可购买")} />
+                </div>
+                <div className="pricing-card__price"><strong>{formatMicro(plan.price_micro)}</strong><span>USDT</span></div>
+                <dl className="pricing-card__facts">
+                  <div><dt>{t("流量配额")}</dt><dd>{plan.traffic_bytes > 0 ? formatBytes(plan.traffic_bytes) : t("不限")}</dd></div>
+                  <div><dt>{t("有效期")}</dt><dd>{plan.duration_days > 0 ? t("{{days}} 天", { days: plan.duration_days }) : t("永久有效")}</dd></div>
+                  <div><dt>{t("可用平台")}</dt><dd>{plan.platforms?.length ? plan.platforms.join(", ") : t("全部平台")}</dd></div>
+                </dl>
+                <dl className="workspace-detail-facts"><PlanLimits plan={plan} /></dl>
+                <ControlButton variant={index === 1 || plans.length === 1 ? "primary" : "secondary"} onPress={() => setBuying(plan)}>
+                  {t("选择套餐")}<ArrowRight size={15} aria-hidden />
+                </ControlButton>
+              </article>
             ))}
-          </ObjectList>
+          </div>
         ) : null}
       </WorkspaceCard>
       <WorkspaceCard
@@ -242,6 +241,7 @@ function PurchaseDrawer({
             <DetailFact label={t("重置周期")} value={periodLabel(plan.period, t)} />
             <DetailFact label={t("扣款金额")} value={`${formatMicro(plan.price_micro)} USDT`} mono />
             <DetailFact label={t("扣款后余额")} value={balanceMicro === null ? "—" : insufficient ? t("余额不足") : `${formatMicro(balanceMicro - plan.price_micro)} USDT`} mono />
+            <PlanLimits plan={plan} />
           </dl>
           {balanceUnknown ? <p role="alert" className="workspace-form-error">{t("余额未知，无法确认购买")}</p> : null}
           {buyMutation.isError ? <p className="workspace-form-error">{formatApiErrorMessage(buyMutation.error, t)}</p> : null}
@@ -249,4 +249,15 @@ function PurchaseDrawer({
       )}
     </InspectorDrawer>
   );
+}
+
+export function PlanLimits({ plan }: { plan: PurchasablePlan }) {
+  const { t } = useI18n();
+  const limit = (value: number | undefined, unit = "") => value == null ? t("未知") : value > 0 ? `${value}${unit}` : t("不限");
+  return <>
+    <DetailFact label={t("每密钥请求上限")} value={limit(plan.max_rps, " RPS")} mono />
+    <DetailFact label={t("每密钥双向合计带宽")} value={limit(plan.max_bandwidth_bps, " B/s")} mono />
+    <DetailFact label={t("每密钥并发连接上限")} value={limit(plan.max_concurrent)} mono />
+    <DetailFact label={t("活跃密钥上限")} value={limit(plan.max_keys)} mono />
+  </>;
 }

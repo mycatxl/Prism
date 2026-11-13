@@ -46,8 +46,8 @@ func TestOpenDB_ConnectionPragmasSurviveARecycledConnection(t *testing.T) {
 		if busyTimeout != 5000 {
 			t.Errorf("%s: busy_timeout = %d, want 5000", stage, busyTimeout)
 		}
-		if synchronous != 1 {
-			t.Errorf("%s: synchronous = %d, want 1 (NORMAL)", stage, synchronous)
+		if synchronous != 2 {
+			t.Errorf("%s: synchronous = %d, want 2 (FULL)", stage, synchronous)
 		}
 	}
 

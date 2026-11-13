@@ -188,7 +188,7 @@ export function ExitRecordsPanel() {
                     </ControlButton>
                   </ControlTableClipCell>
                   <ControlTableClipCell className="text-xs text-ink-faint" title={item.evidence?.organization || undefined}>
-                    {item.evidence?.organization || t("等待来源数据")}
+                    {item.evidence?.organization || t("网络组织待检测")}
                   </ControlTableClipCell>
                   <ControlTableCell className="whitespace-nowrap"><IPTypeBadge summary={item} /></ControlTableCell>
                   <ControlTableCell className="whitespace-nowrap"><QualityBadge summary={item} /></ControlTableCell>

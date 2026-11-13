@@ -8,6 +8,7 @@ import (
 
 	"prism/internal/intel"
 	"prism/internal/node"
+	"prism/internal/quality"
 )
 
 // ------------------------------------------------------------------
@@ -40,23 +41,34 @@ const maxNodeIntelChecks = 32
 
 // NodeIntel is the per-node intel object.
 type NodeIntel struct {
-	State       string            `json:"state"`
-	EgressIPv4  string            `json:"egress_ipv4"`
-	EgressIPv6  string            `json:"egress_ipv6"`
-	Colo        string            `json:"colo"`
-	ASN         int               `json:"asn"`
-	ASOrg       string            `json:"as_org"`
-	Country     string            `json:"country"`
-	City        string            `json:"city"`
-	IPType      string            `json:"ip_type"`
-	Native      *bool             `json:"native"`
-	PurityScore *int              `json:"purity_score"`
-	PurityBand  string            `json:"purity_band"`
-	Confidence  string            `json:"confidence"`
-	Verdict     string            `json:"verdict"`
-	Flags       []string          `json:"flags"`
-	Checks      map[string]string `json:"checks"`
-	AssessedAt  string            `json:"assessed_at"`
+	currentIP             string
+	currentExitChanged    bool
+	evidenceReadFailed    bool
+	measurementReadFailed bool
+	egressReadFailed      bool
+	Facts                 map[string]quality.Fact `json:"facts"`
+	Signals               quality.Signals         `json:"signals"`
+	Reasons               []string                `json:"reasons"`
+	MeasurementState      string                  `json:"measurement_state"`
+	MeasurementError      string                  `json:"measurement_error"`
+	MeasurementAttempts   int                     `json:"measurement_attempts"`
+	State                 string                  `json:"state"`
+	EgressIPv4            string                  `json:"egress_ipv4"`
+	EgressIPv6            string                  `json:"egress_ipv6"`
+	Colo                  string                  `json:"colo"`
+	ASN                   int                     `json:"asn"`
+	ASOrg                 string                  `json:"as_org"`
+	Country               string                  `json:"country"`
+	City                  string                  `json:"city"`
+	IPType                string                  `json:"ip_type"`
+	Native                *bool                   `json:"native"`
+	PurityScore           *int                    `json:"purity_score"`
+	PurityBand            string                  `json:"purity_band"`
+	Confidence            string                  `json:"confidence"`
+	Verdict               string                  `json:"verdict"`
+	Flags                 []string                `json:"flags"`
+	Checks                map[string]string       `json:"checks"`
+	AssessedAt            string                  `json:"assessed_at"`
 	// AssessedAtNs is the assessment timestamp used for sorting (sort_by=
 	// assessed_at). The wire shape carries the RFC3339 form above instead.
 	AssessedAtNs int64 `json:"-"`
@@ -83,9 +95,11 @@ func (s *ControlPlaneService) intelProjection() *intel.Snapshot {
 //
 // egress_ipv4, egress_ipv6 and colo come from node_egress and stay empty here:
 // the list path fills them for a whole page at once with FillNodeIntelEgress.
-func (s *ControlPlaneService) nodeIntel(entry *node.NodeEntry, now time.Time) NodeIntel {
-	out := NodeIntel{
-		State:      IntelStateUnassessed,
+func (s *ControlPlaneService) nodeIntel(entry *node.NodeEntry, now time.Time) (out NodeIntel) {
+	defer func() { out.explainFacts() }()
+	out = NodeIntel{
+		State:   IntelStateUnassessed,
+		Reasons: []string{}, MeasurementState: "never_scheduled",
 		IPType:     intel.IPTypeName(intel.IPTypeUnknown),
 		PurityBand: intel.BandName(intel.BandUnknown),
 		Confidence: intel.ConfidenceName(intel.ConfidenceNone),
@@ -96,20 +110,33 @@ func (s *ControlPlaneService) nodeIntel(entry *node.NodeEntry, now time.Time) No
 	if entry == nil {
 		return out
 	}
+	out.Checks = s.nodeIntelChecks(entry.Hash, now)
 	ip := entry.GetEgressIP()
 	if !ip.IsValid() {
 		return out
+	}
+	out.currentIP = ip.Unmap().String()
+	if ip.Is4() {
+		out.EgressIPv4 = ip.String()
+	} else if ip.Is6() {
+		out.EgressIPv6 = ip.String()
 	}
 	snap := s.intelProjection()
 	if snap == nil {
 		return out
 	}
-	lite, ok := snap.Assessment(ip)
+	if m := snap.Measurement(entry.Hash.Hex()); m.State != "" {
+		out.MeasurementState, out.MeasurementError, out.MeasurementAttempts = m.State, m.Error, m.Attempts
+		out.measurementReadFailed = m.State == "read_failed"
+	}
+	lite, ok := snap.NodeAssessment(entry.Hash.Hex(), ip)
 	if !ok {
 		return out
 	}
 
 	out.State = intelState(lite, now)
+	lite = lite.Current(now)
+	out.Facts = lite.FactValues()
 	out.IPType = intel.IPTypeName(lite.IPType)
 	out.Native = lite.NativeValue()
 	out.PurityScore = lite.ScoreValue()
@@ -117,6 +144,7 @@ func (s *ControlPlaneService) nodeIntel(entry *node.NodeEntry, now time.Time) No
 	out.Confidence = intel.ConfidenceName(lite.Confidence)
 	out.Verdict = intel.VerdictName(lite.Verdict)
 	out.Flags = intel.FlagNames(lite.Flags)
+	out.Reasons = lite.ReasonValues()
 	out.ASN = lite.ASNValue()
 	out.ASOrg = lite.ASOrg
 	out.Country = lite.Country
@@ -183,6 +211,11 @@ func (s *ControlPlaneService) nodeIntelChecks(hash node.Hash, now time.Time) map
 // egress fields simply stay empty. The assessment itself is never read from the
 // database here.
 func (s *ControlPlaneService) FillNodeIntelEgress(ctx context.Context, nodes []NodeSummary) {
+	defer func() {
+		for i := range nodes {
+			nodes[i].Intel.explainFacts()
+		}
+	}()
 	if s == nil || s.Intel == nil || len(nodes) == 0 {
 		return
 	}
@@ -198,13 +231,40 @@ func (s *ControlPlaneService) FillNodeIntelEgress(ctx context.Context, nodes []N
 	if len(hashes) == 0 {
 		return
 	}
+	states, stateErr := s.Intel.Store().LatestMeasurementStates(ctx, hashes)
+	if stateErr != nil {
+		for i := range nodes {
+			nodes[i].Intel.measurementReadFailed = true
+		}
+	} else {
+		for i := range nodes {
+			if m, ok := states[nodes[i].NodeHash]; ok {
+				nodes[i].Intel.MeasurementState = m.State
+				nodes[i].Intel.MeasurementError = m.Error
+				nodes[i].Intel.MeasurementAttempts = m.Attempts
+			}
+		}
+	}
 	rows, err := s.Intel.Store().NodeEgressByHashes(ctx, hashes)
-	if err != nil || len(rows) == 0 {
+	if err != nil {
+		for i := range nodes {
+			nodes[i].Intel.egressReadFailed = true
+		}
+		return
+	}
+	if len(rows) == 0 {
 		return
 	}
 	for i := range nodes {
 		row, ok := rows[nodes[i].NodeHash]
 		if !ok {
+			continue
+		}
+		current := nodes[i].Intel.currentIP
+		// A stored observation may lag the live probe; it must not replace the
+		// address used to select the current score.
+		if current != "" && current != row.IPv4 && current != row.IPv6 {
+			nodes[i].Intel.currentExitChanged = true
 			continue
 		}
 		nodes[i].Intel.EgressIPv4 = row.IPv4
@@ -219,7 +279,7 @@ func (s *ControlPlaneService) FillNodeIntelEgress(ctx context.Context, nodes []N
 
 // hasIntelFilters reports whether any intel filter is set.
 func hasIntelFilters(filters NodeFilters) bool {
-	return filters.PurityMin != nil ||
+	return filters.PurityState != nil || filters.PurityReason != nil || filters.PurityMin != nil ||
 		filters.PurityMax != nil ||
 		len(filters.Verdicts) > 0 ||
 		filters.ConfidenceMin != nil ||
@@ -240,8 +300,15 @@ func hasIntelFilters(filters NodeFilters) bool {
 // purity_band match the projected names; purity_band=review keeps its pre-
 // meaning and selects the review/conflicting verdicts.
 func (s *ControlPlaneService) nodeIntelMatchesFilters(intelView NodeIntel, filters NodeFilters) bool {
-	if intelView.State == IntelStateUnassessed {
+	if filters.PurityState != nil && ((*filters.PurityState == "rated") != (intelView.PurityScore != nil)) {
 		return false
+	}
+	if filters.PurityReason != nil && (intelView.PurityScore != nil || intelView.Facts["purity"].Cause != *filters.PurityReason) {
+		return false
+	}
+	if intelView.State == IntelStateUnassessed {
+		filters.PurityState, filters.PurityReason = nil, nil
+		return !hasIntelFilters(filters)
 	}
 	if filters.IPType != nil && intelView.IPType != *filters.IPType {
 		return false

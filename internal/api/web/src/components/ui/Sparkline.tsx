@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
 import { cn } from "../../lib/cn";
+import { ChartGradient } from "./ChartPrimitives";
 
 /**
  * A series as a hairline, for the one place a figure needs its own history beside
@@ -26,6 +27,7 @@ export function Sparkline({
   height?: number;
   className?: string;
 }) {
+  const gradientId = useId().replace(/:/g, "");
   const toneClass = {
     accent: "text-accent",
     signal: "text-signal",
@@ -48,10 +50,16 @@ export function Sparkline({
     const inked = (value: number) =>
       span === 0 ? height / 2 : height - 2 - ((value - lowest) / span) * (height - 4);
     const step = 100 / (points.length - 1);
-    const line = points.map((value, index) => `${(index * step).toFixed(2)},${inked(value).toFixed(2)}`);
+    const coords = points.map((value, index) => ({ x: index * step, y: inked(value) }));
+    // Controls stay inside each pair's bounds, so peaks never overshoot the data.
+    const line = coords.slice(1).reduce((path, point, index) => {
+      const previous = coords[index];
+      const middle = (previous.x + point.x) / 2;
+      return `${path} C${middle},${previous.y} ${middle},${point.y} ${point.x},${point.y}`;
+    }, `M${coords[0].x},${coords[0].y}`);
     return {
-      line: line.join(" "),
-      area: `M0,${height} L${line.join(" L")} L100,${height} Z`,
+      line,
+      area: `${line} L100,${height} L0,${height} Z`,
     };
   }, [values, height]);
 
@@ -70,9 +78,10 @@ export function Sparkline({
       className={cn("block w-full", toneClass, className)}
       style={{ height }}
     >
-      <path d={shape.area} fill="currentColor" opacity={0.12} />
-      <polyline
-        points={shape.line}
+      <defs><ChartGradient id={gradientId} color="currentColor" /></defs>
+      <path d={shape.area} fill={`url(#${gradientId})`} />
+      <path
+        d={shape.line}
         fill="none"
         stroke="currentColor"
         strokeWidth={1.5}

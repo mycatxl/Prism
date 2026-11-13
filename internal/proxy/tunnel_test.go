@@ -7,6 +7,67 @@ import (
 	"time"
 )
 
+type halfClosePipeConn struct{ net.Conn }
+
+func (c *halfClosePipeConn) CloseWrite() error { return nil }
+
+func TestPumpPreparedTunnelReaderBoundsSilentPeerAfterHalfClose(t *testing.T) {
+	previousTimeout := tunnelHalfCloseTimeout
+	tunnelHalfCloseTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { tunnelHalfCloseTimeout = previousTimeout })
+
+	clientConn, clientPeer := net.Pipe()
+	upstreamBase, upstreamPeer := net.Pipe()
+	upstreamConn := &halfClosePipeConn{Conn: upstreamBase}
+	defer clientPeer.Close()
+	defer upstreamPeer.Close()
+
+	resultCh := make(chan tunnelRelayResult, 1)
+	go func() {
+		resultCh <- pumpPreparedTunnelReader(
+			clientConn,
+			clientConn,
+			&preparedTunnel{upstreamConn: upstreamConn, recordResult: func(bool) {}},
+			tunnelPumpOptions{},
+		)
+	}()
+
+	if err := clientPeer.Close(); err != nil {
+		t.Fatalf("close client peer: %v", err)
+	}
+	select {
+	case result := <-resultCh:
+		if !result.netOK || result.proxyErr != nil {
+			t.Fatalf("half-close timeout result = %+v, want a clean relay result", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("silent upstream kept the half-closed tunnel alive")
+	}
+}
+
+func TestPumpPreparedTunnelReader_InvalidStateClosesBothSockets(t *testing.T) {
+	client, clientPeer := net.Pipe()
+	upstream, upstreamPeer := net.Pipe()
+	defer clientPeer.Close()
+	defer upstreamPeer.Close()
+
+	result := pumpPreparedTunnelReader(
+		client,
+		nil,
+		&preparedTunnel{upstreamConn: upstream, recordResult: func(bool) {}},
+		tunnelPumpOptions{},
+	)
+	if result.proxyErr != ErrUpstreamRequestFailed || result.upstreamErr == nil {
+		t.Fatalf("invalid state result = %+v", result)
+	}
+	for name, peer := range map[string]net.Conn{"client": clientPeer, "upstream": upstreamPeer} {
+		_ = peer.SetReadDeadline(time.Now().Add(time.Second))
+		if _, err := peer.Read(make([]byte, 1)); err == nil {
+			t.Fatalf("%s socket remained open", name)
+		}
+	}
+}
+
 func TestPumpPreparedTunnelReader_FallsBackToFullCloseWhenHalfCloseUnavailable(t *testing.T) {
 	clientBase, clientPeer := net.Pipe()
 	upstreamBase, upstreamPeer := net.Pipe()

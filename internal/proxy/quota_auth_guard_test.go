@@ -157,8 +157,8 @@ func TestForwardProxy_QuotaRefusalIsNotChargedToTheAuthFailureGuard(t *testing.T
 		rec := httptest.NewRecorder()
 		fp.ServeHTTP(rec, req)
 
-		if rec.Code != http.StatusTooManyRequests {
-			t.Fatalf("attempt %d: status = %d, want 429 (body %q)", i, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("attempt %d: status = %d, want 402 (body %q)", i, rec.Code, rec.Body.String())
 		}
 		if got := rec.Header().Get("X-Prism-Error"); got != ErrQuotaExceeded.PrismError {
 			t.Fatalf("attempt %d: X-Prism-Error = %q, want %q", i, got, ErrQuotaExceeded.PrismError)

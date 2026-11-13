@@ -20,6 +20,7 @@ import (
 	"prism/internal/state"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -250,6 +251,9 @@ func TestRuntimeConfigPatchAllowlist_StaysInSyncWithRuntimeConfigJSONFields(t *t
 
 	var onlyInJSON []string
 	for key := range jsonFields {
+		if key == "payment_config_initialized" {
+			continue
+		} // persistence-only, never operator controlled
 		if _, ok := allow[key]; !ok {
 			onlyInJSON = append(onlyInJSON, key)
 		}
@@ -500,6 +504,7 @@ func TestCreatePlatform_BuildsRoutableViewBeforePublish(t *testing.T) {
 	ob := testutil.NewNoopOutbound()
 	entry.Outbound.Store(&ob)
 	pool.LoadNodeFromBootstrap(entry)
+	pool.SetQualitySnapshot(measurement.Snapshot(entry.GetEgressIP()))
 
 	runtimeCfg := &atomic.Pointer[config.RuntimeConfig]{}
 	runtimeCfg.Store(config.NewDefaultRuntimeConfig())

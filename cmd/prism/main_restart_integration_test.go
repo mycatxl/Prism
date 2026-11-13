@@ -20,6 +20,7 @@ import (
 	"prism/internal/state"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 )
 
 func TestBootstrapRestart_RecoversTopologyAndStickyLease(t *testing.T) {
@@ -105,6 +106,7 @@ func TestBootstrapRestart_RecoversTopologyAndStickyLease(t *testing.T) {
 	pool1.RecordResult(hash, true)
 
 	entry1.SetEgressIP(egressIP)
+	pool1.SetQualitySnapshot(measurement.Snapshot(egressIP))
 	entry1.SetEgressRegion("hk")
 	entry1.LastEgressUpdate.Store(egressUpdatedAt)
 	entry1.LastEgressUpdateAttempt.Store(egressAttemptAt)
@@ -178,6 +180,7 @@ func TestBootstrapRestart_RecoversTopologyAndStickyLease(t *testing.T) {
 	if err := bootstrapNodes(engine2, pool2, subManager2, outboundMgr2, envCfg, runtimeCfg.LatencyAuthorities); err != nil {
 		t.Fatalf("bootstrapNodes: %v", err)
 	}
+	pool2.SetQualitySnapshot(measurement.Snapshot(egressIP))
 	pool2.RebuildAllPlatforms()
 
 	router2 := routing.NewRouter(routing.RouterConfig{

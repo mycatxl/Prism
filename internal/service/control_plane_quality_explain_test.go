@@ -14,6 +14,7 @@ import (
 	"prism/internal/platform"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -174,7 +175,10 @@ func TestExplainPlatformNode_AcceptsRoutableNode(t *testing.T) {
 
 	// A non-nil GeoIP service is the production wiring; the stored egress
 	// region still wins (node.GetRegion prefers the probe metadata).
-	cp := &ControlPlaneService{Pool: pool, SubMgr: subMgr, GeoIP: &geoip.Service{}}
+	intelSvc := newIntelProjectionForTest(t)
+	measured, _ := measurement.Snapshot(netip.MustParseAddr("203.0.113.10")).Assessment(netip.MustParseAddr("203.0.113.10"))
+	intelSvc.Snapshot().SetAssessment(netip.MustParseAddr("203.0.113.10"), measured)
+	cp := &ControlPlaneService{Pool: pool, SubMgr: subMgr, GeoIP: &geoip.Service{}, Intel: intelSvc}
 
 	rules := explainRules(t, cp, plat.ID, hash)
 
@@ -184,14 +188,15 @@ func TestExplainPlatformNode_AcceptsRoutableNode(t *testing.T) {
 	assertExplainRule(t, rules, "egress", true, "203.0.113.10")
 	assertExplainRule(t, rules, "region", true, "region=jp")
 	assertExplainRule(t, rules, "latency", true, "latency known")
-	assertExplainRule(t, rules, "quality", true, "no quality policy configured")
+	assertExplainRule(t, rules, "quality.egress", true, "203.0.113.10")
+	assertExplainRule(t, rules, "quality.measured", true, "state=valid")
 
 	results, err := cp.ExplainPlatformNode(plat.ID, hash.Hex())
 	if err != nil {
 		t.Fatalf("ExplainPlatformNode: %v", err)
 	}
-	if len(results) != 7 {
-		t.Fatalf("rule count = %d, want 7 (%+v)", len(results), results)
+	if len(results) != 9 {
+		t.Fatalf("rule count = %d, want 9 (%+v)", len(results), results)
 	}
 	for _, result := range results {
 		if !result.Passed {
@@ -327,7 +332,7 @@ func TestExplainPlatformNode_QualityPolicyRules(t *testing.T) {
 	for _, result := range allowResults {
 		names = append(names, result.Rule)
 	}
-	want := []string{"node.enabled", "node.healthy", "regex", "egress", "region", "latency", "quality.egress", "quality.unknown"}
+	want := []string{"node.enabled", "node.privacy", "node.healthy", "regex", "egress", "region", "latency", "quality.egress", "quality.measured"}
 	if len(names) != len(want) {
 		t.Fatalf("quality rules for an unassessed node = %v, want %v", names, want)
 	}
@@ -336,7 +341,7 @@ func TestExplainPlatformNode_QualityPolicyRules(t *testing.T) {
 			t.Fatalf("rule %d = %q, want %q (%v)", i, names[i], rule, names)
 		}
 	}
-	assertExplainRule(t, rulesByName(t, allowResults), "quality.unknown", true, "state=unobserved")
+	assertExplainRule(t, rulesByName(t, allowResults), "quality.measured", false, "state=unobserved")
 }
 
 func rulesByName(t *testing.T, results []NodeRuleResult) map[string]NodeRuleResult {

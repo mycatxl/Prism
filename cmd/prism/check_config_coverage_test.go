@@ -124,11 +124,18 @@ func loaderEnvVariables(t *testing.T) []string {
 func allEnvVariables(t *testing.T) []string {
 	t.Helper()
 	seen := map[string]bool{}
-	err := filepath.WalkDir(filepath.Join("..", ".."), func(path string, entry os.DirEntry, walkErr error) error {
+	root := filepath.Join("..", "..")
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if entry.IsDir() {
+			if filepath.Dir(path) == root {
+				switch entry.Name() {
+				case "preview_data", "notes", ".local", "bin", "state", "data", "backups":
+					return filepath.SkipDir
+				}
+			}
 			// node_modules carries third-party Go sources that are not ours.
 			if entry.Name() == ".git" || entry.Name() == "node_modules" {
 				return filepath.SkipDir

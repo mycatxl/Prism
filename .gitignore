@@ -57,3 +57,15 @@ go.work.sum
 # Machine-local Impeccable state: the critique snapshots and detector config that
 # the design skill writes next to the project. Useful on disk, never in the repo.
 .impeccable/
+preview_data/
+task_apple_ui_rebuild.md
+task_fix_card_overflow.md
+task_pixel_perfect_empty_states.md
+task_deep_audit_astra.md
+# Every agent dispatch brief written during development. These are working
+# instructions handed to a coding agent, not project artefacts: they must never
+# reach the published repository. No task_*.md is tracked by git.
+task_*.md
+
+# Dispatch scratch: retry wrappers, chain scripts, handoff notes. Never published.
+.dispatch/

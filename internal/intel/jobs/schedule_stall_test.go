@@ -95,28 +95,24 @@ func TestManager_StalledJobYieldsItsSlotToQueuedWork(t *testing.T) {
 	}
 }
 
-// TestManager_StalledJobKeepsRunningWithoutCompetition pins the other half of the
-// rule: yielding must not strand a job when nothing else wants the slot.
+// Legitimate retries retain their attempt budget when nobody needs the slot.
 func TestManager_StalledJobKeepsRunningWithoutCompetition(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	clock := newFakeClock(time.Date(2026, 10, 2, 4, 0, 0, 0, time.UTC))
 	m := newScheduleManager(t, st, clock, parkedRunner{}, 1)
-
 	job := createRunningJob(t, m, st, clock, PriorityManual)
-	clock.advance(jobStallTimeout + time.Hour)
+	clock.advance(2*jobStallTimeout + time.Hour)
 	m.refreshActiveJobs(m.Config())
-
-	ids := m.currentActiveJobIDs()
-	if len(ids) != 1 || ids[0] != job.ID {
-		t.Fatalf("active = %v, want the only job to keep running", ids)
+	if ids := m.currentActiveJobIDs(); len(ids) != 1 || ids[0] != job.ID {
+		t.Fatal("only job lost its retry slot", ids)
 	}
-	if _, ok, _ := m.claimOne(ctx); !ok {
-		t.Fatal("a stalled job with no competition must stay claimable")
+	if _, ok, err := m.claimOne(ctx); err != nil || !ok {
+		t.Fatal("a stalled job with no competition must stay claimable", err)
 	}
 	settled, _ := st.GetJob(ctx, job.ID)
-	if settled.Status != store.JobRunning {
-		t.Fatalf("job = %+v, want it still running: nothing was waiting for the slot", settled)
+	if settled.Status != store.JobRunning || settled.Failed != 0 {
+		t.Fatal("retrying job terminated without queued pressure", settled)
 	}
 }
 

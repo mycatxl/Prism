@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -130,6 +131,63 @@ func TestSelfPurchase_ChargesAndPutsThePlanInForce(t *testing.T) {
 	}
 	if purchase.DeltaMicro != -5_000_000 || purchase.RefID != plan.ID || purchase.RequestID != "req-1" {
 		t.Fatalf("purchase row: %+v", purchase)
+	}
+}
+
+func TestSelfPurchaseConcurrentRequestsCannotSpendTheSameBalance(t *testing.T) {
+	cp, _, _, nowNs := newTenantTestService(t)
+	userID := newPurchaseTestUser(t, cp, nowNs)
+	plan := mustPlan(t, cp, pricedPlanInput("Parallel purchase", 5_000_000), nowNs)
+	creditUser(t, cp, userID, 5_000_000, nowNs)
+
+	const workers = 24
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, err := cp.SelfPurchase(userID, PurchaseInput{
+				PlanID: plan.ID, RequestID: fmt.Sprintf("parallel-purchase-%d", i),
+			}, nowNs+int64(i+1))
+			results <- err
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	succeeded := 0
+	for err := range results {
+		if err == nil {
+			succeeded++
+			continue
+		}
+		var serviceErr *ServiceError
+		if !errors.As(err, &serviceErr) || (serviceErr.Code != "INVALID_ARGUMENT" && serviceErr.Code != "CONFLICT") {
+			t.Fatalf("parallel purchase returned unexpected error: %v", err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d concurrent purchases succeeded with one plan price in balance, want 1", succeeded)
+	}
+	if balance, err := cp.Engine.GetBalance(userID); err != nil || balance != 0 {
+		t.Fatalf("balance after concurrent purchases = %d, %v; want 0", balance, err)
+	}
+	ledger, err := cp.Engine.ListBalanceLedger(userID, 0)
+	if err != nil {
+		t.Fatalf("ledger: %v", err)
+	}
+	purchases := 0
+	for _, entry := range ledger {
+		if entry.Reason == model.BalanceReasonPurchase {
+			purchases++
+		}
+	}
+	if purchases != 1 {
+		t.Fatalf("concurrent purchases wrote %d purchase ledger rows, want 1", purchases)
 	}
 }
 

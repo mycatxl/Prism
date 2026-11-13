@@ -28,6 +28,7 @@ import (
 	"prism/internal/state"
 	"prism/internal/subscription"
 	"prism/internal/testutil"
+	"prism/internal/testutil/measurement"
 	"prism/internal/topology"
 )
 
@@ -645,6 +646,7 @@ func TestAPIContract_PaginationAndSorting(t *testing.T) {
 
 func TestAPIContract_PlatformListIncludesRoutableNodeCount(t *testing.T) {
 	srv, cp, _ := newControlPlaneTestServer(t)
+	cp.Pool.SetQualitySnapshot(measurement.Snapshot(netip.MustParseAddr("203.0.113.10")))
 
 	platformID := mustCreatePlatform(t, srv, "routable-count-target")
 	sub := subscription.NewSubscription("sub-test", "sub-test", "https://example.com/sub", true, false)
@@ -1741,7 +1743,7 @@ func TestAPIContract_RequestLogEndpoints(t *testing.T) {
 	if payload["req_headers_b64"] != base64.StdEncoding.EncodeToString([]byte("req-h-1")) {
 		t.Fatalf("req_headers_b64 mismatch: got %v", payload["req_headers_b64"])
 	}
-	if payload["resp_body_b64"] != base64.StdEncoding.EncodeToString([]byte("resp-b-1")) {
+	if payload["resp_body_b64"] != base64.StdEncoding.EncodeToString([]byte("[redacted]")) {
 		t.Fatalf("resp_body_b64 mismatch: got %v", payload["resp_body_b64"])
 	}
 	trunc, ok := payload["truncated"].(map[string]any)

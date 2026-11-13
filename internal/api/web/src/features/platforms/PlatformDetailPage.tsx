@@ -1,6 +1,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
+import { RefreshCw, ShieldAlert, Trash2 } from "lucide-react";
+import { BackLink } from "../../components/ui/BackLink";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useForm, useFormState, useWatch } from "react-hook-form";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -26,6 +27,7 @@ import { useI18n } from "../../i18n";
 import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { formatDateTime, formatGoDuration, formatRelativeTime } from "../../lib/time";
+import { nodeTagLabel } from "../nodes/detail/nodeMeta";
 import {
   clearAllPlatformLeases,
   deletePlatform,
@@ -130,12 +132,11 @@ function PlatformLeaseNavigator({
 
 function PlatformIdentity({ platform }: { platform: Platform }) {
   const { t } = useI18n();
-  const state = platformStatus(platform);
   return (
     <div className="workspace-platform-identity">
       <span className="workspace-platform-row__mark" aria-hidden>{platform.name.slice(0, 1).toUpperCase()}</span>
       <div className="workspace-platform-identity__copy">
-        <div className="workspace-platform-identity__title"><strong>{platform.name}</strong><StatusMark tone={state.tone === "alert" ? "alert" : "signal"} label={t(state.label)} /></div>
+        <div className="workspace-platform-identity__title"><strong>{platform.name}</strong></div>
         <code>{platform.id}</code>
       </div>
       <QueryBadge tone={platform.id === ZERO_UUID ? "neutral" : "signal"} label={platform.id === ZERO_UUID ? t("内置平台") : t("管理员平台")} />
@@ -162,7 +163,7 @@ export function PlatformDetailPage() {
       const next = new URLSearchParams(previous);
       next.set("tab", tab);
       return next;
-    }, { replace: true });
+    }, { replace: true, state: location.state });
   };
   const [leasePage, setLeasePage] = useState(0);
   const [leasePageSize, setLeasePageSize] = useState<number>(LEASE_PAGE_SIZE_OPTIONS[0]);
@@ -403,8 +404,8 @@ export function PlatformDetailPage() {
       title={platform?.name ?? t("平台详情")}
       description={t("查看平台到节点池、接入地址和租约状态的关系；配置与危险操作保持在独立工作面。")}
       meta={<StatusMark tone={pageTone} label={platformQuery.isError ? t("读取失败") : platform ? t(status?.label ?? "未知") : t("等待对象")} />}
+      navigation={<BackLink fallback={opsPaths.platforms}>{t("返回平台目录")}</BackLink>}
       actions={<>
-        <ControlButton variant="secondary" size="sm" onPress={() => navigate(opsPaths.platforms)}><ArrowLeft size={14} aria-hidden />{t("返回平台目录")}</ControlButton>
         <ControlButton variant="secondary" size="sm" onPress={() => void platformQuery.refetch()} isDisabled={!platformId || platformQuery.isFetching} loading={platformQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton>
       </>}
     >
@@ -501,8 +502,8 @@ export function PlatformDetailPage() {
                   <div className="workspace-command__actions"><ControlButton variant="secondary" size="sm" onPress={() => void leaseQuery.refetch()} loading={leaseQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton></div>
                 </div>
                 {leaseQuery.isLoading || isLeasePageTransitioning ? <div className="workspace-register-state"><span className="workspace-spinner" aria-hidden />{t("正在加载租约")}</div> : null}
-                {leaseQuery.isError ? <EmptyWorkState title={t("租约读取失败")} detail={formatApiErrorMessage(leaseQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leaseQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
-                {!leaseQuery.isLoading && !leaseQuery.isError && leases.length === 0 ? <EmptyWorkState title={debouncedLeaseSearch ? t("没有匹配的租约") : t("当前平台暂无租约")} detail={debouncedLeaseSearch ? t("尝试清除账号筛选。") : t("租约会在租户请求平台后出现。")} /> : null}
+                {leaseQuery.isError ? <EmptyWorkState embedded title={t("租约读取失败")} detail={formatApiErrorMessage(leaseQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void leaseQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
+                {!leaseQuery.isLoading && !leaseQuery.isError && leases.length === 0 ? <EmptyWorkState embedded title={debouncedLeaseSearch ? t("没有匹配的租约") : t("当前平台暂无租约")} detail={debouncedLeaseSearch ? t("尝试清除账号筛选。") : t("租约会在租户请求平台后出现。")} /> : null}
                 {leases.length > 0 ? (
                   <ObjectList className="workspace-lease-list">
                     {leases.map((lease) => {
@@ -513,7 +514,7 @@ export function PlatformDetailPage() {
                           key={lease.account}
                           leading={<span className="workspace-lease-row__mark" aria-hidden>↗</span>}
                           title={lease.account || t("未命名账号")}
-                          subtitle={`${lease.node_tag || t("节点标识未知")} · ${lease.node_hash || t("节点哈希未知")}`}
+                          subtitle={`${nodeTagLabel(lease.node_tag) || t("节点标识未知")} · ${lease.node_hash || t("节点哈希未知")}`}
                           facts={<><span>{t("出口")} {lease.egress_ip || "—"}</span><span>{t("过期")} {formatDateTime(lease.expiry)}</span><span>{t("最后访问")} {formatDateTime(lease.last_accessed)}</span></>}
                           action={<ControlButton variant="ghost" size="sm" isIconOnly aria-label={t("释放账号 {{account}} 的租约", { account: lease.account })} onPress={() => handleReleaseLease(lease)} isDisabled={rowBusy} loading={releasing}><Trash2 size={14} aria-hidden /></ControlButton>}
                         />

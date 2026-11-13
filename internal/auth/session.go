@@ -129,6 +129,15 @@ func NewCookiePolicy(isTLS bool, host string) (CookiePolicy, error) {
 	return CookiePolicy{}, ErrPlainHTTPNotAllowed
 }
 
+// NewCookiePolicyForRemote applies the plain-HTTP exception to the connection
+// peer instead of the HTTP Host header. Host is supplied by the client and can
+// be forged as "localhost" on a publicly reachable listener; RemoteAddr is set
+// by net/http from the accepted connection. A trusted TLS proxy is handled by
+// isTLS before this check.
+func NewCookiePolicyForRemote(isTLS bool, remoteAddr string) (CookiePolicy, error) {
+	return NewCookiePolicy(isTLS, remoteAddr)
+}
+
 // PlainHTTPAllowed reports whether a host is reachable only by the machine
 // itself, which is the only case where a session may be issued without TLS.
 func PlainHTTPAllowed(host string) bool {

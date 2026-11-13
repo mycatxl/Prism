@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/btree"
@@ -28,7 +29,12 @@ import (
 // AddNodeFromSub / RemoveNodeFromSub operations.
 
 type GlobalNodePool struct {
-	nodes *xsync.Map[node.Hash, *node.NodeEntry]
+	privacyPolicy    atomic.Pointer[node.PrivacyPolicy]
+	privacyDeleted   sync.Map // node.Hash -> reason; credential-free event fence
+	privacyDeleteMu  sync.Mutex
+	onPrivacyDelete  func(node.Hash, string, []string) error
+	onPrivacyJournal func(node.Hash, string, []string) error
+	nodes            *xsync.Map[node.Hash, *node.NodeEntry]
 
 	// Platform references for dirty-notify.
 	platMu         sync.RWMutex
@@ -84,6 +90,7 @@ type GlobalNodePool struct {
 
 // PoolConfig configures the GlobalNodePool.
 type PoolConfig struct {
+	PrivacyPolicy          *node.PrivacyPolicy
 	SubLookup              func(subID string) *subscription.Subscription
 	GeoLookup              platform.GeoLookupFunc
 	QualityLookup          platform.QualityLookupFunc
@@ -113,7 +120,7 @@ func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 		panic("topology: NewGlobalNodePool requires non-nil MaxConsecutiveFailures")
 	}
 
-	return &GlobalNodePool{
+	p := &GlobalNodePool{
 		nodes: xsync.NewMap[node.Hash, *node.NodeEntry](),
 		hashIndex: btree.NewG(64, func(a, b node.Hash) bool {
 			return bytes.Compare(a[:], b[:]) < 0
@@ -135,19 +142,52 @@ func NewGlobalNodePool(cfg PoolConfig) *GlobalNodePool {
 		platformByID:           make(map[string]*platform.Platform),
 		platformByName:         make(map[string]*platform.Platform),
 	}
+	p.privacyPolicy.Store(cfg.PrivacyPolicy)
+	return p
 }
+
+// SetPrivacyPolicy immediately updates live eligibility, then refreshes capacity views.
+func (p *GlobalNodePool) SetPrivacyPolicy(policy *node.PrivacyPolicy) {
+	p.privacyPolicy.Store(policy)
+	p.Range(func(h node.Hash, e *node.NodeEntry) bool {
+		if reason := node.PrivacyDeletionReason(e.RawOptions); reason != "" {
+			p.DeletePrivacyNode(h, reason, "")
+		} else if policy.Denies(e.GetEgressIP()) {
+			p.DeletePrivacyNode(h, node.PrivacyOwnAsset, "")
+		}
+		return true
+	})
+	p.RebuildAllPlatforms()
+}
+
+func (p *GlobalNodePool) PrivacyPolicyEnabled() bool { return p.privacyPolicy.Load() != nil }
 
 // AddNodeFromSub adds a node to the pool with the given subscription reference.
 // Uses xsync.Compute for atomic load-or-create + ref-update.
 // Idempotent: adding the same (hash, subID) pair multiple times is safe.
 // After mutation, notifies all platforms to re-evaluate the node.
 func (p *GlobalNodePool) AddNodeFromSub(hash node.Hash, rawOpts json.RawMessage, subID string) {
+	if p.PrivacyPolicyEnabled() {
+		if reason := node.PrivacyDeletionReason(rawOpts); reason != "" {
+			p.DeletePrivacyNode(hash, reason, subID)
+			return
+		}
+	}
+	if p.PrivacyDeleted(hash) {
+		p.DeletePrivacyNode(hash, p.PrivacyDeletionReason(hash), subID)
+		return
+	}
 	isNew := false
 	p.hashIndexMu.Lock()
+	if p.PrivacyDeleted(hash) {
+		p.hashIndexMu.Unlock()
+		return
+	}
 	p.nodes.Compute(hash, func(entry *node.NodeEntry, loaded bool) (*node.NodeEntry, xsync.ComputeOp) {
 		if !loaded {
 			createdAt := time.Now()
 			entry = node.NewNodeEntry(hash, rawOpts, createdAt, p.maxLatencyTableEntries)
+			entry.SetPrivacyPolicySource(&p.privacyPolicy)
 			// New subscription nodes start as circuit-open and must be proven healthy by probes.
 			entry.CircuitOpenSince.Store(createdAt.UnixNano())
 			isNew = true
@@ -213,6 +253,9 @@ func (p *GlobalNodePool) RemoveNodeFromSub(hash node.Hash, subID string) {
 
 // GetEntry retrieves a node entry by hash.
 func (p *GlobalNodePool) GetEntry(hash node.Hash) (*node.NodeEntry, bool) {
+	if p.PrivacyDeleted(hash) {
+		return nil, false
+	}
 	return p.nodes.Load(hash)
 }
 
@@ -276,7 +319,7 @@ func (p *GlobalNodePool) Range(fn func(node.Hash, *node.NodeEntry) bool) {
 
 // Size returns the number of nodes in the pool.
 func (p *GlobalNodePool) Size() int {
-	return p.nodes.Size()
+	return max(0, p.nodes.Size())
 }
 
 // LoadNodeFromBootstrap inserts a node during bootstrap recovery.
@@ -285,7 +328,17 @@ func (p *GlobalNodePool) LoadNodeFromBootstrap(entry *node.NodeEntry) {
 	if entry == nil {
 		return
 	}
+	if p.PrivacyDeleted(entry.Hash) {
+		return
+	}
+	if p.PrivacyPolicyEnabled() {
+		if reason := node.PrivacyDeletionReason(entry.RawOptions); reason != "" {
+			p.DeletePrivacyNode(entry.Hash, reason, "")
+			return
+		}
+	}
 	p.hashIndexMu.Lock()
+	entry.SetPrivacyPolicySource(&p.privacyPolicy)
 	p.nodes.Store(entry.Hash, entry)
 	p.hashIndex.ReplaceOrInsert(entry.Hash)
 	p.hashIndexMu.Unlock()
@@ -885,25 +938,42 @@ func (p *GlobalNodePool) RecordLatency(hash node.Hash, rawTarget string, latency
 //   - ip!=nil, loc=nil: keep region if IP unchanged; clear region if IP changed.
 //   - loc!=nil: set region to loc (normalized).
 func (p *GlobalNodePool) UpdateNodeEgressIP(hash node.Hash, ip *netip.Addr, loc *string) {
+	p.updateNodeEgressIP(hash, ip, loc, false)
+}
+
+// UpdateNodeEgressIPFromAdminProbe is the only path allowed to replace a known
+// owned exit with a new measurement. Timers and intel jobs use the normal path.
+func (p *GlobalNodePool) UpdateNodeEgressIPFromAdminProbe(hash node.Hash, ip *netip.Addr, loc *string) {
+	p.updateNodeEgressIP(hash, ip, loc, true)
+}
+
+func (p *GlobalNodePool) updateNodeEgressIP(hash node.Hash, ip *netip.Addr, loc *string, adminRetest bool) {
 	entry, ok := p.nodes.Load(hash)
 	if !ok {
+		return
+	}
+	if ip != nil && entry.PrivacyDeniesEgress(*ip) {
+		p.DeletePrivacyNode(hash, node.PrivacyOwnAsset, "")
 		return
 	}
 
 	nowNs := time.Now().UnixNano()
 	entry.LastEgressUpdateAttempt.Store(nowNs)
 
-	oldIP := entry.GetEgressIP()
+	var oldIP netip.Addr
 	oldRegion := entry.GetEgressRegion()
 	ipChanged := false
 
 	if ip != nil {
 		// Record successful egress-IP sample timestamp.
 		entry.LastEgressUpdate.Store(nowNs)
-		if oldIP != *ip {
-			entry.SetEgressIP(*ip)
-			ipChanged = true
+		oldIP, ipChanged = entry.SetProbeEgressIP(*ip, adminRetest)
+		if ipChanged {
 			p.indexEgressIP(hash, oldIP, *ip)
+		} else if oldIP != *ip {
+			// A late automatic response cannot erase the quarantining sample or
+			// attach its region to the address that remains stored.
+			return
 		}
 	}
 
@@ -953,6 +1023,9 @@ func (p *GlobalNodePool) SeedEgressIndex(hash node.Hash, ip netip.Addr) {
 func (p *GlobalNodePool) indexEgressIP(hash node.Hash, oldIP, newIP netip.Addr) {
 	p.egressMu.Lock()
 	defer p.egressMu.Unlock()
+	if p.PrivacyDeleted(hash) {
+		return
+	}
 	if p.egressIndex == nil {
 		p.egressIndex = make(map[netip.Addr]map[node.Hash]struct{})
 	}

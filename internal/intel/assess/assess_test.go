@@ -32,16 +32,20 @@ func ev(provider string) evb {
 	}}
 }
 
-func (b evb) on(addr string) evb         { b.e.IP = addr; return b }
+func (b evb) on(addr string) evb { b.e.IP = addr; return b }
+
+// completeNegatives is explicit observed data for tests of clean scoring;
+// missing-signal tests deliberately use ev() without this fixture.
+func (b evb) completeNegatives() evb {
+	return b.flag("proxy", false).flag("vpn", false).flag("tor", false).flag("compromised", false)
+}
 func (b evb) risk(v int) evb             { b.e.RiskScore = ip(v); return b }
 func (b evb) fraud(v int) evb            { b.e.FraudScore = ip(v); return b }
 func (b evb) typeOf(v string) evb        { b.e.IPType = v; return b }
-func (b evb) sourceType(v string) evb    { b.e.SourceType = v; return b }
 func (b evb) native(v bool) evb          { b.e.Native = bp(v); return b }
 func (b evb) residential(v bool) evb     { b.e.IsResidential = bp(v); return b }
 func (b evb) roles(v ...string) evb      { b.e.TorRoles = v; return b }
 func (b evb) asn(v int) evb              { b.e.ASNNumber = v; return b }
-func (b evb) org(v string) evb           { b.e.Organization = v; return b }
 func (b evb) country(v string) evb       { b.e.CountryCode = v; return b }
 func (b evb) registered(v string) evb    { b.e.RegisteredCC = v; return b }
 func (b evb) observedAt(t time.Time) evb { b.e.ObservedAt = t; return b }
@@ -105,750 +109,32 @@ func evidence(items ...evb) []quality.Evidence {
 // Table-driven coverage of every branch of –
 // ------------------------------------------------------------------
 
-func TestAssess_Table(t *testing.T) {
-	threeZones := []string{"zen.spamhaus.org", "bl.spamcop.net", "psbl.surriel.com"}
-
+// Auxiliary risk remains actionable without ever deducting from purity.
+func TestAssess_AuxiliaryRisksDoNotChangePrimary(t *testing.T) {
 	cases := []struct {
-		name       string
-		ip         string
-		evidence   []quality.Evidence
-		enabled    map[string]bool
-		failed     map[string]string
-		score      *int
-		band       string
-		state      string
-		verdict    string
-		confidence string
-		ipType     string
-		native     *bool
-		components []string
-		penalty    int
-		hasReasons []string
-		noReasons  []string
+		name     string
+		evidence evb
+		flag     Flags
+		verdict  string
+		reason   string
 	}{
-		{
-			name: "clean_all_scoring_sources",
-			evidence: evidence(
-				ev("proxycheck").risk(5),
-				ev("ippure").fraud(5).residential(true),
-				ev("ipqs").fraud(5).sourceType("Residential"),
-				ev("abuseipdb").abuse(0, 0),
-				ev("ipapi_is").typeOf("residential"),
-				ev("ip_api").flag("proxy", false),
-				ev("dnsbl").dnsbl(threeZones, nil),
-			),
-			score:      ip(97),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeResidential,
-			components: []string{"proxycheck", "ippure", "ipapi_is", "ip_api", "dnsbl"},
-			penalty:    0,
-		},
-		{
-			// ipqs and abuseipdb appear in the evidence but carry no weight
-			// (both vendors reject a keyless request), so they produce no
-			// component. This case pins that down from both sides: ipqs reports
-			// a terrible 90, and if it were still scored the weighted base
-			// would fall to 66; the coverage denominator ignores the two
-			// unweighted sources, so one of three enabled sources still covers
-			// 3/5.
-			name: "unweighted_sources_do_not_score_or_shrink_coverage",
-			evidence: evidence(
-				ev("proxycheck").risk(0),
-				ev("ipqs").fraud(90),
-				ev("abuseipdb").abuse(0, 0),
-			),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true, SourceAbuseIPDB: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    0,
-		},
-		{
-			name:       "single_source_low_coverage_is_incomplete",
-			evidence:   evidence(ev("proxycheck").risk(10)),
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictIncomplete,
-			confidence: ConfidenceLow,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    0,
-			hasReasons: []string{ReasonIncompleteCoverage, ReasonIPTypeUnknown},
-		},
-		{
-			name:       "single_source_full_coverage_is_favorable",
-			evidence:   evidence(ev("proxycheck").risk(10)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-		},
-		{
-			name:       "caution_band",
-			evidence:   evidence(ev("proxycheck").risk(25)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(75),
-			band:       "mixed",
-			state:      StateValid,
-			verdict:    VerdictCaution,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-		},
-		{
-			name:       "high_risk_by_score",
-			evidence:   evidence(ev("proxycheck").risk(45)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(55),
-			band:       "poor",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			hasReasons: []string{ReasonLowPurity},
-		},
-		{
-			name:       "high_risk_by_tor_signal",
-			evidence:   evidence(ev("proxycheck").risk(0).flag("tor", true)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(70),
-			band:       "mixed",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -30,
-			hasReasons: []string{ReasonTorExit},
-		},
-		{
-			name:       "high_risk_by_tor_exit_role",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("torproject").roles("exit")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(70),
-			band:       "mixed",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -30,
-			hasReasons: []string{ReasonTorExit},
-		},
-		{
-			name:       "tor_relay_is_review_not_high_risk",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("torproject").roles("guard")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    0,
-			hasReasons: []string{ReasonTorRelay},
-			noReasons:  []string{ReasonTorExit},
-		},
-		{
-			name:       "compromised_deducts_40",
-			evidence:   evidence(ev("proxycheck").risk(0).flag("compromised", true)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(60),
-			band:       "mixed",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -40,
-			hasReasons: []string{ReasonCompromised},
-		},
-		{
-			// ipqs carries no weight, so the VPN signal rides on the
-			// proxycheck row: the flag still costs its 10 points.
-			name:       "vpn_deducts_10_and_reviews",
-			evidence:   evidence(ev("proxycheck").risk(0).flag("vpn", true)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -10,
-			hasReasons: []string{ReasonVPN},
-		},
-		{
-			name:       "proxy_flag_with_clean_partner_scores_80",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ip_api").flag("proxy", true)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPI: true},
-			score:      ip(80),
-			band:       "fair",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ip_api"},
-			penalty:    -10,
-			hasReasons: []string{ReasonProxy},
-		},
-		{
-			name:       "scraper_deducts_10_and_reviews",
-			evidence:   evidence(ev("proxycheck").risk(0).flag("scraper", true)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -10,
-			hasReasons: []string{ReasonScraper},
-		},
-		{
-			name:       "anonymous_signal_reviews_without_deduction",
-			evidence:   evidence(ev("proxycheck").risk(0).flag("anonymous", true)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    0,
-			hasReasons: []string{ReasonAnonymous},
-		},
-		{
-			name:       "attack_history_reviews",
-			evidence:   evidence(ev("proxycheck").risk(0).attacks("proxy", "bruteforce")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			hasReasons: []string{ReasonAttackHistory},
-		},
-		{
-			name:       "dnsbl_two_listed_zones",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("dnsbl").dnsbl(threeZones, []string{"zen.spamhaus.org", "bl.spamcop.net"})),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceDNSBL: true},
-			score:      ip(83),
-			band:       "fair",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "dnsbl"},
-			penalty:    0,
-			hasReasons: []string{"DNSBL_LISTED:zen.spamhaus.org", "DNSBL_LISTED:bl.spamcop.net"},
-		},
-		{
-			name:       "dnsbl_listed_but_not_checked_is_clean",
-			evidence:   evidence(ev("dnsbl").dnsbl([]string{"zen.spamhaus.org", "bl.spamcop.net"}, []string{"psbl.surriel.com"})),
-			enabled:    map[string]bool{SourceDNSBL: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"dnsbl"},
-			noReasons:  []string{"DNSBL_LISTED:psbl.surriel.com"},
-		},
-		{
-			name:     "dnsbl_without_checked_zone_is_not_scored",
-			evidence: evidence(ev("dnsbl").dnsbl(nil, []string{"zen.spamhaus.org"})),
-			enabled:  map[string]bool{SourceDNSBL: true},
-			score:    nil,
-			band:     "unknown",
-			state:    StatePending,
-			verdict:  VerdictPending,
-			ipType:   IPTypeUnknown,
-			hasReasons: []string{
-				ReasonNoValidEvidence,
-			},
-		},
-		{
-			// abuseipdb keeps feeding the abuse deduction even though it
-			// carries no weight: with no scoring source enabled the assessment
-			// is unsupported, yet AbuseConfidence is still read by detectFlags
-			// and costs its 10 points. It is never a silent "clean".
-			name:       "abuse_without_weighted_component_is_unsupported_but_flags",
-			evidence:   evidence(ev("abuseipdb").abuse(25, 1)),
-			enabled:    map[string]bool{SourceAbuseIPDB: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StateUnsupported,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			penalty:    -10,
-			hasReasons: []string{ReasonAbuseConfidence, ReasonNoScoringSource},
-			noReasons:  []string{ReasonRecentAbuse},
-		},
-		{
-			// The high_risk rule reads AbuseConfidence directly, so it
-			// still fires for an unweighted source.
-			name:       "abuse_high_confidence_with_reports_is_high_risk",
-			evidence:   evidence(ev("abuseipdb").abuse(80, 5)),
-			enabled:    map[string]bool{SourceAbuseIPDB: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StateUnsupported,
-			verdict:    VerdictHighRisk,
-			ipType:     IPTypeUnknown,
-			penalty:    -10,
-			hasReasons: []string{ReasonRecentAbuse, ReasonNoScoringSource},
-		},
-		{
-			// 76 with no reports is not "recent abuse", and the row is not
-			// scored: the verdict follows the weighted sources alone.
-			name:       "abuse_76_without_reports_is_not_recent_abuse",
-			evidence:   evidence(ev("abuseipdb").abuse(76, 0), ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business")),
-			enabled:    map[string]bool{SourceAbuseIPDB: true, SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipapi_is"},
-			penalty:    -10,
-			noReasons:  []string{ReasonRecentAbuse},
-		},
-		{
-			name:       "ipapi_is_abuser_is_compromised",
-			evidence:   evidence(ev("ipapi_is").flag("compromised", true), ev("proxycheck").risk(0)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(36),
-			band:       "poor",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ipapi_is"},
-			penalty:    -40,
-			hasReasons: []string{ReasonCompromised},
-		},
-		{
-			name:       "ipapi_is_proxy_flag",
-			evidence:   evidence(ev("ipapi_is").flag("proxy", true), ev("proxycheck").risk(0)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(74),
-			band:       "mixed",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ipapi_is"},
-			penalty:    -10,
-			hasReasons: []string{ReasonProxy},
-		},
-		{
-			name: "ipv6_ippure_component_excluded",
-			ip:   testIPv6,
-			evidence: evidence(
-				ev("ippure").on(testIPv6).fraud(0).residential(true),
-				ev("proxycheck").on(testIPv6).risk(10),
-			),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPPure: true},
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeResidential,
-			components: []string{"proxycheck"},
-		},
-		{
-			// ipqs still votes on the network type even though it carries
-			// no weight: voteOf reads the row's own payload, not the weight
-			// table. Only the scoring sources decide the score.
-			name: "conflicting_residential_vs_datacenter",
-			evidence: evidence(
-				ev("proxycheck").risk(0).typeOf("mobile"),
-				ev("ipqs").fraud(0).sourceType("Residential"),
-				ev("ipapi_is").typeOf("datacenter"),
-				ev("ip_api").on(testIPv4).typeOf("datacenter").flag("proxy", false),
-			),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true, SourceIPAPIIs: true, SourceIPAPI: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictConflicting,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeConflicting,
-			components: []string{"proxycheck", "ipapi_is", "ip_api"},
-			hasReasons: []string{ReasonIPTypeConflicting},
-		},
-		{
-			name: "tie_prefers_non_datacenter_without_residential_vote",
-			evidence: evidence(
-				ev("proxycheck").risk(0).typeOf("datacenter"),
-				ev("ipapi_is").typeOf("business"),
-			),
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipapi_is"},
-		},
-		{
-			name: "tie_between_business_and_wireless_is_deterministic",
-			evidence: evidence(
-				ev("proxycheck").risk(0).typeOf("business"),
-				ev("ipapi_is").typeOf("wireless"),
-			),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipapi_is"},
-		},
-		{
-			name:       "non_residential_only_vote",
-			evidence:   evidence(ev("ippure").fraud(0).residential(false)),
-			enabled:    map[string]bool{SourceIPPure: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeNonResidential,
-			components: []string{"ippure"},
-		},
-		{
-			name: "non_residential_is_dropped_when_others_vote",
-			evidence: evidence(
-				ev("ippure").fraud(0).residential(false),
-				ev("proxycheck").risk(0).typeOf("residential"),
-			),
-			enabled:    map[string]bool{SourceIPPure: true, SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeResidential,
-			components: []string{"proxycheck", "ippure"},
-		},
-		{
-			name:       "wireless_is_preserved",
-			evidence:   evidence(ev("proxycheck").risk(0).typeOf("wireless")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeWireless,
-			components: []string{"proxycheck"},
-		},
-		{
-			name:       "offline_hosting_asn_fallback",
-			evidence:   evidence(ev("dbip_lite").asn(16509).org("Amazon")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeDatacenter,
-			hasReasons: []string{ReasonASNHosting},
-		},
-		{
-			name:       "offline_non_hosting_asn_has_no_type",
-			evidence:   evidence(ev("dbip_lite").asn(64512).org("Local ISP")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			hasReasons: []string{ReasonIPTypeUnknown},
-			noReasons:  []string{ReasonASNHosting},
-		},
-		{
-			name:       "native_from_ippure",
-			evidence:   evidence(ev("ippure").fraud(0).native(true), ev("proxycheck").risk(0)),
-			enabled:    map[string]bool{SourceIPPure: true, SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeUnknown,
-			native:     bp(true),
-			components: []string{"proxycheck", "ippure"},
-			noReasons:  []string{ReasonNativeHeuristic},
-		},
-		{
-			name:       "native_heuristic_match",
-			evidence:   evidence(ev("maxmind_geolite2").country("US").registered("us")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			native:     bp(true),
-			hasReasons: []string{ReasonNativeHeuristic},
-		},
-		{
-			name:       "native_heuristic_mismatch",
-			evidence:   evidence(ev("maxmind_geolite2").country("DE").registered("US")),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			native:     bp(false),
-			hasReasons: []string{ReasonNativeHeuristic},
-		},
-		{
-			name:       "native_unknown",
-			evidence:   evidence(ev("proxycheck").risk(0)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			native:     nil,
-			components: []string{"proxycheck"},
-		},
-		{
-			name:       "all_enabled_sources_failed_is_unsupported",
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			failed:     map[string]string{SourceProxycheck: "PROVIDER_UNAVAILABLE", SourceIPAPIIs: "PROVIDER_AUTH"},
-			score:      nil,
-			band:       "unknown",
-			state:      StateUnsupported,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			hasReasons: []string{ReasonAllSourcesFailed},
-		},
-		{
-			// ipqs is enabled but unweighted, so it is not part of the coverage
-			// denominator: the single weighted source that failed is the whole
-			// denominator, which makes the state unsupported rather than
-			// pending. Pending now needs a weighted source that has not failed.
-			name:       "all_weighted_enabled_sources_failed_is_unsupported",
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true},
-			failed:     map[string]string{SourceProxycheck: "PROVIDER_UNAVAILABLE"},
-			score:      nil,
-			band:       "unknown",
-			state:      StateUnsupported,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			hasReasons: []string{ReasonAllSourcesFailed},
-		},
-		{
-			name:       "no_evidence_at_all_is_pending",
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			hasReasons: []string{ReasonNoValidEvidence},
-		},
-		{
-			name:       "stale_evidence_is_ignored",
-			evidence:   evidence(ev("proxycheck").risk(10).expired()),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeUnknown,
-			hasReasons: []string{ReasonNoValidEvidence},
-		},
-		{
-			// One weighted source against the whole keyless denominator (11)
-			// covers 3/11 = 0.27, the "low" row.
-			name:       "one_weighted_source_is_low_without_full_coverage",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0)),
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictIncomplete,
-			confidence: ConfidenceLow,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			hasReasons: []string{ReasonIncompleteCoverage},
-		},
-		{
-			name:       "confidence_high_needs_coverage_and_agreement",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0), ev("abuseipdb").abuse(0, 0), ev("ipapi_is").typeOf("business")),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true, SourceAbuseIPDB: true, SourceIPAPIIs: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceHigh,
-			ipType:     IPTypeBusiness,
-			components: []string{"proxycheck", "ipapi_is"},
-		},
-		{
-			name:       "disagreement_blocks_high_confidence",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").flag("compromised", true)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true},
-			score:      ip(36),
-			band:       "poor",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck", "ipapi_is"},
-			penalty:    -40,
-		},
-		{
-			name:       "penalty_is_applied_once_per_flag",
-			evidence:   evidence(ev("proxycheck").risk(0).flag("proxy", true), ev("ipqs").fraud(0).flag("proxy", true)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true},
-			score:      ip(90),
-			band:       "clean",
-			state:      StateValid,
-			verdict:    VerdictReview,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -10,
-			hasReasons: []string{ReasonProxy},
-		},
-		{
-			name:       "score_is_clamped_to_zero",
-			evidence:   evidence(ev("proxycheck").risk(100).flag("compromised", true).flag("tor", true).flag("vpn", true)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			score:      ip(0),
-			band:       "poor",
-			state:      StateValid,
-			verdict:    VerdictHighRisk,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-			penalty:    -80,
-		},
-		{
-			name:       "ip_api_without_proxy_value_does_not_score",
-			evidence:   evidence(ev("ip_api").typeOf("mobile")),
-			enabled:    map[string]bool{SourceIPAPI: true},
-			score:      nil,
-			band:       "unknown",
-			state:      StatePending,
-			verdict:    VerdictPending,
-			ipType:     IPTypeMobile,
-			hasReasons: []string{ReasonNoValidEvidence},
-		},
-		{
-			// ipqs is enabled but unweighted, so this is one component out of a
-			// 3-weight denominator: coverage is 1.0, and agreement is exact.
-			name:       "score_100_is_excellent",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipqs").fraud(0)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPQS: true},
-			score:      ip(100),
-			band:       "excellent",
-			state:      StateValid,
-			verdict:    VerdictFavorable,
-			confidence: ConfidenceMedium,
-			ipType:     IPTypeUnknown,
-			components: []string{"proxycheck"},
-		},
+		{"compromised", ev(SourceProxycheck).flag("compromised", true), FlagCompromised, VerdictHighRisk, ReasonCompromised},
+		{"tor", ev(SourceProxycheck).flag("tor", true), FlagTor, VerdictHighRisk, ReasonTorExit},
+		{"vpn", ev(SourceProxycheck).flag("vpn", true), FlagVPN, VerdictReview, ReasonVPN},
+		{"proxy", ev(SourceProxycheck).flag("proxy", true), FlagProxy, VerdictReview, ReasonProxy},
+		{"scraper", ev(SourceProxycheck).flag("scraper", true), FlagScraper, VerdictReview, ReasonScraper},
+		{"anonymous", ev(SourceProxycheck).flag("anonymous", true), FlagAnonymous, VerdictReview, ReasonAnonymous},
+		{"abuse", ev(SourceAbuseIPDB).abuse(80, 1), FlagAbuse, VerdictHighRisk, ReasonRecentAbuse},
+		{"dnsbl", ev(SourceDNSBL).dnsbl([]string{"zone"}, []string{"zone"}), FlagDNSBL, VerdictReview, "DNSBL_LISTED:zone"},
+		{"attack", ev(SourceProxycheck).attacks("proxy"), FlagAttackHistory, VerdictReview, ReasonAttackHistory},
+		{"tor_exit", ev(SourceTorProject).roles("exit"), FlagTor, VerdictHighRisk, ReasonTorExit},
+		{"tor_relay", ev(SourceTorProject).roles("guard"), 0, VerdictReview, ReasonTorRelay},
 	}
-
-	if len(cases) < 25 {
-		t.Fatalf("the scoring table must cover at least 25 cases, got %d", len(cases))
-	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			addr := netip.MustParseAddr(testIPv4)
-			if tc.ip != "" {
-				addr = netip.MustParseAddr(tc.ip)
-			}
-			got := AssessInput(Input{
-				IP:       addr,
-				Evidence: tc.evidence,
-				Enabled:  tc.enabled,
-				Failed:   tc.failed,
-				Now:      testNow,
-			})
-
-			if !equalInt(got.PurityScore, tc.score) {
-				t.Fatalf("purity score = %s, want %s", formatInt(got.PurityScore), formatInt(tc.score))
-			}
-			if got.PurityBand != tc.band {
-				t.Fatalf("band = %q, want %q", got.PurityBand, tc.band)
-			}
-			if got.State != tc.state {
-				t.Fatalf("state = %q, want %q", got.State, tc.state)
-			}
-			if got.Verdict != tc.verdict {
-				t.Fatalf("verdict = %q, want %q", got.Verdict, tc.verdict)
-			}
-			if tc.confidence != "" && got.Confidence != tc.confidence {
-				t.Fatalf("confidence = %q, want %q (coverage=%.3f agreement=%.3f)", got.Confidence, tc.confidence, got.Coverage, got.Agreement)
-			}
-			if got.IPType != tc.ipType {
-				t.Fatalf("ip type = %q, want %q", got.IPType, tc.ipType)
-			}
-			if !equalBool(got.Native, tc.native) {
-				t.Fatalf("native = %v, want %v", got.Native, tc.native)
-			}
-			if tc.components != nil {
-				sources := componentSources(got)
-				if len(sources) != len(tc.components) {
-					t.Fatalf("components = %v, want %v", sources, tc.components)
-				}
-				for i, want := range tc.components {
-					if sources[i] != want {
-						t.Fatalf("components = %v, want %v", sources, tc.components)
-					}
-				}
-			}
-			if got.PenaltyPoints != tc.penalty {
-				t.Fatalf("penalty points = %d, want %d (penalties=%v)", got.PenaltyPoints, tc.penalty, got.Penalties)
-			}
-			for _, reason := range tc.hasReasons {
-				if !hasString(got.Reasons, reason) {
-					t.Fatalf("reasons %v missing %q", got.Reasons, reason)
-				}
-			}
-			for _, reason := range tc.noReasons {
-				if hasString(got.Reasons, reason) {
-					t.Fatalf("reasons %v must not contain %q", got.Reasons, reason)
-				}
-			}
-			if got.IPText != addr.Unmap().String() {
-				t.Fatalf("ip text = %q, want %q", got.IPText, addr.Unmap().String())
-			}
-			if got.Profile != Profile {
-				t.Fatalf("profile = %q, want %q", got.Profile, Profile)
+			got := Assess(testIPv4Addr(t), evidence(ev(SourceIPPure).fraud(20), tc.evidence), testNow, nil)
+			if got.PurityScore == nil || *got.PurityScore != 80 || got.PenaltyPoints != 0 || len(got.Penalties) != 0 || got.Flags&tc.flag != tc.flag || got.Verdict != tc.verdict || !hasReason(got, tc.reason) {
+				t.Fatalf("independent risk lost: %+v", got)
 			}
 		})
 	}
@@ -862,12 +148,12 @@ func TestAssess_ValidityWindow(t *testing.T) {
 		}
 	})
 
-	t.Run("earliest_valid_until_wins", func(t *testing.T) {
+	t.Run("primary_valid_until_wins", func(t *testing.T) {
 		got := Assess(netip.MustParseAddr(testIPv4), evidence(
-			ev("proxycheck").risk(0).until(testNow.Add(2*time.Hour)),
+			ev("ippure").fraud(0).until(testNow.Add(2*time.Hour)),
 			ev("ipqs").fraud(0).until(testNow.Add(30*time.Minute)),
 		), testNow, nil)
-		want := testNow.Add(30 * time.Minute)
+		want := testNow.Add(2 * time.Hour)
 		if !got.ValidUntil.Equal(want) {
 			t.Fatalf("valid_until = %s, want %s", got.ValidUntil, want)
 		}
@@ -888,7 +174,7 @@ func TestAssess_Deterministic(t *testing.T) {
 		IP: netip.MustParseAddr(testIPv4),
 		Evidence: evidence(
 			ev("proxycheck").risk(0).typeOf("business"),
-			ev("ipapi_is").typeOf("wireless"),
+			ev("ipapi_is").completeNegatives().typeOf("wireless"),
 			ev("dnsbl").dnsbl([]string{"a", "b"}, []string{"b"}),
 			ev("abuseipdb").abuse(30, 2),
 			ev("ipqs").fraud(10).typeOf("datacenter"),
@@ -914,8 +200,8 @@ func TestAssess_Deterministic(t *testing.T) {
 }
 
 func TestAssess_NewestEvidencePerProviderWins(t *testing.T) {
-	older := ev("proxycheck").risk(90).observedAt(testNow.Add(-time.Hour))
-	newer := ev("proxycheck").risk(10).observedAt(testNow)
+	older := ev("ippure").fraud(90).observedAt(testNow.Add(-time.Hour))
+	newer := ev("ippure").fraud(10).observedAt(testNow)
 	got := Assess(netip.MustParseAddr(testIPv4), evidence(older, newer), testNow, map[string]bool{SourceProxycheck: true})
 	if got.PurityScore == nil || *got.PurityScore != 90 {
 		t.Fatalf("score = %s, want 90", formatInt(got.PurityScore))
@@ -942,7 +228,7 @@ func TestAssess_BandThresholds(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got := Assess(netip.MustParseAddr(testIPv4),
-			evidence(ev("proxycheck").risk(tc.risk)),
+			evidence(ev("ippure").fraud(tc.risk)),
 			testNow, map[string]bool{SourceProxycheck: true})
 		if got.PurityBand != tc.band {
 			t.Fatalf("risk %d: band = %q, want %q", tc.risk, got.PurityBand, tc.band)
@@ -958,7 +244,7 @@ func TestAssess_ConfiguredBandThresholds(t *testing.T) {
 	input := func() Input {
 		return Input{
 			IP:       netip.MustParseAddr(testIPv4),
-			Evidence: evidence(ev("proxycheck").risk(25)),
+			Evidence: evidence(ev("ippure").fraud(25)),
 			Enabled:  map[string]bool{SourceProxycheck: true},
 			Now:      testNow,
 		}
@@ -977,51 +263,15 @@ func TestAssess_ConfiguredBandThresholds(t *testing.T) {
 	}
 }
 
-func TestAssess_ConfidenceBoundaries(t *testing.T) {
-	cases := []struct {
-		name       string
-		evidence   []quality.Evidence
-		enabled    map[string]bool
-		confidence string
-	}{
-		{
-			name:       "no_source",
-			confidence: ConfidenceNone,
-		},
-		{
-			// One weighted source covers 3/11 = 0.27 of the keyless
-			// denominator: the "low" row.
-			name:       "one_source_with_low_coverage_is_low",
-			evidence:   evidence(ev("proxycheck").risk(0)),
-			confidence: ConfidenceLow,
-		},
-		{
-			name:       "one_source_with_full_coverage_is_medium",
-			evidence:   evidence(ev("proxycheck").risk(0)),
-			enabled:    map[string]bool{SourceProxycheck: true},
-			confidence: ConfidenceMedium,
-		},
-		{
-			// Two weighted sources cover 5/11 = 0.45 without full coverage, so
-			// they take the ">= 0.4" branch of: medium.
-			name:       "two_sources_coverage_0_45_is_medium",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business")),
-			confidence: ConfidenceMedium,
-		},
-		{
-			name:       "two_sources_high_coverage_and_agreement_is_high",
-			evidence:   evidence(ev("proxycheck").risk(0), ev("ipapi_is").typeOf("business"), ev("ip_api").flag("proxy", false)),
-			enabled:    map[string]bool{SourceProxycheck: true, SourceIPAPIIs: true, SourceIPAPI: true},
-			confidence: ConfidenceHigh,
-		},
+func TestAssess_ConfidenceDoesNotClaimCalibration(t *testing.T) {
+	for _, rows := range [][]quality.Evidence{nil, evidence(ev(SourceProxycheck).risk(0))} {
+		if got := Assess(testIPv4Addr(t), rows, testNow, nil); got.Confidence != ConfidenceNone {
+			t.Fatal("auxiliary evidence created primary confidence")
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := Assess(netip.MustParseAddr(testIPv4), tc.evidence, testNow, tc.enabled)
-			if got.Confidence != tc.confidence {
-				t.Fatalf("confidence = %q, want %q", got.Confidence, tc.confidence)
-			}
-		})
+	got := Assess(testIPv4Addr(t), evidence(ev(SourceIPPure).fraud(0)), testNow, nil)
+	if got.Confidence != ConfidenceLow || got.Coverage != 1 || got.SourceCount != 1 {
+		t.Fatalf("single vendor is not calibrated high confidence: %+v", got)
 	}
 }
 
@@ -1081,36 +331,12 @@ func TestFlagsEqualProjectionBits(t *testing.T) {
 // helpers
 // ------------------------------------------------------------------
 
-func componentSources(a Assessment) []string {
-	out := make([]string, 0, len(a.Components))
-	for _, item := range a.Components {
-		out = append(out, item.Source)
-	}
-	return out
-}
-
-func equalInt(a, b *int) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
-func equalBool(a, b *bool) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
 func formatInt(v *int) string {
 	if v == nil {
 		return "nil"
 	}
 	return string(rune('0'+*v/100%10)) + string(rune('0'+*v/10%10)) + string(rune('0'+*v%10))
 }
-
-func hasString(values []string, want string) bool { return containsString(values, want) }
 
 func hasPrefixFold(s, prefix string) bool {
 	if len(s) < len(prefix) {

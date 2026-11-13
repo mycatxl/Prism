@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"prism/internal/keys"
 	"prism/internal/model"
 )
 
@@ -177,14 +178,8 @@ func (s *ControlPlaneService) SetTenantUserStatus(id, status string, nowNs int64
 	if err := s.SetAccountStatus(id, status, nowNs); err != nil {
 		return AdminUserView{}, mapAccountWriteError("set account status", err)
 	}
-	if status == model.UserStatusDisabled {
-		if _, err := s.Engine.DeleteSessionsByUser(id); err != nil {
-			return AdminUserView{}, internal("end account sessions", err)
-		}
-	}
-	// A disabled key must be refused by the data plane, and the data plane
-	// reads the user status out of the key state it holds.
 	if err := s.republishUserKeys(id); err != nil {
+		s.removePublishedUserKeys(id)
 		return AdminUserView{}, err
 	}
 	return s.tenantUserView(id)
@@ -199,6 +194,7 @@ func (s *ControlPlaneService) SetTenantUserRole(id, role string, nowNs int64) (A
 		return AdminUserView{}, mapAccountWriteError("set account role", err)
 	}
 	if err := s.republishUserKeys(id); err != nil {
+		s.removePublishedUserKeys(id)
 		return AdminUserView{}, err
 	}
 	return s.tenantUserView(id)
@@ -255,11 +251,13 @@ func (s *ControlPlaneService) DeleteTenantUser(id string) error {
 		}
 		for _, row := range rows {
 			s.Keys.Delete(row.ID)
+			s.Conns.CloseKey(row.ID)
 		}
 	}
 	if err := s.Engine.DeleteUser(id); err != nil {
 		return mapUserLookupError(err)
 	}
+	s.Usage.ForgetUser(id)
 	return nil
 }
 
@@ -320,44 +318,34 @@ func (s *ControlPlaneService) UpdateTenantUser(id string, patch TenantUserPatch,
 		}
 	}
 
-	// Every write below is a single-column write - the locked variants of the
-	// account setters, which assume the lock this method holds. Nothing may
-	// write the row back whole: a column this patch does not name, such as the
-	// password hash it read before the argon2id step, would be restored to the
-	// value it held then.
-	disableAccount := false
-	if patch.Status != nil {
-		if err := s.setAccountStatusLocked(id, *patch.Status, nowNs); err != nil {
-			return AdminUserView{}, mapAccountWriteError("set account status", err)
-		}
-		disableAccount = *patch.Status == model.UserStatusDisabled
-	}
-	if patch.Role != nil {
-		if err := s.setAccountRoleLocked(id, *patch.Role, nowNs); err != nil {
-			return AdminUserView{}, mapAccountWriteError("set account role", err)
-		}
-	}
+	var hash *string
 	if patch.Password != nil {
-		// The hash computed above, written as a single column.
-		if err := s.Engine.UpdateUserPassword(id, passwordHash, nowNs); err != nil {
-			return AdminUserView{}, mapAccountWriteError("set account password", err)
-		}
+		hash = &passwordHash
 	}
-
-	// A disabled account must not keep a usable session, and a reset password
-	// must evict whoever held the old one: one delete covers both when they
-	// arrive in the same request.
-	if disableAccount || patch.Password != nil {
-		if _, err := s.Engine.DeleteSessionsByUser(id); err != nil {
-			return AdminUserView{}, internal("end account sessions", err)
-		}
+	if err := s.Engine.UpdateUserSecurityPatch(id, patch.Status, patch.Role, hash, nowNs); err != nil {
+		return AdminUserView{}, mapAccountWriteError("update account", err)
 	}
-	// The data plane reads the account status and the plan out of key state, so
-	// the write is not complete until the user's keys have been republished.
-	if err := s.republishUserKeys(id); err != nil {
+	if err := s.republishUserKeysLocked(id); err != nil {
+		s.removePublishedUserKeys(id)
 		return AdminUserView{}, err
 	}
+
 	return s.tenantUserView(id)
+}
+
+// removePublishedUserKeys is the fail-closed fallback when a status change has
+// committed but rebuilding a user's key snapshots cannot read the database.
+func (s *ControlPlaneService) removePublishedUserKeys(userID string) {
+	if s == nil || s.Keys == nil {
+		return
+	}
+	s.Keys.Range(func(state *keys.KeyState) bool {
+		if state != nil && state.UserID == userID {
+			s.Keys.Delete(state.KeyID)
+			s.Conns.CloseKey(state.KeyID)
+		}
+		return true
+	})
 }
 
 // validateTenantUserPatch checks every field of a patch against the account it
@@ -556,14 +544,14 @@ func foldUsageDays(rows []model.UsageRow, days int, nowNs int64) []UsageDay {
 			bucket = &UsageDay{DayNs: day}
 			buckets[day] = bucket
 		}
-		bucket.IngressBytes += row.IngressBytes
-		bucket.EgressBytes += row.EgressBytes
+		bucket.IngressBytes = model.SaturatingUsageAdd(bucket.IngressBytes, row.IngressBytes)
+		bucket.EgressBytes = model.SaturatingUsageAdd(bucket.EgressBytes, row.EgressBytes)
 	}
 
 	result := make([]UsageDay, 0, days)
 	for day := fromNs; day < fromNs+int64(days)*nsPerDay; day += nsPerDay {
 		if bucket, ok := buckets[day]; ok {
-			bucket.TotalBytes = bucket.IngressBytes + bucket.EgressBytes
+			bucket.TotalBytes = model.SaturatingUsageAdd(bucket.IngressBytes, bucket.EgressBytes)
 			result = append(result, *bucket)
 			continue
 		}

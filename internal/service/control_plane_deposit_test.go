@@ -230,7 +230,7 @@ func (f *fakeChain) handler(t *testing.T) http.HandlerFunc {
 		}
 		payload := struct {
 			Data []row `json:"data"`
-		}{}
+		}{Data: []row{}}
 		for _, tr := range f.transfers {
 			var out row
 			out.TransactionID = tr.txID
@@ -369,13 +369,13 @@ func TestScanDepositsSkipsUnknownAmountsAndAdvancesCursor(t *testing.T) {
 	if cursor != blockMs {
 		t.Fatalf("cursor: got %d, want %d", cursor, blockMs)
 	}
-	// A zero watermark is omitted from the query, so the first poll reads the
-	// whole confirmed history of the address.
-	if len(chain.queries) != 1 || chain.queries[0] != "" {
-		t.Fatalf("first query min_timestamp: got %v, want one query without a watermark", chain.queries)
+	// The first poll starts at the oldest outstanding order, avoiding unrelated
+	// history while preserving transfers whose confirmation arrives late.
+	if len(chain.queries) != 1 || chain.queries[0] != fmt.Sprint(nowNs/1_000_000) {
+		t.Fatalf("first query min_timestamp: got %v, want the order creation time", chain.queries)
 	}
 
-	// The next scan must ask from the new watermark.
+	// An outstanding order keeps its window under observation despite the watermark.
 	chain.transfers = nil
 	if _, err := cp.ScanDeposits(context.Background(), nowNs); err != nil {
 		t.Fatalf("second scan: %v", err)
@@ -383,8 +383,8 @@ func TestScanDepositsSkipsUnknownAmountsAndAdvancesCursor(t *testing.T) {
 	if len(chain.queries) != 2 {
 		t.Fatalf("queries: got %d, want 2", len(chain.queries))
 	}
-	if chain.queries[1] != fmt.Sprintf("%d", blockMs) {
-		t.Fatalf("second query min_timestamp: got %q, want %d", chain.queries[1], blockMs)
+	if chain.queries[1] != fmt.Sprint(nowNs/1_000_000) {
+		t.Fatalf("second query min_timestamp: got %q, want the outstanding order creation time", chain.queries[1])
 	}
 }
 
@@ -423,14 +423,14 @@ func TestScanDepositsAdvancesCursorPastForeignTransfers(t *testing.T) {
 		t.Fatalf("cursor: got %d, want %d (a page of foreign rows must still move it)", cursor, blockMs)
 	}
 
-	// With the cursor advanced, the next poll asks from that watermark instead
-	// of re-reading the same page.
+	// A bounded recent window is revisited to catch delayed provider indexing;
+	// the persisted cursor still advances on filtered rows.
 	chain.transfers = nil
 	if _, err := cp.ScanDeposits(context.Background(), nowNs); err != nil {
 		t.Fatalf("second scan: %v", err)
 	}
-	if len(chain.queries) != 2 || chain.queries[1] != fmt.Sprintf("%d", blockMs) {
-		t.Fatalf("second query min_timestamp: got %v, want %d", chain.queries, blockMs)
+	if len(chain.queries) != 2 || chain.queries[1] != fmt.Sprint((nowNs-depositWindowNs-depositHoldNs)/1_000_000) {
+		t.Fatalf("second query min_timestamp: got %v, want the recent confirmation window", chain.queries)
 	}
 }
 

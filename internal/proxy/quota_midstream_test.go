@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -352,7 +353,8 @@ func TestNormalizeQuotaGracePercent(t *testing.T) {
 func TestForwardProxy_HTTPResponseIsCutMidStreamWhenTheAllowanceRunsOut(t *testing.T) {
 	payload := bytes.Repeat([]byte("x"), midStreamBodyLen)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
 		_, _ = w.Write(payload)
 	}))
 	defer upstream.Close()
@@ -365,14 +367,36 @@ func TestForwardProxy_HTTPResponseIsCutMidStreamWhenTheAllowanceRunsOut(t *testi
 	key := workingKeyState()
 	key.Plan.TrafficBytes = midStreamAllowance
 	store := &mutableKeyStore{state: key}
-	fp, emitter, _, registry := newQuotaForwardProxy(t, env, store)
+	fp, emitter, counters, registry := newQuotaForwardProxy(t, env, store)
 
-	req := httptest.NewRequest(http.MethodGet, upstream.URL+"/large", nil)
+	server := httptest.NewServer(fp)
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, upstream.URL+"/large", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	req.Header.Set("Proxy-Authorization", basicAuth("plat", testCredential))
-	rec := httptest.NewRecorder()
-	fp.ServeHTTP(rec, req)
-
-	body := rec.Body.Bytes()
+	proxyURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer transport.CloseIdleConnections()
+	response, err := (&http.Client{Transport: transport}).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", response.StatusCode)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	if readErr == nil {
+		t.Fatal("quota interruption ended a chunked 200 successfully")
+	}
+	if used := counters.UserBytes(key.UserID); used > midStreamAllowance {
+		t.Fatalf("charged %d bytes beyond %d allowance", used, midStreamAllowance)
+	}
 	if int64(len(body)) >= midStreamBodyLen {
 		t.Fatalf("the whole %d-byte response reached the client: the allowance was not enforced mid-stream", len(body))
 	}

@@ -18,7 +18,7 @@ export function NotFoundPage() {
   const role = useAuthStore((state) => state.session.user?.role);
   return (
     <section className="workspace-not-found-shell flex min-h-full items-center justify-center px-6 py-16">
-      <SurfaceCard className="workspace-empty workspace-not-found w-full max-w-md text-center">
+      <SurfaceCard className="workspace-not-found w-full max-w-md text-center">
         <SurfaceBody>
         <FileQuestion size={26} className="text-accent" />
         <h1 className="text-lg font-semibold">{t("页面不存在")}</h1>

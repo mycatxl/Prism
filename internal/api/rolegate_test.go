@@ -135,6 +135,17 @@ func TestRequireAdmin(t *testing.T) {
 			wantCode:   "NOT_FOUND",
 		},
 		{
+			// Role isolation precedes CSRF for a tenant probing the admin
+			// surface. Otherwise write routes would answer 403 while unknown and
+			// read-only routes answer 404, revealing which endpoints exist.
+			name:       "a tenant write without csrf is still hidden",
+			session:    "user-session",
+			method:     http.MethodPost,
+			path:       "/api/v1/admin/plans",
+			wantStatus: http.StatusNotFound,
+			wantCode:   "NOT_FOUND",
+		},
+		{
 			// A key inherits the role of whoever holds it: minting one for a
 			// user must not smuggle that user past the gate.
 			name:       "a key held by a user does not open the control plane",
