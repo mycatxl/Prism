@@ -10,8 +10,7 @@ TAGS := with_quic with_grpc with_utls with_wireguard with_gvisor with_openvpn wi
 BUILD_TAGS ?= $(TAGS)
 # The version a build stamps into internal/buildinfo. A caller passes VERSION to
 # pin it (the release workflow passes the tag name); left alone it comes from
-# the git tag the working tree is on, so a local build reports v0.3.0 rather
-# than "dev".
+# git describe for the working tree (the nearest tag or commit identifier).
 VERSION ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_TIME ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)

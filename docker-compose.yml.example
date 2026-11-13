@@ -1,9 +1,10 @@
 # Two ways to run the container. Pick one.
 #
-#   docker compose up -d          builds the image from this checkout (needs Go and
-#                                 Node in the build, several minutes)
-#   docker compose pull && up -d  uses the published image instead (no toolchain,
-#                                 seconds) -- uncomment `image:` and remove `build:`
+#   docker compose up -d          builds the image from this checkout (Go and
+#                                 Node run inside the build stages)
+#   docker compose pull
+#   docker compose up -d          uses the published image instead -- keep
+#                                 `image:` and remove the entire `build:` block
 #
 # Do not leave both enabled and then call `docker compose pull`: with `build:` set,
 # compose builds and tags the result locally, so the image name below is only used
@@ -20,7 +21,14 @@
 # `up` it would fail and keep the service from starting. Run it by hand, once,
 # against the same volumes this file declares:
 #
+#   # First deployment only: generate the required legacy configuration token
+#   # in a private host .env. Never overwrite an existing deployment's .env.
+#   (umask 077; set -C; printf 'PRISM_PROXY_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env)
+#   # For source builds, run `docker compose build` before initialization.
 #   docker compose run --rm prism prism init --dir /tmp --admin-username admin
+#
+# The init container's /tmp/.env is temporary; the host .env above supplies the
+# service configuration token. Proxy traffic still requires a tenant AccessKey.
 #
 # It prints the generated administrator password once -- copy it -- then
 # `docker compose up -d` and sign in at http://127.0.0.1:2260/ui/ as that
@@ -32,13 +40,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    # Published by the release workflow on a v* tag. Comment out `build:` above to
+      args:
+        VERSION: v0.5.0
+    # Published by the release workflow on a v* tag. Remove the `build:` block to
     # use it, and pin the release you intend (`latest` follows the newest
     # non-prerelease release). Bump this line with every release you deploy: it
     # is the version an operator actually runs, so it must never lag the
-    # published tags (v0.4.2 is the current one).
+    # published tags. Git tag v0.5.0 produces image tag 0.5.0 (without `v`).
     # Tags: https://github.com/mycatxl/Prism/pkgs/container/prism
-    image: ghcr.io/mycatxl/prism:0.4.2
+    image: ghcr.io/mycatxl/prism:0.5.0
     container_name: prism
     restart: unless-stopped
     environment:
