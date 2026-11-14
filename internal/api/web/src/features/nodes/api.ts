@@ -138,6 +138,9 @@ function appendNodeFilters(query: URLSearchParams, filters: NodeListQuery): void
   appendIfNotEmpty("tag_keyword", filters.tag_keyword);
   appendIfNotEmpty("region", filters.region?.toLowerCase());
   appendIfNotEmpty("egress_ip", filters.egress_ip);
+  if (filters.latency_min !== undefined) query.set("latency_min", String(filters.latency_min));
+  if (filters.latency_max !== undefined) query.set("latency_max", String(filters.latency_max));
+  if (filters.has_egress_ip !== undefined) query.set("has_egress_ip", String(filters.has_egress_ip));
   // datetime-local carries browser-local time; the API requires an instant.
   if (filters.probed_since) query.set("probed_since", new Date(filters.probed_since).toISOString());
 

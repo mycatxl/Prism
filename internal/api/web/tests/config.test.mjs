@@ -5,8 +5,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import http from "node:http";
 import { test } from "node:test";
+import { loadConfigFromFile } from "vite";
 import { loadServerEnv, readServerConfig } from "../server/config.mjs";
 import { createPanelServer } from "../server/http.mjs";
+
+test("isolated frontend builds skip deployment dotenv and force same-origin API requests", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "prism-isolated-build-"));
+  const cwd = process.cwd();
+  const previous = process.env.PRISM_ISOLATED_WEB_BUILD;
+  try {
+    await writeFile(join(dir, ".env"), "PRISM_UI_PORT=invalid\nVITE_API_BASE_URL=invalid\n");
+    process.env.PRISM_ISOLATED_WEB_BUILD = "1";
+    process.chdir(dir);
+    const loaded = await loadConfigFromFile({ command: "build", mode: "production" }, new URL("../vite.config.ts", import.meta.url).pathname);
+    assert.equal(loaded.config.envDir, false);
+    assert.equal(loaded.config.define["import.meta.env.VITE_API_BASE_URL"], JSON.stringify(""));
+    assert.equal(loaded.config.server.proxy["/api"].target, "http://127.0.0.1:2260");
+  } finally {
+    process.chdir(cwd);
+    if (previous === undefined) delete process.env.PRISM_ISOLATED_WEB_BUILD; else process.env.PRISM_ISOLATED_WEB_BUILD = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("management defaults to loopback 1262, backend remains separate", () => {
   assert.deepEqual(readServerConfig({}), {

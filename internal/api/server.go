@@ -170,6 +170,7 @@ func NewServerWithAddress(
 
 		// System config mutations.
 		authed.Handle("PATCH /api/v1/system/config", HandlePatchSystemConfig(cp))
+		authed.Handle("POST /api/v1/system/alerts/test", HandleTestOperationalAlert(cp))
 
 		// Platforms.
 		authed.Handle("GET /api/v1/platforms", HandleListPlatforms(cp))

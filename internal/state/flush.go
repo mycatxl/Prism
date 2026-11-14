@@ -20,6 +20,8 @@ type CacheFlushWorker struct {
 	thresholdFn func() int
 	intervalFn  func() time.Duration
 	checkTick   time.Duration // how often to check conditions
+	// OnError observes a failed flush; it must return promptly.
+	OnError func(error)
 
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
@@ -102,6 +104,9 @@ func (w *CacheFlushWorker) run() {
 
 func (w *CacheFlushWorker) doFlush() {
 	if err := w.engine.FlushDirtySets(w.readers); err != nil {
+		if w.OnError != nil {
+			w.OnError(err)
+		}
 		log.Printf("[state] flush error (entries re-merged): %v", err)
 	}
 }

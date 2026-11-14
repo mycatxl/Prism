@@ -133,7 +133,9 @@ func HandlePatchSystemConfig(cp *service.ControlPlaneService) http.HandlerFunc {
 			writeServiceError(w, err)
 			return
 		}
-		WriteJSON(w, http.StatusOK, result.PublicView())
+		view := result.PublicView()
+		view.PaymentURLChecks = cp.CheckPaymentURLs(r.Context(), body, result)
+		WriteJSON(w, http.StatusOK, view)
 	}
 }
 
@@ -143,7 +145,7 @@ func runtimePatchRequiresSession(body []byte) bool {
 		return false
 	}
 	for field := range object {
-		if field == "node_privacy" || field == "registration_mode" || strings.HasPrefix(field, "ldc_") || strings.HasPrefix(field, "tron_") {
+		if field == "node_privacy" || field == "registration_mode" || strings.HasPrefix(field, "ldc_") || strings.HasPrefix(field, "tron_") || strings.HasPrefix(field, "alert_telegram_") {
 			return true
 		}
 	}

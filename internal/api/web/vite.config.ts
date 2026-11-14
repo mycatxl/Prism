@@ -3,13 +3,16 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { loadServerEnv, readServerConfig } from "./server/config.mjs";
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
+  const isolatedBuild = command === "build" && process.env.PRISM_ISOLATED_WEB_BUILD === "1";
   const config = readServerConfig(
-    loadServerEnv(process.cwd(), process.env, mode),
+    isolatedBuild ? {} : loadServerEnv(process.cwd(), process.env, mode),
   );
   const developmentOrigin = `http://${config.host}:${config.port}`;
 
   return {
+    envDir: isolatedBuild ? false : undefined,
+    define: isolatedBuild ? { "import.meta.env.VITE_API_BASE_URL": JSON.stringify("") } : undefined,
     base: "/ui/",
     plugins: [react(), tailwindcss()],
     build: {

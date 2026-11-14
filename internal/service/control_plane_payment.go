@@ -3,7 +3,6 @@ package service
 import (
 	"math"
 	"math/big"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -71,12 +70,8 @@ func validatePaymentConfig(c *config.RuntimeConfig) *ServiceError {
 		if v.value == "" {
 			continue
 		}
-		u, err := url.Parse(v.value)
-		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
-			return invalidArg(v.name + ": must be an absolute HTTPS URL without credentials, query or fragment")
-		}
-		if v.name != "ldc_gateway_url" && strings.Contains(v.value, "&") {
-			return invalidArg(v.name + ": must not contain an EasyPay parameter separator")
+		if _, err := validatePaymentURL(v.name, v.value); err != nil {
+			return err
 		}
 	}
 	for _, v := range []struct{ name, value string }{{"tron_address", c.TronAddress}, {"tron_usdt_contract", c.TronUSDTContract}} {

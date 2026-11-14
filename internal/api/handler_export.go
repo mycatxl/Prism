@@ -35,6 +35,9 @@ type exportNodeFilter struct {
 	Region         string   `json:"region,omitempty"`
 	CircuitOpen    *bool    `json:"circuit_open,omitempty"`
 	HasOutbound    *bool    `json:"has_outbound,omitempty"`
+	HasEgressIP    *bool    `json:"has_egress_ip,omitempty"`
+	LatencyMin     *float64 `json:"latency_min,omitempty"`
+	LatencyMax     *float64 `json:"latency_max,omitempty"`
 	EgressIP       string   `json:"egress_ip,omitempty"`
 	TagKeyword     string   `json:"tag_keyword,omitempty"`
 	ProbedSince    string   `json:"probed_since,omitempty"`
@@ -111,6 +114,11 @@ func (f exportNodeFilter) toNodeFilters() (service.NodeFilters, error) {
 	filters.Enabled = f.Enabled
 	filters.CircuitOpen = f.CircuitOpen
 	filters.HasOutbound = f.HasOutbound
+	filters.HasEgressIP = f.HasEgressIP
+	filters.LatencyMin, filters.LatencyMax = f.LatencyMin, f.LatencyMax
+	if err := validateNodeOperationalFilters(&filters); err != nil {
+		return filters, err
+	}
 	if strings.TrimSpace(f.ProbedSince) != "" {
 		parsed, err := time.Parse(time.RFC3339Nano, f.ProbedSince)
 		if err != nil {
@@ -173,6 +181,12 @@ func exportFilterFromQuery(r *http.Request) (exportNodeFilter, error) {
 		PurityMax: q.Get("purity_max"),
 	}
 	var err error
+	if filter.LatencyMin, err = parseNodeLatencyBound(q.Get("latency_min"), "latency_min"); err != nil {
+		return filter, err
+	}
+	if filter.LatencyMax, err = parseNodeLatencyBound(q.Get("latency_max"), "latency_max"); err != nil {
+		return filter, err
+	}
 	if intelValues.PurityMin != "" {
 		value, parseErr := parsePurityBound(intelValues.PurityMin, "purity_min")
 		if parseErr != nil {
@@ -201,6 +215,9 @@ func exportFilterFromQuery(r *http.Request) (exportNodeFilter, error) {
 		return filter, err
 	}
 	if filter.HasOutbound, err = ParseBoolQuery(r, "has_outbound"); err != nil {
+		return filter, err
+	}
+	if filter.HasEgressIP, err = ParseBoolQuery(r, "has_egress_ip"); err != nil {
 		return filter, err
 	}
 	if filter.Native, err = ParseBoolQuery(r, "native"); err != nil {

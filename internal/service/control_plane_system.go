@@ -14,6 +14,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"prism/internal/alerting"
 	"prism/internal/auth"
 	"prism/internal/config"
 	"prism/internal/intel"
@@ -115,11 +116,13 @@ type ControlPlaneService struct {
 	LDC *ldc.Client
 	// Logf records events a response cannot report. It is optional: nil means
 	// stay quiet, and every caller has to work without it.
-	Logf          func(string, ...any)
-	depositScanMu sync.Mutex
-	configMu      sync.Mutex
-	configVersion int
-	endpointMu    sync.RWMutex
+	Logf              func(string, ...any)
+	AlertNotifier     *alerting.Notifier
+	PaymentURLChecker *PaymentURLChecker
+	depositScanMu     sync.Mutex
+	configMu          sync.Mutex
+	configVersion     int
+	endpointMu        sync.RWMutex
 	// keyCreateMu serialises the "read the key count, then insert" pair in
 	// CreateAccessKey. The check and the insert are two statements, so two
 	// creations arriving together can both pass the check and then both
@@ -245,6 +248,11 @@ var runtimeConfigAllowedFields = map[string]bool{
 	"alert_usage_ratio":                        true,
 	"alert_window_minutes":                     true,
 	"alert_retention_days":                     true,
+	"alert_telegram_enabled":                   true,
+	"alert_telegram_bot_token":                 true,
+	"alert_telegram_chat_id":                   true,
+	"alert_disk_free_percent":                  true,
+	"alert_cooldown_minutes":                   true,
 	"registration_mode":                        true,
 	"ldc_enabled":                              true, "ldc_gateway_url": true, "ldc_pid": true, "ldc_key": true,
 	"ldc_rate": true, "ldc_notify_url": true, "ldc_return_url": true,
@@ -459,6 +467,9 @@ func validateRuntimeConfig(cfg *config.RuntimeConfig) *ServiceError {
 	}
 	if err := validatePaymentConfig(cfg); err != nil {
 		return err
+	}
+	if err := cfg.ValidateOperationalAlerts(); err != nil {
+		return invalidArg(err.Error())
 	}
 	latencyURL := strings.TrimSpace(cfg.LatencyTestURL)
 	u, verr := parseHTTPAbsoluteURL("latency_test_url", latencyURL)

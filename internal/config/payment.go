@@ -55,15 +55,30 @@ func (c *RuntimeConfig) SeedPaymentConfig(env *EnvConfig) {
 }
 
 // PublicView masks secrets without changing their database representation.
-func (c *RuntimeConfig) PublicView() any {
+type RuntimeConfigView struct {
+	*RuntimeConfig
+	LDCKeySet                bool              `json:"ldc_key_set"`
+	TronAPIKeySet            bool              `json:"tron_api_key_set"`
+	AlertTelegramBotTokenSet bool              `json:"alert_telegram_bot_token_set"`
+	PaymentURLChecks         []PaymentURLCheck `json:"payment_url_checks,omitempty"`
+}
+
+// PaymentURLCheck is an advisory result for a callback URL at save time. It
+// contains safe classifications only, never raw URLs or transport diagnostics.
+type PaymentURLCheck struct {
+	Field      string `json:"field"`
+	Status     string `json:"status"`
+	Code       string `json:"code"`
+	HTTPStatus int    `json:"http_status,omitempty"`
+}
+
+func (c *RuntimeConfig) PublicView() *RuntimeConfigView {
 	if c == nil {
 		return nil
 	}
 	copy := *c
 	copy.LDCKey, copy.TronAPIKey = "", ""
-	return struct {
-		*RuntimeConfig
-		LDCKeySet     bool `json:"ldc_key_set"`
-		TronAPIKeySet bool `json:"tron_api_key_set"`
-	}{&copy, c.LDCKey != "", c.TronAPIKey != ""}
+	copy.AlertTelegramBotToken = ""
+	copy.NormalizeOperationalAlerts()
+	return &RuntimeConfigView{RuntimeConfig: &copy, LDCKeySet: c.LDCKey != "", TronAPIKeySet: c.TronAPIKey != "", AlertTelegramBotTokenSet: c.AlertTelegramBotToken != ""}
 }

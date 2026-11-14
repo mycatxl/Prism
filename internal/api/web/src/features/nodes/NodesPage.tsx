@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownUp, ArrowLeft, ArrowRight, ArrowUpRight, Copy, Download, ExternalLink, Globe2, Network, Radar, Radio, RefreshCw, ShieldCheck, Zap } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ControlButton, ControlInput, ControlSelect, ControlTabs, DetailFact, EmptyWorkState, FilterChip, InspectorDrawer, ObjectList, ObjectRow, WorkspacePage, StatusMark, WorkspaceCard } from "../../components/control-plane";
 import { ToastContainer } from "../../components/control-plane";
@@ -10,12 +10,14 @@ import { formatApiErrorMessage } from "../../lib/error-message";
 import { opsPaths } from "../../lib/paths";
 import { formatDateTime } from "../../lib/time";
 import { listPlatforms } from "../platforms/api";
+import { listNodeSubscriptionOptions } from "./subscriptionOptions";
 import { listIntelChecks, parseCheckFilterValue } from "../intel/checks";
 import { checkOutcomeLabel, checkOutcomeOptions, CHECK_FILTER_NOTE, GEMINI_EVIDENCE_NOTE } from "../intel/checkPresentation";
 import { createIntelJob } from "../jobs/api";
 import type { IntelJobScope } from "../jobs/types";
 import { buildBulkIntelScope, hasUnsupportedFilters } from "./intelScope";
 import { getAllRegions, getRegionName } from "./regions";
+import { nodeFilterError, nodeHealthFilters, nodeHealthMode, nodeLatencyPreset, updateNodeFilterParams, updateNodeLatencyPreset } from "./filters";
 import { exportNodes, getNode, listNodes, NODE_EXPORT_FORMATS, probeEgress, probeLatency, type NodeExportFormat } from "./api";
 import type { NodeListQuery, NodeSummary, NodeSortBy } from "./types";
 import { getQualityStatus, inspectNode, qualityPollingInterval } from "./quality/api";
@@ -31,6 +33,8 @@ const sizes = [20, 50, 100, 200] as const;
 const protocolLabels: Record<string, string> = { shadowsocks: "Shadowsocks", vmess: "VMess", vless: "VLESS", trojan: "Trojan", hysteria: "Hysteria", hysteria2: "Hysteria 2", tuic: "TUIC", wireguard: "WireGuard", shadowtls: "ShadowTLS", socks: "SOCKS", http: "HTTP", ssh: "SSH", anytls: "AnyTLS", direct: "Direct" };
 const exportLabels: Record<NodeExportFormat, string> = { singbox: "sing-box JSON", mihomo: "mihomo / Clash YAML", v2rayn: "v2rayN Base64", uri: "URI 分享链接", proxy: "代理地址", csv: "CSV 分析表", json: "JSON 分析数据" };
 const sortLabels: Record<NodeSortBy, string> = { tag: "节点名称", created_at: "创建时间", failure_count: "连续失败", region: "地区", purity_score: "纯净度", latency: "参考延迟", assessed_at: "最近检测" };
+const healthLabels: Record<string, string> = { all: "全部", healthy: "健康", circuit_open: "降级", error: "危急", disabled: "禁用", custom: "自定义" };
+const commonRegions = ["HK", "JP", "SG", "US", "TW", "CN", "GB", "DE"];
 
 type HealthTone = "neutral" | "signal" | "warn" | "alert";
 
@@ -50,16 +54,6 @@ function optionalInteger(value: string): number | undefined {
   if (!value.trim()) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function filterError(filter: { purity_min: string; purity_max: string; asn: string; probed_since: string }) {
-  for (const value of [filter.purity_min, filter.purity_max]) {
-    if (value && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 100)) return "纯净度必须是 0–100 的整数。";
-  }
-  if (filter.purity_min && filter.purity_max && Number(filter.purity_min) > Number(filter.purity_max)) return "纯净度下限不能大于上限。";
-  if (filter.asn && (!Number.isInteger(Number(filter.asn)) || Number(filter.asn) < 1 || Number(filter.asn) > 4294967295)) return "ASN 必须是 1–4294967295 的整数。";
-  if (filter.probed_since && !Number.isFinite(new Date(filter.probed_since).getTime())) return "请选择有效的探测时间。";
-  return "";
 }
 
 function toneForState(tone: HealthTone): "neutral" | "signal" | "warn" | "alert" {
@@ -85,7 +79,7 @@ export function NodesPage() {
   const pageSize = sizes.includes(rawSize as (typeof sizes)[number]) ? rawSize : 50;
   const sort = (Object.keys(sortLabels) as NodeSortBy[]).includes(params.get("sort") as NodeSortBy) ? params.get("sort") as NodeSortBy : "tag";
   const order = params.get("order") === "desc" ? "desc" : "asc";
-  const mode = params.get("status") || (params.get("enabled") === "false" ? "disabled" : params.get("has_outbound") === "false" ? "error" : params.get("circuit_open") === "true" ? "circuit_open" : "all");
+  const mode = nodeHealthMode(params);
   const keyword = params.get("tag_keyword") || params.get("tag") || "";
   const filter = {
     ip_type: params.get("ip_type") || "",
@@ -98,24 +92,23 @@ export function NodesPage() {
     tag_keyword: keyword,
     platform_id: params.get("platform_id") || "",
     subscription_id: params.get("subscription_id") || "",
-    region: params.get("region") || "",
+    region: params.get("region")?.trim() || "",
     egress_ip: params.get("egress_ip") || "",
+    has_egress_ip: params.get("has_egress_ip") || "",
+    latency_min: params.get("latency_min")?.trim() || "",
+    latency_max: params.get("latency_max")?.trim() || "",
     purity_min: params.get("purity_min") || "",
     purity_max: params.get("purity_max") || "",
     verdict: params.get("verdict") || "",
     confidence_min: params.get("confidence_min") || "",
     native: params.get("native") || "",
     asn: params.get("asn") || "",
-    country: params.get("country") || "",
+    country: params.get("country")?.trim() || "",
     probed_since: params.get("probed_since") || "",
   };
   const selectedChecks = params.getAll("check").map((value) => value.trim()).filter(Boolean);
-  const validationError = filterError(filter);
-  const modeFilter = {
-    enabled: mode === "disabled" ? false : mode !== "all" ? true : undefined,
-    has_outbound: mode === "error" ? false : mode === "healthy" || mode === "circuit_open" ? true : undefined,
-    circuit_open: mode === "healthy" ? false : mode === "circuit_open" ? true : undefined,
-  };
+  const validationError = nodeFilterError({ ...filter, status: params.get("status") || "", enabled: params.get("enabled") || "", has_outbound: params.get("has_outbound") || "", circuit_open: params.get("circuit_open") || "" });
+  const modeFilter = nodeHealthFilters(params);
   const nodeQuery: NodeListQuery = {
     ...filter,
     ...modeFilter,
@@ -126,6 +119,9 @@ export function NodesPage() {
     sort_order: order,
     purity_min: optionalInteger(filter.purity_min),
     purity_max: optionalInteger(filter.purity_max),
+    latency_min: filter.latency_min ? Number(filter.latency_min) : undefined,
+    latency_max: filter.latency_max ? Number(filter.latency_max) : undefined,
+    has_egress_ip: filter.has_egress_ip === "true" ? true : filter.has_egress_ip === "false" ? false : undefined,
     asn: optionalInteger(filter.asn),
     native: filter.native === "true" ? true : filter.native === "false" ? false : undefined,
     verdict: filter.verdict || undefined,
@@ -141,6 +137,7 @@ export function NodesPage() {
   const detailQuery = useQuery({ queryKey: ["node", selected], queryFn: () => getNode(selected), enabled: Boolean(selected), refetchInterval: qualityPollingInterval(qualityStatus.data) });
   const detail = detailQuery.data ?? nodes.find((node) => node.node_hash === selected);
   const platforms = useQuery({ queryKey: ["platforms", "node-filter"], queryFn: () => listPlatforms({ limit: 1000 }), enabled: view === "nodes", staleTime: 60_000 });
+  const subscriptions = useQuery({ queryKey: ["subscriptions", "node-filter"], queryFn: ({ signal }) => listNodeSubscriptionOptions(signal), enabled: view === "nodes", staleTime: 60_000 });
   const checksQuery = useQuery({ queryKey: ["intel", "checks"], queryFn: ({ signal }) => listIntelChecks(signal), enabled: view === "nodes", staleTime: 300_000 });
   const checks = checksQuery.data ?? [];
   const platformName = platforms.data?.items.find((platform) => platform.id === filter.platform_id)?.name.toLowerCase();
@@ -148,18 +145,7 @@ export function NodesPage() {
   const capabilityName = checks.find((check) => check.id === capabilityID)?.name || capabilityID;
   const capabilityOutcome = selectedChecks.map(parseCheckFilterValue).find((entry) => entry.checkID === capabilityID)?.outcome || "";
 
-  const update = (key: string, value: string) => setParams((previous) => {
-    const next = new URLSearchParams(previous);
-    if (value || key === "capability") next.set(key, value); else next.delete(key);
-    if (key === "platform_id") next.delete("capability");
-    if (key === "tag_keyword") next.delete("tag");
-    if (key === "status") for (const alias of ["enabled", "has_outbound", "circuit_open"]) next.delete(alias);
-    if (key !== "page" && key !== "selected") {
-      next.delete("page");
-      next.delete("cursor");
-    }
-    return next;
-  }, { replace: true, state: location.state });
+  const update = (key: string, value: string) => setParams((previous) => updateNodeFilterParams(previous, key, value), { replace: true, state: location.state });
   const changeView = (nextView: string) => setParams((previous) => {
     const next = new URLSearchParams(previous);
     if (nextView === "exits") next.set("view", "exits"); else next.delete("view");
@@ -200,16 +186,26 @@ export function NodesPage() {
   const probe = useMutation({ mutationFn: ({ hash, kind }: { hash: string; kind: "egress" | "latency" }) => kind === "egress" ? probeEgress(hash) : probeLatency(hash), onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["nodes"] }); void queryClient.invalidateQueries({ queryKey: ["node"] }); showToast("success", t("探测已完成")); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
   const qualityProbe = useMutation({ mutationFn: inspectNode, onSuccess: (result) => { void queryClient.invalidateQueries({ queryKey: ["nodes"] }); void queryClient.invalidateQueries({ queryKey: ["node"] }); void queryClient.invalidateQueries({ queryKey: ["quality"] }); showToast("success", t(result.queued ? "检测已排队" : "已复用最近的检测结果")); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
   const bulkCount = nodesData?.total ?? 0;
-  const bulkScopeBlocked = mode === "error" || mode === "disabled" || mode === "circuit_open";
+  const bulkScopeBlocked = mode === "error" || mode === "disabled" || mode === "circuit_open" || mode === "custom";
   const bulkScopeWider = hasUnsupportedFilters(params);
   const [bulkJobID, setBulkJobID] = useState("");
   const bulkJob = useMutation({ mutationFn: (request: { scope: IntelJobScope; count: number }) => createIntelJob({ kind: "full", scope: request.scope, force: true }), onSuccess: (response, request) => { void queryClient.invalidateQueries({ queryKey: ["intel-jobs"] }); setBulkJobID(response.job.id); showToast("success", t("已创建情报任务（预计 {{count}} 个节点）", { count: request.count })); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
   const exportMutation = useMutation({ mutationFn: (format: NodeExportFormat) => exportNodes(format, nodeQuery), onSuccess: (result) => { const url = URL.createObjectURL(result.blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = result.fileName; anchor.click(); URL.revokeObjectURL(url); showToast("success", t("已导出 {{count}} 个节点", { count: result.exported })); }, onError: (error) => showToast("error", formatApiErrorMessage(error, t)) });
-  const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["nodes"] }); void queryClient.invalidateQueries({ queryKey: ["node"] }); void queryClient.invalidateQueries({ queryKey: ["platforms", "node-filter"] }); void queryClient.invalidateQueries({ queryKey: ["quality"] }); };
+  const refresh = () => { void queryClient.invalidateQueries({ queryKey: ["nodes"] }); void queryClient.invalidateQueries({ queryKey: ["node"] }); void queryClient.invalidateQueries({ queryKey: ["platforms", "node-filter"] }); void queryClient.invalidateQueries({ queryKey: ["subscriptions", "node-filter"] }); void queryClient.invalidateQueries({ queryKey: ["quality"] }); };
   const copy = async (value: string) => { try { await navigator.clipboard.writeText(value); showToast("success", t("已复制")); } catch { showToast("error", t("无法复制，请手动选择文本")); } };
 
   const activeFilters = [
-    ["status", mode !== "all" ? mode : "", t("状态")], ["tag_keyword", keyword, t("关键词")], ["platform_id", filter.platform_id ? platforms.data?.items.find((item) => item.id === filter.platform_id)?.name || filter.platform_id : "", t("平台")], ["subscription_id", filter.subscription_id ? t("已限定") : "", t("节点范围")], ["country", filter.country, t("国家")], ["region", filter.region, t("地区")], ["ip_type", filter.ip_type, t("IP 类型")], ["quality_state", filter.quality_state, t("质量")], ["risk_grade", filter.risk_grade, t("风险")], ["purity_state", filter.purity_state, t("纯净度状态")], ["purity_reason", filter.purity_reason ? t(measurementStatusLabel({ state: "unknown", cause: filter.purity_reason })) : "", t("检测状态")], ["purity_band", filter.purity_band, t("纯净度")], ["protocol", filter.protocol, t("协议")], ["egress_ip", filter.egress_ip, t("出口 IP")], ["purity_min", filter.purity_min, t("纯净度下限")], ["purity_max", filter.purity_max, t("纯净度上限")], ["verdict", filter.verdict, t("判定")], ["confidence_min", filter.confidence_min, t("置信度")], ["native", filter.native, t("原生 IP")], ["asn", filter.asn, "ASN"], ["probed_since", filter.probed_since, t("探测时间")], ["check", selectedChecks.map((value) => { const { checkID, outcome } = parseCheckFilterValue(value); return `${checks.find((check) => check.id === checkID)?.name || checkID}: ${t(checkOutcomeLabel(checkID, outcome))}`; }).join(", "), t("检测项")],
+    ["status", mode !== "all" && mode !== "custom" ? t(healthLabels[mode] || mode) : "", t("状态")],
+    ...(["enabled", "has_outbound", "circuit_open"] as const).map((key) => [key, mode === "custom" && params.get(key) ? t(params.get(key) === "true" ? "是" : "否") : "", t(key === "enabled" ? "节点启用" : key === "has_outbound" ? "可用出站" : "熔断")]),
+    ["tag_keyword", keyword, t("关键词")],
+    ["platform_id", filter.platform_id ? platforms.data?.items.find((item) => item.id === filter.platform_id)?.name || filter.platform_id : "", t("平台")],
+    ["subscription_id", filter.subscription_id ? subscriptions.data?.find((item) => item.id === filter.subscription_id)?.name || filter.subscription_id : "", t("来源订阅")],
+    ["country", filter.country, t("情报国家")],
+    ["region", filter.region ? `${filter.region.toUpperCase()} ${getRegionName(filter.region.toUpperCase()) || ""}`.trim() : "", t("地区")],
+    ["latency_min", filter.latency_min ? `≥ ${filter.latency_min} ms` : "", t("参考延迟")],
+    ["latency_max", filter.latency_max ? `< ${filter.latency_max} ms` : "", t("参考延迟")],
+    ["has_egress_ip", filter.has_egress_ip ? t(filter.has_egress_ip === "true" ? "有出口 IP" : "无出口 IP") : "", t("出口测得状态")],
+    ["ip_type", filter.ip_type, t("IP 类型")], ["quality_state", filter.quality_state, t("质量")], ["risk_grade", filter.risk_grade, t("风险")], ["purity_state", filter.purity_state, t("纯净度状态")], ["purity_reason", filter.purity_reason ? t(measurementStatusLabel({ state: "unknown", cause: filter.purity_reason })) : "", t("检测状态")], ["purity_band", filter.purity_band, t("纯净度")], ["protocol", protocolLabels[filter.protocol] || filter.protocol, t("协议")], ["egress_ip", filter.egress_ip, t("出口 IP")], ["purity_min", filter.purity_min, t("纯净度下限")], ["purity_max", filter.purity_max, t("纯净度上限")], ["verdict", filter.verdict, t("判定")], ["confidence_min", filter.confidence_min, t("置信度")], ["native", filter.native, t("原生 IP")], ["asn", filter.asn, "ASN"], ["probed_since", filter.probed_since, t("探测时间")], ["check", selectedChecks.map((value) => { const { checkID, outcome } = parseCheckFilterValue(value); return `${checks.find((check) => check.id === checkID)?.name || checkID}: ${t(checkOutcomeLabel(checkID, outcome))}`; }).join(", "), t("检测项")],
   ].filter((item) => Boolean(item[1])) as Array<[string, string, ReactNode]>;
   const hasActiveFilters = activeFilters.length > 0;
   const totalPages = Math.max(1, Math.ceil((nodesData?.total ?? 0) / pageSize));
@@ -217,7 +213,12 @@ export function NodesPage() {
   const canGoPrevious = nodesData?.has_previous ?? currentPage > 0;
   const canGoNext = nodesData?.has_next ?? currentPage < totalPages - 1;
   const selectedIndex = nodes.findIndex((node) => node.node_hash === selected);
-  const regions = useMemo(() => getAllRegions(), []);
+  const regions = getAllRegions();
+  const regionItems = [...commonRegions.map((code) => regions.find((region) => region.code === code)!), ...regions.filter((region) => !commonRegions.includes(region.code))];
+  const sourceItems = (subscriptions.data ?? []).map((source) => ({ id: source.id, label: source.enabled ? source.name : `${source.name} (${t("禁用")})` }));
+  if (filter.subscription_id && !sourceItems.some((item) => item.id === filter.subscription_id)) sourceItems.push({ id: filter.subscription_id, label: filter.subscription_id });
+  const protocols = Object.entries(protocolLabels).map(([id, label]) => ({ id, label }));
+  if (filter.protocol && !protocolLabels[filter.protocol]) protocols.push({ id: filter.protocol, label: filter.protocol });
 
   return (
     <WorkspacePage eyebrow="Inventory / node pool" title={t("节点") } description={t("按健康状态、协议、地区、延迟和解锁能力查找节点。") } meta={<StatusMark tone={validationError || nodesQuery.isError ? "warn" : nodesQuery.isSuccess ? "live" : "neutral"} label={validationError ? t("筛选条件无效") : nodesQuery.isError ? t("读取失败") : nodesQuery.isSuccess ? t("结果已同步") : t("等待结果")} />} actions={<><ControlButton variant="secondary" size="sm" onPress={refresh} loading={nodesQuery.isFetching}><RefreshCw size={14} aria-hidden />{t("刷新")}</ControlButton><ControlButton variant="secondary" size="sm" onPress={() => navigate(`${opsPaths.subscriptions}?create=1`)}><Download size={14} aria-hidden />{t("导入订阅")}</ControlButton></>}>
@@ -229,10 +230,14 @@ export function NodesPage() {
           <section className="workspace-command workspace-node-command">
             <div className="workspace-command__body">
               <ControlInput label={t("搜索节点") } value={keyword} onChange={(event) => update("tag_keyword", event.target.value)} placeholder={t("节点名称或标签")} className="workspace-node-command__keyword" />
-              <ControlSelect label={t("健康状态")} selectedKey={mode} items={[{ id: "all", label: t("全部") }, { id: "healthy", label: t("健康") }, { id: "circuit_open", label: t("降级") }, { id: "error", label: t("危急") }, { id: "disabled", label: t("禁用") }]} onSelectionChange={(key) => update("status", key ?? "")} />
+              <ControlSelect label={t("健康状态")} selectedKey={mode} items={Object.entries(healthLabels).map(([id, label]) => ({ id, label: t(label), isDisabled: id === "custom" }))} onSelectionChange={(key) => update("status", key ?? "")} />
+              <ControlSelect label={t("协议")} selectedKey={filter.protocol} items={[{ id: "", label: t("全部") }, ...protocols]} onSelectionChange={(key) => update("protocol", key ?? "")} />
+              <ControlSelect label={t("来源订阅")} selectedKey={filter.subscription_id} items={[{ id: "", label: t("全部订阅来源") }, ...sourceItems]} hint={subscriptions.isError ? t("订阅来源读取失败，请刷新重试。") : undefined} onSelectionChange={(key) => update("subscription_id", key ?? "")} />
+              <ControlSelect label={t("国家 / 地区")} selectedKey={filter.region.toLowerCase()} items={[{ id: "", label: t("全部国家 / 地区") }, ...regionItems.map((region) => ({ id: region.code.toLowerCase(), label: region.name }))]} hint={t("按出口探测地区筛选，无需已有情报评分。")} onSelectionChange={(key) => update("region", key ?? "")} />
+              <ControlSelect label={t("参考延迟")} selectedKey={nodeLatencyPreset(params)} items={[{ id: "all", label: t("全部") }, { id: "excellent", label: t("优质 <150 ms") }, { id: "usable", label: t("可用 <300 ms") }, { id: "slow", label: t("较慢 ≥300 ms") }, { id: "custom", label: t("自定义区间"), isDisabled: true }]} hint={t("按参考域名的平均延迟筛选；未测得延迟时不匹配区间。")} onSelectionChange={(key) => setParams((previous) => updateNodeLatencyPreset(previous, key || "all"), { replace: true, state: location.state })} />
+              <ControlSelect label={t("出口测得状态")} selectedKey={filter.has_egress_ip} items={[{ id: "", label: t("全部") }, { id: "true", label: t("有出口 IP") }, { id: "false", label: t("无出口 IP") }]} onSelectionChange={(key) => update("has_egress_ip", key ?? "")} />
               <ControlSelect label={t("路由平台")} hint={t("按平台路由候选池筛选；不代表已解锁平台服务。")} selectedKey={filter.platform_id} items={[{ id: "", label: t("全部平台") }, ...(platforms.data?.items ?? []).map((platform) => ({ id: platform.id, label: platform.name }))]} onSelectionChange={(key) => update("platform_id", key ?? "")} />
-              <ControlInput label={t("国家 / 地区") } list="node-country-options" value={filter.country} onChange={(event) => update("country", event.target.value)} placeholder="CN / US" />
-              <datalist id="node-country-options">{regions.map((region) => <option key={region.code} value={region.code}>{getRegionName(region.code)}</option>)}</datalist>
+              <div className="workspace-node-shortcuts" role="group" aria-label={t("常用地区")}><span>{t("常用地区")}</span>{commonRegions.map((code) => <ControlButton key={code} variant={filter.region.toUpperCase() === code ? "secondary" : "ghost"} size="sm" aria-pressed={filter.region.toUpperCase() === code} onPress={() => update("region", filter.region.toUpperCase() === code ? "" : code.toLowerCase())}>{code} {getRegionName(code)}</ControlButton>)}</div>
             </div>
             <div className="workspace-command__actions"><ControlButton variant="primary" size="sm" aria-controls="node-advanced-filters" onPress={() => { const panel = document.getElementById("node-advanced-filters") as HTMLDetailsElement | null; if (panel) { panel.open = true; panel.scrollIntoView({ behavior: "smooth", block: "center" }); panel.querySelector("summary")?.focus(); } }}><ArrowDownUp size={14} aria-hidden />{t("高级筛选")}</ControlButton></div>
           </section>
@@ -242,14 +247,16 @@ export function NodesPage() {
           <details id="node-advanced-filters" className="workspace-advanced-filters">
             <summary>{t("网络质量、情报与探测条件")}</summary>
             <div className="workspace-advanced-filters__grid">
-              <ControlInput label={t("地区") } hint={t("出口探测地区码；与情报国家条件同时生效。")} value={filter.region} onChange={(event) => update("region", event.target.value)} placeholder="region" />
+              <ControlInput label={t("情报国家") } hint={t("仅匹配已有有效情报的国家；与出口地区条件同时生效。")} list="node-country-options" value={filter.country} onChange={(event) => update("country", event.target.value.toUpperCase())} placeholder="CN / US" />
+              <datalist id="node-country-options">{regions.map((region) => <option key={region.code} value={region.code}>{getRegionName(region.code)}</option>)}</datalist>
+              <ControlInput label={t("延迟下限（ms，含）")} type="number" min="0" max="3600000" step="any" value={filter.latency_min} onChange={(event) => update("latency_min", event.target.value)} />
+              <ControlInput label={t("延迟上限（ms，不含）")} type="number" min="0" max="3600000" step="any" value={filter.latency_max} onChange={(event) => update("latency_max", event.target.value)} />
               <ControlInput label={t("出口 IP") } value={filter.egress_ip} onChange={(event) => update("egress_ip", event.target.value)} placeholder="IP address" />
               <ControlSelect label={t("IP 类型")} selectedKey={filter.ip_type} items={[{ id: "", label: t("全部") }, ...["residential", "mobile", "business", "wireless", "datacenter", "non_residential", "conflicting"].map((value) => ({ id: value, label: value }))]} onSelectionChange={(key) => update("ip_type", key ?? "")} />
               <ControlSelect label={t("质量状态")} selectedKey={filter.quality_state} items={[{ id: "", label: t("全部") }, ...["unobserved", "pending", "partial", "valid", "stale", "conflicting", "unsupported"].map((value) => ({ id: value, label: value }))]} onSelectionChange={(key) => update("quality_state", key ?? "")} />
               <ControlSelect label={t("风险等级")} selectedKey={filter.risk_grade} items={[{ id: "", label: t("全部") }, ...["unknown", "low", "moderate", "high", "severe", "review"].map((value) => ({ id: value, label: value }))]} onSelectionChange={(key) => update("risk_grade", key ?? "")} />
               <ControlSelect label={t("纯净度状态")} selectedKey={filter.purity_state} items={[{id:"",label:t("全部")},{id:"rated",label:t("已评分")},{id:"unrated",label:t("未评分")}]} onSelectionChange={key => update("purity_state",key ?? "")}/>
               <ControlSelect label={t("纯净度等级")} selectedKey={filter.purity_band} items={[{ id: "", label: t("全部") }, ...purityBands.map((band) => ({ id: band.id, label: t(band.label) }))]} onSelectionChange={(key) => update("purity_band", key ?? "")} />
-              <ControlSelect label={t("协议")} selectedKey={filter.protocol} items={[{ id: "", label: t("全部") }, ...Object.entries(protocolLabels).map(([value, label]) => ({ id: value, label }))]} onSelectionChange={(key) => update("protocol", key ?? "")} />
               <ControlInput label={t("纯净度下限") } type="number" min="0" max="100" value={filter.purity_min} onChange={(event) => update("purity_min", event.target.value)} />
               <ControlInput label={t("纯净度上限") } type="number" min="0" max="100" value={filter.purity_max} onChange={(event) => update("purity_max", event.target.value)} />
               <ControlSelect label={t("判定")} selectedKey={filter.verdict} items={[{ id: "", label: t("全部") }, ...["favorable", "review", "high_risk", "conflicting", "incomplete", "pending"].map((value) => ({ id: value, label: value }))]} onSelectionChange={(key) => update("verdict", key ?? "")} />

@@ -352,7 +352,7 @@ func AverageEWMAForDomainsMs(entry *NodeEntry, domains []string) (float64, bool)
 		if !ok {
 			continue
 		}
-		sumMs += float64(stats.Ewma.Milliseconds())
+		sumMs += float64(stats.Ewma) / float64(time.Millisecond)
 		count++
 	}
 	if count == 0 {

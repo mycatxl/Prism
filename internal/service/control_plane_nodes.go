@@ -31,9 +31,14 @@ type NodeFilters struct {
 	Region         *string
 	CircuitOpen    *bool
 	HasOutbound    *bool
-	EgressIP       *string
-	ProbedSince    *time.Time
-	TagKeyword     *string
+	HasEgressIP    *bool
+	// Reference latency in milliseconds, from the configured authority domains.
+	// The minimum is inclusive and the maximum exclusive; unmeasured nodes never match.
+	LatencyMin  *float64
+	LatencyMax  *float64
+	EgressIP    *string
+	ProbedSince *time.Time
+	TagKeyword  *string
 
 	// intel filters. They are evaluated against the in-memory
 	// assessment projection (see nodeIntelMatchesFilters): ip_type and
@@ -439,6 +444,23 @@ func (s *ControlPlaneService) nodeEntryMatchesFilters(
 		}
 	}
 	// Egress IP filter.
+	if filters.HasEgressIP != nil && entry.GetEgressIP().IsValid() != *filters.HasEgressIP {
+		return false
+	}
+	if filters.LatencyMin != nil || filters.LatencyMax != nil {
+		if s.RuntimeCfg == nil {
+			return false
+		}
+		cfg := s.RuntimeCfg.Load()
+		if cfg == nil {
+			return false
+		}
+		latency, measured := node.AverageEWMAForDomainsMs(entry, cfg.LatencyAuthorities)
+		if !measured || latency <= 0 || (filters.LatencyMin != nil && latency < *filters.LatencyMin) ||
+			(filters.LatencyMax != nil && latency >= *filters.LatencyMax) {
+			return false
+		}
+	}
 	if filters.EgressIP != nil {
 		egressIP := entry.GetEgressIP()
 		if !egressIP.IsValid() || egressIP.String() != *filters.EgressIP {

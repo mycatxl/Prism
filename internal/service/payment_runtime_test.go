@@ -152,6 +152,15 @@ func TestDepositScannerCanEnableAfterStartup(t *testing.T) {
 	cp := h.cp
 	called := make(chan struct{}, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A poll cadence must not cancel a healthy provider response that takes
+		// longer than one tick, including time spent preparing the scan in SQLite.
+		timer := time.NewTimer(100 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-r.Context().Done():
+			return
+		}
 		select {
 		case called <- struct{}{}:
 		default:
@@ -160,12 +169,55 @@ func TestDepositScannerCanEnableAfterStartup(t *testing.T) {
 	}))
 	defer srv.Close()
 	cp.Tron = tron.NewClient(srv.URL, "", config.DefaultUSDTContract)
-	stop := StartDepositScanner(cp, 10*time.Millisecond, nil)
+	stop := StartDepositScanner(cp, 10*time.Millisecond, t.Logf)
 	defer stop()
 	patchPayments(t, cp, map[string]any{"tron_deposit_enabled": true, "tron_address": testUSDTAddress})
 	select {
 	case <-called:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("scanner did not activate after runtime enable")
+	}
+}
+
+func TestDepositScannerStopCancelsProviderRequest(t *testing.T) {
+	h := newPatchHarness(t)
+	cp := h.cp
+	patchPayments(t, cp, map[string]any{"tron_deposit_enabled": true, "tron_address": testUSDTAddress})
+	started := make(chan struct{}, 1)
+	canceled := make(chan struct{}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+		select {
+		case canceled <- struct{}{}:
+		default:
+		}
+	}))
+	defer srv.Close()
+	cp.Tron = tron.NewClient(srv.URL, "", config.DefaultUSDTContract)
+	stop := StartDepositScanner(cp, 10*time.Millisecond, t.Logf)
+	defer stop()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scanner did not reach the provider")
+	}
+	stopped := make(chan struct{})
+	go func() {
+		stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("scanner stop did not cancel the in-flight request")
+	}
+	select {
+	case <-canceled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider did not observe request cancellation")
 	}
 }

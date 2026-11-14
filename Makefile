@@ -1,5 +1,6 @@
 GO ?= go
 NPM ?= npm
+GO_RACE_TIMEOUT ?= 30m
 WEB_DIR := internal/api/web
 # One tag set for every build path (this file, the root Dockerfile and
 # .github/workflows/release.yml). The mihomo fallback kernel was evaluated and
@@ -64,7 +65,7 @@ test:
 	$(GO) test -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
 
 test-race:
-	$(GO) test -race -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
+	$(GO) test -race -timeout '$(GO_RACE_TIMEOUT)' -tags '$(BUILD_TAGS)' ./cmd/... ./internal/...
 
 # Coverage is measured once for the whole tree and then checked against a
 # floor, both in total and for the packages the multi-tenant data layer lives

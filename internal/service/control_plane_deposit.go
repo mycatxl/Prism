@@ -67,6 +67,9 @@ const (
 	depositCursorName = "tron"
 	// depositPollInterval is how often the chain is read.
 	depositPollInterval = 30 * time.Second
+	// depositScanTimeout gives SQLite preparation and provider requests their
+	// own budget even when a caller uses a shorter polling cadence.
+	depositScanTimeout = 30 * time.Second
 )
 
 // DepositIntentView is what the deposit page shows.
@@ -411,6 +414,7 @@ func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf f
 	if interval <= 0 {
 		interval = depositPollInterval
 	}
+	passTimeout := max(interval, depositScanTimeout)
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
@@ -435,7 +439,7 @@ func StartDepositScanner(cp *ControlPlaneService, interval time.Duration, logf f
 					if _, err := cp.SweepDeposits(nowNs); err != nil {
 						logf("[service] sweep deposits: %v", err)
 					}
-					passCtx, passCancel := context.WithTimeout(ctx, interval)
+					passCtx, passCancel := context.WithTimeout(ctx, passTimeout)
 					_, err := cp.ScanDeposits(passCtx, nowNs)
 					passCancel()
 					if err != nil {

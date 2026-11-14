@@ -14,6 +14,17 @@ func (a *prismApp) initPrivacyDeletion() error {
 	engine := a.stateEngine
 	pool := a.topoRuntime.pool
 	engine.EnablePrivacyDeletion()
+	events, err := engine.PrivacyDeletions()
+	if err != nil {
+		return err
+	}
+	for _, e := range events {
+		h, err := node.ParseHex(e.NodeHash)
+		if err != nil {
+			return err
+		}
+		pool.DeletePrivacyNode(h, e.Reason, e.SubscriptionID)
+	}
 	pool.SetPrivacyJournal(func(h node.Hash, reason string, sources []string) error {
 		bindings, err := engine.LoadAllSubscriptionNodes()
 		if err != nil {
@@ -46,17 +57,6 @@ func (a *prismApp) initPrivacyDeletion() error {
 		}
 		return nil
 	})
-	events, err := engine.PrivacyDeletions()
-	if err != nil {
-		return err
-	}
-	for _, e := range events {
-		h, err := node.ParseHex(e.NodeHash)
-		if err != nil {
-			return err
-		}
-		pool.DeletePrivacyNode(h, e.Reason, e.SubscriptionID)
-	}
 	// Disabled local sources may have no cached inventory row. Inspect their
 	// documents too, before bootstrap can retain or republish them.
 	subs, err := engine.ListSubscriptions()

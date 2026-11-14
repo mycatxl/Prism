@@ -109,6 +109,10 @@ export type NodeListFilters = {
   enabled?: boolean;
   circuit_open?: boolean;
   has_outbound?: boolean;
+  has_egress_ip?: boolean;
+  /** Reference latency in ms: minimum inclusive, maximum exclusive. Unmeasured nodes do not match. */
+  latency_min?: number;
+  latency_max?: number;
  // intel filters. `check` is repeatable and each entry is
   // "<check id>:<outcome>".
   purity_min?: number;

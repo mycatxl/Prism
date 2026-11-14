@@ -591,7 +591,9 @@ def call(method,path,body=None):
 try:
     defaults=call('GET','/api/v1/system/config/default')
     current=call('GET','/api/v1/system/config')
-    patch={k:v for k,v in defaults.items() if v is not None and k not in ('node_privacy','payment_config_initialized') and not k.startswith(('ldc_','tron_'))}
+    # Measurement must leave payment/notification credentials and their
+    # read-only presence flags out of a runtime configuration PATCH.
+    patch={k:v for k,v in defaults.items() if v is not None and k not in ('node_privacy','payment_config_initialized') and not k.startswith(('ldc_','tron_','alert_telegram_'))}
     patch.update({k:current[k] for k in ('latency_test_url','egress_trace_url','latency_authorities','cache_flush_interval')})
     patch['intel_enabled']=True
     call('PATCH','/api/v1/system/config',patch)

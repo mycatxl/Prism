@@ -19,9 +19,12 @@ async function choose(page, label, option) {
   await page.getByRole("option", { name: option, exact: true }).click();
 }
 async function changed(page, action) {
-  const pending = page.waitForResponse(isNodes);
-  await action();
-  const response = await pending;
+  let response;
+  try {
+    [response] = await Promise.all([page.waitForResponse(isNodes), action()]);
+  } catch (error) {
+    throw new Error(`Node list did not refresh at ${new URL(page.url()).search}: ${error.message}`);
+  }
   assert.equal(response.status(), 200, `node filter rejected: ${new URL(response.url()).search}`);
   const body = await response.json();
   await expect(page.locator(".workspace-node-list .workspace-object-row")).toHaveCount(body.items.length);
@@ -36,7 +39,7 @@ async function changed(page, action) {
 }
 
 export function registerNodePlatformChecks(check) {
-  check("regression: node list and centered details show business facts without source metadata", async ({ page, origin }) => {
+  check("regression: source filtering is visible while node rows and details show business facts", async ({ page, origin }) => {
     try {
       for (const width of [390, 1100, 1440, 2560]) {
         await page.setViewportSize({ width, height: 900 });
@@ -46,9 +49,9 @@ export function registerNodePlatformChecks(check) {
         await expect(row).toContainText("HTTP");
         await expect(row).toContainText("纯净度");
         await expect(row).toContainText("Gemini：");
-        await expect(page.getByRole("combobox", { name: "订阅来源", exact: true })).toHaveCount(0);
+        await expect(page.getByRole("combobox", { name: "来源订阅", exact: true })).toBeVisible();
         const forbidden = /UI_Local|无订阅来源|订阅来源|来源与标签|数据来源|技术来源|网络字段来源|来源发现|等待来源数据|供应商声明|MEASUREMENT_DISABLED|provider=|IPPure|IPPURE_|fraudScore/;
-        assert.doesNotMatch(await page.locator("main").innerText(), forbidden);
+        assert.doesNotMatch(await page.locator(".workspace-node-list").innerText(), forbidden);
         await row.focus();
         await row.press("Enter");
         const dialog = page.getByRole("dialog");
@@ -106,6 +109,55 @@ export function registerNodePlatformChecks(check) {
     await visit(page, origin);
     await page.getByRole("button", { name: "高级筛选", exact: true }).click();
     await expect(page.getByRole("combobox", { name: "质量状态", exact: true })).toBeVisible();
+  });
+
+  check("regression: main node filters expose protocols sources latency egress and common regions", async ({ page, origin, context }) => {
+    await visit(page, origin, "?size=20");
+    for (const label of ["协议", "来源订阅", "国家 / 地区", "参考延迟", "出口测得状态"]) await expect(page.getByRole("combobox", { name: label, exact: true })).toBeVisible();
+    assert.equal(await page.locator("#node-advanced-filters").getAttribute("open"), null);
+    const sources = await (await context.request.get(origin + "/api/v1/subscriptions?limit=1000")).json();
+    const source = sources.items.find((item) => item.name === "UI_Local");
+    assert.ok(source);
+    let result = await changed(page, () => choose(page, "来源订阅", source.name));
+    assert.equal(result.query.get("subscription_id"), source.id);
+    await expect(page.locator(".workspace-active-filters")).toContainText("来源订阅: UI_Local");
+    result = await changed(page, () => choose(page, "参考延迟", "优质 <150 ms"));
+    assert.equal(result.query.get("latency_max"), "150");
+    assert.equal(result.query.has("latency_min"), false);
+    await expect(page.getByRole("button", { name: /批量拉取情报/ })).toBeDisabled();
+    result = await changed(page, () => choose(page, "参考延迟", "较慢 ≥300 ms"));
+    assert.equal(result.query.get("latency_min"), "300");
+    assert.equal(result.query.has("latency_max"), false);
+    result = await changed(page, () => choose(page, "出口测得状态", "无出口 IP"));
+    assert.equal(result.query.get("has_egress_ip"), "false");
+    result = await changed(page, () => page.getByRole("button", { name: /^JP / }).click());
+    assert.equal(result.query.get("region"), "jp");
+    assert.equal(result.query.get("subscription_id"), source.id);
+    result = await changed(page, () => page.locator(".workspace-filter-chip").filter({ hasText: "来源订阅:" }).getByRole("button").click());
+    assert.equal(result.query.has("subscription_id"), false);
+    assert.equal(result.query.get("region"), "jp");
+    const exported = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/nodes/export");
+    await page.getByRole("button", { name: "导出", exact: true }).click();
+    const exportResponse = await exported;
+    assert.equal(exportResponse.status(), 200);
+    const exportQuery = new URL(exportResponse.url()).searchParams;
+    assert.equal(exportQuery.get("latency_min"), "300");
+    assert.equal(exportQuery.get("has_egress_ip"), "false");
+    assert.equal(exportQuery.get("region"), "jp");
+    // Clearing can reuse the still-fresh initial page instead of issuing another GET.
+    await page.getByRole("button", { name: "清除全部", exact: true }).click();
+    await expect(page).toHaveURL(origin + nodes + "?size=20");
+    await expect(page.locator(".workspace-node-list .workspace-object-row")).toHaveCount(2);
+    const cleared = new URL(page.url()).searchParams;
+    assert.equal(cleared.get("size"), "20");
+    for (const key of ["latency_min", "latency_max", "has_egress_ip", "region"]) assert.equal(cleared.has(key), false);
+    try {
+      for (const width of [390, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "filter controls overflow horizontally");
+        await saveSurface(page, "node-main-filters");
+      }
+    } finally { await page.setViewportSize({ width: 1440, height: 900 }); }
   });
 
   for (const label of ["质量状态", "风险等级"]) {

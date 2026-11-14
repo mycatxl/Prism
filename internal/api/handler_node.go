@@ -221,7 +221,7 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 		}
 		filters.SubscriptionID = subscriptionID
 
-		if v := q.Get("region"); v != "" {
+		if v := strings.TrimSpace(q.Get("region")); v != "" {
 			filters.Region = &v
 		}
 		if v := q.Get("egress_ip"); v != "" {
@@ -242,6 +242,24 @@ func HandleListNodes(cp *service.ControlPlaneService) http.HandlerFunc {
 			return
 		}
 		filters.HasOutbound = hasOutbound
+		hasEgressIP, ok := parseBoolQueryOrWriteInvalid(w, r, "has_egress_ip")
+		if !ok {
+			return
+		}
+		filters.HasEgressIP = hasEgressIP
+		var err error
+		if filters.LatencyMin, err = parseNodeLatencyBound(q.Get("latency_min"), "latency_min"); err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
+		}
+		if filters.LatencyMax, err = parseNodeLatencyBound(q.Get("latency_max"), "latency_max"); err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
+		}
+		if err := validateNodeOperationalFilters(&filters); err != nil {
+			writeInvalidArgument(w, err.Error())
+			return
+		}
 
 		enabled, ok := parseBoolQueryOrWriteInvalid(w, r, "enabled")
 		if !ok {

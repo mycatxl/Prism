@@ -80,29 +80,30 @@ SOCKS5 仅支持 TCP CONNECT。内嵌 **sing-box** 引擎支持 Shadowsocks、Tr
 ## 部署架构
 
 ```text
-浏览器 / API 客户端 / 代理客户端
-                |
-          可选 TLS 终止代理
-                |
-     Prism 监听器（默认 :2260）
-        |                       |
-  内嵌 WebUI + API         HTTP / SOCKS5 / 反向代理
-        |                       |
-  用户、套餐、密钥          鉴权 + 平台策略
-        |                       |
-  SQLite 状态/缓存/情报     粘性租约 -> sing-box -> 上游
+浏览器 / API / 支付回调             HTTP CONNECT / SOCKS5 客户端
+           | HTTPS                            | TCP
+     HTTP 反代 / Tunnel                 直连或保留来源的 L4
+           |                                  |
+     回环管理监听器                        公网数据接入点
+           |                                  |
+      WebUI + API                    鉴权 -> 粘性租约 -> 上游
+           +------------ 同一个 Prism 进程 -----+
+                       SQLite 状态/缓存/情报
 ```
 
-TLS 终止代理通常用于远程 Web/API 访问和 HTTP 反向转发。HTTP 正向代理与 SOCKS5 客户端需要连接能够接收相应协议的监听器。
+HTTP 反代或普通 Cloudflare Tunnel 公开主机名用于管理 HTTP。HTTP CONNECT 与 SOCKS5 客户端需要直达 TCP 接入点或使用适合的 L4 路径。当前 Prism 不解析 PROXY protocol v1/v2；普通 L4 前置若替换 TCP 来源，也会丢失客户归因。可信 XFF、端口策略和防火墙示例见[入站指南](docs/INGRESS.md)。
 
 每个状态目录由一个 Prism 进程独占。SQLite 保存账号、订阅、用量和审计数据，并配有缓存库和情报库；密钥快照和连接注册表保存在进程内。目录锁阻止两个进程同时打开同一状态目录。v0.5.0 不提供共享状态集群、跨实例撤销或配额同步。
 
 额外接入点可按需启用代理协议。`PRISM_ADMIN_LISTEN=host:port` 增加仅提供 `/ui/`、`/api/` 和 `/healthz` 的管理监听器；主监听器仍提供管理路由。
 
+单机设计点为 10,000 个注册用户和客户侧双向合计 1 Gbps。[容量规划](docs/CAPACITY.md) 给出起测硬件、并发与出口 IP 预算、进程内基准证据，以及形成该硬件承载声明所需的同步记账实测。
+
 ## 配置与安全
 
 - 使用 `PRISM_*` 环境变量。[`.env.example`](.env.example) 和 [`deploy/backend.env.example`](deploy/backend.env.example) 列出部署配置。初始化和运行必须使用相同存储路径，生成的 `.env` 应保持私有。
 - 通过 `./bin/prism check-config` 检查实际生效配置，敏感值会被遮蔽。控制台支持的运行时设置可免重启修改。
+- 在运营设置中配置 Telegram 运维通知，token 不回显，覆盖存储、数据库锁、用量失败和节点池故障；支付网址保存会提示可达性警告。详见[运维指南](docs/OPERATIONS.md)。
 - 远程 Web 访问应由反向代理终止 TLS，并将 `PRISM_TRUSTED_PROXIES` 限定为该代理。浏览器会话要求 HTTPS 或本地回环 HTTP；监听器仅向预期客户端开放。
 - 自动化可使用 admin 范围的 AccessKey 读取管理接口并执行允许的操作。签发凭据、修改支付配置和隐私准入设置要求管理员浏览器会话及 CSRF 校验。管理员密钥和浏览器会话不能替代代理密钥。
 - 默认网络防护在本地直连路径拒绝私网、元数据地址及常见 SMTP 端口。节点准入另行检查禁止的节点地址、已知自有资产出口及配置的隐私规则。
@@ -165,6 +166,9 @@ docs/                运维与验收指南
 
 ## 文档
 
+- [`docs/CAPACITY.md`](docs/CAPACITY.md)：单机规格、出口 IP 供给、本地基准与持久记账容量边界。
+- [`docs/INGRESS.md`](docs/INGRESS.md)：管理 Tunnel、公网数据接入点、可信来源 IP 与 PROXY protocol 边界。
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md)：Telegram 告警、支付网址检查和节点筛选。
 - [`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md)：角色、注册、套餐、密钥、用量、计费及运维边界（中文）。
 - [`docs/RECOVERY.md`](docs/RECOVERY.md)：受保护的离线管理员恢复、备份、时钟校正、用量核账和证书续期（英文）。
 - [`docs/LIVE_ACCEPTANCE.md`](docs/LIVE_ACCEPTANCE.md)：获授权的 HTTP/SOCKS5/反向代理真实验收与证据记录（英文）。

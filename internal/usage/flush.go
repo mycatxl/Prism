@@ -90,6 +90,9 @@ type Flusher struct {
 	Interval time.Duration
 	// Logf receives progress and error messages. Nil silences them.
 	Logf func(format string, args ...any)
+	// OnError observes failed persistence after the accounting locks are released.
+	// Implementations must return promptly; the production observer only queues an alert.
+	OnError func(error)
 	// Now is the clock, in Unix nanoseconds. Nil uses the wall clock. It is a
 	// field so the tests can place a flush in a known hour bucket.
 	Now func() int64
@@ -144,11 +147,15 @@ type FlushResult struct {
 // next pass rather than being written twice. If the write then fails, the
 // drained amounts are put back: losing them would silently under-bill, which is
 // worse than retrying a row.
-func (f *Flusher) FlushOnce(nowNs int64) (FlushResult, error) {
-	var result FlushResult
+func (f *Flusher) FlushOnce(nowNs int64) (result FlushResult, err error) {
 	if f == nil || f.Counters == nil || f.Store == nil {
 		return result, nil
 	}
+	defer func() {
+		if err != nil && f.OnError != nil {
+			f.OnError(err)
+		}
+	}()
 	if nowNs <= 0 {
 		nowNs = f.now()
 	}

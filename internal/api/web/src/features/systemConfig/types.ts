@@ -107,7 +107,24 @@ export type RegistrationMode = "off" | "invite" | "open";
  * different slices of one response, read by different pages, so they share one
  * type - and therefore one fetch and one cache entry.
  */
-export type SystemConfigView = RuntimeConfig & {
+export type OperationalAlertSettings = {
+  alert_telegram_enabled?: boolean;
+  alert_telegram_bot_token?: string;
+  alert_telegram_bot_token_set?: boolean;
+  alert_telegram_chat_id?: string;
+  alert_disk_free_percent?: number;
+  alert_cooldown_minutes?: number;
+};
+
+export type PaymentURLCheck = {
+  field: string;
+  status: "reachable" | "warning";
+  code: string;
+  http_status?: number;
+};
+
+export type SystemConfigView = RuntimeConfig & OperationalAlertSettings & {
+  payment_url_checks?: PaymentURLCheck[];
   node_privacy?: NodePrivacyConfig;
  ldc_key_set?: boolean;
  tron_api_key_set?: boolean;
@@ -119,4 +136,4 @@ export type SystemConfigView = RuntimeConfig & {
 };
 
 /** A PATCH body: any subset of what the same url answers. */
-export type RuntimeConfigPatch = Partial<SystemConfigView>;
+export type RuntimeConfigPatch = Partial<Omit<SystemConfigView, "ldc_key_set" | "tron_api_key_set" | "alert_telegram_bot_token_set" | "payment_url_checks">>;

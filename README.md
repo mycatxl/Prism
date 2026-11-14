@@ -80,29 +80,30 @@ SOCKS5 supports TCP CONNECT only. The embedded **sing-box** engine supports upst
 ## Deployment architecture
 
 ```text
-Browser / API client / proxy client
-                |
-     Optional TLS terminator
-                |
-     Prism listener (default :2260)
-        |                       |
-  Embedded WebUI + API     HTTP / SOCKS5 / reverse
-        |                       |
-  Users, plans, keys      Authentication + platform policy
-        |                       |
-  SQLite state/cache/intel   Sticky lease -> sing-box -> upstream
+Browser / API / payment callback         HTTP CONNECT / SOCKS5 client
+              | HTTPS                              | TCP
+       HTTP reverse proxy / Tunnel          Direct or source-preserving L4
+              |                                    |
+   Loopback management listener           Public data endpoint
+              |                                    |
+        WebUI + API                Authentication -> lease -> upstream
+              +----------- one Prism process ------+
+                         SQLite state/cache/intel
 ```
 
-The TLS terminator is typically used for remote web/API access and HTTP reverse forwarding. Direct HTTP-proxy and SOCKS5 clients must reach a listener that accepts their protocol.
+Use HTTP reverse proxies or ordinary Cloudflare Tunnel public hostnames for management HTTP. HTTP CONNECT and SOCKS5 clients need direct TCP access or a suitable L4 path. Prism currently does not parse PROXY protocol v1/v2; an ordinary L4 proxy that replaces the source address also replaces per-client attribution. See [the ingress guide](docs/INGRESS.md) for trusted XFF, port policies and firewall examples.
 
 One Prism process owns each state directory. SQLite stores accounts, subscriptions, usage and audit data alongside cache and intelligence databases; key snapshots and connection registries live in that process. A directory lock prevents two processes opening the same state directory. Shared-state clustering, cross-instance revocation and quota synchronization are outside v0.5.0.
 
 Additional endpoints can enable selected proxy protocols. `PRISM_ADMIN_LISTEN=host:port` adds a management-only listener for `/ui/`, `/api/` and `/healthz`; the primary listener continues to expose management routes.
 
+The single-host design point is 10,000 registered users and 1 Gbps of combined customer traffic. [Capacity planning](docs/CAPACITY.md) specifies starting hardware, concurrent-connection and egress-IP budgets, reproducible in-process benchmarks and the synchronous-accounting measurements needed to establish a hardware-specific limit.
+
 ## Configuration and security
 
 - Use `PRISM_*` variables. [`.env.example`](.env.example) and [`deploy/backend.env.example`](deploy/backend.env.example) document deployment settings. Initialize and run against the same storage paths, keeping the generated `.env` private.
 - Inspect effective configuration with `./bin/prism check-config`; secrets are masked. The console can change supported runtime settings without a restart.
+- Configure Telegram operational notifications under operator settings. Tokens are never echoed; storage, SQLite locks, usage failures and node-pool outages are covered. Payment URL saves report reachability warnings. See [the operations guide](docs/OPERATIONS.md).
 - For remote web access, terminate TLS at a reverse proxy and restrict `PRISM_TRUSTED_PROXIES` to that proxy. Browser sessions require HTTPS or local loopback HTTP. Restrict listener exposure to the intended clients.
 - Automation can authenticate management reads and supported operations with an admin-scope AccessKey. Credential issuance, payment settings and privacy-admission changes require an administrator browser session with CSRF validation. Admin keys and browser sessions do not replace proxy keys.
 - Default network guards reject private/metadata targets and common SMTP ports on local direct paths. Node admission separately checks forbidden node addresses, known own-asset exits and configured privacy rules.
@@ -165,6 +166,9 @@ docs/                operator and acceptance guides
 
 ## Documentation
 
+- [`docs/CAPACITY.md`](docs/CAPACITY.md): single-host sizing, egress-IP supply, local benchmark evidence and durable-accounting limits (Chinese).
+- [`docs/INGRESS.md`](docs/INGRESS.md): management Tunnel, public data endpoints, trusted client IPs and the PROXY protocol boundary (Chinese).
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md): Telegram alerts, payment URL checks and node filtering (Chinese).
 - [`docs/MULTI_TENANT.md`](docs/MULTI_TENANT.md): roles, registration, plans, keys, usage, billing and operational boundaries (Chinese).
 - [`docs/RECOVERY.md`](docs/RECOVERY.md): protected offline administrator recovery, backups, clock correction, usage reconciliation and certificate renewal (English).
 - [`docs/LIVE_ACCEPTANCE.md`](docs/LIVE_ACCEPTANCE.md): authorized live HTTP/SOCKS5/reverse verification and evidence receipts (English).

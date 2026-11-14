@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
+	"prism/internal/alerting"
 	"prism/internal/api"
 	"prism/internal/auth"
 	"prism/internal/buildinfo"
@@ -62,7 +63,10 @@ type prismApp struct {
 	//: the usage summary and prune loop over state.db.
 	stopUsageRetention func()
 	//: the usage alert scanner over state.db.
-	stopUsageAlerts func()
+	stopUsageAlerts        func()
+	alertNotifier          *alerting.Notifier
+	stopOperationalMonitor func()
+	stopPanicObserver      func()
 	//: the subscription expiry sweep over state.db.
 	stopSubscriptionSweeper func()
 	//: the automatic renewal sweep over state.db.
@@ -259,6 +263,7 @@ func newPrismApp(envCfg *config.EnvConfig, engine *state.StateEngine, intelStore
 	}
 	// 4. Runtime configuration (persisted values, defaults otherwise).
 	app.runtimeCfg.Store(loadRuntimeConfig(engine, envCfg))
+	app.alertNotifier = alerting.NewNotifier(app.runtimeCfg.Load, nil, log.Printf)
 	if err := ensureDefaultAccountHeaderRule(engine); err != nil {
 		return nil, err
 	}
@@ -485,6 +490,11 @@ func (a *prismApp) bootstrapFromPersistence(engine *state.StateEngine) error {
 		func() time.Duration { return time.Duration(runtimeConfigSnapshot(a.runtimeCfg).CacheFlushInterval) },
 		5*time.Second, // check tick
 	)
+	a.flushWorker.OnError = func(err error) {
+		if a.alertNotifier != nil {
+			a.alertNotifier.ReportError(alerting.PersistenceFailed, err)
+		}
+	}
 	return nil
 }
 
@@ -543,6 +553,7 @@ func (a *prismApp) initObservability() error {
 }
 
 func (a *prismApp) startBackgroundServices() {
+	a.startOperationalAlerts()
 	// --- Step 8 Batch 1: CacheFlushWorker + GeoIP + MetricsManager ---
 	a.flushWorker.Start()
 	log.Println("Cache flush worker started")
@@ -656,7 +667,8 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 		Intel:          a.intelSvc,
 		// The service logs what a response cannot report, such as a data-plane
 		// publish that failed after a charge was committed.
-		Logf: log.Printf,
+		Logf:          log.Printf,
+		AlertNotifier: a.alertNotifier,
 	}
 	cpService.InitializeLDC()
 
@@ -689,7 +701,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// delete, so it stays well clear of the metric pruner's five-minute cadence.
 	a.stopUsageRetention = (&usage.Retention{
 		Store: engine,
-		Logf:  usage.DefaultLogf,
+		Logf:  a.usageLogf,
 		// The daily window follows usage_retention_days, read at each pass so
 		// the console can shorten or lengthen it without a restart.
 		DailyKeepFn: func() time.Duration {
@@ -761,7 +773,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	cpService.Usage = a.usageCounters
 	cpService.Conns = a.usageSessions
 	cpService.Limiter = usageLimiter
-	usageJournal, err := usage.NewJournal(engine, usage.DefaultLogf)
+	usageJournal, err := usage.NewJournal(alertJournalStore{JournalStore: engine, report: a.reportUsageError}, a.usageLogf)
 	if err != nil {
 		return err
 	}
@@ -793,14 +805,14 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	// empty aggregate.
 	seedRetry := usageSeedRetry{attempts: 4, backoff: 250 * time.Millisecond}
 	a.usageCounters.RequireSeed()
-	seeded, seedErr := seedUsage(a.usageCounters, engine, seedRetry, usage.DefaultLogf)
+	seeded, seedErr := seedUsage(a.usageCounters, engine, seedRetry, a.usageLogf)
 	if seedErr != nil {
-		usage.DefaultLogf(
+		a.usageLogf(
 			"Usage accounting: cannot read subscriptions to restore usage after %d attempts: %v; "+
 				"finite user quotas remain closed until a re-seed succeeds - the process keeps trying every %s",
 			seedRetry.attempts, seedErr, usage.DefaultFlushInterval)
 		safego.Go("the usage re-seed", func() {
-			reseedUsageUntilApplied(accountingCtx, a.usageCounters, engine, usage.DefaultFlushInterval, usage.DefaultLogf)
+			reseedUsageUntilApplied(accountingCtx, a.usageCounters, engine, usage.DefaultFlushInterval, a.usageLogf)
 		})
 	} else {
 		a.usageCounters.MarkSeedReady()
@@ -812,7 +824,8 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	go (&usage.Flusher{
 		Counters: a.usageCounters,
 		Store:    engine,
-		Logf:     usage.DefaultLogf,
+		Logf:     a.usageLogf,
+		OnError:  a.reportUsageError,
 	}).Start(accountingCtx)
 
 	// The rollover is what makes an allowance a period rather than a one-time
@@ -821,7 +834,7 @@ func (a *prismApp) buildNetworkServers(engine *state.StateEngine) error {
 	go (&usage.PeriodReset{
 		Store:    engine,
 		Counters: a.usageCounters,
-		Logf:     usage.DefaultLogf,
+		Logf:     a.usageLogf,
 	}).Start(accountingCtx)
 
 	// The enforcer is what makes a disable mean "now" rather than "at the next
@@ -1329,6 +1342,9 @@ const shutdownStepTimeout = 10 * time.Second
 func (a *prismApp) shutdown() {
 	overallCtx, cancelOverall := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelOverall()
+	if a.stopOperationalMonitor != nil {
+		shutdownBlocking("operational alert monitor", a.stopOperationalMonitor)
+	}
 
 	// 0. The audit retention loop only touches state.db.
 	if a.stopAuditPruner != nil {
@@ -1446,6 +1462,12 @@ func (a *prismApp) shutdown() {
 	}
 
 	shutdownBlocking("cache flush worker", a.flushWorker.Stop) // final cache flush before DB close
+	if a.stopPanicObserver != nil {
+		a.stopPanicObserver()
+	}
+	if a.alertNotifier != nil {
+		a.alertNotifier.Stop()
+	}
 	log.Println("Server stopped")
 }
 

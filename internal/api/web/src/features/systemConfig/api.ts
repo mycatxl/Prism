@@ -107,6 +107,13 @@ function normalizeSystemConfig(raw: Partial<SystemConfigView> | null | undefined
   }
 
   return {
+    alert_telegram_enabled: Boolean(raw.alert_telegram_enabled),
+    alert_telegram_bot_token: "",
+    alert_telegram_bot_token_set: Boolean(raw.alert_telegram_bot_token_set),
+    alert_telegram_chat_id: asString(raw.alert_telegram_chat_id, ""),
+    alert_disk_free_percent: asNumber(raw.alert_disk_free_percent, 10),
+    alert_cooldown_minutes: asNumber(raw.alert_cooldown_minutes, 15),
+    payment_url_checks: Array.isArray(raw.payment_url_checks) ? raw.payment_url_checks.filter((check) => check && typeof check.field === "string" && typeof check.code === "string" && ["reachable", "warning"].includes(check.status)) : [],
     ldc_enabled: Boolean(raw.ldc_enabled),
     ldc_gateway_url: asString(raw.ldc_gateway_url, DEFAULT_CONFIG.ldc_gateway_url),
     ldc_pid: asString(raw.ldc_pid, DEFAULT_CONFIG.ldc_pid),
@@ -188,4 +195,8 @@ export async function patchSystemConfig(patch: RuntimeConfigPatch): Promise<Syst
 
 export async function getEnvConfig(): Promise<EnvConfig> {
   return await apiRequest<EnvConfig>(path + "/env");
+}
+
+export async function sendTestOperationalAlert(): Promise<{ delivered: boolean }> {
+  return apiRequest("/api/v1/system/alerts/test", { method: "POST", body: {} });
 }

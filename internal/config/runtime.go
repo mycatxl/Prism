@@ -94,6 +94,13 @@ type RuntimeConfig struct {
 	AlertUsageRatio    float64 `json:"alert_usage_ratio"`
 	AlertWindowMinutes int     `json:"alert_window_minutes"`
 	AlertRetentionDays int     `json:"alert_retention_days"`
+
+	// Outbound operational alerts. The token is persisted but masked in every API view.
+	AlertTelegramEnabled  bool   `json:"alert_telegram_enabled"`
+	AlertTelegramBotToken string `json:"alert_telegram_bot_token"`
+	AlertTelegramChatID   string `json:"alert_telegram_chat_id"`
+	AlertDiskFreePercent  int    `json:"alert_disk_free_percent"`
+	AlertCooldownMinutes  int    `json:"alert_cooldown_minutes"`
 }
 
 // DefaultEgressTraceURL is the shipped node egress probe target. It is also the
@@ -252,6 +259,8 @@ func NewDefaultRuntimeConfig() *RuntimeConfig {
 		AlertUsageRatio:               DefaultAlertUsageRatio,
 		AlertWindowMinutes:            DefaultAlertWindowMinutes,
 		AlertRetentionDays:            DefaultAlertRetentionDays,
+		AlertDiskFreePercent:          DefaultAlertDiskFreePercent,
+		AlertCooldownMinutes:          DefaultAlertCooldownMinutes,
 	}
 }
 

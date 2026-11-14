@@ -6,7 +6,30 @@ package safego
 import (
 	"log"
 	"runtime/debug"
+	"sync/atomic"
 )
+
+type panicObserver struct{ notify func(string) }
+
+var observer atomic.Pointer[panicObserver]
+
+// SetPanicObserver installs a payload-free operational signal and returns an
+// idempotent restore function. Panic values and stacks stay in local diagnostics.
+func SetPanicObserver(notify func(string)) func() {
+	var next *panicObserver
+	if notify != nil {
+		next = &panicObserver{notify: notify}
+	}
+	previous := observer.Swap(next)
+	return func() { observer.CompareAndSwap(next, previous) }
+}
+
+func observePanic(name string) {
+	defer func() { _ = recover() }()
+	if current := observer.Load(); current != nil {
+		current.notify(name)
+	}
+}
 
 // Run calls fn and contains a panic: it is logged with its stack and swallowed,
 // so the caller - usually one pass of a periodic loop - keeps going. A panic in
@@ -14,6 +37,7 @@ import (
 func Run(name string, fn func()) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			observePanic(name)
 			log.Printf("safego: recovered a panic in %s: %v\n%s", name, recovered, debug.Stack())
 		}
 	}()

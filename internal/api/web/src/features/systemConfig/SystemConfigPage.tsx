@@ -35,7 +35,8 @@ import {
   SYSTEM_ENV_CONFIG_QUERY_KEY,
   SYSTEM_ENV_STALE_MS,
 } from "./api";
-import type { EnvConfig, RuntimeConfig, RuntimeConfigPatch, SystemConfigView } from "./types";
+import type { EnvConfig, PaymentURLCheck, RuntimeConfig, RuntimeConfigPatch, SystemConfigView } from "./types";
+import { PaymentURLChecks } from "./PaymentURLChecks";
 
 type RuntimeConfigForm = {
   ldc_enabled: boolean;
@@ -368,6 +369,7 @@ export function SystemConfigPage() {
   const [params, setParams] = useSearchParams();
   const [categorySearch, setCategorySearch] = useState("");
   const [paymentTab, setPaymentTab] = useState("ldc");
+  const [paymentURLChecks, setPaymentURLChecks] = useState<PaymentURLCheck[]>([]);
   const category = CATEGORIES.find((item) => item.id === params.get("category"));
   const [draftForm, setDraftForm] = useState<RuntimeConfigForm | null>(null);
   const [customPatchText, setCustomPatchText] = useState<string | null>(null);
@@ -427,6 +429,7 @@ export function SystemConfigPage() {
       return { updated: await patchSystemConfig(patch), changedCount: Object.keys(patch).length };
     },
     onSuccess: ({ updated, changedCount }) => {
+      setPaymentURLChecks(updated.payment_url_checks ?? []);
       queryClient.setQueryData(SYSTEM_CONFIG_QUERY_KEY, updated);
       setDraftForm(null);
       setCustomPatchText(null);
@@ -520,6 +523,8 @@ export function SystemConfigPage() {
       {form && category ? <>
         <WorkspaceCard eyebrow={`Governance / ${category.id}`} title={t(category.title)} description={t(category.description)} meta={t("{{count}} 个配置项", { count: category.fields.length + category.staticCount })} actions={<ControlButton variant="secondary" size="sm" onPress={() => void reloadFromServer()} isDisabled={reloadPending || saveMutation.isPending} loading={reloadPending}><RefreshCw size={14} aria-hidden />{t("重新加载")}</ControlButton>}>
           {category.id === "payments" ? <ControlTabs items={[{id:"ldc",label:t("Linux.do 积分 (EasyPay)")},{id:"tron",label:t("TRON (USDT & TRX)")}]} selectedKey={paymentTab} onSelectionChange={setPaymentTab} label={t("支付网关")} /> : null}
+          {category.id === "payments" && paymentTab === "ldc" ? <><p className="workspace-muted">{t("保存付款网址时检查 HTTPS 格式和公开可达性；网络警告不会阻止保存合法网址。")}</p><PaymentURLChecks checks={paymentURLChecks} /></> : null}
+          {category.id === "payments" && paymentTab === "tron" ? <p className="workspace-muted">{t("TRON 充值通过链上轮询确认，无需支付回调 URL。")}</p> : null}
           {category.fields.length ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><PencilLine size={14} aria-hidden />{t("可编辑配置")}</span><QueryBadge label={t("运行时变更，保存后生效")} /></div><div className="workspace-form-grid">{category.fields.filter((field) => category.id !== "payments" || field.startsWith(paymentTab === "ldc" ? "ldc_" : "tron_")).map((field) => <RuntimeFieldEditor key={field} field={field} form={form} defaultForm={defaultBaseline ? configToForm(defaultBaseline) : null} pending={saveMutation.isPending} setField={setFormField} restore={restoreField} />)}</div></div> : null}
           {category.staticCount > 0 ? envBaseline ? <div className="workspace-form-section"><div className="workspace-section-heading"><span><LockKeyhole size={14} aria-hidden />{t("部署只读信息")}</span><QueryBadge label={t("来自部署环境，修改需重启")} /></div>{staticRows(category.id, envBaseline, t).map((group) => <StaticGroup key={group.title} title={group.title} rows={group.rows} />)}</div> : <EmptyWorkState embedded title={t("静态配置加载失败")} detail={formatApiErrorMessage(envQuery.error, t)} action={<ControlButton variant="secondary" size="sm" onPress={() => void envQuery.refetch()}>{t("重试")}</ControlButton>} /> : null}
         </WorkspaceCard>

@@ -27,6 +27,7 @@ import { registerNodePlatformChecks } from "../tests/node-platform-ui.mjs";
 import { registerPanelWorkflowChecks } from "../tests/panel-workflows.mjs";
 import { registerPanelSurfaceChecks } from "../tests/panel-surfaces.mjs";
 import { registerPanelTaskChecks } from "../tests/panel-tasks.mjs";
+import { registerEngineeringChecks } from "../tests/engineering-ui.mjs";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -2206,6 +2207,7 @@ async function quiet(page) {
 }
 
 registerNodePlatformChecks(check);
+registerEngineeringChecks(check);
 registerPanelWorkflowChecks(check);
 registerPanelSurfaceChecks(check);
 registerPanelTaskChecks(check);

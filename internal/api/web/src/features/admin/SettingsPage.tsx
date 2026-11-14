@@ -36,6 +36,7 @@ import {
 import type { RegistrationMode, RuntimeConfigPatch, SystemConfigView } from "../systemConfig/types";
 
 import { NodePrivacySettings } from "./NodePrivacySettings";
+import { TelegramAlertSettings } from "./TelegramAlertSettings";
 import { purityBandLabel } from "../nodes/quality/presentation";
 import { PurityGuide } from "../nodes/quality/PurityGuide";
 import { invalidatePurityQueries } from "../nodes/quality/cache";
@@ -136,6 +137,7 @@ export function SettingsPage() {
         </div>
       ) : null}
       {configQuery.data?.node_privacy ? <NodePrivacySettings key={JSON.stringify(configQuery.data.node_privacy)} config={configQuery.data.node_privacy} /> : null}
+      {configQuery.data ? <TelegramAlertSettings key={JSON.stringify([configQuery.data.alert_telegram_enabled, configQuery.data.alert_telegram_chat_id, configQuery.data.alert_telegram_bot_token_set, configQuery.data.alert_disk_free_percent, configQuery.data.alert_cooldown_minutes])} config={configQuery.data} /> : null}
       <SettingsFormContent
         key={pinnedKey ?? liveKey}
         config={config}

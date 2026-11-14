@@ -46,7 +46,7 @@ export type ListSubscriptionsInput = {
   keyword?: string;
 };
 
-export async function listSubscriptions(input: ListSubscriptionsInput = {}): Promise<PageResponse<Subscription>> {
+export async function listSubscriptions(input: ListSubscriptionsInput = {}, signal?: AbortSignal): Promise<PageResponse<Subscription>> {
   const query = new URLSearchParams({
     limit: String(input.limit ?? 50),
     offset: String(input.offset ?? 0),
@@ -62,7 +62,7 @@ export async function listSubscriptions(input: ListSubscriptionsInput = {}): Pro
     query.set("keyword", keyword);
   }
 
-  const data = await apiRequest<PageResponse<ApiSubscription>>(`${basePath}?${query.toString()}`);
+  const data = await apiRequest<PageResponse<ApiSubscription>>(`${basePath}?${query.toString()}`, { signal });
   return normalizeSubscriptionPage(data);
 }
 
